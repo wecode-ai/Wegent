@@ -57,6 +57,7 @@ import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { useChatStatusIndicator } from '@/features/tasks/hooks/useChatStatusIndicator'
 import {
   buildInteractiveFormCancellation,
   findPendingInteractiveForm,
@@ -207,6 +208,7 @@ function ChatAreaContent({
   const pathname = usePathname()
   const { setSelectedDeviceId } = useDevices()
   const chatStreamContext = useOptionalTaskSession()
+  const chatStatus = useChatStatusIndicator()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
@@ -1618,6 +1620,9 @@ function ChatAreaContent({
 
   const shouldMountQueueMessageHandler =
     effectiveTaskType === 'chat' || effectiveTaskType === 'task' || effectiveTaskType === 'code'
+  const compactingWaitMessage = chatStatus.isCompacting
+    ? t('common:chat_status.compacting')
+    : undefined
 
   return (
     <div
@@ -1702,6 +1707,7 @@ function ChatAreaContent({
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
+              waitingMessage={compactingWaitMessage}
             />
           </div>
         </div>

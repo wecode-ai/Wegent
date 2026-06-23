@@ -128,6 +128,8 @@ class StreamingState:
 
     # Latest context metrics snapshot for observability and refresh recovery
     context_metrics: Optional[dict[str, Any]] = None
+    context_compactions: list[dict[str, Any]] = field(default_factory=list)
+    termination_reason: Optional[str] = None
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -222,6 +224,10 @@ class StreamingState:
             result["messages_chain"] = self.messages_chain
         if self.context_metrics:
             result["context_metrics"] = self.context_metrics
+        if include_value and self.context_compactions:
+            result["context_compactions"] = self.context_compactions
+        if self.termination_reason:
+            result["termination_reason"] = self.termination_reason
         return result
 
 
@@ -439,6 +445,8 @@ class StreamingCore:
             messages_chain=result.get("messages_chain"),
             reasoning_content=result.get("reasoning_content"),
             context_metrics=result.get("context_metrics"),
+            context_compactions=result.get("context_compactions"),
+            termination_reason=result.get("termination_reason"),
         )
 
         return result

@@ -831,6 +831,7 @@
   },
   "chat_status": {
     "title": "Current chat status",
+    "tooltip": "Status & quota",
     "description": "Show the current context budget for the active conversation",
     "status_line_title": "Chat status line",
     "status_line_description": "Show lightweight runtime status items in the chat toolbar.",
@@ -840,15 +841,10 @@
     "context_remaining": "Context {{percent}}% left",
     "context_usage": "{{used}} / {{total}} context tokens",
     "token_usage": "{{used}} / {{total}} input tokens",
+    "compacting": "Compacting context...",
     "over_trigger": "Compression threshold reached",
     "save_success": "Chat status preference saved",
     "save_failed": "Failed to save chat status preference"
-  },
-  "tool_output_guard": {
-    "title": "Tool output truncation",
-    "description": "Automatically compress oversized tool outputs in Chat mode to reduce failures caused by overly long context.",
-    "save_success": "Tool output truncation preference saved",
-    "save_failed": "Failed to save tool output truncation preference"
   },
   "guide": {
     "title": "Welcome",

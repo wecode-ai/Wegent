@@ -297,6 +297,7 @@ export interface ChatDonePayload {
     /** Message blocks for mixed rendering (new format) */
     blocks?: ChatBlock[]
     error?: string // Error message if result represents error completion
+    termination_reason?: string
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
   }
@@ -368,6 +369,21 @@ export interface ChatStatusUpdatedPayload {
   phase: string
   /** Context budget snapshot associated with this phase transition. */
   context_metrics: ContextMetricsSnapshot
+  /** Optional transient summary-compaction runtime event. */
+  context_compaction?: ChatContextCompactionPayload
+}
+
+export interface ChatContextCompactionPayload {
+  type: 'summary_compact'
+  status: 'started' | 'completed' | 'fallback'
+  before_tokens: number
+  trigger_limit: number
+  target_limit: number
+  used_legacy_fallback: boolean
+  created_at: string
+  after_tokens?: number
+  summary_message_id?: string
+  failure_reason?: string
 }
 
 /**
@@ -669,6 +685,8 @@ export interface TaskJoinAck {
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>
+  /** Latest cached status snapshot for active streaming recovery. */
+  status_updated?: ChatStatusUpdatedPayload
   error?: string
 }
 

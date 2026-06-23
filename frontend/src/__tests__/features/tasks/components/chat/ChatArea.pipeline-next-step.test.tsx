@@ -106,6 +106,15 @@ jest.mock('@/hooks/use-toast', () => ({
   }),
 }))
 
+jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
+  useChatStatusIndicator: () => ({
+    enabled: false,
+    display: null,
+    currentTaskId: 42,
+    isCompacting: false,
+  }),
+}))
+
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
     selectedTeam: mockSelectedTeam,

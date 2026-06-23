@@ -161,6 +161,8 @@ export interface MessageBubbleProps {
   t: (key: string) => string
   /** Whether to show waiting indicator (streaming but no content yet) */
   isWaiting?: boolean
+  /** Optional override for the in-message waiting indicator text */
+  waitingMessage?: string
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
   onSendMessage?: (
     content: string,
@@ -368,6 +370,7 @@ const MessageBubble = memo(
     theme,
     t,
     isWaiting,
+    waitingMessage,
     onSendMessage,
     onAskUserSubmit,
     onTextSelect,
@@ -1445,7 +1448,7 @@ const MessageBubble = memo(
               />
               {/* Show waiting indicator when streaming but no content yet */}
               {isWaiting || msg.isWaiting ? (
-                <StreamingWaitIndicator isWaiting={true} />
+                <StreamingWaitIndicator isWaiting={true} message={waitingMessage} />
               ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
                 /* Show inline edit component when editing a user message */
                 <InlineMessageEdit
@@ -1473,6 +1476,7 @@ const MessageBubble = memo(
                         theme={theme}
                         blocks={msg.result.blocks}
                         annotations={msg.result?.annotations}
+                        processingMessage={waitingMessage}
                         onUseAsReference={onUseAsReference}
                         taskId={selectedTaskDetail?.id}
                         subtaskId={msg.subtaskId}
@@ -1670,6 +1674,7 @@ const MessageBubble = memo(
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
       prevProps.msg.result === nextProps.msg.result &&
       prevProps.isWaiting === nextProps.isWaiting &&
+      prevProps.waitingMessage === nextProps.waitingMessage &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
