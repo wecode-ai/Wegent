@@ -24,6 +24,10 @@ export interface UserPreferences {
     {
       use_user_config?: boolean
       use_proxy?: boolean
+      auth_sync?: {
+        master_device_id?: string | null
+        slave_device_ids?: string[]
+      }
     }
   > | null
 }

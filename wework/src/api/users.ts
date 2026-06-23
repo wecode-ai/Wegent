@@ -7,6 +7,11 @@ export interface UpdateCurrentUserRequest {
   preferences?: UserPreferences
 }
 
+export interface RuntimeAuthSync {
+  master_device_id: string | null
+  slave_device_ids: string[]
+}
+
 export interface UserRuntimeConfig {
   runtime: UserRuntime
   display_name: string
@@ -16,9 +21,12 @@ export interface UserRuntimeConfig {
   target_path: string
   auth_json_sha256?: string | null
   auth_json_updated_at?: string | null
+  auth_json_source_device_id?: string | null
+  auth_json_source_modified_at?: string | null
   proxy_configured: boolean
   proxy_url_masked: string
   proxy_updated_at?: string | null
+  auth_sync: RuntimeAuthSync
   updated_at?: string | null
 }
 
@@ -32,6 +40,7 @@ export interface UserProxyConfig {
 export interface UpdateUserRuntimeConfigRequest {
   use_user_config: boolean
   use_proxy?: boolean
+  auth_sync?: RuntimeAuthSync
 }
 
 function runtimeConfigPath(runtime: UserRuntime) {

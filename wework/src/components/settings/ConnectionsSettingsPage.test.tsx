@@ -202,6 +202,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: false,
       proxy_url_masked: '',
       proxy_updated_at: null,
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:00Z',
     })
     userApi.updateRuntimeConfig.mockResolvedValue({
@@ -216,6 +217,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: false,
       proxy_url_masked: '',
       proxy_updated_at: null,
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:01Z',
     })
     userApi.getProxyConfig.mockResolvedValue({
@@ -242,6 +244,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: false,
       proxy_url_masked: '',
       proxy_updated_at: null,
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:00Z',
     })
     userApi.importRuntimeAuthJson.mockResolvedValue({
@@ -256,6 +259,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: false,
       proxy_url_masked: '',
       proxy_updated_at: null,
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
@@ -347,6 +351,54 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
   })
 
+  test('saves Codex auth master slave sync settings', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice({ id: 11, device_id: 'master-device', name: 'Master Mac' }),
+      localDevice({ id: 12, device_id: 'slave-a', name: 'Build Mac' }),
+    ])
+    userApi.updateRuntimeConfig.mockResolvedValueOnce({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      use_proxy: false,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
+      auth_sync: {
+        master_device_id: 'master-device',
+        slave_device_ids: ['slave-a'],
+      },
+      updated_at: '2026-06-09T00:00:02Z',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-codex-auth'))
+
+    expect(await screen.findByTestId('runtime-config-auth-sync-section')).toBeInTheDocument()
+    await userEvent.selectOptions(
+      screen.getByTestId('runtime-config-master-device-select'),
+      'master-device'
+    )
+    await userEvent.click(screen.getByTestId('runtime-config-slave-device-slave-a'))
+    await userEvent.click(screen.getByTestId('runtime-config-auth-sync-save-button'))
+
+    await waitFor(() =>
+      expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
+        use_user_config: false,
+        use_proxy: false,
+        auth_sync: {
+          master_device_id: 'master-device',
+          slave_device_ids: ['slave-a'],
+        },
+      })
+    )
+  })
+
   test('saves personal proxy then enables it for Codex auth', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     userApi.getRuntimeConfig.mockResolvedValueOnce({
@@ -361,6 +413,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: true,
       proxy_url_masked: 'http://127.0.0.1:7890',
       proxy_updated_at: '2026-06-09T00:00:02Z',
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:00Z',
     })
     userApi.updateRuntimeConfig.mockResolvedValueOnce({
@@ -375,6 +428,7 @@ describe('ConnectionsSettingsPage', () => {
       proxy_configured: true,
       proxy_url_masked: 'http://127.0.0.1:7890',
       proxy_updated_at: '2026-06-09T00:00:02Z',
+      auth_sync: { master_device_id: null, slave_device_ids: [] },
       updated_at: '2026-06-09T00:00:03Z',
     })
 
