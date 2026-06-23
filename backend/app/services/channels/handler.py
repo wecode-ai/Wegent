@@ -80,7 +80,6 @@ CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
 TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
-TASK_RUNNING_NOTICE = "开始思考..."
 
 
 @dataclass
@@ -1194,12 +1193,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return None
 
         await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
-        await self._emit_initial_stream_content(
-            streaming_emitter,
-            task_id=callback_key,
-            subtask_id=0,
-            content=f"{TASK_RUNNING_NOTICE}\n\n",
-        )
         return streaming_emitter
 
     async def _emit_private_im_runtime_stream_error(

@@ -495,7 +495,7 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
 
 
 @pytest.mark.asyncio
-async def test_weibo_runtime_message_sends_running_prefix_on_registered_stream(
+async def test_weibo_runtime_message_registers_stream_without_status_prefix(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
@@ -577,11 +577,7 @@ async def test_weibo_runtime_message_sends_running_prefix_on_registered_stream(
         "task_id": "runtime:device-1:codex-1",
         "subtask_id": 0,
     }
-    assert calls["emit_status_prefix"] == {
-        "task_id": "runtime:device-1:codex-1",
-        "subtask_id": 0,
-        "content": "开始思考...\n\n",
-    }
+    assert "emit_status_prefix" not in calls
     assert calls["registered_emitter"] == {
         "task_id": "runtime:device-1:codex-1",
         "emitter": calls["created_emitter"],
