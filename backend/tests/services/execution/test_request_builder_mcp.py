@@ -80,6 +80,35 @@ class TestClarificationSkillInjection:
         assert result == preload_skills
 
 
+class TestDefaultAvailableHelpSkills:
+    def test_inject_default_help_skills_adds_public_available_refs(self):
+        refs = TaskRequestBuilder._inject_default_help_skills(
+            [
+                {
+                    "name": "subscription-manager",
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            ]
+        )
+
+        assert refs == [
+            {"name": "subscription-manager", "namespace": "default", "is_public": True},
+            {"name": "wegent-help", "namespace": "default", "is_public": True},
+            {"name": "wegent-knowledge", "namespace": "default", "is_public": True},
+        ]
+
+    def test_inject_default_help_skills_deduplicates_existing_refs(self):
+        refs = TaskRequestBuilder._inject_default_help_skills(
+            [{"name": "wegent-help", "namespace": "default", "is_public": True}]
+        )
+
+        assert [item["name"] for item in refs] == [
+            "wegent-help",
+            "wegent-knowledge",
+        ]
+
+
 class TestExtractSkillMcpToList:
     """Tests for _extract_skill_mcp_to_list static method."""
 
