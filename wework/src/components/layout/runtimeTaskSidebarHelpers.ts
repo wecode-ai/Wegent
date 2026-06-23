@@ -41,10 +41,6 @@ export function getRuntimeChatSidebarTaskItems(
   return getRuntimeSidebarTaskItems(workspaces.filter(isRuntimeChatWorkspace))
 }
 
-export function getRuntimeDirectoryWorkspaces(workspaces: RuntimeDeviceWorkspace[] = []) {
-  return workspaces.filter(workspace => !isRuntimeChatWorkspace(workspace))
-}
-
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
   return [...items].sort((left, right) => {
     const leftTime = new Date(getRuntimeTaskTime(left.task) || 0).getTime()
@@ -65,11 +61,6 @@ export function getVisibleRuntimeSidebarTaskItems(
 
 export function hasHiddenRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {
   return items.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
-}
-
-export function getRuntimeWorkspaceLabel(workspace: RuntimeDeviceWorkspace) {
-  const deviceLabel = workspace.deviceName || workspace.deviceId
-  return `${deviceLabel} ${workspace.workspacePath}`
 }
 
 export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) {

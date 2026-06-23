@@ -4,20 +4,23 @@ sidebar_position: 16
 
 # 本地运行时任务
 
-Wework 的本地运行时任务用于展示和继续用户已经在设备上创建的 Codex 或 Claude Code 工作。它不再把这些工作导入中心库的 `TaskResource` 或 `Subtask`，而是按三层结构展示：
+Wework 的本地运行时任务用于展示和继续用户已经在设备上创建的 Codex 或 Claude Code 工作。它不再把这些工作导入中心库的 `TaskResource` 或 `Subtask`，也不再依赖 Backend `projects` 表生成侧栏列表。列表来自在线设备 executor 返回的运行时线程，并在前端展示为两类：
 
 ```text
 Project
-  Device Workspace
-    LocalTask
+  LocalTask
+
+Conversation
+  LocalTask
 ```
 
 ## 数据归属
 
-- Project 是中心状态，仍由 Backend 管理。
-- Device Workspace 是中心映射，表示某个用户、设备和本地目录属于哪个 Project。
+- Project 是 executor 线程所属工作区的展示分组，由运行时列表里的工作区信息推导。
+- Conversation 是没有项目归属的 Codex 对话线程展示分组。
 - LocalTask 是 executor 本机状态，只保存在设备上。
 - LocalTask 的稳定身份是 `deviceId + localTaskId`。`workspacePath` 只作为设备工作区上下文使用，用于列表分组、创建任务和右侧工具定位目录；任务 URL、IM 通知订阅和原生 Codex 更新去重都不把路径作为身份字段。
+- executor 返回的 `workspaceKind` 用于区分 Project 与 Conversation。Codex App 风格的目录（例如 `~/Documents/Codex/YYYY-MM-DD/<name>`）会被标记为 `chat` 并展示到“对话”，其他工作区展示到“项目”。
 
 executor 仍为非 Codex 或导入类本地任务保留 JSON LocalTask 索引：
 
@@ -29,15 +32,18 @@ $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 
 ## 列表刷新
 
-任务列表由前端轮询触发。
+任务列表由 Wework 在启动、显式刷新或设备状态变化时请求，不再由固定 interval 轮询触发。
 
-1. Wework 定时请求 `GET /api/runtime-work?client_origin=wework`。
-2. Backend 读取当前用户的 Project 和 Device Workspace 映射。
-3. Backend 通过在线设备的 WebSocket RPC 调用 `runtime.tasks.list`。
-4. executor 刷新本机 Codex 发现结果，并合并非 Codex/导入类 JSON LocalTask 索引。
-5. Backend 按 `deviceId + workspacePath` 分组返回 Project -> Device Workspace -> LocalTask，但每个 LocalTask 的打开和通知身份仍是 `deviceId + localTaskId`。
+1. Wework 请求 `GET /api/runtime-work`。
+2. Backend 读取当前用户在线设备列表，并通过设备 WebSocket RPC 调用 `runtime.tasks.list`。
+3. executor 刷新本机 Codex 发现结果，并合并非 Codex/导入类 JSON LocalTask 索引。
+4. executor 在返回值中携带 `workspaceKind`、工作区路径、任务标题、更新时间和设备状态。
+5. Backend 做轻量聚合后返回给 Wework，不再读取或匹配 Backend `projects` 表。
+6. Wework 根据 runtime work 响应展示 Project 和 Conversation；每个 LocalTask 的打开和通知身份仍是 `deviceId + localTaskId`。
 
 executor 不主动向 Backend 轮询或推送任务列表。离线设备不会贡献 LocalTask；Wework 可以显示映射目录离线，但不会从中心库缓存本地任务。
+
+如果只有一个设备，Wework 不在项目名后显示设备 IP；如果有多个设备，本地设备不显示 IP，远端在线设备显示可用的非 loopback runtime transfer host 或客户端 IP，并配绿色在线点。
 
 ## 打开和继续任务
 
@@ -110,9 +116,13 @@ Project 场景必须使用可信的 Device Workspace 映射：
 
 复制任务的身份仍然使用 `deviceId + localTaskId`。`workspacePath` 只用于定位目标设备目录和工作区工具上下文。
 
-## 非 Project 工作区
+## Project 与 Conversation
 
-executor 发现但没有映射到中心 Project 的目录会在 Wework 的“未映射工作区”中显示。它们同样来自在线设备的 `runtime.tasks.list` 返回值，而不是中心数据库任务。
+Wework 不再显示“未映射工作区”。executor 返回的线程必须能归入“项目”或“对话”：
+
+- `workspaceKind: chat` 的任务展示在“对话”区。
+- 其他任务按工作区名称展示为“项目”。
+- “对话”区即使为空也始终显示，并且支持像“项目”区一样折叠和展开。
 
 ## IM 通知
 
@@ -136,4 +146,4 @@ URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 UR
 
 ## 兼容性
 
-Wegent 原生 Task/Subtask 流程仍保留给现有聊天、共享任务和历史 task URL。Wework sidebar、移动端 drawer、项目下任务展示和新任务创建路径使用 runtime work API，不再依赖 DB task list。
+Wegent 原生 Task/Subtask 流程仍保留给现有聊天、共享任务和历史 task URL。Wework sidebar、移动端 drawer、项目下任务展示和新任务创建路径使用 runtime work API，不再依赖 DB task list 或 Backend `projects` 表。

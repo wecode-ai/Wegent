@@ -31,6 +31,7 @@ Example:
 
 import asyncio
 import hashlib
+import ipaddress
 import os
 import platform
 import re
@@ -70,6 +71,19 @@ def build_runtime_auth_file_report(
             "exists": codex_auth_path.is_file(),
         }
     }
+
+
+def _is_usable_device_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    return not (
+        address.is_loopback
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_link_local
+    )
 
 
 class WebSocketClient:
@@ -345,7 +359,7 @@ class WebSocketClient:
                 # Google's public DNS server (8.8.8.8)
                 s.connect(("8.8.8.8", 80))
                 ip = s.getsockname()[0]
-                if ip and ip != "127.0.0.1":
+                if ip and _is_usable_device_ip(ip):
                     return ip
         except Exception:
             logger.debug("Failed to detect IP via UDP socket", exc_info=True)
@@ -353,20 +367,31 @@ class WebSocketClient:
         try:
             # Method 2: Get hostname resolution
             ip = socket.gethostbyname(socket.gethostname())
-            if ip and ip != "127.0.0.1":
+            if ip and _is_usable_device_ip(ip):
                 return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname resolution", exc_info=True)
 
         try:
-            # Method 3: Try to get IP from network interfaces (Linux only)
+            # Method 3: Enumerate hostname addresses, useful on macOS where
+            # gethostbyname may resolve to loopback only.
+            addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+            for address in addresses:
+                ip = address[4][0]
+                if ip and _is_usable_device_ip(ip):
+                    return ip
+        except Exception:
+            logger.debug("Failed to detect IP via hostname addresses", exc_info=True)
+
+        try:
+            # Method 4: Try to get IP from network interfaces (Linux only)
             result = subprocess.run(
                 ["hostname", "-I"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 ips = result.stdout.strip().split()
                 for ip in ips:
-                    if ip and not ip.startswith("127."):
+                    if ip and _is_usable_device_ip(ip):
                         return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname -I", exc_info=True)

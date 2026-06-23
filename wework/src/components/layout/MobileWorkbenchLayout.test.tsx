@@ -835,6 +835,9 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    expect(screen.getByTestId('mobile-runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('mobile-runtime-chat-empty')).toHaveTextContent('暂无会话')
+    expect(screen.queryByText('未映射工作区')).not.toBeInTheDocument()
     await userEvent.click(screen.getByText('github_wegent'))
 
     expect(screen.queryByText('Local Mac · Wegent local')).not.toBeInTheDocument()
@@ -897,7 +900,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(runningStatus.querySelector('svg')).not.toBeNull()
   })
 
-  test('renders unmapped chat runtime tasks as conversations in the mobile drawer', async () => {
+  test('renders chat runtime tasks as conversations in the mobile drawer', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
@@ -939,8 +942,9 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
-    expect(screen.getByText('对话')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-runtime-chat-section')).toHaveTextContent('对话')
     expect(screen.queryByText(`Local Mac ${chatPath}`)).not.toBeInTheDocument()
+    expect(screen.queryByText('未映射工作区')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('mobile-chat-runtime-task-button'))
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({

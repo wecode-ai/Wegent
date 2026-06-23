@@ -7,6 +7,7 @@
 import contextlib
 import json
 import os
+import re
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ from shared.logger import setup_logger
 DEFAULT_CODEX_SESSION_LIMIT = 100
 CODEX_SESSION_RUNNING_TAIL_LINES = 200
 CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
+CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 logger = setup_logger("codex_session_discovery")
 
@@ -279,12 +281,31 @@ def _thread_to_local_task(thread: Any) -> Optional[LocalTaskRecord]:
         workspace_path=normalize_workspace_path(cwd),
         title=_thread_title(thread, thread_id),
         runtime="codex",
+        workspace_kind=_codex_thread_workspace_kind(cwd),
         runtime_handle=runtime_handle,
         created_at=created_at,
         updated_at=updated_at,
         running=_is_thread_running(thread)
         or _is_session_transcript_running(session_path),
         status="active",
+    )
+
+
+def _codex_thread_workspace_kind(cwd: str) -> str:
+    return "chat" if _is_codex_app_conversation_path(cwd) else "workspace"
+
+
+def _is_codex_app_conversation_path(cwd: str) -> bool:
+    try:
+        path = Path(cwd).expanduser().resolve(strict=False)
+        root = (Path.home() / "Documents" / "Codex").resolve(strict=False)
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+
+    parts = relative.parts
+    return len(parts) >= 2 and bool(
+        CODEX_CONVERSATION_DATE_PATTERN.fullmatch(parts[0])
     )
 
 

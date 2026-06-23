@@ -3,7 +3,6 @@ import {
   Bell,
   ChevronRight,
   Edit3,
-  Folder,
   FolderPlus,
   GitCompareArrows,
   Loader2,
@@ -48,17 +47,14 @@ import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
   getRuntimeChatSidebarTaskItems,
-  getRuntimeDirectoryWorkspaces,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
-  getRuntimeWorkspaceLabel,
   getVisibleRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
-  sortRuntimeTasks,
 } from './runtimeTaskSidebarHelpers'
 import { useResizableSidebar } from './useResizableSidebar'
 
@@ -307,6 +303,16 @@ interface SidebarDeviceState {
   status: SidebarDeviceStatus
 }
 
+function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
+  return {
+    id: projectWork.project.id,
+    name: projectWork.project.name,
+    description: projectWork.project.description,
+    color: projectWork.project.color,
+    tasks: [],
+  }
+}
+
 function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
@@ -333,12 +339,58 @@ function getSidebarDeviceName(deviceState: SidebarDeviceState): string {
   return deviceState.device?.name || deviceState.deviceId
 }
 
-function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
-  return getSidebarDeviceColor(getSidebarDeviceColorKey(workspace.deviceName, workspace.deviceId))
+function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
+  const runtimeTransferHost = getDisplayableNetworkHost(device?.runtime_transfer_host)
+  if (runtimeTransferHost) return runtimeTransferHost
+  return getDisplayableNetworkHost(device?.client_ip)
 }
 
-function getRuntimeWorkspaceTaskCount(workspaces: RuntimeDeviceWorkspace[]): number {
-  return workspaces.reduce((count, workspace) => count + workspace.localTasks.length, 0)
+function getDisplayableNetworkHost(value?: string | null): string | null {
+  if (!value) return null
+  const host = extractNetworkHost(value.trim())
+  if (!host || isLoopbackNetworkHost(host)) return null
+  return host
+}
+
+function extractNetworkHost(value: string): string {
+  const bracketMatch = value.match(/^\[([^\]]+)\](?::\d+)?$/)
+  if (bracketMatch?.[1]) return bracketMatch[1]
+  const colonParts = value.split(':')
+  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
+    return colonParts[0]
+  }
+  return value
+}
+
+function isLoopbackNetworkHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
+}
+
+function getRuntimeProjectDeviceState(
+  runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[]
+): SidebarDeviceState | null {
+  const workspace = runtimeProjectWork?.deviceWorkspaces[0]
+  if (!workspace) return null
+  const device = devices.find(item => item.device_id === workspace.deviceId)
+  return {
+    deviceId: workspace.deviceId,
+    device,
+    status: (device?.status ?? workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
+  }
+}
+
+function shouldShowProjectDeviceStatus(
+  deviceState: SidebarDeviceState | null,
+  devices: DeviceInfo[]
+): deviceState is SidebarDeviceState {
+  if (!deviceState || devices.length <= 1) return false
+  return deviceState.device?.device_type !== 'local'
+}
+
+function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
+  return getSidebarDeviceColor(getSidebarDeviceColorKey(workspace.deviceName, workspace.deviceId))
 }
 
 function getProjectDeviceWorkspaces(
@@ -361,180 +413,6 @@ function getProjectDeviceWorkspaces(
       createdAt: '',
       updatedAt: '',
     })) ?? []
-  )
-}
-
-function filterRuntimeWorkspacesByDevice(
-  workspaces: RuntimeDeviceWorkspace[],
-  deviceId: string | null
-): RuntimeDeviceWorkspace[] {
-  if (!deviceId) return workspaces
-  return workspaces.filter(workspace => workspace.deviceId === deviceId)
-}
-
-function filterRuntimeProjectWorkByDevice(
-  projectWork: RuntimeProjectWork,
-  deviceId: string | null
-): RuntimeProjectWork {
-  if (!deviceId) return projectWork
-
-  const deviceWorkspaces = filterRuntimeWorkspacesByDevice(projectWork.deviceWorkspaces, deviceId)
-  return {
-    ...projectWork,
-    deviceWorkspaces,
-    totalLocalTasks: getRuntimeWorkspaceTaskCount(deviceWorkspaces),
-  }
-}
-
-function SidebarOnlineDevices({
-  devices,
-  expanded,
-  offlineExpanded,
-  selectedDeviceId,
-  onToggleExpanded,
-  onToggleOfflineExpanded,
-  onSelectDevice,
-  onAddDevice,
-}: {
-  devices: DeviceInfo[]
-  expanded: boolean
-  offlineExpanded: boolean
-  selectedDeviceId: string | null
-  onToggleExpanded: () => void
-  onToggleOfflineExpanded: () => void
-  onSelectDevice: (deviceId: string) => void
-  onAddDevice: () => void
-}) {
-  const { t } = useTranslation('common')
-  const onlineDevices = useMemo(
-    () => devices.filter(device => device.status === 'online'),
-    [devices]
-  )
-  const offlineDevices = useMemo(
-    () => devices.filter(device => device.status !== 'online'),
-    [devices]
-  )
-  const selectedDevice = devices.find(device => device.device_id === selectedDeviceId) ?? null
-  const selectedOfflineDevice =
-    selectedDevice && selectedDevice.status !== 'online' ? selectedDevice : null
-  const visibleOfflineDevices = offlineExpanded
-    ? offlineDevices
-    : selectedOfflineDevice
-      ? [selectedOfflineDevice]
-      : []
-  const visibleDevices = [...onlineDevices, ...visibleOfflineDevices]
-
-  return (
-    <section data-testid="sidebar-online-devices" className="mb-6 px-2.5">
-      <div
-        data-testid="sidebar-devices-header"
-        className="mb-1.5 flex h-5 items-center justify-between gap-2"
-      >
-        <button
-          type="button"
-          data-testid="sidebar-devices-section-toggle"
-          aria-expanded={expanded}
-          onClick={onToggleExpanded}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-[12px] font-semibold leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-        >
-          <ChevronRight
-            className={cn(
-              'h-3.5 w-3.5 shrink-0 transition-transform',
-              expanded ? 'rotate-90' : 'rotate-0'
-            )}
-          />
-          <span className="shrink-0">{t('workbench.online_devices', '在线设备')}</span>
-          <span className="shrink-0 text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
-            {onlineDevices.length}
-          </span>
-          {selectedDevice && (
-            <span className="min-w-0 truncate text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
-              {selectedDevice.name || selectedDevice.device_id}
-            </span>
-          )}
-        </button>
-        {offlineDevices.length > 0 && (
-          <button
-            type="button"
-            data-testid="sidebar-offline-devices-toggle"
-            onClick={() => {
-              if (!offlineExpanded && !expanded) {
-                onToggleExpanded()
-              }
-              onToggleOfflineExpanded()
-            }}
-            className="h-5 shrink-0 rounded-sm px-1 text-[11px] font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-          >
-            {offlineExpanded
-              ? t('workbench.hide_offline_devices', '收起离线')
-              : t('workbench.show_offline_devices', {
-                  count: offlineDevices.length,
-                  defaultValue: '离线 {{count}}',
-                })}
-          </button>
-        )}
-        <button
-          type="button"
-          data-testid="sidebar-add-device-button"
-          aria-label={t('workbench.add_device')}
-          title={t('workbench.add_device')}
-          onClick={onAddDevice}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      {expanded && (
-        <div data-testid="sidebar-device-list" className="space-y-0.5">
-          {visibleDevices.map(device => {
-            const deviceName = device.name || device.device_id
-            const color = getSidebarDeviceColor(
-              getSidebarDeviceColorKey(device.name, device.device_id)
-            )
-            const selected = selectedDeviceId === device.device_id
-            const deviceState: SidebarDeviceState = {
-              deviceId: device.device_id,
-              device,
-              status: device.status,
-            }
-
-            return (
-              <button
-                type="button"
-                key={device.device_id}
-                data-testid={`sidebar-online-device-${device.device_id}`}
-                aria-pressed={selected}
-                onClick={() => onSelectDevice(device.device_id)}
-                title={deviceName}
-                className={cn(
-                  'flex h-5 w-full min-w-0 items-center gap-2 rounded-sm text-left text-[12px] leading-4 hover:text-[rgb(var(--color-sidebar-text-primary))]',
-                  selected
-                    ? 'font-semibold text-[rgb(var(--color-sidebar-text-primary))]'
-                    : 'font-medium text-[rgb(var(--color-sidebar-text-secondary))]',
-                  device.status !== 'online' && 'opacity-70'
-                )}
-              >
-                <span
-                  data-testid={`sidebar-online-device-color-${device.device_id}`}
-                  aria-hidden="true"
-                  className={cn(
-                    'h-2 w-2 shrink-0 rounded-full opacity-90',
-                    selected && 'h-2.5 w-2.5'
-                  )}
-                  style={{ backgroundColor: color }}
-                />
-                <span className="min-w-0 truncate">{deviceName}</span>
-                <SidebarDeviceStatusIndicator
-                  deviceState={deviceState}
-                  testId={`sidebar-device-status-${device.device_id}`}
-                  className="ml-auto"
-                />
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </section>
   )
 }
 
@@ -601,7 +479,7 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
   )
 }
 
-function SidebarDeviceStatusIndicator({
+function ProjectDeviceInlineStatus({
   deviceState,
   testId,
   className,
@@ -610,27 +488,29 @@ function SidebarDeviceStatusIndicator({
   testId: string
   className?: string
 }) {
-  const { t } = useTranslation('common')
-  if (deviceState.status === 'online') return null
-
-  const label = getSidebarDeviceStatusLabel(t, deviceState.status)
-  const deviceName = getSidebarDeviceName(deviceState)
-  const title = formatSidebarTemplate(
-    t('workbench.project_device_status_title', '{{device}} · {{status}}'),
-    { device: deviceName, status: label }
-  )
+  const label = getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  const online = deviceState.status === 'online'
 
   return (
     <span
       data-testid={testId}
-      title={title}
-      aria-label={title}
+      title={label}
+      aria-label={label}
       className={cn(
-        'inline-flex h-5 shrink-0 items-center rounded-full text-[11px] leading-4 text-[rgb(var(--color-sidebar-text-muted))]',
+        'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
         className
       )}
     >
-      <span className="shrink-0">{label}</span>
+      <span className="max-w-[96px] truncate">{label}</span>
+      <span
+        data-testid={`${testId}-dot`}
+        aria-hidden="true"
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full',
+          !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
+        )}
+        style={online ? { backgroundColor: '#1FD660' } : undefined}
+      />
     </span>
   )
 }
@@ -860,85 +740,6 @@ function RuntimeLocalTaskRow({
   )
 }
 
-function RuntimeWorkspaceGroup({
-  workspace,
-  currentRuntimeTask,
-  imNotificationSettings,
-  showDeviceMarker,
-  onOpenRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
-  onToggleRuntimeTaskNotification,
-}: {
-  workspace: RuntimeDeviceWorkspace
-  currentRuntimeTask?: RuntimeTaskAddress | null
-  imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
-  showDeviceMarker: boolean
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onToggleRuntimeTaskNotification?: (
-    address: RuntimeTaskAddress,
-    subscribed: boolean
-  ) => Promise<void> | void
-}) {
-  const { t } = useTranslation('common')
-  const sortedTasks = useMemo(() => sortRuntimeTasks(workspace.localTasks), [workspace.localTasks])
-  const deviceState: SidebarDeviceState = {
-    deviceId: workspace.deviceId,
-    status: workspace.available
-      ? (workspace.deviceStatus as SidebarDeviceStatus) || 'online'
-      : 'unavailable',
-  }
-  const title = `${workspace.deviceName || workspace.deviceId} · ${workspace.workspacePath}`
-
-  return (
-    <div
-      data-testid={`runtime-workspace-row-${workspace.id ?? workspace.workspacePath}`}
-      className="space-y-0.5"
-    >
-      <div
-        className={cn(
-          'flex h-8 min-w-0 items-center rounded-md pl-9 pr-2 text-[13px] leading-[18px]',
-          workspace.available
-            ? 'text-[rgb(var(--color-sidebar-text-secondary))]'
-            : 'text-[rgb(var(--color-sidebar-text-muted))] opacity-70'
-        )}
-        title={title}
-      >
-        <Folder className="mr-2 h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
-        <span className="min-w-0 flex-1 truncate">{getRuntimeWorkspaceLabel(workspace)}</span>
-        {!workspace.available && (
-          <SidebarDeviceStatusIndicator
-            deviceState={deviceState}
-            testId={`runtime-workspace-device-status-${workspace.id ?? workspace.deviceId}`}
-          />
-        )}
-      </div>
-      {sortedTasks.length === 0 ? (
-        <div
-          data-testid={`runtime-workspace-empty-${workspace.id ?? workspace.workspacePath}`}
-          className="ml-14 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-        >
-          {t('workbench.no_chats', '暂无会话')}
-        </div>
-      ) : (
-        sortedTasks.map(task => (
-          <RuntimeLocalTaskRow
-            key={task.localTaskId}
-            workspace={workspace}
-            task={task}
-            selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-            imNotificationSettings={imNotificationSettings}
-            showDeviceMarker={showDeviceMarker}
-            onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-            onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-            onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-          />
-        ))
-      )}
-    </div>
-  )
-}
-
 function ProjectItem({
   project,
   expanded,
@@ -946,6 +747,7 @@ function ProjectItem({
   onSelectProject,
   devices,
   runtimeProjectWork,
+  runtimeOnlyProject,
   currentRuntimeTask,
   imNotificationSettings,
   showDeviceMarker,
@@ -963,6 +765,7 @@ function ProjectItem({
   onSelectProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
+  runtimeOnlyProject: boolean
   currentRuntimeTask?: RuntimeTaskAddress | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
@@ -989,7 +792,10 @@ function ProjectItem({
     [runtimeTaskItems, runtimeTasksExpanded]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(runtimeTaskItems)
-  const projectDeviceState = getSidebarDeviceState(getProjectDeviceId(project), devices)
+  const projectDeviceState =
+    getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
+    getSidebarDeviceState(getProjectDeviceId(project), devices)
+  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(projectDeviceState, devices)
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
@@ -1019,56 +825,58 @@ function ProjectItem({
           <span className="min-w-0 flex-1 truncate" title={project.name}>
             {project.name}
           </span>
-          {projectDeviceState && (
-            <SidebarDeviceStatusIndicator
+          {showProjectDeviceStatus && (
+            <ProjectDeviceInlineStatus
               deviceState={projectDeviceState}
               testId={`project-device-status-${project.id}`}
               className="ml-auto justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
             />
           )}
         </button>
-        <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
-          <ActionMenu
-            ariaLabel={t('workbench.project_actions', '项目操作')}
-            testId={`project-menu-${project.id}`}
-            items={[
-              {
-                label: t('workbench.edit_project', '编辑项目'),
-                icon: Settings,
-                testId: `edit-project-${project.id}`,
-                onSelect: () => onEditProject(project),
-              },
-              {
-                label: t('workbench.rename_project', '重命名项目'),
-                icon: Edit3,
-                testId: `rename-project-${project.id}`,
-                onSelect: () => onRenameProject(project),
-              },
-              {
-                label: t('workbench.remove_project', '移除'),
-                icon: X,
-                testId: `remove-project-${project.id}`,
-                danger: true,
-                onSelect: () => onRemoveProject(project.id),
-              },
-            ]}
-          />
-          <button
-            type="button"
-            data-testid="project-new-conversation-button"
-            disabled={!canStartProjectChat}
-            onClick={event => {
-              event.stopPropagation()
-              if (!canStartProjectChat) return
-              onStartNewProjectChat(project.id)
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-            title={newProjectChatTitle}
-            aria-label={newProjectChatTitle}
-          >
-            <MessageSquarePlus className="h-4 w-4" />
-          </button>
-        </div>
+        {!runtimeOnlyProject && (
+          <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
+            <ActionMenu
+              ariaLabel={t('workbench.project_actions', '项目操作')}
+              testId={`project-menu-${project.id}`}
+              items={[
+                {
+                  label: t('workbench.edit_project', '编辑项目'),
+                  icon: Settings,
+                  testId: `edit-project-${project.id}`,
+                  onSelect: () => onEditProject(project),
+                },
+                {
+                  label: t('workbench.rename_project', '重命名项目'),
+                  icon: Edit3,
+                  testId: `rename-project-${project.id}`,
+                  onSelect: () => onRenameProject(project),
+                },
+                {
+                  label: t('workbench.remove_project', '移除'),
+                  icon: X,
+                  testId: `remove-project-${project.id}`,
+                  danger: true,
+                  onSelect: () => onRemoveProject(project.id),
+                },
+              ]}
+            />
+            <button
+              type="button"
+              data-testid="project-new-conversation-button"
+              disabled={!canStartProjectChat}
+              onClick={event => {
+                event.stopPropagation()
+                if (!canStartProjectChat) return
+                onStartNewProjectChat(project.id)
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+              title={newProjectChatTitle}
+              aria-label={newProjectChatTitle}
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
       {expanded && (
         <div className="space-y-0.5">
@@ -1163,10 +971,7 @@ export function DesktopSidebar({
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
-  const unmappedExpandedStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'unmappedRuntimeExpanded'
-  )
+  const chatsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'chatsExpanded')
   const expandedProjectIdsStorageKey = getDesktopSidebarStorageKey(
     storageScope,
     'expandedProjectIds'
@@ -1181,41 +986,32 @@ export function DesktopSidebar({
   const [projectsExpanded, setProjectsExpanded] = useState(() =>
     readStoredBoolean(projectsExpandedStorageKey, true)
   )
-  const [unmappedExpanded, setUnmappedExpanded] = useState(() =>
-    readStoredBoolean(unmappedExpandedStorageKey, true)
+  const [chatsExpanded, setChatsExpanded] = useState(() =>
+    readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
-  const [devicesExpanded, setDevicesExpanded] = useState(false)
-  const [offlineDevicesExpanded, setOfflineDevicesExpanded] = useState(false)
-  const [selectedDeviceFilterId, setSelectedDeviceFilterId] = useState<string | null>(null)
-  const activeDeviceFilterId =
-    selectedDeviceFilterId && devices.some(device => device.device_id === selectedDeviceFilterId)
-      ? selectedDeviceFilterId
-      : null
-  const visibleExpandedProjectIds = useMemo(
-    () => pruneProjectIdSet(expandedProjectIds, projects),
-    [expandedProjectIds, projects]
-  )
   const filteredRuntimeProjects = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return items.map(item => filterRuntimeProjectWorkByDevice(item, activeDeviceFilterId))
-  }, [runtimeWork?.projects, activeDeviceFilterId])
+    return items
+  }, [runtimeWork?.projects])
+  const sidebarProjects = useMemo(() => {
+    if (runtimeWork) {
+      return filteredRuntimeProjects.map(runtimeProjectToProject)
+    }
+    return projects
+  }, [filteredRuntimeProjects, projects, runtimeWork])
+  const visibleExpandedProjectIds = useMemo(
+    () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
+    [expandedProjectIds, sidebarProjects]
+  )
   const runtimeWorkByProjectId = useMemo(() => {
     return new Map(filteredRuntimeProjects.map(item => [item.project.id, item]))
   }, [filteredRuntimeProjects])
   const unmappedWorkspaces = useMemo(
-    () =>
-      filterRuntimeWorkspacesByDevice(
-        runtimeWork?.unmappedDeviceWorkspaces ?? [],
-        activeDeviceFilterId
-      ),
-    [runtimeWork?.unmappedDeviceWorkspaces, activeDeviceFilterId]
-  )
-  const unmappedDirectoryWorkspaces = useMemo(
-    () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
-    [unmappedWorkspaces]
+    () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
+    [runtimeWork?.unmappedDeviceWorkspaces]
   )
   const unmappedChatTaskItems = useMemo(
     () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
@@ -1232,14 +1028,14 @@ export function DesktopSidebar({
     )
     return projectWork?.project.id ?? null
   }, [currentRuntimeTask, runtimeWork?.projects])
-  const selectedRuntimeInUnmapped = useMemo(() => {
+  const selectedRuntimeChatVisible = useMemo(() => {
     if (!currentRuntimeTask) return false
-    return unmappedDirectoryWorkspaces.some(workspace =>
-      workspace.localTasks.some(task => isRuntimeTaskSelected(currentRuntimeTask, workspace, task))
+    return unmappedChatTaskItems.some(({ workspace, task }) =>
+      isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
     )
-  }, [currentRuntimeTask, unmappedDirectoryWorkspaces])
+  }, [currentRuntimeTask, unmappedChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded || selectedRuntimeProjectId !== null
-  const displayedUnmappedExpanded = unmappedExpanded || selectedRuntimeInUnmapped
+  const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
   const displayedExpandedProjectIds = useMemo(() => {
     if (selectedRuntimeProjectId === null) return visibleExpandedProjectIds
     if (visibleExpandedProjectIds.has(selectedRuntimeProjectId)) return visibleExpandedProjectIds
@@ -1256,10 +1052,6 @@ export function DesktopSidebar({
       }
       return next
     })
-  }
-
-  const handleSelectDeviceFilter = (deviceId: string) => {
-    setSelectedDeviceFilterId(previous => (previous === deviceId ? null : deviceId))
   }
 
   const openProjectCreateDialog = () => {
@@ -1281,8 +1073,8 @@ export function DesktopSidebar({
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
-    writeStoredBoolean(unmappedExpandedStorageKey, unmappedExpanded)
-  }, [unmappedExpanded, unmappedExpandedStorageKey, storageScope])
+    writeStoredBoolean(chatsExpandedStorageKey, chatsExpanded)
+  }, [chatsExpanded, chatsExpandedStorageKey, storageScope])
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -1294,13 +1086,13 @@ export function DesktopSidebar({
 
     storageScopeRef.current = storageScope
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
-    setUnmappedExpanded(readStoredBoolean(unmappedExpandedStorageKey, true))
+    setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
   }, [
+    chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,
     projectsExpandedStorageKey,
     storageScope,
-    unmappedExpandedStorageKey,
   ])
 
   useEffect(() => {
@@ -1333,9 +1125,9 @@ export function DesktopSidebar({
     taskRow?.scrollIntoView({ block: 'nearest' })
   }, [
     currentRuntimeTask,
+    displayedChatsExpanded,
     displayedExpandedProjectIds,
     displayedProjectsExpanded,
-    displayedUnmappedExpanded,
   ])
 
   return (
@@ -1369,22 +1161,11 @@ export function DesktopSidebar({
         data-testid="sidebar-worklists-scroll"
         className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
-        <SidebarOnlineDevices
-          devices={devices}
-          expanded={devicesExpanded}
-          offlineExpanded={offlineDevicesExpanded}
-          selectedDeviceId={activeDeviceFilterId}
-          onToggleExpanded={() => setDevicesExpanded(expanded => !expanded)}
-          onToggleOfflineExpanded={() => setOfflineDevicesExpanded(expanded => !expanded)}
-          onSelectDevice={handleSelectDeviceFilter}
-          onAddDevice={() => onOpenSettings({ autoOpenAddCloudDeviceDialog: true })}
-        />
-
         <section>
           <SidebarSectionHeader
             title={t('workbench.projects', '项目')}
             expanded={displayedProjectsExpanded}
-            hasContent={projects.length > 0}
+            hasContent={sidebarProjects.length > 0}
             toggleTestId="projects-section-toggle"
             iconTestId="projects-section-chevron-right"
             onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -1404,16 +1185,17 @@ export function DesktopSidebar({
           </SidebarSectionHeader>
           {displayedProjectsExpanded && (
             <div className="space-y-1">
-              {projects.map(project => (
+              {sidebarProjects.map(project => (
                 <ProjectItem
                   key={project.id}
                   project={project}
                   expanded={displayedExpandedProjectIds.has(project.id)}
                   devices={devices}
                   runtimeProjectWork={runtimeWorkByProjectId.get(project.id)}
+                  runtimeOnlyProject={!projects.some(item => item.id === project.id)}
                   currentRuntimeTask={currentRuntimeTask}
                   imNotificationSettings={imNotificationSettings}
-                  showDeviceMarker={devicesExpanded}
+                  showDeviceMarker={false}
                   onToggleProject={handleToggleProject}
                   onSelectProject={onSelectProject}
                   onStartNewProjectChat={onStartNewProjectChat}
@@ -1429,57 +1211,36 @@ export function DesktopSidebar({
           )}
         </section>
 
-        {unmappedChatTaskItems.length > 0 && (
-          <section data-testid="runtime-chat-section" className="mt-8">
-            <div className="mb-2 flex h-7 items-center px-2.5">
-              <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
-                {t('workbench.chats', '对话')}
-              </span>
-            </div>
-            <div className="space-y-0.5 pb-2">
-              {unmappedChatTaskItems.map(({ workspace, task }) => (
-                <RuntimeLocalTaskRow
-                  key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
-                  workspace={workspace}
-                  task={task}
-                  selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                  indentClassName="pl-2.5"
-                  imNotificationSettings={imNotificationSettings}
-                  showDeviceMarker={devicesExpanded}
-                  onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-                  onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-                  onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section data-testid="unmapped-runtime-section" className="mt-8">
+        <section data-testid="runtime-chat-section" className="mt-8">
           <SidebarSectionHeader
-            title={t('workbench.unmapped_device_workspaces', '未映射工作区')}
-            expanded={displayedUnmappedExpanded}
-            hasContent={unmappedDirectoryWorkspaces.length > 0}
-            toggleTestId="unmapped-runtime-section-toggle"
-            iconTestId="unmapped-runtime-section-chevron-right"
-            onToggle={() => setUnmappedExpanded(expanded => !expanded)}
+            title={t('workbench.chats', '对话')}
+            expanded={displayedChatsExpanded}
+            hasContent={unmappedChatTaskItems.length > 0}
+            toggleTestId="runtime-chat-section-toggle"
+            iconTestId="runtime-chat-section-chevron-right"
+            onToggle={() => setChatsExpanded(expanded => !expanded)}
           >
             <span />
           </SidebarSectionHeader>
-          {displayedUnmappedExpanded && (
-            <div className="space-y-1 pb-2">
-              {unmappedDirectoryWorkspaces.length === 0 ? (
-                <div className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
-                  {t('workbench.no_unmapped_device_workspaces', '暂无未映射工作区')}
+          {displayedChatsExpanded && (
+            <div className="space-y-0.5 pb-2">
+              {unmappedChatTaskItems.length === 0 ? (
+                <div
+                  data-testid="runtime-chat-empty"
+                  className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+                >
+                  {t('workbench.no_chats', '暂无会话')}
                 </div>
               ) : (
-                unmappedDirectoryWorkspaces.map(workspace => (
-                  <RuntimeWorkspaceGroup
-                    key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                unmappedChatTaskItems.map(({ workspace, task }) => (
+                  <RuntimeLocalTaskRow
+                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
                     workspace={workspace}
-                    currentRuntimeTask={currentRuntimeTask}
+                    task={task}
+                    selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                    indentClassName="pl-2.5"
                     imNotificationSettings={imNotificationSettings}
-                    showDeviceMarker={devicesExpanded}
+                    showDeviceMarker={false}
                     onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
                     onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                     onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}

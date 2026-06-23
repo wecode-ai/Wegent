@@ -477,7 +477,7 @@ async def test_prepare_git_device_workspace_rejects_nonmatching_nonempty_directo
 
 
 @pytest.mark.asyncio
-async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
+async def test_list_runtime_work_groups_executor_workspaces_without_project_mapping(
     test_db,
     test_user,
     monkeypatch,
@@ -492,8 +492,8 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
         payload=DeviceWorkspaceUpsert(
             projectId=project.id,
             deviceId="device-1",
-            workspacePath="/repo/Wegent",
-            label="MacBook",
+            workspacePath="/repo/Legacy",
+            label="legacy mapping",
         ),
     )
 
@@ -507,6 +507,7 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
                     "name": "MacBook",
                     "status": "online",
                     "device_type": "local",
+                    "client_ip": "192.0.2.10",
                 }
             ]
         ),
@@ -522,6 +523,7 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
                             "workspacePath": "/repo/Wegent",
                             "title": "Fix reconnect",
                             "runtime": "codex",
+                            "workspaceKind": "workspace",
                             "createdAt": "2026-06-20T01:00:00Z",
                             "updatedAt": "2026-06-20T02:00:00Z",
                             "running": False,
@@ -536,9 +538,25 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
                             "workspacePath": "/tmp/spike",
                             "title": "Spike",
                             "runtime": "claude_code",
+                            "workspaceKind": "workspace",
                             "createdAt": "2026-06-20T03:00:00Z",
                             "updatedAt": "2026-06-20T04:00:00Z",
                             "running": True,
+                        }
+                    ],
+                },
+                {
+                    "workspacePath": "/Users/alice/Documents/Codex/2026-06-23/chat-1",
+                    "localTasks": [
+                        {
+                            "localTaskId": "chat-1",
+                            "workspacePath": (
+                                "/Users/alice/Documents/Codex/2026-06-23/chat-1"
+                            ),
+                            "title": "Hello",
+                            "runtime": "codex",
+                            "workspaceKind": "chat",
+                            "updatedAt": "2026-06-20T05:00:00Z",
                         }
                     ],
                 },
@@ -550,245 +568,40 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
     response = await runtime_work_service.list_runtime_work(
         db=test_db,
         user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
     )
 
-    assert response.total_local_tasks == 2
-    assert response.projects[0].project.id == project.id
-    assert response.projects[0].device_workspaces[0].workspace_path == "/repo/Wegent"
+    assert response.total_local_tasks == 3
+    assert [project_work.project.name for project_work in response.projects] == [
+        "spike",
+        "Wegent",
+    ]
+    assert {project_work.project.id for project_work in response.projects}.isdisjoint(
+        {project.id}
+    )
+    assert response.projects[0].device_workspaces[0].workspace_path == "/tmp/spike"
+    assert response.projects[0].device_workspaces[0].id is None
+    assert response.projects[0].device_workspaces[0].project_id is None
+    assert response.projects[0].device_workspaces[0].mapped is True
     assert (
-        response.projects[0].device_workspaces[0].local_tasks[0].local_task_id
+        response.projects[1].device_workspaces[0].local_tasks[0].local_task_id
         == "codex-1"
     )
-    assert response.unmapped_device_workspaces[0].workspace_path == "/tmp/spike"
+    assert len(response.unmapped_device_workspaces) == 1
+    assert response.unmapped_device_workspaces[0].workspace_kind == "chat"
     assert (
-        response.unmapped_device_workspaces[0].local_tasks[0].runtime == "claude_code"
+        response.unmapped_device_workspaces[0].local_tasks[0].local_task_id == "chat-1"
     )
     rpc.assert_awaited_once()
     assert test_db.query(TaskResource).count() == 0
 
 
 @pytest.mark.asyncio
-async def test_list_runtime_work_materializes_legacy_project_config_workspace(
+async def test_list_runtime_work_preserves_executor_workspace_kind(
     test_db,
     test_user,
     monkeypatch,
 ):
     from app.services import runtime_work_service
-
-    project = _local_path_project(
-        test_db,
-        test_user.id,
-        device_id="device-1",
-        path="/repo/Wegent",
-    )
-    monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
-        AsyncMock(
-            return_value=[
-                {
-                    "device_id": "device-1",
-                    "name": "Local Device",
-                    "status": "online",
-                    "executor_version": "1.8.5",
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        runtime_work_service.runtime_rpc_service,
-        "call",
-        AsyncMock(
-            return_value={
-                "workspaces": [
-                    {
-                        "workspacePath": "/repo/Wegent",
-                        "localTasks": [],
-                    }
-                ]
-            }
-        ),
-    )
-
-    response = await runtime_work_service.list_runtime_work(
-        db=test_db,
-        user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-    )
-
-    workspace = response.projects[0].device_workspaces[0]
-    assert workspace.id is not None
-    assert workspace.project_id == project.id
-    assert workspace.device_id == "device-1"
-    assert workspace.workspace_path == "/repo/Wegent"
-
-    rows = runtime_work_service.list_device_workspaces(
-        db=test_db,
-        user_id=test_user.id,
-        project_id=project.id,
-    )
-    assert len(rows) == 1
-    assert rows[0].id == workspace.id
-    assert rows[0].workspace_path == "/repo/Wegent"
-
-
-@pytest.mark.asyncio
-async def test_list_runtime_work_uses_mapping_label_as_workspace_kind(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    from app.schemas.runtime_work import DeviceWorkspaceUpsert
-    from app.services import runtime_work_service
-
-    project = _project(test_db, test_user.id)
-    runtime_work_service.upsert_device_workspace(
-        db=test_db,
-        user_id=test_user.id,
-        payload=DeviceWorkspaceUpsert(
-            projectId=project.id,
-            deviceId="device-1",
-            workspacePath="/repo/Wegent",
-            label="worktree",
-        ),
-    )
-
-    monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
-        AsyncMock(
-            return_value=[
-                {
-                    "device_id": "device-1",
-                    "name": "MacBook",
-                    "status": "online",
-                    "device_type": "local",
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        runtime_work_service.runtime_rpc_service,
-        "call",
-        AsyncMock(return_value={"workspaces": []}),
-    )
-
-    response = await runtime_work_service.list_runtime_work(
-        db=test_db,
-        user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-    )
-
-    workspace = response.projects[0].device_workspaces[0]
-    assert workspace.workspace_path == "/repo/Wegent"
-    assert workspace.label == "worktree"
-    assert workspace.workspace_kind == "worktree"
-
-
-@pytest.mark.asyncio
-async def test_list_runtime_work_matches_project_configured_local_directory_without_mapping_row(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    from app.services import runtime_work_service
-
-    project = _local_path_project(test_db, test_user.id)
-
-    monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
-        AsyncMock(
-            return_value=[
-                {
-                    "device_id": "device-1",
-                    "name": "MacBook",
-                    "status": "online",
-                    "device_type": "local",
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        runtime_work_service.runtime_rpc_service,
-        "call",
-        AsyncMock(
-            return_value={
-                "workspaces": [
-                    {
-                        "workspacePath": "/repo/Wegent",
-                        "localTasks": [
-                            {
-                                "localTaskId": "018f2d6b-8c7a-7abc-9def-0123456789ab",
-                                "workspacePath": "/repo/Wegent",
-                                "title": "Implement runtime sidebar",
-                                "runtime": "codex",
-                                "updatedAt": "2026-06-20T02:00:00Z",
-                            }
-                        ],
-                    },
-                    {
-                        "workspacePath": (
-                            "/Users/axb-mac/.wecode/wegent-executor/workspace/"
-                            "chats/2026-06-20/hi-1"
-                        ),
-                        "localTasks": [
-                            {
-                                "localTaskId": "019ee579-f6f4-73d3-9b3e-2d4652e0c9e9",
-                                "workspacePath": (
-                                    "/Users/axb-mac/.wecode/wegent-executor/"
-                                    "workspace/chats/2026-06-20/hi-1"
-                                ),
-                                "title": "hi",
-                                "runtime": "codex",
-                                "updatedAt": "2026-06-20T14:40:46+00:00",
-                            }
-                        ],
-                    },
-                ]
-            }
-        ),
-    )
-
-    response = await runtime_work_service.list_runtime_work(
-        db=test_db,
-        user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-    )
-
-    workspace = response.projects[0].device_workspaces[0]
-    assert response.projects[0].project.id == project.id
-    assert workspace.device_id == "device-1"
-    assert workspace.workspace_path == "/repo/Wegent"
-    assert workspace.local_tasks[0].title == "Implement runtime sidebar"
-    assert len(response.unmapped_device_workspaces) == 1
-    assert (
-        response.unmapped_device_workspaces[0].workspace_path
-        == "/Users/axb-mac/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1"
-    )
-    assert response.unmapped_device_workspaces[0].workspace_kind == "chat"
-    assert response.unmapped_device_workspaces[0].local_tasks[0].title == "hi"
-    assert (
-        response.unmapped_device_workspaces[0].local_tasks[0].workspace_kind == "chat"
-    )
-    assert test_db.query(TaskResource).count() == 0
-
-
-@pytest.mark.asyncio
-async def test_list_runtime_work_groups_managed_worktree_under_source_project(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    from app.services import runtime_work_service
-
-    project = _local_path_project(
-        test_db,
-        test_user.id,
-        path="/workspace/Wegent",
-        name="Wegent",
-    )
 
     monkeypatch.setattr(
         runtime_work_service.device_service,
@@ -818,6 +631,8 @@ async def test_list_runtime_work_groups_managed_worktree_under_source_project(
                                 "workspacePath": "/workspace/worktrees/42/Wegent",
                                 "title": "Fix worktree sidebar",
                                 "runtime": "codex",
+                                "workspaceKind": "worktree",
+                                "worktreeId": "42",
                                 "updatedAt": "2026-06-20T02:00:00Z",
                             }
                         ],
@@ -830,128 +645,25 @@ async def test_list_runtime_work_groups_managed_worktree_under_source_project(
     response = await runtime_work_service.list_runtime_work(
         db=test_db,
         user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-    )
-
-    worktree_workspace = response.projects[0].device_workspaces[0]
-    task = worktree_workspace.local_tasks[0]
-    assert response.projects[0].project.id == project.id
-    assert worktree_workspace.workspace_path == "/workspace/Wegent"
-    assert worktree_workspace.workspace_kind == "workspace"
-    assert worktree_workspace.worktree_id is None
-    assert task.local_task_id == "codex-worktree"
-    assert task.workspace_path == "/workspace/worktrees/42/Wegent"
-    assert task.workspace_kind == "worktree"
-    assert task.worktree_id == "42"
-    assert response.unmapped_device_workspaces == []
-    assert test_db.query(TaskResource).count() == 0
-
-
-@pytest.mark.asyncio
-async def test_list_runtime_work_groups_mapped_device_worktree_under_project(
-    test_db,
-    test_user,
-    monkeypatch,
-):
-    from app.schemas.runtime_work import DeviceWorkspaceUpsert
-    from app.services import runtime_work_service
-
-    project = _git_project(test_db, test_user.id, name="Wegent_github")
-    runtime_work_service.upsert_device_workspace(
-        db=test_db,
-        user_id=test_user.id,
-        payload=DeviceWorkspaceUpsert(
-            projectId=project.id,
-            deviceId="target-device",
-            workspacePath="/target/Wegent_github",
-            repoUrl="https://github.com/wecode-ai/Wegent.git",
-            label="workspace",
-        ),
-    )
-
-    monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
-        AsyncMock(
-            return_value=[
-                {
-                    "device_id": "target-device",
-                    "name": "Linux",
-                    "status": "online",
-                    "device_type": "local",
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        runtime_work_service.runtime_rpc_service,
-        "call",
-        AsyncMock(
-            return_value={
-                "workspaces": [
-                    {
-                        "workspacePath": "/target/worktrees/019eeb2c/Wegent_github",
-                        "localTasks": [
-                            {
-                                "localTaskId": "forked-codex",
-                                "workspacePath": (
-                                    "/target/worktrees/019eeb2c/Wegent_github"
-                                ),
-                                "title": "Forked Codex task",
-                                "runtime": "codex",
-                                "updatedAt": "2026-06-22T02:00:00Z",
-                            }
-                        ],
-                    }
-                ]
-            }
-        ),
-    )
-
-    response = await runtime_work_service.list_runtime_work(
-        db=test_db,
-        user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
     )
 
     workspace = response.projects[0].device_workspaces[0]
     task = workspace.local_tasks[0]
-    assert response.projects[0].project.id == project.id
-    assert workspace.device_id == "target-device"
-    assert workspace.workspace_path == "/target/Wegent_github"
-    assert task.local_task_id == "forked-codex"
-    assert task.workspace_path == "/target/worktrees/019eeb2c/Wegent_github"
+    assert workspace.workspace_path == "/workspace/worktrees/42/Wegent"
+    assert workspace.workspace_kind == "worktree"
+    assert workspace.worktree_id == "42"
     assert task.workspace_kind == "worktree"
-    assert task.worktree_id == "019eeb2c"
+    assert task.worktree_id == "42"
     assert response.unmapped_device_workspaces == []
-    assert test_db.query(TaskResource).count() == 0
 
 
 @pytest.mark.asyncio
-async def test_list_runtime_work_groups_codex_git_origin_under_matching_project(
+async def test_list_runtime_work_skips_offline_devices(
     test_db,
     test_user,
     monkeypatch,
 ):
-    from app.schemas.runtime_work import DeviceWorkspaceUpsert
     from app.services import runtime_work_service
-
-    project = _local_path_project(
-        test_db,
-        test_user.id,
-        path="/workspace/Wegent",
-        name="Wegent",
-    )
-    runtime_work_service.upsert_device_workspace(
-        db=test_db,
-        user_id=test_user.id,
-        payload=DeviceWorkspaceUpsert(
-            projectId=project.id,
-            deviceId="device-1",
-            workspacePath="/workspace/Wegent",
-            repoUrl="https://github.com/wecode-ai/Wegent.git",
-        ),
-    )
 
     monkeypatch.setattr(
         runtime_work_service.device_service,
@@ -961,52 +673,24 @@ async def test_list_runtime_work_groups_codex_git_origin_under_matching_project(
                 {
                     "device_id": "device-1",
                     "name": "MacBook",
-                    "status": "online",
+                    "status": "offline",
                     "device_type": "local",
                 }
             ]
         ),
     )
-    monkeypatch.setattr(
-        runtime_work_service.runtime_rpc_service,
-        "call",
-        AsyncMock(
-            return_value={
-                "workspaces": [
-                    {
-                        "workspacePath": "/Users/alice/dev/other/Wegent",
-                        "localTasks": [
-                            {
-                                "localTaskId": "codex-git-origin",
-                                "workspacePath": "/Users/alice/dev/other/Wegent",
-                                "title": "Fix Git grouped task",
-                                "runtime": "codex",
-                                "gitInfo": {
-                                    "originUrl": "git@github.com:wecode-ai/Wegent.git"
-                                },
-                                "updatedAt": "2026-06-20T02:00:00Z",
-                            }
-                        ],
-                    }
-                ]
-            }
-        ),
-    )
+    rpc = AsyncMock(return_value={"workspaces": []})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.list_runtime_work(
         db=test_db,
         user_id=test_user.id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
     )
 
-    workspace = response.projects[0].device_workspaces[0]
-    task = workspace.local_tasks[0]
-    assert response.projects[0].project.id == project.id
-    assert workspace.workspace_path == "/workspace/Wegent"
-    assert task.local_task_id == "codex-git-origin"
-    assert task.workspace_path == "/Users/alice/dev/other/Wegent"
+    assert response.projects == []
     assert response.unmapped_device_workspaces == []
-    assert test_db.query(TaskResource).count() == 0
+    assert response.total_local_tasks == 0
+    rpc.assert_not_awaited()
 
 
 @pytest.mark.asyncio
