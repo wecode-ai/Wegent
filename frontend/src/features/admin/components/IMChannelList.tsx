@@ -65,6 +65,7 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 type UserMappingMode = 'staff_id' | 'email' | 'select_user'
 
 const BOT_TOKEN_CHANNEL_TYPES = new Set<IMChannelType>(['telegram', 'discord'])
+const WEIBO_CHANNEL_TYPE: IMChannelType = 'weibo'
 
 const IMChannelList: React.FC = () => {
   const { t } = useTranslation()
@@ -97,6 +98,10 @@ const IMChannelList: React.FC = () => {
     client_id: string
     client_secret: string
     bot_token: string
+    weibo_app_id: string
+    weibo_app_secret: string
+    weibo_ws_endpoint: string
+    weibo_token_endpoint: string
     card_template_id: string
     user_mapping_mode: UserMappingMode
     target_user_id: number
@@ -109,6 +114,10 @@ const IMChannelList: React.FC = () => {
     client_id: '',
     client_secret: '',
     bot_token: '',
+    weibo_app_id: '',
+    weibo_app_secret: '',
+    weibo_ws_endpoint: '',
+    weibo_token_endpoint: '',
     card_template_id: '',
     user_mapping_mode: 'select_user',
     target_user_id: 0,
@@ -257,6 +266,14 @@ const IMChannelList: React.FC = () => {
         })
         return
       }
+    } else if (formData.channel_type === WEIBO_CHANNEL_TYPE) {
+      if (!formData.weibo_app_id.trim() || !formData.weibo_app_secret.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.weibo_config_required'),
+        })
+        return
+      }
     } else {
       // DingTalk and other channels use client_id/client_secret
       if (!formData.client_id.trim() || !formData.client_secret.trim()) {
@@ -295,6 +312,15 @@ const IMChannelList: React.FC = () => {
 
       if (BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type)) {
         config.bot_token = formData.bot_token.trim()
+      } else if (formData.channel_type === WEIBO_CHANNEL_TYPE) {
+        config.app_id = formData.weibo_app_id.trim()
+        config.app_secret = formData.weibo_app_secret.trim()
+        if (formData.weibo_ws_endpoint.trim()) {
+          config.ws_endpoint = formData.weibo_ws_endpoint.trim()
+        }
+        if (formData.weibo_token_endpoint.trim()) {
+          config.token_endpoint = formData.weibo_token_endpoint.trim()
+        }
       } else {
         config.client_id = formData.client_id.trim()
         config.client_secret = formData.client_secret.trim()
@@ -381,6 +407,19 @@ const IMChannelList: React.FC = () => {
       if (BOT_TOKEN_CHANNEL_TYPES.has(selectedChannel.channel_type)) {
         if (formData.bot_token.trim()) {
           newConfig.bot_token = formData.bot_token.trim()
+        }
+      } else if (selectedChannel.channel_type === WEIBO_CHANNEL_TYPE) {
+        if (formData.weibo_app_id.trim()) {
+          newConfig.app_id = formData.weibo_app_id.trim()
+        }
+        if (formData.weibo_app_secret.trim()) {
+          newConfig.app_secret = formData.weibo_app_secret.trim()
+        }
+        if (formData.weibo_ws_endpoint.trim()) {
+          newConfig.ws_endpoint = formData.weibo_ws_endpoint.trim()
+        }
+        if (formData.weibo_token_endpoint.trim()) {
+          newConfig.token_endpoint = formData.weibo_token_endpoint.trim()
         }
       } else {
         if (formData.client_id.trim()) {
@@ -484,6 +523,10 @@ const IMChannelList: React.FC = () => {
       client_id: '',
       client_secret: '',
       bot_token: '',
+      weibo_app_id: '',
+      weibo_app_secret: '',
+      weibo_ws_endpoint: '',
+      weibo_token_endpoint: '',
       card_template_id: '',
       user_mapping_mode: 'select_user',
       target_user_id: 0,
@@ -509,6 +552,10 @@ const IMChannelList: React.FC = () => {
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
       bot_token: '', // Don't show existing bot_token
+      weibo_app_id: (channel.config?.app_id as string) || '',
+      weibo_app_secret: '', // Don't show existing app_secret
+      weibo_ws_endpoint: (channel.config?.ws_endpoint as string) || '',
+      weibo_token_endpoint: (channel.config?.token_endpoint as string) || '',
       card_template_id: (channel.config?.card_template_id as string) || '',
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
@@ -534,6 +581,8 @@ const IMChannelList: React.FC = () => {
         return t('admin:im_channels.types.telegram')
       case 'discord':
         return t('admin:im_channels.types.discord')
+      case 'weibo':
+        return t('admin:im_channels.types.weibo')
       default:
         return type
     }
@@ -543,6 +592,79 @@ const IMChannelList: React.FC = () => {
     if (!teamId) return t('admin:im_channels.no_default_team')
     const team = teams.find(t => t.id === teamId)
     return team?.display_name || team?.name || `Team #${teamId}`
+  }
+
+  const renderWeiboConfigFields = (isEdit: boolean) => {
+    const idPrefix = isEdit ? 'edit-' : ''
+    const testIdPrefix = isEdit ? 'edit-' : ''
+
+    return (
+      <>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}weibo_app_id`}>
+            {t('admin:im_channels.form.weibo_app_id')}
+            {!isEdit && ' *'}
+          </Label>
+          <Input
+            id={`${idPrefix}weibo_app_id`}
+            data-testid={`${testIdPrefix}weibo-app-id-input`}
+            value={formData.weibo_app_id}
+            onChange={e => setFormData({ ...formData, weibo_app_id: e.target.value })}
+            placeholder={t('admin:im_channels.form.weibo_app_id_placeholder')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}weibo_app_secret`}>
+            {t('admin:im_channels.form.weibo_app_secret')}
+            {!isEdit && ' *'}
+          </Label>
+          <Input
+            id={`${idPrefix}weibo_app_secret`}
+            data-testid={`${testIdPrefix}weibo-app-secret-input`}
+            type="password"
+            value={formData.weibo_app_secret}
+            onChange={e => setFormData({ ...formData, weibo_app_secret: e.target.value })}
+            placeholder={t(
+              isEdit
+                ? 'admin:im_channels.form.weibo_app_secret_edit_placeholder'
+                : 'admin:im_channels.form.weibo_app_secret_placeholder'
+            )}
+          />
+          {isEdit && (
+            <p className="text-xs text-text-muted">
+              {t('admin:im_channels.form.leave_empty_to_keep')}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}weibo_ws_endpoint`}>
+            {t('admin:im_channels.form.weibo_ws_endpoint')}
+          </Label>
+          <Input
+            id={`${idPrefix}weibo_ws_endpoint`}
+            data-testid={`${testIdPrefix}weibo-ws-endpoint-input`}
+            value={formData.weibo_ws_endpoint}
+            onChange={e => setFormData({ ...formData, weibo_ws_endpoint: e.target.value })}
+            placeholder={t('admin:im_channels.form.weibo_ws_endpoint_placeholder')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}weibo_token_endpoint`}>
+            {t('admin:im_channels.form.weibo_token_endpoint')}
+          </Label>
+          <Input
+            id={`${idPrefix}weibo_token_endpoint`}
+            data-testid={`${testIdPrefix}weibo-token-endpoint-input`}
+            value={formData.weibo_token_endpoint}
+            onChange={e => setFormData({ ...formData, weibo_token_endpoint: e.target.value })}
+            placeholder={t('admin:im_channels.form.weibo_token_endpoint_placeholder')}
+          />
+          <p className="text-xs text-text-muted">
+            {t('admin:im_channels.form.weibo_endpoint_help')}
+          </p>
+        </div>
+      </>
+    )
   }
 
   return (
@@ -718,6 +840,7 @@ const IMChannelList: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="dingtalk">{t('admin:im_channels.types.dingtalk')}</SelectItem>
+                  <SelectItem value="weibo">{t('admin:im_channels.types.weibo')}</SelectItem>
                   <SelectItem value="telegram">{t('admin:im_channels.types.telegram')}</SelectItem>
                   <SelectItem value="discord">{t('admin:im_channels.types.discord')}</SelectItem>
                   <SelectItem value="feishu" disabled>
@@ -727,7 +850,7 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            {/* Bot-token channels use bot_token, other channels use client_id/client_secret */}
+            {/* Render credential fields for the selected platform. */}
             {BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type) ? (
               <div className="space-y-2">
                 <Label htmlFor="bot_token">{t('admin:im_channels.form.bot_token')} *</Label>
@@ -739,6 +862,8 @@ const IMChannelList: React.FC = () => {
                   placeholder={t('admin:im_channels.form.bot_token_placeholder')}
                 />
               </div>
+            ) : formData.channel_type === WEIBO_CHANNEL_TYPE ? (
+              renderWeiboConfigFields(false)
             ) : (
               <>
                 <div className="space-y-2">
@@ -804,9 +929,7 @@ const IMChannelList: React.FC = () => {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="default_model">
-                {t('admin:im_channels.form.default_model')}
-              </Label>
+              <Label htmlFor="default_model">{t('admin:im_channels.form.default_model')}</Label>
               <Select
                 value={formData.default_model_name || '__none__'}
                 onValueChange={value =>
@@ -904,7 +1027,7 @@ const IMChannelList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               {t('admin:common.cancel')}
             </Button>
-            <Button onClick={handleCreateChannel} disabled={saving}>
+            <Button variant="primary" onClick={handleCreateChannel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('admin:common.create')}
             </Button>
@@ -936,7 +1059,7 @@ const IMChannelList: React.FC = () => {
                 className="bg-muted"
               />
             </div>
-            {/* Bot-token channels use bot_token, other channels use client_id/client_secret */}
+            {/* Render credential fields for the selected platform. */}
             {BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type) ? (
               <div className="space-y-2">
                 <Label htmlFor="edit-bot_token">
@@ -953,6 +1076,8 @@ const IMChannelList: React.FC = () => {
                   placeholder={t('admin:im_channels.form.bot_token_edit_placeholder')}
                 />
               </div>
+            ) : formData.channel_type === WEIBO_CHANNEL_TYPE ? (
+              renderWeiboConfigFields(true)
             ) : (
               <>
                 <div className="space-y-2">
@@ -1132,7 +1257,7 @@ const IMChannelList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               {t('admin:common.cancel')}
             </Button>
-            <Button onClick={handleUpdateChannel} disabled={saving}>
+            <Button variant="primary" onClick={handleUpdateChannel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('admin:common.save')}
             </Button>

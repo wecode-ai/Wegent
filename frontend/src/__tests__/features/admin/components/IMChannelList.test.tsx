@@ -116,7 +116,7 @@ jest.mock('@/apis/admin', () => ({
 
 const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
 
-describe('IMChannelList Discord channel config', () => {
+describe('IMChannelList channel config', () => {
   beforeEach(() => {
     jest.clearAllMocks()
 
@@ -200,6 +200,151 @@ describe('IMChannelList Discord channel config', () => {
           default_team_id: 10,
           config: expect.objectContaining({
             bot_token: 'discord-token',
+            user_mapping_mode: 'select_user',
+            user_mapping_config: {
+              target_user_id: 20,
+            },
+          }),
+        })
+      )
+    })
+  })
+
+  test('creates a Weibo channel with Open IM credentials', async () => {
+    render(<IMChannelList />)
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getIMChannels).toHaveBeenCalled()
+      expect(mockedAdminApis.getPublicTeams).toHaveBeenCalled()
+      expect(mockedAdminApis.getUsers).toHaveBeenCalled()
+    })
+    const createButton = await screen.findByText('admin:im_channels.create_channel')
+    fireEvent.click(createButton)
+
+    expect(screen.getByText('admin:im_channels.types.weibo')).toBeInTheDocument()
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'weibo' },
+    })
+
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_app_id *')).toBeInTheDocument()
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_app_secret *')).toBeInTheDocument()
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_ws_endpoint')).toBeInTheDocument()
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_token_endpoint')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.name *'), {
+      target: { value: 'weibo-main' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_app_id *'), {
+      target: { value: 'weibo-app' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_app_secret *'), {
+      target: { value: 'weibo-secret' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_ws_endpoint'), {
+      target: { value: 'wss://example.com/ws' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_token_endpoint'), {
+      target: { value: 'https://example.com/token' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: '10' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[4], {
+      target: { value: '20' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createIMChannel).toHaveBeenCalled()
+    })
+
+    const payload = mockedAdminApis.createIMChannel.mock.calls[0][0]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        name: 'weibo-main',
+        channel_type: 'weibo',
+        default_team_id: 10,
+      })
+    )
+    expect(payload.config).toEqual(
+      expect.objectContaining({
+        app_id: 'weibo-app',
+        app_secret: 'weibo-secret',
+        ws_endpoint: 'wss://example.com/ws',
+        token_endpoint: 'https://example.com/token',
+        user_mapping_mode: 'select_user',
+        user_mapping_config: {
+          target_user_id: 20,
+        },
+      })
+    )
+    expect(payload.config).not.toHaveProperty('client_id')
+    expect(payload.config).not.toHaveProperty('client_secret')
+  })
+
+  test('edits a Weibo channel without exposing the existing app secret', async () => {
+    mockedAdminApis.getIMChannels.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 7,
+          name: 'weibo-main',
+          channel_type: 'weibo',
+          is_enabled: false,
+          config: {
+            app_id: 'weibo-app',
+            app_secret: '***',
+            ws_endpoint: 'wss://old.example.com/ws',
+            token_endpoint: 'https://old.example.com/token',
+            user_mapping_mode: 'select_user',
+            user_mapping_config: {
+              target_user_id: 20,
+            },
+          },
+          default_team_id: 10,
+          default_model_name: '',
+          created_at: '',
+          updated_at: '',
+          created_by: 0,
+        },
+      ],
+    })
+
+    render(<IMChannelList />)
+
+    await screen.findByText('weibo-main')
+    fireEvent.click(screen.getByTitle('admin:im_channels.edit_channel'))
+
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_app_id')).toHaveValue('weibo-app')
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_app_secret')).toHaveValue('')
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_ws_endpoint')).toHaveValue(
+      'wss://old.example.com/ws'
+    )
+    expect(screen.getByLabelText('admin:im_channels.form.weibo_token_endpoint')).toHaveValue(
+      'https://old.example.com/token'
+    )
+
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_app_id'), {
+      target: { value: 'weibo-app-2' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_app_secret'), {
+      target: { value: 'new-secret' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.weibo_ws_endpoint'), {
+      target: { value: 'wss://new.example.com/ws' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.save' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.updateIMChannel).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          config: expect.objectContaining({
+            app_id: 'weibo-app-2',
+            app_secret: 'new-secret',
+            ws_endpoint: 'wss://new.example.com/ws',
+            token_endpoint: 'https://old.example.com/token',
             user_mapping_mode: 'select_user',
             user_mapping_config: {
               target_user_id: 20,
