@@ -20,8 +20,8 @@ from app.services.im.session_service import im_session_service
 
 
 class FakeChannelHandler(BaseChannelHandler[dict[str, Any], BaseCallbackInfo]):
-    def __init__(self, user: User):
-        super().__init__(ChannelType.DINGTALK, channel_id=77)
+    def __init__(self, user: User, channel_type: ChannelType = ChannelType.DINGTALK):
+        super().__init__(channel_type, channel_id=77)
         self.user = user
         self.replies: list[str] = []
 
@@ -492,6 +492,101 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
     assert calls["callback"]["callback_info"].conversation_id == "conv-private"
     assert calls["send"]["request"].source.source == "im"
+
+
+@pytest.mark.asyncio
+async def test_weibo_runtime_message_sends_running_prefix_on_registered_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="weibo",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = {
+                "task_id": task_id,
+                "callback_info": callback_info,
+            }
+
+        async def register_emitter(self, task_id, emitter):
+            calls["registered_emitter"] = {
+                "task_id": task_id,
+                "emitter": emitter,
+            }
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    class FakeStreamingEmitter:
+        async def emit_start(self, **kwargs):
+            calls["emit_start"] = kwargs
+
+        async def emit_status_prefix(self, **kwargs):
+            calls["emit_status_prefix"] = kwargs
+
+    async def fake_create_streaming_emitter(message_context: MessageContext):
+        emitter = FakeStreamingEmitter()
+        calls["created_emitter"] = emitter
+        return emitter
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        handler,
+        "create_streaming_emitter",
+        fake_create_streaming_emitter,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    assert handled is True
+    assert handler.replies == []
+    assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
+    assert calls["emit_start"] == {
+        "task_id": "runtime:device-1:codex-1",
+        "subtask_id": 0,
+    }
+    assert calls["emit_status_prefix"] == {
+        "task_id": "runtime:device-1:codex-1",
+        "subtask_id": 0,
+        "content": "正在运行任务。\n\n",
+    }
+    assert calls["registered_emitter"] == {
+        "task_id": "runtime:device-1:codex-1",
+        "emitter": calls["created_emitter"],
+    }
+    assert calls["send"]["request"].address.local_task_id == "codex-1"
 
 
 @pytest.mark.asyncio

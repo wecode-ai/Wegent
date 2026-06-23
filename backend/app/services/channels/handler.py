@@ -80,6 +80,7 @@ CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
 TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
+TASK_RUNNING_NOTICE = "正在运行任务。"
 
 
 @dataclass
@@ -341,13 +342,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         return response_emitter
 
     def should_merge_task_created_running_notice_with_stream(self) -> bool:
-        return False
+        return self._channel_type == ChannelType.WEIBO
 
     async def _emit_initial_stream_content(
         self,
         streaming_emitter: Any,
         *,
-        task_id: int,
+        task_id: int | str,
         subtask_id: int,
         content: Optional[str],
     ) -> None:
@@ -1078,9 +1079,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             address.device_id,
             address.local_task_id,
         )
+        streaming_emitter = await self._create_private_im_runtime_streaming_emitter(
+            callback_key=callback_key,
+            message_context=message_context,
+        )
         await self._register_private_im_runtime_callback(
             callback_key=callback_key,
             message_context=message_context,
+            streaming_emitter=streaming_emitter,
         )
         try:
             response = await runtime_work_service.send_runtime_message(
@@ -1122,8 +1128,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 runtime_task.get("localTaskId"),
             )
             await im_session_service.clear_active_task(db, session=im_session)
-            await self.send_text_reply(
-                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
+            await self._emit_private_im_runtime_stream_error(
+                streaming_emitter=streaming_emitter,
+                task_id=callback_key,
+                message_context=message_context,
+                error="当前本地任务不可用,请回到 Wework 重新选择。",
             )
             return
 
@@ -1137,9 +1146,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
         await self._delete_private_im_runtime_callback(callback_key)
-        await self.send_text_reply(
-            message_context,
-            response.error or "本地任务暂时无法接收消息，请稍后重试。",
+        await self._emit_private_im_runtime_stream_error(
+            streaming_emitter=streaming_emitter,
+            task_id=callback_key,
+            message_context=message_context,
+            error=response.error or "本地任务暂时无法接收消息，请稍后重试。",
         )
 
     def _runtime_task_callback_key(self, runtime_task: dict[str, Any]) -> str:
@@ -1157,6 +1168,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         *,
         callback_key: str,
         message_context: MessageContext,
+        streaming_emitter: Any = None,
     ) -> None:
         callback_service = self.get_callback_service()
         if not callback_service:
@@ -1165,6 +1177,47 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_id=callback_key,
             callback_info=self.create_callback_info(message_context),
         )
+        if streaming_emitter and hasattr(callback_service, "register_emitter"):
+            await callback_service.register_emitter(callback_key, streaming_emitter)
+
+    async def _create_private_im_runtime_streaming_emitter(
+        self,
+        *,
+        callback_key: str,
+        message_context: MessageContext,
+    ) -> Any:
+        if not self.should_merge_task_created_running_notice_with_stream():
+            return None
+
+        streaming_emitter = await self.create_streaming_emitter(message_context)
+        if not streaming_emitter:
+            return None
+
+        await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
+        await self._emit_initial_stream_content(
+            streaming_emitter,
+            task_id=callback_key,
+            subtask_id=0,
+            content=f"{TASK_RUNNING_NOTICE}\n\n",
+        )
+        return streaming_emitter
+
+    async def _emit_private_im_runtime_stream_error(
+        self,
+        *,
+        streaming_emitter: Any,
+        task_id: str,
+        message_context: MessageContext,
+        error: str,
+    ) -> None:
+        if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
+            await streaming_emitter.emit_error(
+                task_id=task_id,
+                subtask_id=0,
+                error=error,
+            )
+            return
+        await self.send_text_reply(message_context, error)
 
     async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
         callback_service = self.get_callback_service()

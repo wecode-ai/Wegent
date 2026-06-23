@@ -18,11 +18,12 @@ async def _create_session(
     user: User,
     *,
     conversation_id: str = "conv-router",
+    channel_type: str = "dingtalk",
 ):
     return await im_session_service.get_or_create_private_session(
         db=db,
         user_id=user.id,
-        channel_type="dingtalk",
+        channel_type=channel_type,
         channel_id=12,
         conversation_id=conversation_id,
         sender_id="staff-a",
@@ -728,6 +729,84 @@ async def test_task_mode_normal_message_with_active_task_returns_continue_task(
     assert result.reply is None
     assert session.active_task_id == 7001
     assert session.state == IMSessionState.IDLE
+
+
+async def test_weibo_task_command_requires_runtime_binding_without_recent_task_list(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user, channel_type="weibo")
+
+    result = await im_command_router.route(
+        test_db,
+        session,
+        "/task",
+        recent_tasks=_recent_tasks(),
+        projects=_projects(),
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert result.task_id is None
+    assert session.mode == IMSessionMode.TASK
+    assert session.state == IMSessionState.IDLE
+    assert session.active_task_id is None
+    assert session.pending_payload == {}
+    assert "继续到私聊" in result.reply
+    assert "最近任务" not in result.reply
+
+
+async def test_weibo_task_mode_plain_text_clears_legacy_active_task_id(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user, channel_type="weibo")
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+
+    result = await im_command_router.route(
+        test_db,
+        session,
+        "继续修复登录问题",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert result.task_id is None
+    assert session.mode == IMSessionMode.TASK
+    assert session.active_task_id is None
+    assert session.active_runtime_task is None
+    assert "继续到私聊" in result.reply
+
+
+async def test_weibo_task_mode_plain_text_continues_bound_runtime_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user, channel_type="weibo")
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+
+    result = await im_command_router.route(
+        test_db,
+        session,
+        "继续 runtime 任务",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.CONTINUE_TASK
+    assert result.task_id is None
+    assert result.message == "继续 runtime 任务"
 
 
 async def test_chat_mode_non_command_returns_unhandled(

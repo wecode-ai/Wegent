@@ -55,6 +55,11 @@ NOTIFY_OFF_ARGS = {
     "关闭",
 }
 NOTIFY_STATUS_ARGS = {"", "status", "状态", "state"}
+RUNTIME_ONLY_TASK_CHANNEL_TYPES = {"weibo"}
+RUNTIME_TASK_BINDING_GUIDANCE = (
+    "当前为 Task 模式，但未绑定本地任务。"
+    "请在 Wework 中打开本地任务，点击「继续到私聊」，选择微博私聊后再继续。"
+)
 
 
 class IMCommandRouter:
@@ -97,6 +102,17 @@ class IMCommandRouter:
             )
 
         if session.mode == IMSessionMode.TASK:
+            if self._uses_runtime_only_task_mode(session):
+                if self._has_runtime_task_binding(session):
+                    await self._prepare_runtime_only_task_mode(
+                        db=db, session=session, keep_runtime_task=True
+                    )
+                    return IMCommandResult(
+                        handled=True,
+                        action=IMCommandAction.CONTINUE_TASK,
+                        message=text,
+                    )
+                return await self._require_runtime_task_binding(db=db, session=session)
             if session.active_task_id:
                 return IMCommandResult(
                     handled=True,
@@ -118,6 +134,87 @@ class IMCommandRouter:
             )
 
         return IMCommandResult(handled=False)
+
+    async def _enter_task_mode(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+        recent_tasks: Sequence[Any],
+    ) -> IMCommandResult:
+        if self._uses_runtime_only_task_mode(session):
+            return await self._enter_runtime_only_task_mode(db=db, session=session)
+
+        await im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+        if session.active_task_id:
+            return IMCommandResult(
+                handled=True,
+                reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
+            )
+        if session.active_runtime_task:
+            return IMCommandResult(
+                handled=True,
+                reply="当前为 Task 模式，本地任务已绑定。",
+            )
+        return await self._begin_task_switch(
+            db=db,
+            session=session,
+            recent_tasks=recent_tasks,
+        )
+
+    async def _enter_runtime_only_task_mode(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+    ) -> IMCommandResult:
+        if self._has_runtime_task_binding(session):
+            await self._prepare_runtime_only_task_mode(
+                db=db, session=session, keep_runtime_task=True
+            )
+            return IMCommandResult(
+                handled=True,
+                reply="当前为 Task 模式，本地任务已绑定。",
+            )
+        return await self._require_runtime_task_binding(db=db, session=session)
+
+    async def _require_runtime_task_binding(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+    ) -> IMCommandResult:
+        await self._prepare_runtime_only_task_mode(
+            db=db, session=session, keep_runtime_task=False
+        )
+        return IMCommandResult(
+            handled=True,
+            reply=RUNTIME_TASK_BINDING_GUIDANCE,
+        )
+
+    async def _prepare_runtime_only_task_mode(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+        keep_runtime_task: bool,
+    ) -> None:
+        session.mode = IMSessionMode.TASK
+        session.state = IMSessionState.IDLE
+        session.pending_payload = {}
+        session.state_expires_at = None
+        session.active_task_id = None
+        if not keep_runtime_task or not isinstance(session.active_runtime_task, dict):
+            session.active_runtime_task = None
+        await im_session_service.save_session(session)
+
+    def _uses_runtime_only_task_mode(self, session: IMPrivateSession) -> bool:
+        return (
+            str(session.channel_type or "").lower() in RUNTIME_ONLY_TASK_CHANNEL_TYPES
+        )
+
+    def _has_runtime_task_binding(self, session: IMPrivateSession) -> bool:
+        return isinstance(session.active_runtime_task, dict)
 
     async def _route_command(
         self,
@@ -144,25 +241,17 @@ class IMCommandRouter:
                     )
                     return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
 
-                await im_session_service.set_mode(
-                    db, session=session, mode=IMSessionMode.TASK
-                )
-                if session.active_task_id:
-                    return IMCommandResult(
-                        handled=True,
-                        reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
-                    )
-                if session.active_runtime_task:
-                    return IMCommandResult(
-                        handled=True,
-                        reply="当前为 Task 模式，本地任务已绑定。",
-                    )
-                return await self._begin_task_switch(
+                return await self._enter_task_mode(
                     db=db,
                     session=session,
                     recent_tasks=recent_tasks,
                 )
 
+            if (
+                self._uses_runtime_only_task_mode(session)
+                and session.mode == IMSessionMode.TASK
+            ):
+                return await self._enter_runtime_only_task_mode(db=db, session=session)
             return IMCommandResult(handled=True, reply=self._format_mode_reply(session))
 
         if command == CommandType.CHAT:
@@ -172,26 +261,15 @@ class IMCommandRouter:
             return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
 
         if command == CommandType.TASK:
-            await im_session_service.set_mode(
-                db, session=session, mode=IMSessionMode.TASK
-            )
-            if session.active_task_id:
-                return IMCommandResult(
-                    handled=True,
-                    reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
-                )
-            if session.active_runtime_task:
-                return IMCommandResult(
-                    handled=True,
-                    reply="当前为 Task 模式，本地任务已绑定。",
-                )
-            return await self._begin_task_switch(
+            return await self._enter_task_mode(
                 db=db,
                 session=session,
                 recent_tasks=recent_tasks,
             )
 
         if command == CommandType.SWITCH:
+            if self._uses_runtime_only_task_mode(session):
+                return await self._require_runtime_task_binding(db=db, session=session)
             await im_session_service.set_mode(
                 db, session=session, mode=IMSessionMode.TASK
             )
@@ -290,6 +368,21 @@ class IMCommandRouter:
                 recent_tasks=recent_tasks,
                 projects=projects,
             )
+
+        if self._uses_runtime_only_task_mode(session) and session.state in {
+            IMSessionState.PENDING_TASK_SWITCH,
+            IMSessionState.PENDING_TASK_CREATION,
+        }:
+            if self._has_runtime_task_binding(session):
+                await self._prepare_runtime_only_task_mode(
+                    db=db, session=session, keep_runtime_task=True
+                )
+                return IMCommandResult(
+                    handled=True,
+                    action=IMCommandAction.CONTINUE_TASK,
+                    message=text,
+                )
+            return await self._require_runtime_task_binding(db=db, session=session)
 
         if session.state == IMSessionState.PENDING_TASK_SWITCH:
             return await self._route_pending_task_switch(
@@ -439,6 +532,8 @@ class IMCommandRouter:
             )
 
         if normalized in {"2", "task"}:
+            if self._uses_runtime_only_task_mode(session):
+                return await self._enter_runtime_only_task_mode(db=db, session=session)
             await im_session_service.set_mode(
                 db, session=session, mode=IMSessionMode.TASK
             )
@@ -450,6 +545,8 @@ class IMCommandRouter:
             )
 
         if normalized in {"3", "switch", "recent"}:
+            if self._uses_runtime_only_task_mode(session):
+                return await self._enter_runtime_only_task_mode(db=db, session=session)
             await im_session_service.set_mode(
                 db, session=session, mode=IMSessionMode.TASK
             )
