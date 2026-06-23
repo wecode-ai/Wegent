@@ -18,6 +18,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Server,
   Terminal,
   Trash2,
   UserRound,
@@ -39,10 +40,12 @@ import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
+  isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
   supportsDeviceMetrics,
   supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
@@ -307,12 +310,21 @@ function ConfirmDeviceActionDialog({
 }) {
   const isDelete = action === 'delete'
   const isCloud = isCloudDevice(device)
+  const isRemote = isRemoteDevice(device)
   const Icon = isDelete ? Trash2 : RotateCcw
-  const title = isDelete ? (isCloud ? '删除云设备' : '删除本地设备') : '重启云设备'
+  const title = isDelete
+    ? isCloud
+      ? '删除云设备'
+      : isRemote
+        ? '删除远程设备'
+        : '删除本地设备'
+    : '重启云设备'
   const description = isDelete
     ? isCloud
       ? `将删除 ${device.name}，相关云设备资源会被释放。`
-      : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
+      : isRemote
+        ? `将删除 ${device.name} 的远程设备注册记录。Docker 容器需要你自行停止或删除。`
+        : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
     : `将重启 ${device.name}，设备会短暂离线，进行中的连接可能中断。`
   const confirmLabel = isDelete ? '确认删除' : '确认重启'
   const dialogTestId = isDelete ? 'confirm-delete-device-dialog' : 'confirm-restart-device-dialog'
@@ -673,14 +685,18 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
 
   const isOnline = device.status === 'online'
   const isCloud = isCloudDevice(device)
+  const isRemote = isRemoteDevice(device)
   const canLaunchLocalTerminal =
     supportsLocalTerminalLaunch(device) &&
     isLocalTerminalAvailable() &&
     localExecutorDeviceId === device.device_id
   const canUseCloudSessions = supportsCloudSessions(device)
-  const canUseTerminal = canUseCloudSessions || canLaunchLocalTerminal
+  const canUseRemoteSessions = supportsRemoteSessions(device)
+  const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
+  const canUseTerminal = canUseDeviceSessions || canLaunchLocalTerminal
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
-  const canDeleteOfflineLocalDevice = !isCloud && device.status === 'offline'
+  const canDeleteOfflineLocalDevice = !isCloud && !isRemote && device.status === 'offline'
+  const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
 
   return (
     <>
@@ -754,7 +770,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 disabled={!isOnline || sessionLoading === 'terminal'}
               />
             )}
-            {canUseCloudSessions && (
+            {canUseDeviceSessions && (
               <>
                 <DeviceActionButton
                   testId={`connection-code-server-button-${device.device_id}`}
@@ -763,7 +779,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
-                <VncDesktopButton deviceId={device.device_id} />
+                {canUseCloudSessions && <VncDesktopButton deviceId={device.device_id} />}
               </>
             )}
             {canUseCloudLifecycleActions && (
@@ -812,6 +828,15 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
               </div>
             )}
             {canDeleteOfflineLocalDevice && (
+              <DeviceIconActionButton
+                testId={`connection-delete-button-${device.device_id}`}
+                icon={Trash2}
+                label="删除设备"
+                onClick={() => setConfirmAction('delete')}
+                disabled={deleting}
+              />
+            )}
+            {canDeleteOfflineRemoteDevice && (
               <DeviceIconActionButton
                 testId={`connection-delete-button-${device.device_id}`}
                 icon={Trash2}
@@ -971,7 +996,8 @@ function ConnectionsDeviceSettingsPage({
   }, [])
 
   const cloudDevices = devices.filter(isCloudDevice)
-  const localDevices = devices.filter(device => !isCloudDevice(device))
+  const remoteDevices = devices.filter(isRemoteDevice)
+  const localDevices = devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
 
   useEffect(() => {
     void Promise.resolve().then(fetchDevices)
@@ -1008,7 +1034,7 @@ function ConnectionsDeviceSettingsPage({
               <h2 className="text-sm font-semibold text-text-primary">
                 {t('workbench.connections_authorized_devices', '可连接的设备')}
               </h2>
-              {!loading && cloudDevices.length === 0 && (
+              {!loading && (
                 <button
                   type="button"
                   data-testid="connection-add-device-button"
@@ -1048,6 +1074,14 @@ function ConnectionsDeviceSettingsPage({
                       onChanged={fetchDevices}
                     />
                   )}
+                  {remoteDevices.length > 0 && (
+                    <DeviceSection
+                      title={t('workbench.connection_remote_devices', '远程设备')}
+                      devices={remoteDevices}
+                      icon={Server}
+                      onChanged={fetchDevices}
+                    />
+                  )}
                   {localDevices.length > 0 && (
                     <DeviceSection
                       title={t('workbench.connection_local_devices')}
@@ -1065,6 +1099,7 @@ function ConnectionsDeviceSettingsPage({
 
       <AddCloudDeviceDialog
         open={addDialogOpen}
+        hasCloudDevice={cloudDevices.length > 0 || creating}
         onClose={() => setAddDialogOpen(false)}
         onCreated={fetchDevices}
         onCreatingChange={setCreating}

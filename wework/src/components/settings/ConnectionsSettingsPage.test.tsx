@@ -91,6 +91,24 @@ function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   })
 }
 
+function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
+  return cloudDevice({
+    id: 3,
+    device_id: 'remote-device',
+    name: 'Docker Remote Device',
+    device_type: 'remote',
+    bind_shell: 'claudecode',
+    cloud_config: undefined,
+    remote_config: {
+      provider: 'docker',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      deviceId: 'remote-device',
+      deviceName: 'Docker Remote Device',
+    },
+    ...overrides,
+  })
+}
+
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
@@ -98,6 +116,7 @@ describe('ConnectionsSettingsPage', () => {
     startCodeServer: vi.fn(),
     openLocalTerminal: vi.fn(),
     createCloudDevice: vi.fn(),
+    createDockerRemoteDeviceCommand: vi.fn(),
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
     deleteCloudDevice: vi.fn(),
@@ -259,9 +278,7 @@ describe('ConnectionsSettingsPage', () => {
     const createDialog = screen.getByTestId('add-cloud-device-dialog')
     expect(createDialog.querySelector('.text-\\[\\#0d9488\\]')).toBeNull()
     expect(createDialog).toHaveClass('bg-popover')
-    expect(screen.getByTestId('add-cloud-device-start-command')).toHaveTextContent(
-      'wegent-executor'
-    )
+    expect(screen.queryByTestId('add-cloud-device-start-command')).not.toBeInTheDocument()
     expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass(
       'bg-text-primary',
       'text-background'
@@ -739,6 +756,79 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
     expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
     expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
+  })
+
+  test('lists remote Claude Code devices in a separate section', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Docker Remote Device' }),
+      localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
+    expect(screen.getByText('Docker Remote Device')).toBeInTheDocument()
+    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.getByText('远程设备')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+  })
+
+  test('generates and copies a remote Docker device command from the add device dialog', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.createDockerRemoteDeviceCommand.mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'Docker Remote Device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {
+        DEVICE_TYPE: 'remote',
+      },
+      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+    expect(screen.queryByTestId('remote-docker-image-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-docker-backend-url-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-docker-public-url-input')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    await waitFor(() => expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledTimes(1))
+    expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledWith({
+      client_origin: window.location.origin,
+    })
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('DEVICE_TYPE=remote')
+
+    await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest'
+    )
+  })
+
+  test('disables cloud device creation when the user already has one cloud device', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.createDockerRemoteDeviceCommand.mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'Docker Remote Device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {
+        DEVICE_TYPE: 'remote',
+      },
+      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+
+    expect(screen.getByTestId('add-cloud-device-confirm')).toBeDisabled()
+    expect(screen.getByText(/每个用户只能创建一个云设备/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    expect(api.createCloudDevice).not.toHaveBeenCalled()
+    await waitFor(() => expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledTimes(1))
   })
 
   test('uses theme-aware surfaces for device cards and controls', async () => {

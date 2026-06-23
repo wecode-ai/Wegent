@@ -171,8 +171,10 @@ def extract_completed_result(response_data: dict) -> dict:
         ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
+        "termination_reason": response_data.get("termination_reason"),
         "messages_chain": response_data.get("messages_chain"),
         "context_metrics": response_data.get("context_metrics"),
+        "context_compactions": response_data.get("context_compactions"),
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
@@ -249,6 +251,7 @@ class ResponsesAPIEventParser:
                 data={
                     "phase": data.get("phase"),
                     "context_metrics": data.get("context_metrics") or {},
+                    "context_compaction": data.get("context_compaction"),
                 },
                 message_id=message_id,
             )

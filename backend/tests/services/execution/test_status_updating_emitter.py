@@ -417,3 +417,43 @@ async def test_thinking_events_persist_thinking_blocks():
         content_type=StreamContentType.THINKING,
         content="Reasoning chunk.",
     )
+
+
+@pytest.mark.asyncio
+async def test_done_event_forwards_finalized_result_to_wrapped_emitter():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+
+    finalized_result = {
+        "value": "done",
+        "blocks": [
+            {
+                "id": "read_file_1",
+                "type": "tool",
+                "tool_use_id": "read_file_1",
+                "tool_name": "read_file",
+                "status": "error",
+                "tool_output": "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit.",
+            }
+        ],
+    }
+
+    event = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+        result={"value": "stale"},
+    )
+
+    with patch.object(
+        emitter,
+        "_update_status_completed",
+        new=AsyncMock(return_value=finalized_result),
+    ):
+        await emitter.emit(event)
+
+    wrapped.emit.assert_awaited_once()
+    forwarded_event = wrapped.emit.await_args.args[0]
+    assert forwarded_event.result == finalized_result

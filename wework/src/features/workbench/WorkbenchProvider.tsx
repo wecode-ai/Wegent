@@ -28,6 +28,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
+  filterClaudeCodeDevices,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
@@ -118,6 +119,9 @@ const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const RUNTIME_BLOCK_SUBTASK_ID_OFFSET = 1_000_000_000
 
 type SelectableProjectDeviceWorkspace = RuntimeDeviceWorkspace & { id: number }
+type ProjectMutationOptions = {
+  refreshWorkLists?: boolean
+}
 
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
@@ -165,18 +169,19 @@ function readCachedDeviceList(): DeviceInfo[] {
       return []
     }
     if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return []
-    return parsed.devices
+    return filterClaudeCodeDevices(parsed.devices as DeviceInfo[])
   } catch {
     return []
   }
 }
 
 function writeCachedDeviceList(devices: DeviceInfo[]) {
-  if (devices.length === 0) return
+  const claudeCodeDevices = filterClaudeCodeDevices(devices)
+  if (claudeCodeDevices.length === 0) return
   try {
     window.sessionStorage.setItem(
       DEVICE_LIST_CACHE_KEY,
-      JSON.stringify({ devices, updatedAt: Date.now() })
+      JSON.stringify({ devices: claudeCodeDevices, updatedAt: Date.now() })
     )
   } catch {
     // The live state remains authoritative when browser storage is unavailable.
@@ -184,9 +189,10 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
 }
 
 function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
-  if (devices.length > 0) {
-    writeCachedDeviceList(devices)
-    return devices
+  const claudeCodeDevices = filterClaudeCodeDevices(devices)
+  if (claudeCodeDevices.length > 0) {
+    writeCachedDeviceList(claudeCodeDevices)
+    return claudeCodeDevices
   }
 
   const cachedDevices = readCachedDeviceList()
@@ -307,10 +313,14 @@ export interface WorkbenchContextValue {
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
   upgradeDevice: (deviceId: string) => Promise<void>
-  createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  createProject: (
+    data: CreateProjectRequest,
+    options?: ProjectMutationOptions
+  ) => Promise<ProjectWithTasks>
   createGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   prepareDeviceWorkspace: (
-    data: DeviceWorkspacePrepareRequest
+    data: DeviceWorkspacePrepareRequest,
+    options?: ProjectMutationOptions
   ) => Promise<DeviceWorkspacePrepareResponse>
   deleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   listGitRepositories: () => Promise<GitRepoInfo[]>
@@ -1702,13 +1712,17 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   }, [])
 
   const createProject = useCallback(
-    async (data: CreateProjectRequest) => {
+    async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await resolvedServices.projectApi.createProject(data)
       const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
       if (projectDeviceId) {
         rememberExecutionDevice(projectDeviceId)
       }
-      await refreshWorkLists()
+      if (options.refreshWorkLists === false) {
+        dispatch({ type: 'project_created', project })
+      } else {
+        await refreshWorkLists()
+      }
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       dispatchMessages({ type: 'reset', messages: [] })
@@ -1744,13 +1758,20 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const prepareDeviceWorkspace = useCallback(
-    async (data: DeviceWorkspacePrepareRequest) => {
+    async (data: DeviceWorkspacePrepareRequest, options: ProjectMutationOptions = {}) => {
       if (!resolvedServices.runtimeWorkApi) {
         throw new Error('Runtime work is unavailable')
       }
       const response = await resolvedServices.runtimeWorkApi.prepareDeviceWorkspace(data)
       rememberExecutionDevice(data.deviceId)
-      await refreshWorkLists()
+      if (options.refreshWorkLists === false) {
+        dispatch({ type: 'device_workspace_prepared', mapping: response.mapping })
+        void refreshWorkLists().catch(() => {
+          // Keep the optimistic workspace mapping when the background refresh fails.
+        })
+      } else {
+        await refreshWorkLists()
+      }
       return response
     },
     [refreshWorkLists, rememberExecutionDevice, resolvedServices.runtimeWorkApi]

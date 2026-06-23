@@ -804,9 +804,7 @@ const IMChannelList: React.FC = () => {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="default_model">
-                {t('admin:im_channels.form.default_model')}
-              </Label>
+              <Label htmlFor="default_model">{t('admin:im_channels.form.default_model')}</Label>
               <Select
                 value={formData.default_model_name || '__none__'}
                 onValueChange={value =>

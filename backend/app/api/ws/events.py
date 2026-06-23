@@ -762,6 +762,9 @@ class TaskJoinAck(BaseModel):
     subtasks: Optional[List[Dict[str, Any]]] = Field(
         None, description="Subtasks data for immediate message sync"
     )
+    status_updated: Optional[Dict[str, Any]] = Field(
+        None, description="Latest cached chat:status_updated snapshot"
+    )
     error: Optional[str] = None
 
 

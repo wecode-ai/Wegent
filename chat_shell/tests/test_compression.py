@@ -160,14 +160,51 @@ class TestModelContextConfig:
             trigger_threshold=0.90,
             target_threshold=0.70,
         )
+        # reserved_output_tokens = min(clamp(200000 * 0.1, 16k, 48k), 8192) = 8192
         # available_tokens = 200000 - 8192 = 191808
-        # trigger_limit (effective_limit) = 191808 * 0.90 = 172627
-        expected = int((200000 - 8192) * 0.90)
+        reserved = config.reserved_output_tokens
+        assert reserved == 8192
+        available = 200000 - reserved
+        # trigger_limit (effective_limit) = 191808 * 0.90
+        expected = int(available * 0.90)
         assert config.effective_limit == expected
         assert config.trigger_limit == expected
-        # target_limit = 191808 * 0.70 = 134265
-        expected_target = int((200000 - 8192) * 0.70)
+        # target_limit = 191808 * 0.70
+        expected_target = int(available * 0.70)
         assert config.target_limit == expected_target
+
+    def test_reserved_output_uses_flat_buffer_when_model_cap_is_higher(self):
+        """Large output ceilings must not inflate the governance reserve."""
+        # Large window with a huge max output (e.g. reasoning model): reserve must
+        # follow the flat buffer (clamp(window * 0.1, 16k, 48k)), NOT 96k.
+        config = ModelContextConfig(context_window=256000, output_tokens=96000)
+        assert config.reserved_output_tokens == 25600
+        assert config.available_tokens == 230400
+        assert config.trigger_limit == int(230400 * 0.90)
+
+        # Ratio is capped at 48k for very large windows.
+        big = ModelContextConfig(context_window=1_000_000, output_tokens=100000)
+        assert big.reserved_output_tokens == 48000
+
+        # Small windows never reserve more than half the window.
+        small = ModelContextConfig(context_window=8000, output_tokens=4096)
+        assert small.reserved_output_tokens == 4000
+
+    def test_reserved_output_is_capped_by_model_output_tokens(self):
+        """Small model output caps should shrink the flat reserve."""
+        config = ModelContextConfig(context_window=256000, output_tokens=8192)
+        assert config.reserved_output_tokens == 8192
+        assert config.available_tokens == 256000 - 8192
+        assert config.trigger_limit == int((256000 - 8192) * 0.90)
+
+    def test_target_limit_stays_strictly_below_trigger_when_override_enabled(self):
+        """Auto-compact overrides must not let target land on the trigger boundary."""
+        config = ModelContextConfig(
+            context_window=256000,
+            output_tokens=96000,
+            auto_compact_token_limit=200000,
+        )
+        assert config.target_limit < config.trigger_limit
 
     def test_get_model_context_config_claude(self):
         """Test getting config for Claude model."""
@@ -222,6 +259,8 @@ class TestModelContextConfig:
         # Should use context_window from model_config and default output_tokens
         assert config.context_window == 300000
         assert config.output_tokens == 4096  # default fallback
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 30000
 
     def test_get_model_context_config_empty_model_config(self):
         """Test getting config with empty model_config falls back to built-in."""
@@ -230,6 +269,15 @@ class TestModelContextConfig:
         # Should fall back to built-in defaults for gpt-4o
         assert config.context_window == 128000
         assert config.output_tokens == 16384
+
+    def test_unknown_model_default_does_not_cap_reserve_by_fallback_output_tokens(self):
+        """Unknown-model fallback must keep the flat reserve instead of 4k."""
+        config = get_model_context_config("totally-unknown-model")
+
+        assert config.context_window == 128000
+        assert config.output_tokens == 4096
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 16000
 
 
 class TestCompressionConfig:

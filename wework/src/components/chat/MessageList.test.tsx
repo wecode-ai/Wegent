@@ -663,6 +663,25 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toBeInTheDocument()
   })
 
+  test('renders Codex-style thinking timeline before the first streamed block arrives', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/已处理/)).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
   test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
