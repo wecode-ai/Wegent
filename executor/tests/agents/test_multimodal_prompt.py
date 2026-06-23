@@ -180,6 +180,7 @@ class TestConvertOpenaiToAnthropicContent:
         assert result[0]["source"]["media_type"] == "image/png"
         assert width == MAX_MODEL_IMAGE_LONG_EDGE
         assert height == MAX_MODEL_IMAGE_LONG_EDGE // 2
+
     def test_omits_blank_input_text_for_image_only_prompt(self):
         blocks = [
             {"type": "input_text", "text": ""},

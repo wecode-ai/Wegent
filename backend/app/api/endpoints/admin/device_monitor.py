@@ -483,6 +483,7 @@ async def get_device_stats(
     by_device_type: Dict[str, int] = {
         DeviceType.LOCAL.value: 0,
         DeviceType.CLOUD.value: 0,
+        DeviceType.REMOTE.value: 0,
     }
     by_bind_shell: Dict[str, int] = {
         BindShell.CLAUDECODE.value: 0,
