@@ -327,6 +327,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_id=task_id, emitter=streaming_emitter
         )
 
+    def _select_dispatch_result_emitter(
+        self,
+        *,
+        device_id: Optional[str],
+        streaming_emitter: Any,
+        response_emitter: Any,
+    ) -> Any:
+        """Avoid letting WebSocket dispatch close callback-owned emitters."""
+        if device_id and streaming_emitter:
+            return None
+        return response_emitter
+
     # ==================== Common Methods ====================
 
     async def _get_conversation_task_id(
@@ -1344,6 +1356,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.chat.trigger import trigger_ai_response_unified
 
         try:
+            dispatch_result_emitter = self._select_dispatch_result_emitter(
+                device_id=device_id,
+                streaming_emitter=streaming_emitter,
+                response_emitter=response_emitter,
+            )
             await trigger_ai_response_unified(
                 task=task,
                 assistant_subtask=assistant_subtask,
@@ -1358,7 +1375,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 device_id=device_id,
                 namespace=None,
                 user_subtask_id=user_subtask_id,
-                result_emitter=response_emitter,
+                result_emitter=dispatch_result_emitter,
             )
         except Exception as exc:
             self.logger.exception(
@@ -2725,6 +2742,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # will read them from the DB and inject as vision content automatically,
         # following the same path as PC-uploaded image attachments.
         ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
+        dispatch_device_id = extract_task_device_id(trigger_data["task"]) or getattr(
+            params, "device_id", None
+        )
+        dispatch_result_emitter = self._select_dispatch_result_emitter(
+            device_id=dispatch_device_id,
+            streaming_emitter=streaming_emitter,
+            response_emitter=response_emitter,
+        )
 
         await trigger_ai_response_unified(
             task=trigger_data["task"],
@@ -2736,7 +2761,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_room=task_room,
             namespace=None,
             user_subtask_id=trigger_data["user_subtask_id"],
-            result_emitter=response_emitter,
+            result_emitter=dispatch_result_emitter,
         )
 
         # When a streaming emitter is available (e.g., DingTalk AI Card), rely on
