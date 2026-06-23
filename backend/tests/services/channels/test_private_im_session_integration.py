@@ -580,7 +580,7 @@ async def test_weibo_runtime_message_sends_running_prefix_on_registered_stream(
     assert calls["emit_status_prefix"] == {
         "task_id": "runtime:device-1:codex-1",
         "subtask_id": 0,
-        "content": "正在运行任务。\n\n",
+        "content": "开始思考...\n\n",
     }
     assert calls["registered_emitter"] == {
         "task_id": "runtime:device-1:codex-1",

@@ -80,7 +80,7 @@ CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
 TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
-TASK_RUNNING_NOTICE = "正在运行任务。"
+TASK_RUNNING_NOTICE = "开始思考..."
 
 
 @dataclass
