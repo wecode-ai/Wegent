@@ -121,29 +121,79 @@ function toInstalledMcpItem(item: InstalledMCP): InstalledMcpItem {
   }
 }
 
-function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
+function getInstalledPluginId(item: InstalledPlugin): number {
   const labels = item.metadata['labels']
   const id =
     labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  const components = item.spec.components
-  return {
-    id: Number(id ?? 0),
-    name: item.spec.displayName || item.spec.source.pluginKey,
-    description: item.spec.description,
-    enabled: item.spec.enabled,
-    version: item.spec.version,
-    componentCounts: {
-      skills: components.skills.length,
-      commands: components.commands.length,
-      agents: components.agents.length,
-      mcp: components.mcps.length,
-      hooks: components.hooks.length,
-      lsp: components.lsps.length,
-      monitors: components.monitors.length,
-      bin: components.bins.length,
-    },
-    raw: item,
+  return Number(id ?? 0)
+}
+
+function installedPluginGroupKey(item: InstalledPlugin): string {
+  return `${item.spec.source.type}:${item.spec.source.pluginKey}`
+}
+
+function countUniquePluginComponents(items: InstalledPlugin[]): Record<string, number> {
+  const counts = {
+    skills: new Set<string>(),
+    commands: new Set<string>(),
+    agents: new Set<string>(),
+    hooks: new Set<string>(),
+    mcp: new Set<string>(),
+    lsp: new Set<string>(),
+    monitors: new Set<string>(),
+    bin: new Set<string>(),
   }
+
+  items.forEach(item => {
+    const components = item.spec.components
+    components.skills.forEach(component => counts.skills.add(component.name))
+    components.commands.forEach(component => counts.commands.add(component.name))
+    components.agents.forEach(component => counts.agents.add(component.name))
+    components.hooks.forEach(component => counts.hooks.add(component.name))
+    components.mcps.forEach(component => counts.mcp.add(component.name))
+    components.lsps.forEach(component => counts.lsp.add(component.name))
+    components.monitors.forEach(component => counts.monitors.add(component.name))
+    components.bins.forEach(component => counts.bin.add(component.name))
+  })
+
+  return Object.fromEntries(
+    Object.entries(counts).map(([key, values]) => [key, values.size])
+  ) as Record<string, number>
+}
+
+function runtimeRank(item: InstalledPlugin): number {
+  if (item.spec.runtime === 'claudecode') return 0
+  if (item.spec.runtime === 'codex') return 1
+  return 2
+}
+
+function groupInstalledPlugins(items: InstalledPlugin[]): InstalledPluginItem[] {
+  const groups = new Map<string, InstalledPlugin[]>()
+  items.forEach(item => {
+    const key = installedPluginGroupKey(item)
+    groups.set(key, [...(groups.get(key) ?? []), item])
+  })
+
+  return Array.from(groups.values()).map(group => {
+    const variants = [...group].sort((left, right) => {
+      const runtimeDiff = runtimeRank(left) - runtimeRank(right)
+      if (runtimeDiff !== 0) return runtimeDiff
+      return getInstalledPluginId(left) - getInstalledPluginId(right)
+    })
+    const representative = variants[0]
+    const ids = variants.map(getInstalledPluginId).filter(id => id > 0)
+    return {
+      id: ids[0] ?? 0,
+      ids,
+      name: representative.spec.displayName || representative.spec.source.pluginKey,
+      description: representative.spec.description,
+      enabled: variants.every(item => item.spec.enabled),
+      version: representative.spec.version,
+      componentCounts: countUniquePluginComponents(variants),
+      raw: representative,
+      rawVariants: variants,
+    }
+  })
 }
 
 const emptyCustomMcpForm: CustomMcpFormState = {
@@ -255,7 +305,7 @@ export function PluginManagementWorkspace({
       .listInstalledPlugins()
       .then(response => {
         if (!isCurrent) return
-        setInstalledPlugins(response.items.map(toInstalledPluginItem))
+        setInstalledPlugins(groupInstalledPlugins(response.items))
         setIsLoadingPlugins(false)
       })
       .catch(() => {
@@ -396,15 +446,24 @@ export function PluginManagementWorkspace({
   const toggleInstalledPlugin = (id: number) => {
     const plugin = installedPlugins.find(item => item.id === id)
     if (!plugin) return
+    const nextEnabled = !plugin.enabled
 
     setInstalledPlugins(previous =>
-      previous.map(item => (item.id === id ? { ...item, enabled: !item.enabled } : item))
+      previous.map(item => (item.id === id ? { ...item, enabled: nextEnabled } : item))
     )
-    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
-      setInstalledPlugins(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
+    Promise.all(
+      plugin.ids.map(pluginId =>
+        pluginApi.updateInstalledPlugin(pluginId, { enabled: nextEnabled })
       )
-    })
+    )
+      .then(updatedItems => {
+        const [nextItem] = groupInstalledPlugins(updatedItems)
+        if (!nextItem) return
+        setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+      })
+      .catch(() => {
+        setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+      })
   }
 
   const togglePluginComponent = (id: number, componentKey: string, enabled: boolean) => {
@@ -425,14 +484,30 @@ export function PluginManagementWorkspace({
                   componentStates: nextStates,
                 },
               },
+              rawVariants: item.rawVariants.map(variant => ({
+                ...variant,
+                spec: {
+                  ...variant.spec,
+                  componentStates: {
+                    ...(variant.spec.componentStates || {}),
+                    [componentKey]: enabled,
+                  },
+                },
+              })),
             }
           : item
       )
     )
-    pluginApi
-      .updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
-      .then(updated => {
-        const nextItem = toInstalledPluginItem(updated)
+    Promise.all(
+      plugin.ids.map(pluginId =>
+        pluginApi.updateInstalledPlugin(pluginId, {
+          componentStates: { [componentKey]: enabled },
+        })
+      )
+    )
+      .then(updatedItems => {
+        const [nextItem] = groupInstalledPlugins(updatedItems)
+        if (!nextItem) return
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
       })
       .catch(() => {
@@ -446,9 +521,11 @@ export function PluginManagementWorkspace({
 
     setInstalledPlugins(previous => previous.filter(item => item.id !== id))
     setSelectedPluginId(current => (current === id ? null : current))
-    pluginApi.uninstallInstalledPlugin(id).catch(() => {
-      setInstalledPlugins(previous => [...previous, plugin])
-    })
+    Promise.all(plugin.ids.map(pluginId => pluginApi.uninstallInstalledPlugin(pluginId))).catch(
+      () => {
+        setInstalledPlugins(previous => [...previous, plugin])
+      }
+    )
   }
 
   const createCustomMcp = (event: FormEvent<HTMLFormElement>) => {

@@ -207,6 +207,7 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const components = item.spec.components
   return {
     id: Number(id ?? 0),
+    ids: Number(id ?? 0) > 0 ? [Number(id ?? 0)] : [],
     name: item.spec.displayName || item.spec.source.pluginKey,
     description: item.spec.description,
     enabled: item.spec.enabled,
@@ -222,6 +223,7 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
       bin: components.bins.length,
     },
     raw: item,
+    rawVariants: [item],
   }
 }
 
