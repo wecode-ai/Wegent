@@ -6,6 +6,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
+INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: bash wework/scripts/dev-mac-app.sh [options]
+
+Options:
+  -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
+  -h, --help            Show this help message.
+
+Environment:
+  WEWORK_PORT           Default dev server port when --port is not provided.
+  WEWORK_HOST           Host IP used to build backend proxy targets.
+  BACKEND_PORT          Backend port used when proxy targets are not set.
+
+Examples:
+  bash wework/scripts/dev-mac-app.sh --port 9130
+  WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
+EOF
+}
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -13,6 +33,39 @@ if [ -f "$ENV_FILE" ]; then
   source "$ENV_FILE"
   set +a
 fi
+
+if [ -n "$INITIAL_WEWORK_PORT" ]; then
+  WEWORK_PORT="$INITIAL_WEWORK_PORT"
+fi
+
+REQUESTED_WEWORK_PORT=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -p|--port)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a port value." >&2
+        usage
+        exit 1
+      fi
+      REQUESTED_WEWORK_PORT="$2"
+      shift 2
+      ;;
+    --port=*)
+      REQUESTED_WEWORK_PORT="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 get_local_ip() {
   local ip
@@ -40,7 +93,12 @@ get_local_ip() {
 
 LOCAL_IP="${WEWORK_HOST:-$(get_local_ip)}"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
-WEWORK_PORT="${WEWORK_PORT:-1420}"
+WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
+
+if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_PORT" -gt 65535 ]; then
+  echo "Error: WEWORK_PORT must be a number between 1 and 65535. Got: $WEWORK_PORT" >&2
+  exit 1
+fi
 
 export VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}"
 export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"

@@ -79,6 +79,15 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
   })
 
+  test('keeps section header actions out of the flex layout while hidden', () => {
+    renderSidebar()
+
+    const actions = screen.getByTestId('projects-section-toggle-actions')
+
+    expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
+    expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+  })
+
   test('does not render unmapped runtime workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 

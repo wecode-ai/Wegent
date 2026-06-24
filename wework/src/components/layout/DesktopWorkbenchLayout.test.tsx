@@ -373,10 +373,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'pb-40'
     )
-    expect(screen.getByTestId('desktop-chat-scroll-content')).toHaveClass(
-      'min-h-full',
-      'justify-end'
-    )
+    expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
@@ -1828,12 +1825,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
-    expect(screen.getByTestId('composer-disabled-reason')).toHaveTextContent(
-      'Offline Device 暂不可用，恢复后可继续对话'
-    )
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
       'Offline Device 已离线，恢复在线后可继续对话'
     )
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
@@ -2216,8 +2211,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(fileTab).toHaveClass('group')
     const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
-      'h-5',
-      'w-5',
+      'h-[18px]',
+      'w-[18px]',
       'rounded-full',
       'border',
       'bg-muted',
@@ -2363,8 +2358,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
     const closeButton = within(reviewTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
-      'h-5',
-      'w-5',
+      'h-[18px]',
+      'w-[18px]',
       'rounded-full',
       'border',
       'bg-muted',
@@ -2426,7 +2421,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(2))
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
-    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('new')
     expect(screen.getByTestId('file-changes-review-panel')).not.toHaveTextContent(
       '设备暂时不可用，请稍后重试'
     )
@@ -3245,7 +3240,8 @@ describe('DesktopWorkbenchLayout', () => {
           deviceId: 'device-1',
           path: '/workspace/github_wegent',
           source: 'project',
-        }
+        },
+        'branch'
       )
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
@@ -3255,7 +3251,7 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
-    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('new')
   })
 
   test('submits environment commits from the popover', async () => {

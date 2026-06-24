@@ -11,7 +11,7 @@ import posixpath
 import re
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -38,6 +38,8 @@ from app.schemas.runtime_work import (
     DeviceWorkspaceUpsert,
     LocalTaskSummary,
     RuntimeDeviceWorkspace,
+    RuntimeFileChangesRevertRequest,
+    RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
@@ -65,6 +67,7 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceOpenRequest,
     RuntimeWorkspaceOpenResponse,
 )
+from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
@@ -353,7 +356,7 @@ async def get_runtime_transcript(
     _raise_runtime_rpc_failure(result)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
-        "[RuntimeWork] Runtime transcript RPC completed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s message_count=%s has_more_before=%s before_cursor=%s",
+        "[RuntimeWork] Runtime transcript RPC completed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s message_count=%s messages_with_subtask=%s messages_with_file_changes=%s has_more_before=%s before_cursor=%s",
         user_id,
         normalized_address.device_id,
         normalized_address.local_task_id,
@@ -363,6 +366,8 @@ async def get_runtime_transcript(
             if isinstance(result.get("messages"), list)
             else None
         ),
+        _runtime_message_count(result, "subtaskId"),
+        _runtime_message_count(result, "fileChanges"),
         result.get("hasMoreBefore"),
         result.get("beforeCursor"),
     )
@@ -433,6 +438,73 @@ async def _search_runtime_work_device(
         device=device,
         device_id=device_id,
         project_id=request.project_id,
+    )
+
+
+async def revert_runtime_file_changes(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeFileChangesRevertRequest,
+) -> RuntimeFileChangesRevertResponse:
+    """Revert a native runtime file-change artifact on the owning device."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    summary = TurnFileChangesSummary.model_validate(
+        _runtime_file_changes_summary_payload(request.file_changes)
+    )
+    if summary.device_id != address.device_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Runtime file changes device does not match the task address",
+        )
+    if summary.status == "reverted":
+        return RuntimeFileChangesRevertResponse(
+            fileChanges=summary.model_dump(mode="json")
+        )
+
+    result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=address.device_id,
+        command_key="turn_file_changes_revert",
+        path=summary.workspace_path,
+        args=[summary.artifact_id],
+        timeout_seconds=30,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+    payload = result.get("stdout") if isinstance(result, dict) else None
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Device returned malformed artifact output",
+        )
+    if payload.get("success") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(payload.get("error") or "Runtime file changes revert failed"),
+        )
+    if payload.get("status") == "conflicted":
+        updated = _runtime_file_changes_with_status(summary, "conflicted")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"file_changes": updated, "message": "Patch does not apply"},
+        )
+    if payload.get("status") == "artifact_missing":
+        updated = _runtime_file_changes_with_status(summary, "artifact_missing")
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"file_changes": updated, "message": "Artifact is missing"},
+        )
+    if payload.get("status") != "reverted":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Device returned an invalid revert result",
+        )
+
+    return RuntimeFileChangesRevertResponse(
+        fileChanges=_runtime_file_changes_with_status(summary, "reverted")
     )
 
 
@@ -2224,6 +2296,36 @@ def _runtime_transcript_payload(
     if before_cursor:
         payload["beforeCursor"] = before_cursor
     return payload
+
+
+def _runtime_message_count(result: dict[str, Any], key: str) -> int | None:
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return None
+    snake_key = "file_changes" if key == "fileChanges" else "subtask_id"
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, dict)
+        and (message.get(key) is not None or message.get(snake_key) is not None)
+    )
+
+
+def _runtime_file_changes_with_status(
+    summary: TurnFileChangesSummary,
+    status_value: str,
+) -> dict[str, Any]:
+    updated = summary.model_dump(mode="json")
+    updated["status"] = status_value
+    if status_value == "reverted":
+        updated["reverted_at"] = datetime.now(timezone.utc).isoformat()
+    return updated
+
+
+def _runtime_file_changes_summary_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item for key, item in value.items() if key not in {"diff", "revertible"}
+    }
 
 
 def _project_runtime_target(

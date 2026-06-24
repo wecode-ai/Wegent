@@ -281,6 +281,7 @@ describe('MobileWorkbenchLayout', () => {
         'conversation-device-offline-banner'
       )
     ).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-scroll-area')).not.toHaveClass('pt-28')
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })

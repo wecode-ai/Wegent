@@ -28,6 +28,8 @@ interface ScrollableMessageAreaProps {
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
   onLoadMoreBefore?: () => Promise<void> | void
@@ -219,10 +221,7 @@ export function ScrollableMessageArea({
         <div
           ref={contentRef}
           data-testid={`${scrollTestId}-content`}
-          className={cn(
-            'min-w-0 overflow-x-hidden',
-            messages.length > 0 && !hasMoreBefore && 'flex min-h-full flex-col justify-end'
-          )}
+          className={cn('min-w-0 overflow-x-hidden')}
         >
           {messages.length === 0 ? (
             loading ? (

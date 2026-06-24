@@ -1673,6 +1673,341 @@ def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     assert transcript[1]["status"] == "done"
 
 
+def test_codex_discovery_keeps_commentary_when_task_complete_is_empty(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ae"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Check the page",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "I refreshed the page and checked the DOM.",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:23Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in page.messages] == ["user", "assistant"]
+    assert page.messages[1]["content"] == "I refreshed the page and checked the DOM."
+    assert page.messages[1]["status"] == "done"
+
+
+def test_codex_discovery_keeps_commentary_before_next_user_message(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "First request",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "I checked the current page.",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:23Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Second request",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:24Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in page.messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert [message["content"] for message in page.messages] == [
+        "First request",
+        "I checked the current page.",
+        "Second request",
+    ]
+
+
+def test_codex_discovery_adds_file_changes_from_patch_apply_end(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    changed_file = workspace / "src" / "app.ts"
+    changed_file.parent.mkdir()
+    changed_file.write_text("const label = 'new'\n", encoding="utf-8")
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789df"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Edit the app",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'old'\n+const label = 'new'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'new'\n+const label = 'final'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "Done",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["subtaskId"] > 0
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0]["path"] == "src/app.ts"
+    assert assistant["fileChanges"]["additions"] == 2
+    assert assistant["fileChanges"]["deletions"] == 2
+    assert assistant["fileChanges"]["revertible"] is True
+    assert assistant["fileChanges"]["artifact_id"].startswith("turn-file-changes/")
+    assert "diff --git a/src/app.ts b/src/app.ts" in assistant["fileChanges"]["diff"]
+
+
+def test_codex_discovery_adds_file_changes_to_aborted_turn(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    changed_file = workspace / "src" / "app.ts"
+    changed_file.parent.mkdir()
+    changed_file.write_text("const label = 'new'\n", encoding="utf-8")
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ab"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Edit the app",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'old'\n+const label = 'new'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "turn_aborted",
+                "reason": "interrupted",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["status"] == "cancelled"
+    assert assistant["content"] == "interrupted"
+    assert assistant["subtaskId"] > 0
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0]["path"] == "src/app.ts"
+    assert assistant["fileChanges"]["additions"] == 1
+    assert assistant["fileChanges"]["deletions"] == 1
+
+
+def test_codex_discovery_adds_file_changes_from_patch_content(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "plain-project"
+    workspace.mkdir()
+    changed_file = workspace / "note.txt"
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789e0"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Create a note",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "add",
+                        "content": "hello\n",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "Done",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0] == {
+        "old_path": None,
+        "path": "note.txt",
+        "change_type": "created",
+        "additions": 1,
+        "deletions": 0,
+        "binary": False,
+    }
+    assert assistant["fileChanges"]["revertible"] is True
+    assert "--- /dev/null" in assistant["fileChanges"]["diff"]
+    assert "+++ b/note.txt" in assistant["fileChanges"]["diff"]
+    assert "+hello" in assistant["fileChanges"]["diff"]
+
+
 def test_codex_discovery_reads_transcript_pages(tmp_path):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 
@@ -2999,7 +3334,29 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         executed_requests.append(request)
         await emitter.start(shell_type="ClaudeCode")
         await emitter.text_delta("Created")
-        await emitter.done(content="Created")
+        await emitter.done(
+            content="Created",
+            file_changes={
+                "version": 1,
+                "status": "active",
+                "artifact_id": "turn-2001",
+                "device_id": "device-1",
+                "workspace_path": "/repo/Wegent",
+                "file_count": 1,
+                "additions": 3,
+                "deletions": 1,
+                "files": [
+                    {
+                        "path": "src/app.ts",
+                        "change_type": "modified",
+                        "additions": 3,
+                        "deletions": 1,
+                        "binary": False,
+                    }
+                ],
+                "reverted_at": None,
+            },
+        )
 
     store = LocalTaskStore(tmp_path / "index.json")
     adapter = RuntimeAgentAdapter(
@@ -3055,6 +3412,8 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         "assistant",
     ]
     assert transcript["messages"][0]["content"] == "create the task"
+    assert transcript["messages"][1]["fileChanges"]["artifact_id"] == "turn-2001"
+    assert transcript["messages"][1]["fileChanges"]["files"][0]["path"] == "src/app.ts"
 
 
 @pytest.mark.asyncio

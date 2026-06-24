@@ -75,6 +75,39 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
+  test('renders inline diff preview when summary contains a diff', () => {
+    renderCard({
+      summary: {
+        ...summary,
+        file_count: 1,
+        additions: 1,
+        deletions: 1,
+        files: [
+          {
+            path: 'src/main.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 1,
+            binary: false,
+          },
+        ],
+        diff: [
+          'diff --git a/src/main.ts b/src/main.ts',
+          '--- a/src/main.ts',
+          '+++ b/src/main.ts',
+          '@@ -1 +1 @@',
+          '-const name = "old"',
+          '+const name = "new"',
+        ].join('\n'),
+      },
+    })
+
+    expect(screen.getByTestId('file-changes-inline-diff')).toBeInTheDocument()
+    expect(screen.getByText('src/main.ts')).toBeInTheDocument()
+    expect(screen.getByText('-const name = "old"')).toBeInTheDocument()
+    expect(screen.getByText('+const name = "new"')).toBeInTheDocument()
+  })
+
   test('requests the right review panel without loading diff immediately', async () => {
     const { onLoadDiff, onOpenReview } = renderCard()
 
@@ -84,6 +117,8 @@ describe('FileChangesCard', () => {
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
     expect(request.subtaskId).toBe(21)
+    expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
+    expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.loadDiff).toEqual(expect.any(Function))
     expect(onLoadDiff).not.toHaveBeenCalled()
 
@@ -118,6 +153,8 @@ describe('FileChangesCard', () => {
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
     expect(request.subtaskId).toBe(21)
+    expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
+    expect(request.defaultFileTreeVisible).toBe(false)
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()

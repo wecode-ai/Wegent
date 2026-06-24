@@ -60,6 +60,74 @@ describe('MessageList', () => {
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
   })
 
+  test('renders cancelled assistant turns like stopped Codex turns', () => {
+    const commandBlock: ProcessingBlock = {
+      id: 'call-1',
+      subtaskId: 21,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'pnpm test' },
+      status: 'done',
+      createdAt: Date.parse('2026-06-11T10:09:18Z'),
+    }
+
+    render(
+      <MessageList
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Device 1',
+            status: 'online',
+            is_default: false,
+          },
+        ]}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-stopped',
+            subtaskId: 21,
+            role: 'assistant',
+            content: 'interrupted',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [commandBlock],
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-21',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 4,
+              deletions: 2,
+              files: [
+                {
+                  path: 'src/main.ts',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByText('interrupted')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-activity-group-toggle')).toHaveTextContent(
+      '已运行 1 条命令'
+    )
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent(
+      '你在 9m 18s 后停止了'
+    )
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList

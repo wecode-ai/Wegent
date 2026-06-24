@@ -8,6 +8,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeFileChangesRevertRequest,
+  RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -58,6 +60,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)
+    },
+    revertRuntimeFileChanges(
+      request: RuntimeFileChangesRevertRequest
+    ): Promise<RuntimeFileChangesRevertResponse> {
+      return client.post('/runtime-work/file-changes/revert', request)
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)

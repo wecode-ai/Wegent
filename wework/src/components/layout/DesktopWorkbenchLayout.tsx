@@ -33,6 +33,7 @@ import type {
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
@@ -126,7 +127,8 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<void>
   onLoadEnvironmentDiff?: (
     project: ProjectWithTasks | null,
-    workspaceTarget: WorkspaceTarget
+    workspaceTarget: WorkspaceTarget,
+    mode?: EnvironmentDiffMode
   ) => Promise<string>
   onListEnvironmentBranches: (
     project: ProjectWithTasks | null,
@@ -785,7 +787,8 @@ export function DesktopWorkbenchLayout({
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
           onLoadEnvironmentDiff={
             onLoadEnvironmentDiff
-              ? workspaceTarget => onLoadEnvironmentDiff(environmentProject, workspaceTarget)
+              ? (workspaceTarget, mode) =>
+                  onLoadEnvironmentDiff(environmentProject, workspaceTarget, mode)
               : undefined
           }
           onListEnvironmentBranches={() => {

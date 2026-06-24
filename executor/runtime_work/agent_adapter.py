@@ -91,8 +91,8 @@ class RuntimeTranscriptTransport(EventTransport):
                 status="done",
                 subtask_id=subtask_id,
                 executor_session=data.get("executor_session"),
-                file_changes=_completed_file_changes(data),
                 blocks=self._consume_processing_blocks(terminal_status="done"),
+                file_changes=_completed_file_changes(data),
             )
             self._assistant_draft = ""
             await self._forward_event(
@@ -360,8 +360,8 @@ class RuntimeTranscriptTransport(EventTransport):
         status: str,
         subtask_id: int,
         executor_session: Optional[Any] = None,
-        file_changes: Optional[dict[str, Any]] = None,
         blocks: Optional[list[dict[str, Any]]] = None,
+        file_changes: Optional[dict[str, Any]] = None,
     ) -> None:
         message = {
             "id": f"{self.local_task_id}:assistant:{subtask_id}",
@@ -371,10 +371,10 @@ class RuntimeTranscriptTransport(EventTransport):
             "status": status,
             "subtaskId": subtask_id,
         }
-        if file_changes:
-            message["fileChanges"] = file_changes
         if blocks:
             message["blocks"] = blocks
+        if file_changes:
+            message["fileChanges"] = copy.deepcopy(file_changes)
 
         def update(task: LocalTaskRecord) -> LocalTaskRecord:
             handle = dict(task.runtime_handle)
@@ -742,8 +742,10 @@ def _completed_file_changes(data: dict[str, Any]) -> Optional[dict[str, Any]]:
     response = data.get("response")
     if not isinstance(response, dict):
         return None
-    file_changes = response.get("file_changes")
-    return file_changes if isinstance(file_changes, dict) else None
+    file_changes = response.get("file_changes") or response.get("fileChanges")
+    if isinstance(file_changes, dict):
+        return file_changes
+    return None
 
 
 def _incomplete_content(data: dict[str, Any]) -> str:

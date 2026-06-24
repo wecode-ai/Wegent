@@ -182,6 +182,13 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       accepted: true,
       localTaskId: 'runtime-a',
     }),
+    revertRuntimeFileChanges: vi.fn().mockResolvedValue({
+      fileChanges: {
+        ...createTurnFileChanges(),
+        status: 'reverted',
+        reverted_at: '2026-06-05T00:00:00.000Z',
+      },
+    }),
     createRuntimeTask: vi.fn().mockResolvedValue({
       accepted: true,
       deviceId: 'device-1',
@@ -355,12 +362,12 @@ function RuntimeOpenProbe() {
       </span>
       <span data-testid="runtime-open-file-changes">
         {workbench.messages
-          .map(message =>
-            message.fileChanges
-              ? `${message.fileChanges.file_count}:${message.fileChanges.additions}:${message.fileChanges.deletions}`
-              : ''
-          )
-          .filter(Boolean)
+          .map(message => {
+            if (!message.fileChanges) return ''
+            const paths = message.fileChanges.files.map(file => file.path).join(',')
+            const counts = `${message.fileChanges.file_count}:${message.fileChanges.additions}:${message.fileChanges.deletions}`
+            return [paths, counts].filter(Boolean).join(':')
+          })
           .join('|')}
       </span>
       <span data-testid="runtime-open-error">{workbench.state.error ?? ''}</span>
@@ -982,6 +989,26 @@ describe('WorkbenchProvider runtime tasks', () => {
           role: 'assistant',
           content: '恢复的回答',
           subtaskId: 901,
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'turn-901',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project-alpha',
+            file_count: 1,
+            additions: 4,
+            deletions: 2,
+            files: [
+              {
+                path: 'src/runtime.ts',
+                change_type: 'modified',
+                additions: 4,
+                deletions: 2,
+                binary: false,
+              },
+            ],
+            reverted_at: null,
+          },
           blocks: [
             {
               id: 'thinking-901',
@@ -1028,6 +1055,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('text:处理完成:done')
+    expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('src/runtime.ts')
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',
@@ -1118,6 +1146,48 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('restores a runtime local task from the URL even when it is missing from the work list', async () => {
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&localTaskId=codex-hidden')
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'codex-hidden',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-hidden', role: 'user', content: 'hidden user message' },
+        { id: 'assistant-hidden', role: 'assistant', content: 'hidden assistant message' },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [],
+          unmappedDeviceWorkspaces: [],
+          totalLocalTasks: 0,
+        })
+      ),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:codex-hidden'
+      )
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent(
+      'hidden user message|hidden assistant message'
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      localTaskId: 'codex-hidden',
+      limit: 50,
+    })
+  })
+
   test('loads older runtime transcript messages before the current page', async () => {
     const getRuntimeTranscript = vi.fn(request => {
       if (request.beforeCursor === 'offset:120') {
@@ -1169,7 +1239,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('done')
   })
 
-  test('reviews and reverts runtime transcript file changes through device commands', async () => {
+  test('reviews runtime transcript file changes through device command and reverts through runtime API', async () => {
     window.history.pushState(
       {},
       '',
@@ -1191,21 +1261,22 @@ describe('WorkbenchProvider runtime tasks', () => {
         },
       ],
     } satisfies RuntimeTranscriptResponse)
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: { success: true, diff: 'diff --git a/file b/file' },
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: { success: true, status: 'reverted' },
-        stderr: '',
-      })
+    const executeCommand = vi.fn().mockResolvedValueOnce({
+      success: true,
+      stdout: { success: true, diff: 'diff --git a/file b/file' },
+      stderr: '',
+    })
+    const revertRuntimeFileChanges = vi.fn().mockResolvedValue({
+      fileChanges: {
+        ...fileChanges,
+        status: 'reverted',
+        reverted_at: '2026-06-05T00:00:00.000Z',
+      },
+    })
     const services = createWorkbenchServices({
       runtimeWorkApi: createRuntimeWorkApiMock({
         getRuntimeTranscript,
+        revertRuntimeFileChanges,
       }) as WorkbenchServices['runtimeWorkApi'],
       deviceApi: {
         executeCommand,
@@ -1237,12 +1308,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-file-changes-status')).toHaveTextContent('reverted')
     )
-    expect(executeCommand).toHaveBeenLastCalledWith('device-1', {
-      command_key: 'turn_file_changes_revert',
-      path: fileChanges.workspace_path,
-      args: [fileChanges.artifact_id],
-      timeout_seconds: 30,
-      max_output_bytes: 5 * 1024 * 1024,
+    expect(revertRuntimeFileChanges).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        localTaskId: 'runtime-restored',
+      },
+      fileChanges,
     })
     expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
   })

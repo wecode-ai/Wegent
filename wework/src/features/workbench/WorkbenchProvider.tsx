@@ -8,6 +8,7 @@ import {
   listProjectBranches,
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
+  type EnvironmentDiffMode,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
@@ -353,7 +354,8 @@ export interface WorkbenchContextValue {
   ) => Promise<EnvironmentInfo>
   loadEnvironmentDiff: (
     project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
+    workspaceTarget?: WorkspaceTarget | null,
+    mode?: EnvironmentDiffMode
   ) => Promise<string>
   commitEnvironmentChanges: (
     project: ProjectWithTasks | null,
@@ -644,6 +646,7 @@ function runtimeMessageToWorkbenchMessage(
       : normalizedStatus === 'streaming'
         ? 'streaming'
         : 'done'
+  const runtimeStatus = normalizedStatus === 'cancelled' ? 'cancelled' : status
   const source =
     role === 'user' && message.source?.source === 'im'
       ? ({ ...message.source, source: 'im' } as MessageSource)
@@ -661,6 +664,7 @@ function runtimeMessageToWorkbenchMessage(
     subtaskId,
     content: message.content,
     status,
+    runtimeStatus,
     source,
     attachments: message.attachments,
     blocks: blocks.length > 0 ? blocks : undefined,
@@ -918,6 +922,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     null
   )
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({})
+  const messagesRef = useRef<WorkbenchMessage[]>(messages)
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
@@ -932,6 +937,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     () => isRuntimeLocalTaskRunning(state.runtimeWork, state.currentRuntimeTask),
     [state.currentRuntimeTask, state.runtimeWork]
   )
+
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
   const isRuntimeTranscriptLoading =
     Boolean(currentRuntimeTaskKey) && runtimeTranscriptLoadingKey === currentRuntimeTaskKey
   const currentUser = state.user ?? user
@@ -1893,8 +1902,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       return
     }
 
-    const runtimeTaskAddress = resolveRuntimeTaskRouteAddress(state.runtimeWork, runtimeTaskRoute)
-    if (!runtimeTaskAddress) return
+    const runtimeTaskAddress =
+      resolveRuntimeTaskRouteAddress(state.runtimeWork, runtimeTaskRoute) ?? runtimeTaskRoute
 
     handledRuntimeTaskRouteRef.current = routeKey
     const timer = window.setTimeout(() => {
@@ -2101,8 +2110,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const loadEnvironmentDiff = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project, workspaceTarget),
+    (
+      project: ProjectWithTasks | null,
+      workspaceTarget?: WorkspaceTarget | null,
+      mode?: EnvironmentDiffMode
+    ) => loadProjectEnvironmentDiff(resolvedServices.deviceApi, project, workspaceTarget, mode),
     [resolvedServices]
   )
 
@@ -2685,8 +2697,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: number) => {
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesBySubtaskId(messages, subtaskId)
+        ? findFileChangesBySubtaskId(messagesRef.current, subtaskId)
         : undefined
+      if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
       if (runtimeFileChanges) {
         const response = await resolvedServices.deviceApi.executeCommand(
           runtimeFileChanges.device_id,
@@ -2726,66 +2739,56 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const response = await loadDiff(subtaskId)
       return response.diff
     },
-    [messages, resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
+    [resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
   )
 
   const revertTurnFileChanges = useCallback(
     async (subtaskId: number) => {
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesBySubtaskId(messages, subtaskId)
+        ? findFileChangesBySubtaskId(messagesRef.current, subtaskId)
         : undefined
-      if (runtimeFileChanges) {
-        const response = await resolvedServices.deviceApi.executeCommand(
-          runtimeFileChanges.device_id,
-          {
-            command_key: 'turn_file_changes_revert',
-            path: runtimeFileChanges.workspace_path,
-            args: [runtimeFileChanges.artifact_id],
-            timeout_seconds: 30,
-            max_output_bytes: 5 * 1024 * 1024,
-          }
-        )
-        const stdout = getCommandStdoutObject(response.stdout)
-        if (
-          !response.success ||
-          !stdout ||
-          stdout.success !== true ||
-          stdout.status !== 'reverted'
-        ) {
-          if (stdout?.status === 'conflicted') {
-            const conflictedChanges = { ...runtimeFileChanges, status: 'conflicted' as const }
-            dispatchMessages({
-              type: 'file_changes_updated',
-              subtaskId,
-              fileChanges: conflictedChanges,
-            })
-          } else if (stdout?.status === 'artifact_missing') {
-            dispatchMessages({
-              type: 'file_changes_updated',
-              subtaskId,
-              fileChanges: { ...runtimeFileChanges, status: 'artifact_missing' },
-            })
-          }
-          throw new Error(
-            String(
-              stdout?.error || response.error || response.stderr || 'File changes revert failed'
-            )
+      if (runtimeFileChanges && state.currentRuntimeTask && resolvedServices.runtimeWorkApi) {
+        try {
+          const response = await resolvedServices.runtimeWorkApi.revertRuntimeFileChanges({
+            address: state.currentRuntimeTask,
+            fileChanges: runtimeFileChanges,
+          })
+          const fileChanges = normalizeTurnFileChanges(
+            response.fileChanges ?? response.file_changes
           )
+          if (!fileChanges) {
+            throw new Error('Invalid file changes response')
+          }
+          const nextFileChanges = {
+            ...fileChanges,
+            diff: runtimeFileChanges.diff,
+            revertible: runtimeFileChanges.revertible ?? true,
+          }
+          dispatchMessages({
+            type: 'file_changes_updated',
+            subtaskId,
+            fileChanges: nextFileChanges,
+          })
+          return nextFileChanges
+        } catch (error) {
+          if (error instanceof ApiError && isRecord(error.detail)) {
+            const fileChanges = normalizeTurnFileChanges(error.detail.file_changes)
+            if (fileChanges) {
+              const nextFileChanges = {
+                ...fileChanges,
+                diff: runtimeFileChanges.diff,
+                revertible: runtimeFileChanges.revertible ?? true,
+              }
+              dispatchMessages({
+                type: 'file_changes_updated',
+                subtaskId,
+                fileChanges: nextFileChanges,
+              })
+            }
+          }
+          throw error
         }
-
-        const fileChanges = {
-          ...runtimeFileChanges,
-          status: 'reverted' as const,
-          reverted_at: new Date().toISOString(),
-        }
-        dispatchMessages({
-          type: 'file_changes_updated',
-          subtaskId,
-          fileChanges,
-        })
-        return fileChanges
       }
-
       const revert = resolvedServices.taskApi.revertTurnFileChanges
       if (!revert) throw new Error('File changes revert is unavailable')
       try {
@@ -2814,7 +2817,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         throw error
       }
     },
-    [messages, resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
+    [resolvedServices.runtimeWorkApi, resolvedServices.taskApi, state.currentRuntimeTask]
   )
 
   const pauseCurrentResponse = useCallback(async () => {

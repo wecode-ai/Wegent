@@ -338,6 +338,9 @@ export function MobileWorkbenchLayout({
       : noStandaloneCompatibleDevice
         ? t('workbench.device_status_no_online_device')
         : undefined
+  const inlineComposerDisabledReason = showConversationDeviceBanner
+    ? undefined
+    : composerDisabledReason
 
   useEffect(() => {
     const handlePopState = () => {
@@ -563,7 +566,7 @@ export function MobileWorkbenchLayout({
                   onSubmit={onSend}
                   disabled={composerDisabled}
                   error={state.error}
-                  disabledReason={composerDisabledReason}
+                  disabledReason={inlineComposerDisabledReason}
                   placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
@@ -651,7 +654,7 @@ export function MobileWorkbenchLayout({
                 onSubmit={onSend}
                 disabled={composerDisabled}
                 error={state.error}
-                disabledReason={composerDisabledReason}
+                disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
