@@ -94,6 +94,33 @@ describe('createRuntimeWorkApi', () => {
     })
   })
 
+  test('cancels a runtime task by address', async () => {
+    const post = vi.fn().mockResolvedValue({
+      accepted: true,
+      localTaskId: 'codex-1',
+      workspacePath: '/repo/Wegent',
+    })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.cancelRuntimeTask({
+        deviceId: 'device-1',
+        workspacePath: '/repo/Wegent',
+        localTaskId: 'codex-1',
+      })
+    ).resolves.toEqual({
+      accepted: true,
+      localTaskId: 'codex-1',
+      workspacePath: '/repo/Wegent',
+    })
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/cancel', {
+      deviceId: 'device-1',
+      workspacePath: '/repo/Wegent',
+      localTaskId: 'codex-1',
+    })
+  })
+
   test('searches runtime work transcripts', async () => {
     const post = vi.fn().mockResolvedValue({
       items: [

@@ -47,6 +47,7 @@ from app.schemas.runtime_work import (
     RuntimeSendResponse,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
+    RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
@@ -84,6 +85,7 @@ RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
+RUNTIME_CANCEL_TIMEOUT_SECONDS = 30
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
@@ -637,6 +639,33 @@ async def archive_runtime_task(
             detail=str(exc),
         ) from exc
     return _runtime_archive_response(result, normalized_address)
+
+
+async def cancel_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    """Cancel a running LocalTask through the owning local executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.cancel",
+            payload=_runtime_task_address_payload(normalized_address),
+            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_cancel_response(result, normalized_address)
 
 
 async def create_runtime_task(
@@ -1350,6 +1379,25 @@ def _runtime_archive_response(
             error=str(result.get("error") or "Runtime archive failed"),
         )
     return RuntimeTaskArchiveResponse(
+        accepted=bool(result.get("accepted", True)),
+        localTaskId=str(result.get("localTaskId") or address.local_task_id),
+        workspacePath=result.get("workspacePath") or address.workspace_path,
+        error=result.get("error"),
+    )
+
+
+def _runtime_cancel_response(
+    result: dict[str, Any],
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    if result.get("success") is False:
+        return RuntimeTaskCancelResponse(
+            accepted=False,
+            localTaskId=str(result.get("localTaskId") or address.local_task_id),
+            workspacePath=result.get("workspacePath") or address.workspace_path,
+            error=str(result.get("error") or "Runtime cancel failed"),
+        )
+    return RuntimeTaskCancelResponse(
         accepted=bool(result.get("accepted", True)),
         localTaskId=str(result.get("localTaskId") or address.local_task_id),
         workspacePath=result.get("workspacePath") or address.workspace_path,

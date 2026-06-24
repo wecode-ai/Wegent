@@ -40,6 +40,54 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
   })
 
+  test('bottom-aligns short conversations so new output appears near the composer', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '执行pwd',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('chat-message-scroll-area-content')).toHaveClass(
+      'min-h-full',
+      'justify-end'
+    )
+  })
+
+  test('keeps older transcript loading controls at the top of the message flow', () => {
+    render(
+      <ScrollableMessageArea
+        hasMoreBefore
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '历史消息',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
+  })
+
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
     render(
       <ScrollableMessageArea

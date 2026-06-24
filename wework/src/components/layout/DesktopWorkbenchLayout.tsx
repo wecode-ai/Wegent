@@ -64,6 +64,7 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -166,6 +167,7 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  currentRuntimeTaskRunning = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -772,6 +774,7 @@ export function DesktopWorkbenchLayout({
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
+          currentRuntimeTaskRunning={currentRuntimeTaskRunning}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}

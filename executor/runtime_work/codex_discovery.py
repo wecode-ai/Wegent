@@ -53,6 +53,13 @@ class _TranscriptCacheEntry:
     complete: bool
 
 
+@dataclass(frozen=True)
+class _ThreadResumeConfig:
+    codex_bin: str
+    config_overrides: tuple[str, ...]
+    env: Optional[dict[str, str]]
+
+
 class CodexSessionDiscovery:
     """Read Codex SDK thread metadata and expose user sessions as LocalTasks."""
 
@@ -68,6 +75,7 @@ class CodexSessionDiscovery:
         self.limit = max(1, limit)
         self.codex_client_factory = codex_client_factory
         self._transcript_cache: dict[str, _TranscriptCacheEntry] = {}
+        self._thread_resume_configs: dict[str, _ThreadResumeConfig] = {}
 
     def discover(self) -> list[LocalTaskRecord]:
         try:
@@ -115,6 +123,38 @@ class CodexSessionDiscovery:
         from openai_codex import AsyncCodex
 
         return AsyncCodex(config=codex_config)
+
+    def _create_async_codex_client_for_thread(
+        self,
+        thread_id: str,
+        *,
+        cwd: Optional[str],
+    ) -> Any:
+        resume_config = self._thread_resume_configs.get(thread_id)
+        if resume_config is None:
+            return self._create_async_codex_client()
+
+        client_config = self._codex_config_type()(
+            codex_bin=resume_config.codex_bin,
+            config_overrides=resume_config.config_overrides,
+            cwd=cwd,
+            env=_codex_env(self.codex_home, resume_config.env),
+        )
+        return self._create_async_codex_client_with_config(client_config)
+
+    def _remember_thread_resume_config(
+        self,
+        thread_id: str,
+        codex_config: Any,
+    ) -> None:
+        clean_thread_id = thread_id.strip()
+        if not clean_thread_id:
+            return
+        self._thread_resume_configs[clean_thread_id] = _ThreadResumeConfig(
+            codex_bin=str(getattr(codex_config, "codex_bin", "") or ""),
+            config_overrides=tuple(getattr(codex_config, "config_overrides", ()) or ()),
+            env=dict(getattr(codex_config, "env", None) or {}),
+        )
 
     def _codex_config_type(self) -> Any:
         from openai_codex import CodexConfig
@@ -258,7 +298,7 @@ class CodexSessionDiscovery:
         from executor.agents.codex.codex_agent import _full_access_sandbox
         from executor.agents.codex.event_mapper import CodeXEventMapper
 
-        client = self._create_async_codex_client()
+        client = self._create_async_codex_client_for_thread(thread_id, cwd=cwd)
         async with client as codex:
             thread = await codex.thread_resume(thread_id, cwd=cwd)
             mapper = CodeXEventMapper(emitter)
@@ -350,6 +390,7 @@ class CodexSessionDiscovery:
                         raise RuntimeError(
                             "Codex thread_start did not return a threadId"
                         )
+                    self._remember_thread_resume_config(thread_id, codex_config)
 
                     emitter = emitter_factory(thread_id)
                     mapper = CodeXEventMapper(

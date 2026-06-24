@@ -78,6 +78,14 @@ POST /api/runtime-work/send
 
 Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Claude Code 任务会把本地 transcript 写回 JSON LocalTask 索引；原生 Codex 任务只继续 Codex SDK thread，消息和状态以 Codex 自己的 session 记录为准，不写回 executor JSON 索引。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
 
+如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：
+
+```text
+POST /api/runtime-work/cancel
+```
+
+Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。executor 对原生 Codex 任务取消当前进程内正在运行的 SDK task，清理 running 标记，并让 Responses 流发出 incomplete 状态；非 Codex runtime 由各自 adapter 的 `cancel` 能力处理。取消成功后，前端才发送队列中的下一条消息。这个流程仍只使用 `deviceId + localTaskId` 定位任务，`workspacePath` 只是设备目录上下文。
+
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。

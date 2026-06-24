@@ -207,4 +207,56 @@ describe('workbenchReducer', () => {
 
     expect(refreshed.devices).toEqual([device])
   })
+
+  test('updates cached device and runtime workspace status from websocket events', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Device 1',
+          status: 'offline' as const,
+          is_default: false,
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+        },
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Device 1',
+                deviceStatus: 'offline',
+                available: false,
+                workspacePath: '/workspace/repo',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 0,
+      },
+    })
+
+    const updated = workbenchReducer(state, {
+      type: 'device_status_changed',
+      deviceId: 'device-1',
+      status: 'online',
+    })
+
+    expect(updated.devices[0].status).toBe('online')
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0]).toMatchObject({
+      deviceStatus: 'online',
+      available: true,
+    })
+  })
 })

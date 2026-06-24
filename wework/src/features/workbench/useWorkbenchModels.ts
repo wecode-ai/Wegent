@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   type ModelCompatibilityFamily,
+  areModelCompatibilityFamiliesCompatible,
   areModelsProtocolCompatible,
   getDefaultModelOptions,
   getModelCompatibilityFamily,
@@ -108,7 +109,9 @@ function getCompatibilityDisabledReasonForFamily(
   const nextFamily = getModelCompatibilityFamily(nextModel)
   if (!nextFamily) return 'missing_target_runtime_family'
 
-  return currentFamily === nextFamily ? null : 'runtime_family_mismatch'
+  return areModelCompatibilityFamiliesCompatible(currentFamily, nextFamily)
+    ? null
+    : 'runtime_family_mismatch'
 }
 
 function annotateModelsByCompatibility(

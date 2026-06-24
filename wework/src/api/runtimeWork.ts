@@ -13,6 +13,7 @@ import type {
   RuntimeSendResponse,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
+  RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
@@ -89,6 +90,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     archiveRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archive', address)
+    },
+    cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return client.post('/runtime-work/cancel', address)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)

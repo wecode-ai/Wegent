@@ -425,6 +425,17 @@ class RuntimeTaskArchiveResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeTaskCancelResponse(BaseModel):
+    """Acknowledgement from the runtime cancel RPC."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    local_task_id: str = Field(..., alias="localTaskId")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    error: Optional[str] = None
+
+
 class RuntimeTaskCreateRequest(BaseModel):
     """Request to create a device-local runtime task without DB Task rows."""
 

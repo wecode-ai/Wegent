@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -124,6 +124,81 @@ describe('MessageList', () => {
     expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
   })
 
+  test('does not render blank completed assistant placeholders', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: '执行pwd',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:00.000Z',
+          },
+          {
+            id: 'assistant-empty',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+          {
+            id: 'user-2',
+            role: 'user',
+            content: '执行ls',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:02.000Z',
+          },
+          {
+            id: 'assistant-2',
+            role: 'assistant',
+            content: 'ls output',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:03.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByTestId('message-assistant')).toHaveLength(1)
+    expect(screen.getByText('执行pwd')).toBeInTheDocument()
+    expect(screen.getByText('执行ls')).toBeInTheDocument()
+    expect(screen.getByText('ls output')).toBeInTheDocument()
+  })
+
+  test('keeps completed assistant turns that only have processing blocks', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'thinking-1',
+        subtaskId: 11,
+        type: 'thinking',
+        content: '正在执行 pwd',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-blocks',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByTestId('thinking-toggle-button'))
+    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
+  })
+
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
     const { container } = render(
       <MessageList
@@ -145,6 +220,37 @@ describe('MessageList', () => {
     const orderedList = container.querySelector('.assistant-markdown ol')
     expect(orderedList).toHaveClass('pl-8')
     expect(orderedList).not.toHaveClass('pl-5')
+  })
+
+  test('renders assistant markdown links as reference-style inline links', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-link',
+            role: 'assistant',
+            content: '[MessageList.tsx](https://example.com/MessageList.tsx)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const link = screen.getByRole('link', { name: 'MessageList.tsx' })
+    expect(link).toHaveClass(
+      'inline-flex',
+      'items-center',
+      'gap-1',
+      'rounded-md',
+      'text-blue-600',
+      'no-underline'
+    )
+    expect(link).not.toHaveClass('bg-blue-50')
+    expect(link).not.toHaveClass('hover:bg-blue-100')
+    expect(link).not.toHaveClass('ring-1')
+    expect(link).not.toHaveClass('text-primary')
+    expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
   })
 
   test('renders IM source badge for user messages with channel label', () => {
@@ -725,10 +831,10 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.getByText('正在思考')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
-  test('renders Codex-style thinking timeline before the first streamed block arrives', () => {
+  test('renders a compact thinking indicator before the first streamed block arrives', () => {
     render(
       <MessageList
         messages={[
@@ -743,8 +849,34 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText(/已处理/)).toBeInTheDocument()
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+    const thinkingIndicator = screen.getByTestId('thinking-indicator')
+    expect(thinkingIndicator).toHaveTextContent('正在思考')
+    expect(thinkingIndicator).not.toHaveClass('bg-surface')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows thinking in the message list while waiting for the assistant response', () => {
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'hi',
+            status: 'done',
+            createdAt: '2026-05-25T18:45:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+    const thinkingIndicator = screen.getByTestId('thinking-indicator')
+    expect(thinkingIndicator).toHaveTextContent('正在思考')
+    expect(thinkingIndicator).not.toHaveClass('bg-surface')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
   test('shows a single thinking indicator for streaming assistant messages with blocks', () => {

@@ -410,6 +410,7 @@ class RuntimeAgentAdapter:
         self.run_background = run_background
         self.responses_event_emitter = responses_event_emitter
         self._running_tasks: set[asyncio.Task] = set()
+        self._running_tasks_by_local_task_id: dict[str, asyncio.Task] = {}
 
     async def create(self, payload: dict[str, Any]) -> dict[str, Any]:
         workspace_path = _required_workspace_path(payload)
@@ -498,7 +499,36 @@ class RuntimeAgentAdapter:
 
         task = asyncio.create_task(self._run_agent(local_task_id, request))
         self._running_tasks.add(task)
-        task.add_done_callback(self._running_tasks.discard)
+        self._running_tasks_by_local_task_id[local_task_id] = task
+
+        def cleanup(completed_task: asyncio.Task) -> None:
+            self._running_tasks.discard(completed_task)
+            if (
+                self._running_tasks_by_local_task_id.get(local_task_id)
+                is completed_task
+            ):
+                self._running_tasks_by_local_task_id.pop(local_task_id, None)
+
+        task.add_done_callback(cleanup)
+
+    async def cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
+        local_task_id = _required_text(payload, "localTaskId")
+        workspace_path = payload.get("workspacePath")
+        task = self.store.get_task(
+            local_task_id,
+            workspace_path=workspace_path if isinstance(workspace_path, str) else None,
+        )
+        running_task = self._running_tasks_by_local_task_id.get(local_task_id)
+        if running_task and not running_task.done():
+            running_task.cancel()
+        self._mark_not_running(local_task_id)
+        return {
+            "success": True,
+            "accepted": True,
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+            "runtime": task.runtime,
+        }
 
     async def _run_agent(self, local_task_id: str, request: ExecutionRequest) -> None:
         transport = RuntimeTranscriptTransport(
@@ -515,6 +545,9 @@ class RuntimeAgentAdapter:
         )
         try:
             await self.execute_agent(request, emitter)
+            self._mark_not_running(local_task_id)
+        except asyncio.CancelledError:
+            await emitter.incomplete(reason="cancelled")
             self._mark_not_running(local_task_id)
         except Exception as exc:
             logger.exception("Runtime agent execution failed: %s", exc)

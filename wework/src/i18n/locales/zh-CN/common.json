@@ -261,6 +261,7 @@
     "fullscreen_input_title": "编辑消息",
     "send_message": "发送消息",
     "sending_message": "正在发送...",
+    "runtime_task_running_message": "当前回复仍在进行中，请稍后再发送",
     "custom_mode": "自定义",
     "model_selector": "模型选择",
     "model_family": "模型",

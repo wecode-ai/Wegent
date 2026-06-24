@@ -177,14 +177,28 @@ export function getModelCompatibilityFamily(
   return normalizeCompatibilitySignal(model.runtime?.family) || null
 }
 
+function getCompatibilityRuntimeGroup(family: ModelCompatibilityFamily): string {
+  const [provider = '', protocol = ''] = family.split('.')
+  if (family === 'openai' || protocol === 'openai-responses') return 'openai'
+  if (family === 'claude' || provider === 'claude' || protocol === 'claude') return 'claude'
+  return family
+}
+
+export function areModelCompatibilityFamiliesCompatible(
+  currentFamily?: ModelCompatibilityFamily | null,
+  nextFamily?: ModelCompatibilityFamily | null,
+): boolean {
+  if (!currentFamily || !nextFamily) return false
+  return getCompatibilityRuntimeGroup(currentFamily) === getCompatibilityRuntimeGroup(nextFamily)
+}
+
 export function areModelsProtocolCompatible(
   currentModel?: ModelCompatibilitySource | null,
   nextModel?: ModelCompatibilitySource | null,
 ): boolean {
   const currentFamily = getModelCompatibilityFamily(currentModel)
   const nextFamily = getModelCompatibilityFamily(nextModel)
-  if (!currentFamily || !nextFamily) return false
-  return currentFamily === nextFamily
+  return areModelCompatibilityFamiliesCompatible(currentFamily, nextFamily)
 }
 
 export function inferModelFamily(model: UnifiedModel): string {

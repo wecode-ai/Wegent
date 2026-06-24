@@ -78,6 +78,14 @@ POST /api/runtime-work/send
 
 Backend forwards `runtime.tasks.send`. The executor resumes the runtime session from the local LocalTask's opaque runtime handle. Claude Code tasks write the local transcript back to the JSON LocalTask index. Native Codex tasks only continue the Codex SDK thread; messages and status come from Codex's own session records and are not written back to the executor JSON index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
 
+If the current LocalTask is still replying, Wework queues new user input locally instead of sending concurrent `runtime.tasks.send` calls. Users can remove queued messages, or choose to stop the current reply and send the queued message from the queue panel. That first calls:
+
+```text
+POST /api/runtime-work/cancel
+```
+
+Backend forwards `deviceId + localTaskId` as `runtime.tasks.cancel`. For native Codex tasks, the executor cancels the in-process SDK task, clears the running marker, and lets the Responses stream emit an incomplete state. Non-Codex runtimes are cancelled through their adapter's `cancel` capability. After cancellation is accepted, the frontend sends the next queued message. This flow still identifies the task only by `deviceId + localTaskId`; `workspacePath` remains device-directory context.
+
 Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
 
 Native Codex tasks have one additional rule: transcript refreshes trust only Codex's own session transcript. `runtimeHandle.messages` from a fork package or the executor JSON index is only an import-time snapshot and must not be used as a fallback for native Codex transcripts; otherwise Wework can show stale messages or lose follow-up turns after refresh. Non-SDK native tasks may still use the executor JSON index as their local transcript source.

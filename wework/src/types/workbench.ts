@@ -48,6 +48,7 @@ export interface QueuedWorkbenchMessage {
   status: QueuedMessageStatus
   createdAt: string
   error?: string
+  notice?: string
 }
 
 export interface GuidanceWorkbenchMessage {

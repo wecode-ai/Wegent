@@ -1063,6 +1063,54 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
 
 
 @pytest.mark.asyncio
+async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.cancel_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskAddress(
+            deviceId="device-1",
+            localTaskId="codex-1",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.local_task_id == "codex-1"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.cancel",
+        payload={
+            "deviceId": "device-1",
+            "localTaskId": "codex-1",
+        },
+        timeout_seconds=30,
+    )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_rows(
     test_db,
     test_user,

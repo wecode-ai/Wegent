@@ -160,6 +160,7 @@ class RuntimeWorkRpcHandler:
         self.responses_event_emitter = responses_event_emitter
         self.adapters = adapters or self._default_adapters()
         self._running_sdk_tasks: set[asyncio.Task] = set()
+        self._running_sdk_tasks_by_local_task_id: dict[str, asyncio.Task] = {}
         self._running_sdk_task_ids: set[str] = set()
         self._sdk_codex_task_records: dict[str, LocalTaskRecord] = {}
         self._codex_seen_updated_at: dict[str, str] = {}
@@ -186,6 +187,9 @@ class RuntimeWorkRpcHandler:
             if method == "runtime.tasks.send":
                 response = await self._send(payload)
                 return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.tasks.cancel":
+                response = await self._cancel(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.archive":
                 response = await self._archive(payload)
                 return _compress_runtime_rpc_response(response, method=method)
@@ -209,7 +213,6 @@ class RuntimeWorkRpcHandler:
                 return _compress_runtime_rpc_response(response, method=method)
             if method in {
                 "runtime.tasks.create",
-                "runtime.tasks.cancel",
             }:
                 response = await self._adapter_method(method, payload)
                 return _compress_runtime_rpc_response(response, method=method)
@@ -757,6 +760,14 @@ class RuntimeWorkRpcHandler:
             if codex_page is not None and (
                 codex_page["messages"] or before_cursor is not None
             ):
+                if before_cursor is None:
+                    codex_page = {
+                        **codex_page,
+                        "messages": self._merge_recent_transcript_messages(
+                            codex_page["messages"],
+                            self._runtime_handle_messages(task),
+                        ),
+                    }
                 return codex_page
 
         fallback_started_at = time.perf_counter()
@@ -906,6 +917,12 @@ class RuntimeWorkRpcHandler:
 
         subtask_id = self._next_sdk_codex_subtask_id(task)
         task = self._mark_task_running(task, subtask_id)
+        task = self._record_sdk_codex_user_message(
+            task,
+            message,
+            subtask_id,
+            source=source,
+        )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
         sdk_task = asyncio.create_task(
@@ -919,7 +936,13 @@ class RuntimeWorkRpcHandler:
             )
         )
         self._running_sdk_tasks.add(sdk_task)
-        sdk_task.add_done_callback(self._running_sdk_tasks.discard)
+        self._running_sdk_tasks_by_local_task_id[task.local_task_id] = sdk_task
+        sdk_task.add_done_callback(
+            lambda completed_task, local_task_id=task.local_task_id: (
+                self._running_sdk_tasks.discard(completed_task),
+                self._pop_running_sdk_task(local_task_id, completed_task),
+            )
+        )
         return {
             "success": True,
             "accepted": True,
@@ -963,6 +986,8 @@ class RuntimeWorkRpcHandler:
                 cwd=task.workspace_path,
                 emitter=emitter,
             )
+        except asyncio.CancelledError:
+            await emitter.incomplete(reason="cancelled")
         except Exception as exc:
             logger.exception("Failed to continue Codex SDK thread: %s", thread_id)
             try:
@@ -1008,6 +1033,46 @@ class RuntimeWorkRpcHandler:
         if isinstance(current, int) and current > 0:
             return current + 1
         return int(time.time() * 1000)
+
+    def _pop_running_sdk_task(
+        self,
+        local_task_id: str,
+        completed_task: asyncio.Task,
+    ) -> None:
+        if (
+            self._running_sdk_tasks_by_local_task_id.get(local_task_id)
+            is completed_task
+        ):
+            self._running_sdk_tasks_by_local_task_id.pop(local_task_id, None)
+
+    async def _cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
+        task = self._load_payload_task(payload)
+        if self._is_sdk_codex_task(task):
+            running_task = self._running_sdk_tasks_by_local_task_id.get(
+                task.local_task_id
+            )
+            if running_task and not running_task.done():
+                running_task.cancel()
+            self._running_sdk_task_ids.discard(task.local_task_id)
+            self._mark_sdk_codex_task_not_running(task.local_task_id)
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": task.local_task_id,
+                "workspacePath": task.workspace_path,
+                "runtime": task.runtime,
+            }
+
+        adapter = self.adapters.get(task.runtime)
+        if not adapter or not hasattr(adapter, "cancel"):
+            return self._error(
+                "Runtime cancel adapter is not available",
+                code="unsupported_runtime",
+            )
+        result = await self._maybe_await(getattr(adapter, "cancel")(payload))
+        if isinstance(result, dict):
+            return {"success": True, **result}
+        return {"success": True, "result": result}
 
     def _is_sdk_codex_task(self, task: LocalTaskRecord) -> bool:
         if not self._is_codex_runtime(task.runtime):
@@ -1387,7 +1452,13 @@ class RuntimeWorkRpcHandler:
             )
         )
         self._running_sdk_tasks.add(sdk_task)
-        sdk_task.add_done_callback(self._running_sdk_tasks.discard)
+        self._running_sdk_tasks_by_local_task_id[task.local_task_id] = sdk_task
+        sdk_task.add_done_callback(
+            lambda completed_task, local_task_id=task.local_task_id: (
+                self._running_sdk_tasks.discard(completed_task),
+                self._pop_running_sdk_task(local_task_id, completed_task),
+            )
+        )
 
         return {
             "success": True,
@@ -1425,6 +1496,9 @@ class RuntimeWorkRpcHandler:
                     emitter_factory=emitter_factory,
                 )
             )
+        except asyncio.CancelledError:
+            if emitter is not None:
+                await emitter.incomplete(reason="cancelled")
         except Exception as exc:
             logger.exception("Failed to create Codex SDK thread")
             emitter = self._create_local_task_emitter(
@@ -1570,6 +1644,13 @@ class RuntimeWorkRpcHandler:
         if workspace_path is not None and not isinstance(workspace_path, str):
             raise ValueError("workspacePath must be a string")
 
+        sdk_task = self._find_sdk_codex_task(
+            local_task_id,
+            workspace_path=workspace_path,
+        )
+        if sdk_task is not None:
+            return sdk_task
+
         try:
             task = self.store.get_task(local_task_id, workspace_path=workspace_path)
             if self._is_codex_runtime(task.runtime):
@@ -1579,13 +1660,6 @@ class RuntimeWorkRpcHandler:
             return task
         except KeyError:
             pass
-
-        sdk_task = self._find_sdk_codex_task(
-            local_task_id,
-            workspace_path=workspace_path,
-        )
-        if sdk_task is not None:
-            return sdk_task
 
         return LocalTaskRecord(
             local_task_id=local_task_id.strip(),
@@ -1609,10 +1683,49 @@ class RuntimeWorkRpcHandler:
         task = self._sdk_codex_task_records.get(local_task_id)
         if task is None:
             return
-        self._sdk_codex_task_records[local_task_id] = replace(
+        self._remember_sdk_codex_task(
+            replace(
+                task,
+                running=False,
+                updated_at=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat(),
+            )
+        )
+
+    def _record_sdk_codex_user_message(
+        self,
+        task: LocalTaskRecord,
+        message: str,
+        subtask_id: int,
+        *,
+        source: Optional[dict[str, Any]],
+    ) -> LocalTaskRecord:
+        handle = dict(task.runtime_handle)
+        messages = self._runtime_handle_messages(task)
+        message_id = f"{task.local_task_id}:user:{subtask_id}"
+        if not any(str(existing.get("id")) == message_id for existing in messages):
+            messages.append(
+                {
+                    "id": message_id,
+                    "role": "user",
+                    "content": message,
+                    "createdAt": utc_now_iso(),
+                    "status": "done",
+                    "subtaskId": subtask_id,
+                }
+            )
+        handle["messages"] = messages
+        if source is not None:
+            source_by_message_id = handle.get("sourceMetadataByMessageId")
+            if not isinstance(source_by_message_id, dict):
+                source_by_message_id = {}
+            source_by_message_id[message_id] = dict(source)
+            handle["sourceMetadataByMessageId"] = source_by_message_id
+        return replace(
             task,
-            running=False,
-            updated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            runtime_handle=handle,
+            updated_at=utc_now_iso(),
         )
 
     def _record_sdk_codex_response_event(
@@ -1627,11 +1740,7 @@ class RuntimeWorkRpcHandler:
             return
 
         handle = dict(task.runtime_handle)
-        messages = [
-            dict(message)
-            for message in handle.get("messages", [])
-            if isinstance(message, dict)
-        ]
+        messages = self._runtime_handle_messages(task)
 
         def assistant_message() -> dict[str, Any]:
             message_id = f"{local_task_id}:assistant:{subtask_id}"
@@ -1674,10 +1783,12 @@ class RuntimeWorkRpcHandler:
 
         handle["messages"] = messages
         handle["activeSubtaskId"] = subtask_id
-        self._sdk_codex_task_records[local_task_id] = replace(
-            task,
-            runtime_handle=handle,
-            updated_at=utc_now_iso(),
+        self._remember_sdk_codex_task(
+            replace(
+                task,
+                runtime_handle=handle,
+                updated_at=utc_now_iso(),
+            )
         )
 
     def _response_completed_text(self, data: dict[str, Any]) -> str:
@@ -1697,6 +1808,109 @@ class RuntimeWorkRpcHandler:
                 if isinstance(text, str):
                     chunks.append(text)
         return "".join(chunks)
+
+    def _runtime_handle_messages(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        messages = task.runtime_handle.get("messages", [])
+        if not isinstance(messages, list):
+            return []
+        return [dict(message) for message in messages if isinstance(message, dict)]
+
+    def _merge_recent_transcript_messages(
+        self,
+        codex_messages: Any,
+        cached_messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not isinstance(codex_messages, list):
+            codex_messages = []
+        normalized_codex = [
+            message for message in codex_messages if isinstance(message, dict)
+        ]
+        if not cached_messages:
+            return normalized_codex
+        if not normalized_codex:
+            return [
+                message
+                for message in cached_messages
+                if self._has_recoverable_message_content(message)
+            ]
+
+        result: list[dict[str, Any]] = []
+        cursor = 0
+        used_codex_indexes: set[int] = set()
+
+        for cached_message in cached_messages:
+            match_index = self._find_equivalent_codex_message(
+                cached_message,
+                normalized_codex,
+                start_index=cursor,
+                used_indexes=used_codex_indexes,
+            )
+            if match_index is None:
+                if self._has_recoverable_message_content(cached_message):
+                    result.append(cached_message)
+                continue
+
+            while cursor <= match_index and cursor < len(normalized_codex):
+                if cursor not in used_codex_indexes:
+                    candidate = normalized_codex[cursor]
+                    if self._has_recoverable_message_content(candidate):
+                        result.append(candidate)
+                    used_codex_indexes.add(cursor)
+                cursor += 1
+
+        while cursor < len(normalized_codex):
+            if cursor not in used_codex_indexes:
+                candidate = normalized_codex[cursor]
+                if self._has_recoverable_message_content(candidate):
+                    result.append(candidate)
+            cursor += 1
+
+        return result
+
+    def _find_equivalent_codex_message(
+        self,
+        cached_message: dict[str, Any],
+        codex_messages: list[dict[str, Any]],
+        *,
+        start_index: int,
+        used_indexes: set[int],
+    ) -> Optional[int]:
+        cached_key = self._message_equivalence_key(cached_message)
+        if cached_key is None:
+            return None
+        for index in range(start_index, len(codex_messages)):
+            if index in used_indexes:
+                continue
+            if self._message_equivalence_key(codex_messages[index]) == cached_key:
+                return index
+        return None
+
+    def _message_equivalence_key(
+        self,
+        message: dict[str, Any],
+    ) -> Optional[tuple[str, str]]:
+        role = str(message.get("role") or "").lower()
+        content = self._string_content(message.get("content")).strip()
+        if not role or not content:
+            return None
+        return role, content
+
+    def _has_recoverable_message_content(self, message: dict[str, Any]) -> bool:
+        content = self._string_content(message.get("content")).strip()
+        if content:
+            return True
+        attachments = message.get("attachments")
+        if isinstance(attachments, list) and any(
+            isinstance(attachment, dict) for attachment in attachments
+        ):
+            return True
+        blocks = message.get("blocks")
+        return isinstance(blocks, list) and any(
+            isinstance(block, dict) for block in blocks
+        )
 
     def _find_sdk_codex_task(
         self,

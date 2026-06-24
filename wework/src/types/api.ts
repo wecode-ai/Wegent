@@ -494,6 +494,13 @@ export interface RuntimeTaskArchiveResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskCancelResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath?: string | null
+  error?: string | null
+}
+
 export interface RuntimeTaskCreateRequest {
   projectId?: number
   deviceWorkspaceId?: number
@@ -1271,7 +1278,9 @@ export interface ChatBlock {
   tool_input?: Record<string, unknown>
   tool_output?: unknown
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
-  timestamp?: number
+  timestamp?: number | string | null
+  created_at?: number | string | null
+  createdAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {

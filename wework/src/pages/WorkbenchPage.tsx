@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    currentRuntimeTaskRunning,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore,
     isRuntimeTranscriptLoadingMore,
@@ -107,6 +108,7 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      currentRuntimeTaskRunning={currentRuntimeTaskRunning}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
       isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}

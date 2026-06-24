@@ -23,6 +23,7 @@ from app.schemas.runtime_work import (
     RuntimeSendResponse,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
+    RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
@@ -342,6 +343,25 @@ async def archive_runtime_task_endpoint(
         },
     )
     return await runtime_work_service.archive_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/cancel",
+    response_model=RuntimeTaskCancelResponse,
+    response_model_by_alias=True,
+)
+async def cancel_runtime_task_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel a native runtime LocalTask through the owning local executor."""
+
+    return await runtime_work_service.cancel_runtime_task(
         db=db,
         user_id=current_user.id,
         address=address,

@@ -13,6 +13,8 @@ import type {
 import type { WorkbenchState } from '@/types/workbench'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
+type WorkbenchDeviceStatus = DeviceInfo['status']
+
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
@@ -57,6 +59,12 @@ export type WorkbenchAction =
       standaloneDeviceId?: string | null
       standaloneWorkspacePath?: string | null
     }
+  | {
+      type: 'device_status_changed'
+      deviceId: string
+      status: WorkbenchDeviceStatus
+      name?: string | null
+    }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
@@ -92,6 +100,32 @@ function keepDevicesOnTransientEmpty(
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
   return nextDevices
+}
+
+function updateRuntimeWorkDeviceStatus(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  deviceId: string,
+  status: WorkbenchDeviceStatus
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    if (workspace.deviceId !== deviceId) return workspace
+    return {
+      ...workspace,
+      deviceStatus: status,
+      available: status !== 'offline',
+    }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    unmappedDeviceWorkspaces: runtimeWork.unmappedDeviceWorkspaces.map(updateWorkspace),
+  }
 }
 
 function runtimeWorkspaceFromMapping(
@@ -234,6 +268,23 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneWorkspacePath === undefined
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
+      }
+    case 'device_status_changed':
+      return {
+        ...state,
+        devices: state.devices.map(device => {
+          if (device.device_id !== action.deviceId) return device
+          return {
+            ...device,
+            name: action.name || device.name,
+            status: action.status,
+          }
+        }),
+        runtimeWork: updateRuntimeWorkDeviceStatus(
+          state.runtimeWork,
+          action.deviceId,
+          action.status
+        ),
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }

@@ -889,6 +889,130 @@ async def test_runtime_work_handler_includes_im_source_on_sdk_stream_events(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_keeps_sdk_partial_turn_in_transcript(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class PartialCodexStreamDiscovery:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        def read_transcript(self, _thread_id, _session_path=None):
+            return []
+
+        def read_transcript_page(
+            self,
+            _thread_id,
+            _session_path=None,
+            *,
+            limit,
+            before_cursor,
+        ):
+            return SimpleNamespace(
+                messages=[
+                    {
+                        "id": f"{thread_id}:user:1",
+                        "role": "user",
+                        "content": "执行pwd",
+                        "createdAt": "2026-06-24T11:00:00Z",
+                        "status": "done",
+                    }
+                ],
+                has_more_before=False,
+                before_cursor=None,
+            )
+
+        async def stream_message(self, thread_id, message, *, cwd=None, emitter):
+            await emitter.start(shell_type="Codex")
+            await emitter.text_delta("半截输出")
+            self.started.set()
+            await self.release.wait()
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = PartialCodexStreamDiscovery()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+            running=False,
+            status="active",
+        )
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    send_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "message": "执行pwd",
+            },
+        }
+    )
+
+    assert send_result["accepted"] is True
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+
+    streaming_transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    streaming_messages = streaming_transcript["messages"]
+    assert [message["content"] for message in streaming_messages] == [
+        "执行pwd",
+        "半截输出",
+    ]
+    assert streaming_messages[1]["status"] == "streaming"
+
+    cancel_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    assert cancel_result["accepted"] is True
+    await asyncio.gather(*handler._running_sdk_tasks, return_exceptions=True)
+
+    cancelled_transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    cancelled_messages = cancelled_transcript["messages"]
+    assert [message["content"] for message in cancelled_messages] == [
+        "执行pwd",
+        "半截输出",
+    ]
+    assert cancelled_messages[1]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_rejects_sdk_codex_send_without_event_emitter(
     tmp_path,
 ):
@@ -1273,6 +1397,188 @@ def test_codex_discovery_passes_resolved_codex_binary_to_sdk(tmp_path, monkeypat
     )
     assert client.config.kwargs["env"]["CODEX_HOME"] == str(tmp_path / "codex-home")
     assert (tmp_path / "codex-home").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_codex_discovery_reuses_created_thread_provider_config(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import codex_agent
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            if False:
+                yield None
+
+    class FakeThread:
+        async def turn(self, message, **kwargs):
+            self.turn_args = (message, kwargs)
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, config):
+            self.config = config
+            captured_configs.append(config)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_resume(self, thread_id, cwd=None):
+            resume_calls.append((thread_id, cwd))
+            return FakeThread()
+
+    class FakeEmitter:
+        async def start(self, **_kwargs):
+            return None
+
+        async def error(self, *_args):
+            return None
+
+    captured_configs = []
+    resume_calls = []
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    discovery._remember_thread_resume_config(
+        "thread-1",
+        SimpleNamespace(
+            codex_bin="/custom/codex",
+            config_overrides=(
+                "model_provider=wecode-openai",
+                "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+            ),
+            env={"HTTPS_PROXY": "http://127.0.0.1:7890"},
+        ),
+    )
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client",
+        lambda: pytest.fail("default Codex client should not be used"),
+    )
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+
+    await discovery.stream_message(
+        "thread-1",
+        "continue",
+        cwd="/repo/Wegent",
+        emitter=FakeEmitter(),
+    )
+
+    assert resume_calls == [("thread-1", "/repo/Wegent")]
+    assert captured_configs[0].kwargs["codex_bin"] == "/custom/codex"
+    assert captured_configs[0].kwargs["cwd"] == "/repo/Wegent"
+    assert captured_configs[0].kwargs["config_overrides"] == (
+        "model_provider=wecode-openai",
+        "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+    )
+    assert captured_configs[0].kwargs["env"]["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+
+
+@pytest.mark.asyncio
+async def test_codex_discovery_remembers_provider_config_for_created_thread(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import attachment_handler, codex_agent
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            if False:
+                yield None
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _message, **_kwargs):
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, _config):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_start(self, **_kwargs):
+            return FakeThread()
+
+    class FakeEmitter:
+        async def start(self, **_kwargs):
+            return None
+
+        async def error(self, *_args):
+            return None
+
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(codex_agent, "_deny_all_approval_mode", lambda: "deny")
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+    monkeypatch.setattr(
+        attachment_handler,
+        "process_codex_attachments",
+        lambda **kwargs: SimpleNamespace(
+            prompt=kwargs["prompt"],
+            local_image_paths=[],
+            model_input_files=[],
+        ),
+    )
+
+    await discovery.stream_new_thread(
+        SimpleNamespace(
+            model_config={
+                "model": "openai",
+                "model_id": "gpt-5.5",
+                "base_url": "http://127.0.0.1:3456/v1",
+                "api_key": "wecode-proxy-placeholder",
+                "api_format": "responses",
+            },
+            task_id=1001,
+            subtask_id=2001,
+            system_prompt="",
+            kb_meta_prompt="",
+        ),
+        "start",
+        cwd="/repo/Wegent",
+        emitter_factory=lambda _thread_id: FakeEmitter(),
+    )
+
+    resume_config = discovery._thread_resume_configs["thread-1"]
+    assert resume_config.codex_bin
+    assert "model_provider=wecode-openai" in resume_config.config_overrides
+    assert (
+        "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1"
+        in resume_config.config_overrides
+    )
+    assert (
+        "model_providers.wecode-openai.experimental_bearer_token=wecode-proxy-placeholder"
+        in resume_config.config_overrides
+    )
 
 
 def test_codex_discovery_reads_user_visible_transcript(tmp_path):
@@ -3556,6 +3862,90 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
         "second",
         "reply:second",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_cancels_running_task_before_followup(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyDiscovery:
+        def discover(self):
+            return []
+
+    first_started = asyncio.Event()
+    executed_prompts = []
+
+    async def execute_agent(request, emitter):
+        executed_prompts.append(request.prompt)
+        if request.prompt == "first":
+            first_started.set()
+            await asyncio.Event().wait()
+        await emitter.done(content=f"reply:{request.prompt}")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "first",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "team_id": 1,
+                    "prompt": "first",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {"model": "openai", "api_format": "responses"},
+                    "bot": [{"id": 7}],
+                },
+            },
+        }
+    )
+    local_task_id = create["localTaskId"]
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+
+    cancel = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+            },
+        }
+    )
+    await asyncio.sleep(0)
+
+    send = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+                "message": "guide",
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    assert cancel["success"] is True
+    assert cancel["accepted"] is True
+    assert send["success"] is True
+    assert send["accepted"] is True
+    assert executed_prompts == ["first", "guide"]
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,8 @@ is alive and healthy.
 """
 
 import asyncio
+import math
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
@@ -47,7 +49,16 @@ class LocalHeartbeatService:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._consecutive_failures = 0
-        self._max_failures = 3
+        self._max_failures = self._calculate_reconnect_threshold()
+
+    def _calculate_reconnect_threshold(self) -> int:
+        """Return failures allowed before reconnecting within backend TTL budget."""
+        backend_timeout = max(
+            float(config.LOCAL_HEARTBEAT_TIMEOUT), float(self.interval)
+        )
+        interval_count = math.floor((backend_timeout / float(self.interval)) + 1e-9)
+        interval_budget = max(1, interval_count - 1)
+        return max(1, min(3, interval_budget))
 
     @property
     def is_running(self) -> bool:
@@ -84,6 +95,7 @@ class LocalHeartbeatService:
     async def _heartbeat_loop(self) -> None:
         """Main heartbeat loop using device:heartbeat call."""
         while self._running:
+            started_at = time.monotonic()
             try:
                 if self.client.connected:
                     success = await self.client.send_heartbeat()
@@ -128,6 +140,7 @@ class LocalHeartbeatService:
                 logger.warning(f"Heartbeat error: {e}")
 
             try:
-                await asyncio.sleep(self.interval)
+                elapsed = time.monotonic() - started_at
+                await asyncio.sleep(max(0, self.interval - elapsed))
             except asyncio.CancelledError:
                 break

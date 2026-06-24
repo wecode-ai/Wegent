@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, CopyCheck, Package } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  CopyCheck,
+  Link2,
+  Package,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
@@ -17,6 +25,7 @@ import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  isWaitingForAssistant?: boolean
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -32,9 +41,16 @@ interface MessageListProps {
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
+const ASSISTANT_MARKDOWN_LINK_CLASS = [
+  'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
+  'text-[13px] font-medium leading-5 text-blue-600 no-underline',
+  'transition-colors hover:text-blue-700',
+  'dark:text-blue-300 dark:hover:text-blue-200',
+].join(' ')
 
 export function MessageList({
   messages,
+  isWaitingForAssistant = false,
   devices = [],
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -43,13 +59,18 @@ export function MessageList({
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
 }: MessageListProps) {
-  if (messages.length === 0) {
+  const visibleMessages = messages.filter(shouldRenderMessage)
+  const shouldShowWaitingIndicator =
+    isWaitingForAssistant &&
+    !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+
+  if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-2">
-      {messages.map(message => (
+      {visibleMessages.map(message => (
         <article
           key={message.id}
           className={[
@@ -74,6 +95,32 @@ export function MessageList({
           )}
         </article>
       ))}
+      {shouldShowWaitingIndicator && (
+        <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
+          <WaitingAssistantIndicator />
+        </article>
+      )}
+    </div>
+  )
+}
+
+function shouldRenderMessage(message: WorkbenchMessage): boolean {
+  if (message.role !== 'assistant') return true
+  if (message.status === 'streaming' || message.status === 'failed') return true
+  if (message.fileChanges) return true
+
+  const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
+  if (visibleContent.trim()) return true
+
+  return getDisplayProcessingBlocks(message.blocks, visibleContent).length > 0
+}
+
+function WaitingAssistantIndicator() {
+  const { t } = useTranslation('chat')
+
+  return (
+    <div className="inline-flex items-center text-[13px]" data-testid="thinking-indicator">
+      <span className="waiting-thinking-text">{t('thinking.running')}</span>
     </div>
   )
 }
@@ -535,6 +582,7 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
+  const shouldShowCompactThinking = isStreaming && !hasBlocks && !hasVisibleContent
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
@@ -602,10 +650,16 @@ function AssistantMessage({
               a: ({ href, children }) => (
                 <a
                   href={href}
-                  className="break-words text-primary underline"
+                  className={ASSISTANT_MARKDOWN_LINK_CLASS}
                   target="_blank"
                   rel="noopener noreferrer"
+                  data-testid="assistant-markdown-link"
                 >
+                  <Link2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 shrink-0"
+                    data-testid="assistant-markdown-link-icon"
+                  />
                   {children}
                 </a>
               ),
@@ -616,14 +670,7 @@ function AssistantMessage({
           </ReactMarkdown>
         </div>
       )}
-      {isStreaming && !hasBlocks && (
-        <ToolBlocksDisplay
-          blocks={[]}
-          isStreaming={true}
-          startedAt={getTurnStartMs(message.createdAt)}
-          onOpenWorkspaceFile={onOpenWorkspaceFile}
-        />
-      )}
+      {shouldShowCompactThinking && <WaitingAssistantIndicator />}
       {message.status === 'failed' && (
         <AssistantErrorCard
           error={message.error}
