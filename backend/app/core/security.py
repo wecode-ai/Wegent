@@ -483,28 +483,38 @@ def get_auth_context(
         if not api_key:
             # Fallback: try JWT Bearer token from Authorization header
             # (e.g. task tokens, session tokens)
-            if authorization.startswith("Bearer "):
-                token = authorization[7:]
-                # Skip wg- prefixed tokens: already handled by get_api_key_from_header
-                if not token.startswith("wg-"):
-                    from app.core.auth_utils import verify_jwt_token_with_db
+            if authorization and authorization.strip():
+                # Split on whitespace, compare scheme case-insensitively (RFC 7235)
+                parts = authorization.split(maxsplit=1)
+                if parts[0].lower() == "bearer" and len(parts) == 2:
+                    token = parts[1].strip()
+                    # Skip wg- prefixed tokens: already handled by get_api_key_from_header
+                    if not token.startswith("wg-"):
+                        from app.core.auth_utils import verify_jwt_token_with_db
 
-                    user = verify_jwt_token_with_db(db, token)
-                    if user and user.is_active:
-                        if is_telemetry_enabled():
-                            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
-                            span.set_attribute(
-                                SpanAttributes.AUTH_SOURCE,
-                                "authorization_header",
-                            )
-                            span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
-                            span.set_attribute(SpanAttributes.USER_ID, str(user.id))
-                            span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                            _set_user_context(
-                                user_id=str(user.id),
-                                user_name=user.user_name,
-                            )
-                        return AuthContext(user=user, api_key_name=None)
+                        user = verify_jwt_token_with_db(db, token)
+                        if user and user.is_active:
+                            if is_telemetry_enabled():
+                                span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_TOKEN_TYPE, "bearer"
+                                )
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_SOURCE,
+                                    "authorization_header",
+                                )
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_RESULT, "success"
+                                )
+                                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                                span.set_attribute(
+                                    SpanAttributes.USER_NAME, user.user_name
+                                )
+                                _set_user_context(
+                                    user_id=str(user.id),
+                                    user_name=user.user_name,
+                                )
+                            return AuthContext(user=user, api_key_name=None)
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
