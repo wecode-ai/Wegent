@@ -88,9 +88,15 @@ Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。executor
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
+图片附件上传成功后，Wework 会在当前页面的 `Attachment` 对象上保留一个前端本地的 `local_preview_url`，用于发送后立即展示图片预览，避免刚发送的消息再通过附件下载接口拉取同一张图片。该字段只属于前端渲染状态，不写入 Backend，也不会进入 `attachment_ids` 或 executor 请求；页面刷新后仍以持久化附件 ID 为准重新读取附件。
+
+消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
+
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
-runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Wework 展示文件变更卡片时，运行时 LocalTask 不走中心库 Task API，而是通过当前任务的 `deviceId + workspacePath` 调用设备命令 `turn_file_changes_review` 或 `turn_file_changes_revert`。这样 review 和 revert 都发生在生成该 LocalTask 的实际设备目录中。若本地 artifact 缺失或回滚冲突，前端会把对应状态写回当前 transcript 消息，避免继续展示过期的可操作状态。
+runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。原生 Codex 创建和继续任务时，executor 会把 `NativeTurnFileChangeTracker` 接到 Codex SDK 的 `turn/diff/updated` 事件上，记录最新的本轮累计 diff；回复完成时 tracker 通过 Responses completion fields 返回 `file_changes`，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 都必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
+
+Wework 展示文件变更卡片时，运行时 LocalTask 不走中心库 Task API，而是通过当前任务的 `deviceId + workspacePath` 调用设备命令 `turn_file_changes_review` 或 `turn_file_changes_revert`。这样 review 和 revert 都发生在生成该 LocalTask 的实际设备目录中。运行时本地任务可能没有中心库 `TaskResource`/`Subtask`，因此 artifact id 允许使用 `turn-file-changes/0/<subtaskId>` 这类纯数字路径；设备命令仍必须用完整正则匹配 artifact id，并从 metadata 校验 workspace 与 patch checksum，不能接受任意路径。若本地 artifact 缺失或回滚冲突，前端会把对应状态写回当前 transcript 消息，避免继续展示过期的可操作状态。
 
 ## 工作区工具上下文
 
@@ -118,6 +124,7 @@ Backend 根据请求中的项目映射或独立设备工作区解析目标设备
 - Codex 创建和继续时都不把任务缓存到 executor JSON 索引。当前 executor 进程内会保留一个临时内存记录，用来覆盖 Codex discovery 尚未发现新 thread 的短暂空窗；executor 重启后再以原生 Codex discovery/session 为准。
 - Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
 - 附件仍由 executor 的 Codex attachment pipeline 处理：Backend 只传 attachment id，executor 在目标设备上下载并转换给 Codex SDK，前端不传本地附件路径。
+- Codex 回复完成时如果 Responses `response.completed` 中带有 `file_changes` 或 `fileChanges`，executor 会把它保存到当前 assistant message 的 `fileChanges` 字段，后续 transcript 刷新继续展示同一张文件变更卡片。
 
 Project 场景使用运行时 workspace 引用：
 

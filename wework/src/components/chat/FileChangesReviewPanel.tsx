@@ -14,7 +14,7 @@ import {
   Search,
   WrapText,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
@@ -31,6 +31,7 @@ interface FileChangesReviewPanelProps {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
   viewOptions?: FileChangesReviewViewOption[]
   onRefresh?: () => void
 }
@@ -75,11 +76,16 @@ export function FileChangesReviewPanel({
   defaultFileTreeVisible = true,
   branchName,
   targetBranchName,
+  focusFilePath,
   viewOptions,
   onRefresh,
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
-  const [selection, setSelection] = useState({ diff: '', index: 0 })
+  const [selection, setSelection] = useState<{
+    diff: string
+    focusFilePath?: string
+    index: number
+  }>({ diff: '', index: 0 })
   const [fileTreeVisibility, setFileTreeVisibility] = useState({
     diff,
     defaultFileTreeVisible,
@@ -90,8 +96,17 @@ export function FileChangesReviewPanel({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
 
   const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
+  const focusSectionIndex = useMemo(
+    () => (focusFilePath ? findSectionIndexForPath(sections, focusFilePath) : -1),
+    [focusFilePath, sections]
+  )
+  const defaultSelectedIndex = focusSectionIndex >= 0 ? focusSectionIndex : 0
   const selectedIndex =
-    selection.diff === diff && selection.index < sections.length ? selection.index : 0
+    selection.diff === diff &&
+    selection.focusFilePath === focusFilePath &&
+    selection.index < sections.length
+      ? selection.index
+      : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
   const treeNodes = useMemo(() => buildReviewTree(sections), [sections])
   const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
@@ -104,7 +119,7 @@ export function FileChangesReviewPanel({
       : defaultFileTreeVisible
 
   const selectSection = (index: number) => {
-    setSelection({ diff, index })
+    setSelection({ diff, focusFilePath, index })
     setHunksCollapsed(false)
     window.requestAnimationFrame(() => {
       document
@@ -112,6 +127,19 @@ export function FileChangesReviewPanel({
         ?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
     })
   }
+
+  // When a specific file is requested (e.g. a file row in the changes card),
+  // scroll to its diff section once the diff has loaded. The selection itself
+  // is derived from focusFilePath during render, so this effect only handles
+  // the DOM scroll side-effect.
+  useEffect(() => {
+    if (focusSectionIndex < 0 || !diff) return
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(getDiffSectionDomId(focusSectionIndex))
+        ?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    })
+  }, [diff, focusSectionIndex])
 
   const copyGitApplyCommand = () => {
     const patch = diff.trimEnd()
@@ -726,6 +754,17 @@ function DiffFileSectionView({
 
 function getDiffSectionKey(section: DiffFileSection, index: number) {
   return `${section.path}:${index}`
+}
+
+function findSectionIndexForPath(sections: DiffFileSection[], path: string) {
+  const exact = sections.findIndex(section => section.path === path)
+  if (exact >= 0) return exact
+  // Diff section paths and card file paths can differ by a leading directory
+  // segment (e.g. workspace-relative vs repo-relative), so fall back to a
+  // suffix match before giving up.
+  return sections.findIndex(
+    section => section.path.endsWith(path) || path.endsWith(section.path)
+  )
 }
 
 function getDiffSectionDomId(index: number) {

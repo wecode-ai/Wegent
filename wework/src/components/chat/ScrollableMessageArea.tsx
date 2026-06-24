@@ -30,6 +30,7 @@ interface ScrollableMessageAreaProps {
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
   onLoadMoreBefore?: () => Promise<void> | void

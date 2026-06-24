@@ -64,7 +64,7 @@ When command startup fails, the command exits non-zero, or the command times out
 
 ## Security And Limits
 
-This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `ls_a`, `ls_dirs`, `git_clone`, `git_branch`, `git_diff_shortstat`, `git_remote_url`, `git_add_all`, `git_commit`, and `open_terminal` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`; `ls_dirs` uses the `directory_list` post processor to return only subdirectory names in the current directory. `open_terminal` starts the system terminal window on local devices with a graphical session; it is a one-shot launch command and does not provide streaming terminal interaction. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
+This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `home_dir`, `project_workspace_root`, `ls_a`, `ls_dirs`, `workspace_tree`, `workspace_read_text_file`, `project_folder_status`, `mkdir_p`, `path_exists`, `git_*`, `ls_skills`, `codex_threads_list`, `setup_shared_skills`, `open_terminal`, `sync_runtime_auth_file`, `read_runtime_auth_file`, `turn_file_changes_review`, and `turn_file_changes_revert` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`; `ls_dirs` uses the `directory_list` post processor to return only subdirectory names in the current directory. Workspace, runtime auth, Codex thread, and turn file changes commands use the `json` post processor for structured output. `open_terminal` starts the system terminal window on local devices with a graphical session; it is a one-shot launch command and does not provide streaming terminal interaction. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
 
 At runtime, add or override command definitions with a single environment variable. Simple commands can use string values; commands that need post processing can use object values:
 
@@ -92,6 +92,12 @@ Default protections are:
 - Backend and executor logs include command, device, duration, and exit code metadata.
 
 Because commands run on the user's machine, callers must treat this API as high privilege and avoid exposing it to untrusted entry points.
+
+### Turn File Changes Commands
+
+`turn_file_changes_review` and `turn_file_changes_revert` accept only artifact ids in the form `turn-file-changes/<taskId>/<subtaskId>`. For runtime LocalTasks that do not have a central task row, `taskId` may be `0`. Both path segments must still contain only digits, and the command script uses a full regular-expression match to reject path traversal. The command reads `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` and `changes.patch.gz`, verifies the workspace and patch checksum from metadata, and only then returns the diff or attempts a safe revert.
+
+Callers should bind these commands to the current LocalTask's `deviceId + workspacePath`, not to the central Task API. This keeps review and revert on the same device and workspace that produced the artifact even when the runtime task has no `TaskResource`/`Subtask` rows.
 
 ## Executor Behavior
 

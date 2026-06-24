@@ -36,6 +36,7 @@ interface MessageListProps {
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }
@@ -207,7 +208,8 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
   const documentAttachments = (message.attachments ?? []).filter(
     attachment => !isImageAttachment(attachment)
   )
-  const localImageMentions = codexLocalFileMentions?.images ?? []
+  const localImageMentions =
+    imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? [])
   const shouldCollapse =
     displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
@@ -282,18 +284,19 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
   )
 }
 
-function MessageLocalImagePreview({
-  image,
-}: {
-  image: { filename: string; path: string }
-}) {
+function MessageLocalImagePreview({ image }: { image: { filename: string; path: string } }) {
+  const [hasLoadError, setHasLoadError] = useState(false)
+  const imageSrc = resolveDirectMarkdownImageSrc(image.path)
+  if (!imageSrc || hasLoadError) return null
+
   return (
     <img
       data-testid="message-local-image-preview"
-      src={resolveDirectMarkdownImageSrc(image.path)}
+      src={imageSrc}
       alt={image.filename}
       className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
       loading="lazy"
+      onError={() => setHasLoadError(true)}
     />
   )
 }
@@ -528,6 +531,74 @@ function isLocalImagePath(src: string): boolean {
   return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
 }
 
+type MarkdownLinkTarget =
+  | { kind: 'external' }
+  | { kind: 'none' }
+  | { kind: 'file'; path: string }
+
+// Assistant responses frequently reference repository files with relative or
+// absolute filesystem paths. Rendering those as plain anchors makes the browser
+// navigate the SPA to a broken `http://localhost/...` URL, so file links are
+// routed to the caller (the previous-turn diff review when available, otherwise
+// the workspace file panel) instead.
+function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
+  const value = href?.trim()
+  if (!value) return { kind: 'none' }
+  if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
+  if (value.startsWith('#')) return { kind: 'none' }
+  if (value.startsWith('file://')) {
+    return { kind: 'file', path: localPathFromMarkdownImageSrc(value) }
+  }
+  return { kind: 'file', path: value }
+}
+
+function AssistantMarkdownLink({
+  href,
+  onOpenFile,
+  children,
+}: {
+  href?: string
+  onOpenFile?: (path: string) => void
+  children?: ReactNode
+}) {
+  const target = classifyMarkdownLink(href)
+  const icon = (
+    <Link2
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0"
+      data-testid="assistant-markdown-link-icon"
+    />
+  )
+
+  if (target.kind === 'file') {
+    const filePath = target.path
+    return (
+      <button
+        type="button"
+        className={ASSISTANT_MARKDOWN_LINK_CLASS}
+        data-testid="assistant-markdown-link"
+        onClick={() => onOpenFile?.(filePath)}
+      >
+        {icon}
+        {children}
+      </button>
+    )
+  }
+
+  return (
+    <a
+      href={href}
+      className={ASSISTANT_MARKDOWN_LINK_CLASS}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="assistant-markdown-link"
+    >
+      {icon}
+      {children}
+    </a>
+  )
+}
+
 function localPathFromMarkdownImageSrc(src: string): string {
   if (!src.startsWith('file://')) return src
 
@@ -539,16 +610,16 @@ function localPathFromMarkdownImageSrc(src: string): string {
   }
 }
 
-function resolveDirectMarkdownImageSrc(src: string): string {
+function resolveDirectMarkdownImageSrc(src: string): string | null {
   if (!isLocalImagePath(src)) return src
 
   const localPath = localPathFromMarkdownImageSrc(src)
-  if (typeof convertFileSrc !== 'function') return localPath
+  if (typeof convertFileSrc !== 'function') return null
 
   try {
     return convertFileSrc(localPath)
   } catch {
-    return localPath
+    return null
   }
 }
 
@@ -672,6 +743,7 @@ function AssistantMessage({
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }) {
@@ -685,6 +757,24 @@ function AssistantMessage({
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
   const shouldShowCompactThinking = isStreaming && !hasBlocks && !hasVisibleContent
+
+  // A file referenced in the response usually belongs to this turn's changes, so
+  // route the link into the previous-turn diff review focused on that file. When
+  // the turn has no recorded changes, fall back to the workspace file panel.
+  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
+  const openFileFromLink = (path: string) => {
+    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
+      onOpenFileChangesReview({
+        subtaskId: fileChangesSubtaskId,
+        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
+        reviewTitle: t('file_changes.previous_turn_label'),
+        defaultFileTreeVisible: false,
+        focusFilePath: path,
+      })
+      return
+    }
+    onOpenWorkspaceFile?.(path)
+  }
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
@@ -752,20 +842,9 @@ function AssistantMessage({
                 <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a
-                  href={href}
-                  className={ASSISTANT_MARKDOWN_LINK_CLASS}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="assistant-markdown-link"
-                >
-                  <Link2
-                    aria-hidden="true"
-                    className="h-3.5 w-3.5 shrink-0"
-                    data-testid="assistant-markdown-link-icon"
-                  />
+                <AssistantMarkdownLink href={href} onOpenFile={openFileFromLink}>
                   {children}
-                </a>
+                </AssistantMarkdownLink>
               ),
               img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
             }}

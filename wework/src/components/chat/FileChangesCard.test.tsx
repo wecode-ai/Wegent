@@ -138,6 +138,7 @@ describe('FileChangesCard', () => {
     expect(request.subtaskId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
+    expect(request.focusFilePath).toBeUndefined()
     expect(request.loadDiff).toEqual(expect.any(Function))
     expect(onLoadDiff).not.toHaveBeenCalled()
 
@@ -174,6 +175,7 @@ describe('FileChangesCard', () => {
     expect(request.subtaskId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
+    expect(request.focusFilePath).toBe('src/file-2.ts')
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()

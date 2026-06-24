@@ -1824,27 +1824,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     ]
   )
 
-  const refreshRuntimeTranscript = useCallback(
-    async (address: RuntimeTaskAddress, shouldApply: () => boolean = () => true) => {
-      if (!resolvedServices.runtimeWorkApi) return
-      const transcript = await resolvedServices.runtimeWorkApi.getRuntimeTranscript({
-        ...address,
-        limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
-      })
-      if (!shouldApply()) return
-      dispatchMessages({
-        type: 'reset',
-        messages: runtimeMessagesToWorkbenchMessages(address, transcript.messages),
-      })
-      setRuntimeTranscriptPage({
-        hasMoreBefore: Boolean(transcript.hasMoreBefore),
-        beforeCursor: transcript.beforeCursor ?? null,
-        loadingMore: false,
-      })
-    },
-    [resolvedServices.runtimeWorkApi]
-  )
-
   const loadOlderRuntimeTranscript = useCallback(async () => {
     const address = currentRuntimeTaskRef.current
     if (!address || !resolvedServices.runtimeWorkApi) return
@@ -2355,7 +2334,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           project: runtimeProject,
         })
         await refreshWorkLists()
-        await refreshRuntimeTranscript(address)
+        // A freshly created task has no prior history, so reset pagination
+        // directly instead of re-fetching the transcript. Re-fetching here would
+        // reset the message list with a stale snapshot and clobber both the
+        // optimistic user message and the live WebSocket "thinking" turn, causing
+        // the indicator to flicker (appear -> disappear -> reappear).
+        setRuntimeTranscriptPage({
+          hasMoreBefore: false,
+          beforeCursor: null,
+          loadingMore: false,
+        })
         handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(address)
         navigateTo(buildRuntimeTaskRoute(address))
         return true
@@ -2374,7 +2362,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       modelSelection.models,
       modelSelection.selectedModel,
       refreshWorkLists,
-      refreshRuntimeTranscript,
       rememberExecutionDevice,
       reportSendBlocked,
       resolvedServices.runtimeWorkApi,

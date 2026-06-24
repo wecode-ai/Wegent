@@ -125,9 +125,7 @@ describe('MessageList', () => {
       '已运行 1 条命令'
     )
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
-    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent(
-      '你在 9m 18s 后停止了'
-    )
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
@@ -326,6 +324,83 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
   })
 
+  test('routes assistant file-path links to the workspace file panel', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-file-link',
+            role: 'assistant',
+            content: '[managing-tasks.md](/Users/dev/repo/docs/zh/managing-tasks.md)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    // A filesystem path must not render as a navigating anchor.
+    expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('routes assistant file links to the turn diff review focused on that file', async () => {
+    const onOpenFileChangesReview = vi.fn()
+    const onLoadFileChangesDiff = vi.fn().mockResolvedValue('')
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenFileChangesReview={onOpenFileChangesReview}
+        onLoadFileChangesDiff={onLoadFileChangesDiff}
+        onRevertFileChanges={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-changed-file-link',
+            subtaskId: 42,
+            role: 'assistant',
+            content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-42',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 2,
+              deletions: 2,
+              files: [
+                {
+                  path: 'docs/zh/user-guide/chat/managing-tasks.md',
+                  change_type: 'modified',
+                  additions: 2,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+    expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
+    const request = onOpenFileChangesReview.mock.calls[0][0]
+    expect(request.subtaskId).toBe(42)
+    expect(request.focusFilePath).toBe('docs/zh/user-guide/chat/managing-tasks.md')
+    expect(request.defaultFileTreeVisible).toBe(false)
+    expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
+    await request.loadDiff()
+    expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
+  })
+
   test('renders IM source badge for user messages with channel label', () => {
     render(
       <MessageList
@@ -501,6 +576,86 @@ describe('MessageList', () => {
     )
   })
 
+  test('uses local image attachment previews without fetching after send', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'codex-clipboard.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-25T15:08:00.000+08:00',
+      local_preview_url: 'blob:local-sent-image',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '发出去图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'blob:local-sent-image'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('prefers persisted image attachments over stale Codex local image mentions', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'codex-clipboard.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-25T15:08:00.000+08:00',
+      local_preview_url: 'blob:persisted-image',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-with-attachment',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## codex-clipboard.png: /var/folders/tmp/codex-clipboard.png',
+              '',
+              '## My request for Codex:',
+              '发出去图片',
+            ].join('\n'),
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'blob:persisted-image'
+    )
+    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('发出去图片')
+  })
+
   test('renders Codex local image file mentions as user image previews after refresh', () => {
     render(
       <MessageList
@@ -532,7 +687,7 @@ describe('MessageList', () => {
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
 
-  test('keeps browser rendering alive when Tauri file conversion is unavailable', () => {
+  test('does not render raw local image paths when Tauri file conversion is unavailable', () => {
     tauriCoreMock.convertFileSrc = undefined as unknown as typeof tauriCoreMock.convertFileSrc
 
     render(
@@ -556,10 +711,35 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-local-image-preview')).toHaveAttribute(
-      'src',
-      '/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
+    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+  })
+
+  test('hides Codex local image previews when the converted file URL fails to load', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-load-failure',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /var/folders/tmp/codex-clipboard.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
     )
+
+    fireEvent.error(screen.getByTestId('message-local-image-preview'))
+
+    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 

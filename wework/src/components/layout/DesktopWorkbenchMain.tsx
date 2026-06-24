@@ -127,6 +127,7 @@ interface DesktopReviewState {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
   reloadDiff?: () => Promise<string>
 }
 
@@ -136,6 +137,7 @@ interface DesktopReviewMetadata {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
 }
 
 type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
@@ -391,6 +393,7 @@ export function DesktopWorkbenchMain({
         defaultFileTreeVisible: metadata.defaultFileTreeVisible,
         branchName: metadata.branchName,
         targetBranchName: metadata.targetBranchName,
+        focusFilePath: metadata.focusFilePath,
         reloadDiff: loadDiff,
       })
       try {
@@ -405,6 +408,7 @@ export function DesktopWorkbenchMain({
             defaultFileTreeVisible: metadata.defaultFileTreeVisible,
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
+            focusFilePath: metadata.focusFilePath,
             reloadDiff: loadDiff,
           })
         }
@@ -423,6 +427,7 @@ export function DesktopWorkbenchMain({
             defaultFileTreeVisible: metadata.defaultFileTreeVisible,
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
+            focusFilePath: metadata.focusFilePath,
             reloadDiff: loadDiff,
           })
         }
@@ -496,11 +501,13 @@ export function DesktopWorkbenchMain({
       defaultFileTreeVisible: reviewState.defaultFileTreeVisible,
       branchName: reviewState.branchName,
       targetBranchName: reviewState.targetBranchName,
+      focusFilePath: reviewState.focusFilePath,
     })
   }, [
     openReviewFromDiffLoader,
     reviewState.branchName,
     reviewState.defaultFileTreeVisible,
+    reviewState.focusFilePath,
     reviewState.reloadDiff,
     reviewState.reviewMode,
     reviewState.reviewTitle,
@@ -728,7 +735,12 @@ export function DesktopWorkbenchMain({
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
-              onOpenFileChangesReview={({ loadDiff, reviewTitle, defaultFileTreeVisible }) => {
+              onOpenFileChangesReview={({
+                loadDiff,
+                reviewTitle,
+                defaultFileTreeVisible,
+                focusFilePath,
+              }) => {
                 previousTurnReviewRef.current = {
                   loadDiff,
                   defaultFileTreeVisible,
@@ -738,6 +750,7 @@ export function DesktopWorkbenchMain({
                   reviewTitle,
                   reviewMode: 'previous-turn',
                   defaultFileTreeVisible,
+                  focusFilePath,
                 })
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}

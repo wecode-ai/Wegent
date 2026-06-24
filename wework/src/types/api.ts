@@ -1409,6 +1409,7 @@ export interface Attachment {
   subtask_id?: number | null
   file_extension: string
   created_at: string
+  local_preview_url?: string
 }
 
 export interface AttachmentUploadProgress {

@@ -161,6 +161,71 @@ async def test_runtime_transcript_transport_persists_assistant_file_changes(tmp_
     assert assistant_message["fileChanges"] == _turn_file_changes()
 
 
+@pytest.mark.asyncio
+async def test_local_task_responses_transport_persists_native_codex_file_changes(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class NativeCreateDiscovery(EmptyDiscovery):
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            assert cwd == "/repo/Wegent"
+            emitter = emitter_factory("codex-thread-1")
+            await emitter.start(shell_type="Codex")
+            await emitter.done(
+                content="Edited files", file_changes=_turn_file_changes()
+            )
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=NativeCreateDiscovery(),
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "edit files",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "edit files",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+    await asyncio.gather(*handler._running_sdk_tasks)
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": create["localTaskId"],
+            },
+        }
+    )
+
+    assert transcript["messages"][1]["content"] == "Edited files"
+    assert transcript["messages"][1]["fileChanges"] == _turn_file_changes()
+
+
 def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
 
@@ -1485,6 +1550,114 @@ async def test_codex_discovery_reuses_created_thread_provider_config(
         "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
     )
     assert captured_configs[0].kwargs["env"]["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+
+
+@pytest.mark.asyncio
+async def test_codex_discovery_stream_message_tracks_native_turn_diff(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import codex_agent
+    from executor.runtime_work import codex_discovery
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeTracker:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.recorded = []
+            self.finalized = False
+            FakeTracker.instances.append(self)
+
+        def record_diff(self, diff):
+            self.recorded.append(diff)
+
+        async def finalize(self):
+            self.finalized = True
+            return {"file_changes": _turn_file_changes()}
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            yield SimpleNamespace(
+                method="turn/diff/updated",
+                payload=SimpleNamespace(diff="diff --git a/a.txt b/a.txt\n"),
+            )
+            yield SimpleNamespace(
+                method="turn/completed",
+                payload=SimpleNamespace(
+                    turn=SimpleNamespace(status=SimpleNamespace(value="completed"))
+                ),
+            )
+
+    class FakeThread:
+        async def turn(self, _message, **_kwargs):
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, _config):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_resume(self, _thread_id, cwd=None):
+            assert cwd == "/repo/Wegent"
+            return FakeThread()
+
+    class FakeEmitter:
+        def __init__(self):
+            self.subtask_id = 2001
+            self.completion_fields_provider = None
+
+        def set_completion_fields_provider(self, provider):
+            self.completion_fields_provider = provider
+
+        async def start(self, **_kwargs):
+            return None
+
+        async def done(self, **_kwargs):
+            assert self.completion_fields_provider is not None
+            await self.completion_fields_provider()
+
+        async def error(self, *_args):
+            return None
+
+    monkeypatch.setattr(codex_discovery, "NativeTurnFileChangeTracker", FakeTracker)
+
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client",
+        lambda: FakeAsyncCodex(FakeCodexConfig()),
+    )
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+
+    await discovery.stream_message(
+        "thread-1",
+        "continue",
+        cwd="/repo/Wegent",
+        emitter=FakeEmitter(),
+    )
+
+    assert FakeTracker.instances[0].kwargs["workspace"].as_posix() == "/repo/Wegent"
+    assert FakeTracker.instances[0].kwargs["task_id"] == 0
+    assert FakeTracker.instances[0].kwargs["subtask_id"] == 2001
+    assert FakeTracker.instances[0].recorded == ["diff --git a/a.txt b/a.txt\n"]
+    assert FakeTracker.instances[0].finalized is True
 
 
 @pytest.mark.asyncio

@@ -798,7 +798,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         'resolved-device:runtime-created'
       )
     )
-    expect(screen.getByTestId('message-contents')).toHaveTextContent('已开始处理')
+    // The optimistic user message stays in place; the transcript is not
+    // refetched on send (that reset caused the "thinking" indicator to flicker).
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
+    expect(runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
       deviceId: 'resolved-device',
       localTaskId: 'runtime-created',

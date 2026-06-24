@@ -24,7 +24,10 @@ from executor.runtime_work.local_task_store import (
     normalize_workspace_path,
     utc_now_iso,
 )
-from executor.services.turn_file_changes import TurnFileChangeArtifactStore
+from executor.services.turn_file_changes import (
+    NativeTurnFileChangeTracker,
+    TurnFileChangeArtifactStore,
+)
 from shared.logger import setup_logger
 
 DEFAULT_CODEX_SESSION_LIMIT = 100
@@ -304,7 +307,16 @@ class CodexSessionDiscovery:
         client = self._create_async_codex_client_for_thread(thread_id, cwd=cwd)
         async with client as codex:
             thread = await codex.thread_resume(thread_id, cwd=cwd)
-            mapper = CodeXEventMapper(emitter)
+            turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                emitter=emitter,
+                workspace_path=cwd,
+                task_id=getattr(emitter, "task_id", 0),
+                subtask_id=getattr(emitter, "subtask_id", 0),
+            )
+            mapper = CodeXEventMapper(
+                emitter,
+                turn_file_change_tracker=turn_file_change_tracker,
+            )
             await emitter.start(shell_type="Codex")
             turn = await thread.turn(
                 message,
@@ -396,8 +408,16 @@ class CodexSessionDiscovery:
                     self._remember_thread_resume_config(thread_id, codex_config)
 
                     emitter = emitter_factory(thread_id)
+                    turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                        emitter=emitter,
+                        workspace_path=cwd,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        device_id=getattr(request, "device_id", None),
+                    )
                     mapper = CodeXEventMapper(
                         emitter,
+                        turn_file_change_tracker=turn_file_change_tracker,
                         executor_session_provider=lambda: {
                             "agent": "CodeX",
                             "threadId": thread_id,
@@ -1706,6 +1726,41 @@ def _codex_display_path(path: str, workspace_path: str) -> str:
     with contextlib.suppress(ValueError):
         return candidate.relative_to(workspace).as_posix()
     return path
+
+
+def _attach_native_turn_file_change_tracker(
+    *,
+    emitter: Any,
+    workspace_path: Optional[str],
+    task_id: Any,
+    subtask_id: Any,
+    device_id: Any = None,
+) -> Optional[NativeTurnFileChangeTracker]:
+    if not workspace_path:
+        return None
+    tracker = NativeTurnFileChangeTracker(
+        workspace=Path(workspace_path),
+        task_id=_safe_positive_int(task_id),
+        subtask_id=_safe_positive_int(subtask_id),
+        executor_home=Path(config.WEGENT_EXECUTOR_HOME),
+        device_id=device_id if isinstance(device_id, str) and device_id else None,
+    )
+    set_completion_fields_provider = getattr(
+        emitter,
+        "set_completion_fields_provider",
+        None,
+    )
+    if callable(set_completion_fields_provider):
+        set_completion_fields_provider(tracker.finalize)
+    return tracker
+
+
+def _safe_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value > 0:
+        return value
+    return 0
 
 
 def _record_timestamp(record: dict[str, Any], payload: dict[str, Any]) -> str:

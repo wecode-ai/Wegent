@@ -1781,6 +1781,9 @@ class RuntimeWorkRpcHandler:
             completed_text = self._response_completed_text(data)
             if completed_text:
                 message["content"] = completed_text
+            file_changes = self._response_completed_file_changes(data)
+            if file_changes:
+                message["fileChanges"] = file_changes
             message["status"] = "done"
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             message = assistant_message()
@@ -1818,6 +1821,16 @@ class RuntimeWorkRpcHandler:
                 if isinstance(text, str):
                     chunks.append(text)
         return "".join(chunks)
+
+    def _response_completed_file_changes(
+        self,
+        data: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        response = data.get("response")
+        if not isinstance(response, dict):
+            return None
+        file_changes = response.get("file_changes") or response.get("fileChanges")
+        return file_changes if isinstance(file_changes, dict) else None
 
     def _runtime_handle_messages(
         self,
