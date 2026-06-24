@@ -540,7 +540,16 @@ function localPathFromMarkdownImageSrc(src: string): string {
 }
 
 function resolveDirectMarkdownImageSrc(src: string): string {
-  return isLocalImagePath(src) ? convertFileSrc(localPathFromMarkdownImageSrc(src)) : src
+  if (!isLocalImagePath(src)) return src
+
+  const localPath = localPathFromMarkdownImageSrc(src)
+  if (typeof convertFileSrc !== 'function') return localPath
+
+  try {
+    return convertFileSrc(localPath)
+  } catch {
+    return localPath
+  }
 }
 
 function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {

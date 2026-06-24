@@ -6,9 +6,11 @@ import type { ProcessingBlock } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
-vi.mock('@tauri-apps/api/core', () => ({
+const tauriCoreMock = vi.hoisted(() => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
 }))
+
+vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 
 describe('MessageList', () => {
   test('renders one assistant turn file changes under its message', () => {
@@ -160,6 +162,9 @@ describe('MessageList', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    tauriCoreMock.convertFileSrc = vi.fn(
+      (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`
+    )
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
@@ -525,6 +530,37 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
+  test('keeps browser rendering alive when Tauri file conversion is unavailable', () => {
+    tauriCoreMock.convertFileSrc = undefined as unknown as typeof tauriCoreMock.convertFileSrc
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'browser-codex-image-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-local-image-preview')).toHaveAttribute(
+      'src',
+      '/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
+    )
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
   test('renders assistant markdown attachment images through authenticated blob previews', async () => {
