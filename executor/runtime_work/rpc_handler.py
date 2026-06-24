@@ -1476,16 +1476,20 @@ class RuntimeWorkRpcHandler:
         message: str,
         task: LocalTaskRecord,
     ) -> None:
+        emitter: Optional[ResponsesAPIEmitter] = None
+
         def emitter_factory(thread_id: str) -> ResponsesAPIEmitter:
+            nonlocal emitter
             attached_task = self._attach_sdk_codex_thread(
                 local_task_id=task.local_task_id,
                 thread_id=thread_id,
             )
-            return self._create_local_task_emitter(
+            emitter = self._create_local_task_emitter(
                 attached_task,
                 source=None,
                 subtask_id=request.subtask_id,
             )
+            return emitter
 
         try:
             await self._maybe_await(

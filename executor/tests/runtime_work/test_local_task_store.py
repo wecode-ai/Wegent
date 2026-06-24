@@ -3405,6 +3405,67 @@ async def test_runtime_work_handler_returns_before_codex_thread_start_finishes(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_handles_codex_create_cancel_before_thread_id(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class WaitingThreadStartDiscovery(EmptyDiscovery):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            self.started.set()
+            await self.release.wait()
+
+    discovery = WaitingThreadStartDiscovery()
+    events = []
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+        responses_event_emitter=lambda event, payload: events.append((event, payload)),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "create a Codex task",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "create a Codex task",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+    sdk_task = handler._running_sdk_tasks_by_local_task_id[create["localTaskId"]]
+    sdk_task.cancel()
+
+    await asyncio.gather(sdk_task)
+
+    assert create["localTaskId"] not in handler._running_sdk_task_ids
+    assert events == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_opens_fresh_codex_thread_before_discovery(
     tmp_path,
 ):
