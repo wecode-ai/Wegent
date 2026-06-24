@@ -99,6 +99,10 @@ LOCAL_DEVICE_COMMANDS='{"repo_status":"git status","repo_files":{"command":"ls -
 
 调用方应把这两个命令绑定到当前 LocalTask 的 `deviceId + workspacePath` 上，而不是绑定中心库 Task API。这样即使本地运行时任务没有 `TaskResource`/`Subtask`，审核和撤销也会发生在生成 artifact 的同一台设备和同一个工作区。
 
+### 工作区文件命令根目录
+
+`workspace_tree` 和 `workspace_read_text_file` 会拒绝任何不在允许工作区根目录内的路径。Backend 在每次请求时按用户和设备推导允许的根目录（绝不信任客户端传入的 `WEGENT_WORKSPACE_ROOTS`），来源有两类：workspace `source` 为 `local_path` 的 WeWork 项目，以及运行时 `DeviceWorkspace` 映射。后者让运行时本地任务即使没有指向该目录的 `local_path` 项目，也能浏览和预览自己工作区内的文件。
+
 ## Executor 行为
 
 local executor 优先使用 Backend 下发的 `argv` 执行命令；缺少 `argv` 时才回退到系统 shell。`path`/`cwd` 为空时使用 executor 当前工作目录；`env` 会合并到当前进程环境中。命令超时时，executor 会终止命令进程组并返回超时结果。

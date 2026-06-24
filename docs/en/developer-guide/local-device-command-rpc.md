@@ -99,6 +99,10 @@ Because commands run on the user's machine, callers must treat this API as high 
 
 Callers should bind these commands to the current LocalTask's `deviceId + workspacePath`, not to the central Task API. This keeps review and revert on the same device and workspace that produced the artifact even when the runtime task has no `TaskResource`/`Subtask` rows.
 
+### Workspace File Command Roots
+
+`workspace_tree` and `workspace_read_text_file` reject any path outside an allowed workspace root. The Backend derives the allowed roots per request (never trusting a client-supplied `WEGENT_WORKSPACE_ROOTS`) from two sources for the user and device: WeWork projects whose workspace `source` is `local_path`, and runtime `DeviceWorkspace` mappings. The latter lets runtime-local tasks browse and preview files in their own workspace even when no `local_path` project points at that directory.
+
 ## Executor Behavior
 
 The local executor prefers Backend-provided `argv`; it falls back to the system shell only when `argv` is missing. If `path`/`cwd` is empty, the executor uses its current working directory. `env` is merged into the current process environment. On timeout, the executor terminates the command process group and returns a timeout result.
