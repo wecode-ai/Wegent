@@ -350,24 +350,6 @@ function ToolIcon() {
   )
 }
 
-function CommentaryIcon({ className = 'mt-1 h-4 w-4 shrink-0' }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z"
-      />
-    </svg>
-  )
-}
-
 function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
 

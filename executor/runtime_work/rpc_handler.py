@@ -79,6 +79,32 @@ def _compress_runtime_rpc_response(
     }
 
 
+def _runtime_message_attachments(attachments: Any) -> list[dict[str, Any]]:
+    if not isinstance(attachments, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = attachment.get("id")
+        normalized.append(
+            {
+                "id": attachment_id,
+                "filename": attachment.get("original_filename")
+                or attachment.get("filename")
+                or f"attachment-{attachment_id}",
+                "file_size": attachment.get("file_size") or 0,
+                "mime_type": attachment.get("mime_type") or "application/octet-stream",
+                "status": "ready",
+                "subtask_id": attachment.get("subtask_id") or 0,
+                "file_extension": attachment.get("file_extension") or "",
+                "created_at": utc_now_iso(),
+            }
+        )
+    return normalized
+
+
 class LocalTaskResponsesTransport(EventTransport):
     """Send local-task Responses API events over the existing local executor socket."""
 
@@ -771,7 +797,7 @@ class RuntimeWorkRpcHandler:
                         **codex_page,
                         "messages": self._merge_recent_transcript_messages(
                             codex_page["messages"],
-                            self._runtime_handle_messages(task),
+                            self._runtime_handle_messages_for_codex_thread(task),
                         ),
                     }
                 return codex_page
@@ -881,7 +907,12 @@ class RuntimeWorkRpcHandler:
             payload.get("source") if isinstance(payload.get("source"), dict) else None
         )
         if self._is_sdk_codex_task(task):
-            return await self._send_sdk_codex_task(task, content.strip(), source)
+            return await self._send_sdk_codex_task(
+                task,
+                content.strip(),
+                source,
+                attachments=_runtime_message_attachments(payload.get("attachments")),
+            )
 
         adapter = self.adapters.get(task.runtime)
         if not adapter or not hasattr(adapter, "send"):
@@ -902,6 +933,7 @@ class RuntimeWorkRpcHandler:
         task: LocalTaskRecord,
         message: str,
         source: Optional[dict[str, Any]],
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         stream_message = getattr(self.codex_discovery, "stream_message", None)
         if not callable(stream_message):
@@ -928,6 +960,7 @@ class RuntimeWorkRpcHandler:
             message,
             subtask_id,
             source=source,
+            attachments=attachments,
         )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
@@ -1446,6 +1479,7 @@ class RuntimeWorkRpcHandler:
             title=title,
             message=message,
             subtask_id=request.subtask_id,
+            attachments=_runtime_message_attachments(request.attachments),
         )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
@@ -1556,6 +1590,7 @@ class RuntimeWorkRpcHandler:
         title: str,
         message: str,
         subtask_id: int,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> LocalTaskRecord:
         local_task_id = local_task_id.strip()
         if not local_task_id:
@@ -1577,6 +1612,7 @@ class RuntimeWorkRpcHandler:
                         "createdAt": now,
                         "status": "done",
                         "subtaskId": subtask_id,
+                        **({"attachments": attachments} if attachments else {}),
                     }
                 ],
             },
@@ -1710,6 +1746,7 @@ class RuntimeWorkRpcHandler:
         subtask_id: int,
         *,
         source: Optional[dict[str, Any]],
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> LocalTaskRecord:
         handle = dict(task.runtime_handle)
         messages = self._runtime_handle_messages(task)
@@ -1723,8 +1760,14 @@ class RuntimeWorkRpcHandler:
                     "createdAt": utc_now_iso(),
                     "status": "done",
                     "subtaskId": subtask_id,
+                    **({"attachments": attachments} if attachments else {}),
                 }
             )
+        elif attachments:
+            for existing in messages:
+                if str(existing.get("id")) == message_id:
+                    existing["attachments"] = attachments
+                    break
         handle["messages"] = messages
         if source is not None:
             source_by_message_id = handle.get("sourceMetadataByMessageId")
@@ -1841,6 +1884,26 @@ class RuntimeWorkRpcHandler:
             return []
         return [dict(message) for message in messages if isinstance(message, dict)]
 
+    def _runtime_handle_messages_for_codex_thread(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        messages = self._runtime_handle_messages(task)
+        thread_id = self._sdk_codex_thread_id(task)
+        if not thread_id:
+            return messages
+
+        for sdk_task in self._sdk_codex_task_records.values():
+            if sdk_task.local_task_id == task.local_task_id:
+                continue
+            if self._sdk_codex_thread_id(sdk_task) != thread_id:
+                continue
+            messages = self._merge_recent_transcript_messages(
+                messages,
+                self._runtime_handle_messages(sdk_task),
+            )
+        return messages
+
     def _merge_recent_transcript_messages(
         self,
         codex_messages: Any,
@@ -1879,6 +1942,10 @@ class RuntimeWorkRpcHandler:
             while cursor <= match_index and cursor < len(normalized_codex):
                 if cursor not in used_codex_indexes:
                     candidate = normalized_codex[cursor]
+                    if cursor == match_index and self._message_has_attachments(
+                        cached_message
+                    ):
+                        candidate = cached_message
                     if self._has_recoverable_message_content(candidate):
                         result.append(candidate)
                     used_codex_indexes.add(cursor)
@@ -1916,20 +1983,36 @@ class RuntimeWorkRpcHandler:
         message: dict[str, Any],
     ) -> Optional[tuple[str, str]]:
         role = str(message.get("role") or "").lower()
-        content = self._string_content(message.get("content")).strip()
+        content = self._canonical_message_equivalence_content(
+            self._string_content(message.get("content"))
+        ).strip()
         if not role or not content:
             return None
         return role, content
+
+    def _canonical_message_equivalence_content(self, content: str) -> str:
+        if (
+            "# Files mentioned by the user:" not in content
+            or "## My request for Codex:" not in content
+        ):
+            return content
+        return content.split("## My request for Codex:", maxsplit=1)[1].strip()
 
     def _has_recoverable_message_content(self, message: dict[str, Any]) -> bool:
         content = self._string_content(message.get("content")).strip()
         if content:
             return True
+        return self._message_has_attachments(message) or self._message_has_blocks(
+            message
+        )
+
+    def _message_has_attachments(self, message: dict[str, Any]) -> bool:
         attachments = message.get("attachments")
-        if isinstance(attachments, list) and any(
+        return isinstance(attachments, list) and any(
             isinstance(attachment, dict) for attachment in attachments
-        ):
-            return True
+        )
+
+    def _message_has_blocks(self, message: dict[str, Any]) -> bool:
         blocks = message.get("blocks")
         return isinstance(blocks, list) and any(
             isinstance(block, dict) for block in blocks

@@ -108,6 +108,29 @@ def _turn_file_changes():
     }
 
 
+def _raw_image_attachment():
+    return {
+        "id": 45,
+        "original_filename": "image.png",
+        "file_size": 1024,
+        "mime_type": "image/png",
+        "subtask_id": 2001,
+        "file_extension": ".png",
+    }
+
+
+def _runtime_image_attachment():
+    return {
+        "id": 45,
+        "filename": "image.png",
+        "file_size": 1024,
+        "mime_type": "image/png",
+        "status": "ready",
+        "subtask_id": 2001,
+        "file_extension": ".png",
+    }
+
+
 def _sdk_codex_record(
     thread_id,
     *,
@@ -715,6 +738,223 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
     await asyncio.wait_for(finished.wait(), timeout=1)
     await asyncio.gather(*handler._running_sdk_tasks)
     assert thread_id not in handler._running_sdk_task_ids
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_keeps_codex_followup_attachments_in_transcript(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class FakeCodexStreamDiscovery:
+        def __init__(self):
+            self.started = asyncio.Event()
+
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        async def stream_message(self, _thread_id, _message, *, cwd=None, emitter):
+            self.started.set()
+            await emitter.start(shell_type="Codex")
+            await asyncio.Event().wait()
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = FakeCodexStreamDiscovery()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "message": "发出去图片",
+                "attachments": [_raw_image_attachment()],
+            },
+        }
+    )
+    assert result["accepted"] is True
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    user = transcript["messages"][0]
+    assert user["content"] == "发出去图片"
+    assert len(user["attachments"]) == 1
+    attachment = user["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert isinstance(attachment["created_at"], str)
+    for running_task in list(handler._running_sdk_tasks):
+        running_task.cancel()
+    await asyncio.gather(*handler._running_sdk_tasks, return_exceptions=True)
+
+
+def test_runtime_work_handler_prefers_cached_attachment_message_over_codex_file_mention(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=EmptyDiscovery(),
+    )
+    cached_user = {
+        "id": "thread:user:2001",
+        "role": "user",
+        "content": "发出去图片",
+        "attachments": [_runtime_image_attachment()],
+        "status": "done",
+    }
+    codex_user = {
+        "id": "thread:user:o10",
+        "role": "user",
+        "content": "\n".join(
+            [
+                "# Files mentioned by the user:",
+                "",
+                "## image.png: /Users/me/.wegent-executor/workspace/attachments/1/0/image.png",
+                "",
+                "## My request for Codex:",
+                "发出去图片",
+            ]
+        ),
+        "status": "done",
+    }
+
+    merged = handler._merge_recent_transcript_messages([codex_user], [cached_user])
+
+    assert merged == [cached_user]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_merges_sdk_cached_attachments_for_discovered_codex_thread(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+
+    class TranscriptOnlyCodexDiscovery:
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        def read_transcript_page(
+            self, requested_thread_id, session_path=None, **_kwargs
+        ):
+            from executor.runtime_work.codex_discovery import CodexTranscriptPage
+
+            assert requested_thread_id == thread_id
+            assert session_path is None
+            return CodexTranscriptPage(
+                messages=[
+                    {
+                        "id": f"{thread_id}:user:o10",
+                        "role": "user",
+                        "content": "\n".join(
+                            [
+                                "# Files mentioned by the user:",
+                                "",
+                                "## image.png: /private/var/folders/tmp/image.png",
+                                "",
+                                "## My request for Codex:",
+                                "发出去图片",
+                            ]
+                        ),
+                        "createdAt": "2026-06-21T02:15:37Z",
+                        "status": "done",
+                    },
+                    {
+                        "id": f"{thread_id}:assistant:o11",
+                        "role": "assistant",
+                        "content": "我看到了图片",
+                        "createdAt": "2026-06-21T02:15:58Z",
+                        "status": "done",
+                    },
+                ],
+                has_more_before=False,
+                before_cursor=None,
+            )
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=TranscriptOnlyCodexDiscovery(),
+    )
+    handler._remember_sdk_codex_task(
+        LocalTaskRecord(
+            local_task_id="codex-local-1",
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={
+                "threadId": thread_id,
+                "messages": [
+                    {
+                        "id": "codex-local-1:user:2001",
+                        "role": "user",
+                        "content": "发出去图片",
+                        "attachments": [_runtime_image_attachment()],
+                        "createdAt": "2026-06-21T02:15:37Z",
+                        "status": "done",
+                        "subtaskId": 2001,
+                    }
+                ],
+            },
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    user = result["messages"][0]
+    assert user["content"] == "发出去图片"
+    assert len(user["attachments"]) == 1
+    attachment = user["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert result["messages"][1]["content"] == "我看到了图片"
 
 
 @pytest.mark.asyncio
@@ -3811,6 +4051,7 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
                     "project_workspace_path": "/repo/Wegent",
                     "model_config": {},
                     "bot": [],
+                    "attachments": [_raw_image_attachment()],
                 },
             },
         }
@@ -3857,6 +4098,11 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
         "create a Codex task",
         "Created",
     ]
+    assert len(transcript["messages"][0]["attachments"]) == 1
+    attachment = transcript["messages"][0]["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert isinstance(attachment["created_at"], str)
 
 
 @pytest.mark.asyncio
