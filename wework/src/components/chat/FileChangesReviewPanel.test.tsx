@@ -163,6 +163,33 @@ describe('FileChangesReviewPanel', () => {
     expect(diff).toHaveTextContent('new 13')
   })
 
+  test('merges multiple diff blocks for the same file into one section', async () => {
+    const duplicatePathDiff = [
+      'diff --git a/src/env.ts b/src/env.ts',
+      '--- a/src/env.ts',
+      '+++ b/src/env.ts',
+      '@@ -1 +1 @@',
+      '-old staged',
+      '+new staged',
+      'diff --git a/src/env.ts b/src/env.ts',
+      '--- a/src/env.ts',
+      '+++ b/src/env.ts',
+      '@@ -5 +5 @@',
+      '-old unstaged',
+      '+new unstaged',
+    ].join('\n')
+
+    render(<FileChangesReviewPanel loading={false} diff={duplicatePathDiff} />)
+
+    expect(screen.getAllByTestId('file-changes-review-file-option')).toHaveLength(1)
+    expect(screen.getAllByTestId('file-changes-review-file-diff-section')).toHaveLength(1)
+
+    const diff = screen.getByTestId('file-changes-review-diff')
+    expect(diff).toHaveTextContent('new staged')
+    expect(diff).toHaveTextContent('new unstaged')
+    expect(diff).not.toHaveTextContent('diff --git')
+  })
+
   test('keeps the review toolbar available when the selected view has no diff', async () => {
     const onSelectPreviousTurn = vi.fn()
 

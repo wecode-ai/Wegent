@@ -625,7 +625,7 @@ function AllDiffSections({
       <div
         data-testid="file-changes-review-diff-lines"
         data-wrap={wrapLines ? 'true' : 'false'}
-        className="min-h-0 flex-1 overflow-auto bg-background font-mono text-xs leading-5"
+        className="min-h-0 flex-1 overflow-y-auto bg-background font-mono text-xs leading-5"
       >
         {sections.map((section, index) => (
           <DiffFileSectionView
@@ -675,12 +675,11 @@ function DiffFileSectionView({
       id={getDiffSectionDomId(sectionIndex)}
       data-testid="file-changes-review-file-diff-section"
       className={cn(
-        'scroll-mt-0 border-b border-border last:border-b-0',
-        wrapLines ? 'w-full' : 'w-max min-w-full',
+        'scroll-mt-0 w-full border-b border-border last:border-b-0',
         selected && 'ring-1 ring-inset ring-primary/25'
       )}
     >
-      <header className="sticky top-0 z-10 flex min-h-9 items-center gap-2 border-b border-border bg-background px-2 py-1 font-mono text-sm font-semibold text-text-primary">
+      <header className="sticky top-0 z-10 flex min-h-9 items-center gap-2 border-b border-border bg-background px-2 py-1 text-sm font-medium">
         <button
           type="button"
           data-testid="toggle-file-diff-section-button"
@@ -691,16 +690,14 @@ function DiffFileSectionView({
         >
           <ChevronRight className={cn('h-4 w-4 transition-transform', !collapsed && 'rotate-90')} />
         </button>
-        <span className="min-w-0 flex-1 truncate" title={section.path}>
-          {compactPath(section.path)}
-        </span>
+        <DiffFilePathLabel path={section.path} />
         <span className="shrink-0 font-mono text-xs">
           <span className="text-green-600">+{additions}</span>{' '}
           <span className="text-red-600">-{deletions}</span>
         </span>
       </header>
       {!collapsed && !hunksCollapsed ? (
-        <div>
+        <div className={cn(!wrapLines && 'overflow-x-auto')}>
           <div className={cn(wrapLines ? 'min-w-full' : 'w-max min-w-full')}>
             {hunks
               .filter(hunk => hunk.header)
@@ -773,12 +770,23 @@ function formatDiffLineContent(line: string) {
   return line
 }
 
-function compactPath(path: string) {
-  const parts = path.split('/').filter(Boolean)
-  if (parts.length <= 2) {
-    return path
-  }
-  return `...${parts.slice(-2).join('/')}`
+function DiffFilePathLabel({ path }: { path: string }) {
+  const separatorIndex = path.lastIndexOf('/')
+  const directory = separatorIndex >= 0 ? path.slice(0, separatorIndex + 1) : ''
+  const fileName = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center" title={path}>
+      {directory ? (
+        // direction:rtl keeps the ellipsis on the leading edge so the file name
+        // stays visible when the header is narrow; <bdi> preserves left-to-right text.
+        <span dir="rtl" className="min-w-0 truncate text-text-muted">
+          <bdi>{directory}</bdi>
+        </span>
+      ) : null}
+      <span className="shrink-0 text-text-primary">{fileName}</span>
+    </span>
+  )
 }
 
 function buildReviewTree(sections: DiffFileSection[]): ReviewTreeNode[] {
@@ -851,17 +859,34 @@ function filterTreeNodes(nodes: ReviewTreeNode[], normalizedQuery: string): Revi
 
 function parseDiffHunks(section: DiffFileSection): DiffHunk[] {
   const hunks: DiffHunk[] = []
+  let metadataIndex = 0
   let current: DiffHunk = {
-    id: `${section.path}:metadata`,
+    id: `${section.path}:metadata:${metadataIndex}`,
     lines: [],
   }
   let hunkIndex = 0
 
+  const flush = () => {
+    if (current.header || current.lines.length > 0) {
+      hunks.push(current)
+    }
+  }
+
   section.lines.forEach(line => {
-    if (line.startsWith('@@')) {
-      if (current.header || current.lines.length > 0) {
-        hunks.push(current)
+    // A new "diff --git" inside a merged section starts a fresh metadata block
+    // so its header/index/--- /+++ lines are not rendered as diff content.
+    if (line.startsWith('diff --git')) {
+      flush()
+      metadataIndex += 1
+      current = {
+        id: `${section.path}:metadata:${metadataIndex}`,
+        lines: [],
       }
+      return
+    }
+
+    if (line.startsWith('@@')) {
+      flush()
       current = {
         id: `${section.path}:hunk:${hunkIndex}`,
         header: line,
@@ -874,9 +899,7 @@ function parseDiffHunks(section: DiffFileSection): DiffHunk[] {
     current.lines.push(line)
   })
 
-  if (current.header || current.lines.length > 0) {
-    hunks.push(current)
-  }
+  flush()
 
   return hunks
 }
