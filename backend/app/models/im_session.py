@@ -40,6 +40,9 @@ class IMPrivateSession:
     state: str = IMSessionState.IDLE
     active_task_id: int | None = None
     active_runtime_task: dict[str, Any] | None = None
+    current_target_type: str | None = None
+    current_target: dict[str, Any] | None = None
+    pending_action_id: str | None = None
     pending_payload: dict[str, Any] = field(default_factory=dict)
     state_expires_at: datetime | None = None
     last_seen_at: datetime = field(default_factory=datetime.now)
@@ -67,6 +70,14 @@ class IMPrivateSession:
         runtime_task = values.get("active_runtime_task")
         values["active_runtime_task"] = (
             runtime_task if isinstance(runtime_task, dict) else None
+        )
+        current_target = values.get("current_target")
+        values["current_target"] = (
+            current_target if isinstance(current_target, dict) else None
+        )
+        pending_action_id = values.get("pending_action_id")
+        values["pending_action_id"] = (
+            pending_action_id if isinstance(pending_action_id, str) else None
         )
         return cls(**values)
 
