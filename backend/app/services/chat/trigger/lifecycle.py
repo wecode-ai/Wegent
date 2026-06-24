@@ -33,7 +33,6 @@ from app.services.chat.storage.task_manager import (
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
-from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +376,7 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
     """Load the stored subtask result so we can preserve existing fields."""
     db = SessionLocal()
     try:
-        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if subtask and isinstance(subtask.result, dict):
             return dict(subtask.result)
         return {}

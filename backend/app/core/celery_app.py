@@ -30,6 +30,11 @@ from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
 from app.core.logging import RequestIdFilter, _create_file_handler
+from wecode.task_sharding.store_patch import (
+    install_task_sharding_store_patch_if_enabled,
+)
+
+install_task_sharding_store_patch_if_enabled()
 
 # Use configured broker/backend or fallback to REDIS_URL
 # Settings validator already converts empty strings to None
