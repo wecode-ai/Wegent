@@ -27,6 +27,8 @@ Each runtime uses one user-owned Kind resource:
       "targetPath": "~/.codex/auth.json",
       "encryptedValue": "...",
       "sha256": "...",
+      "sourceDeviceId": "...",
+      "sourceModifiedAt": "...",
       "updatedAt": "..."
     },
     "updatedAt": "..."
@@ -64,7 +66,11 @@ Whether personal configuration is enabled and whether a runtime uses the persona
   "runtime_configs": {
     "codex": {
       "use_user_config": true,
-      "use_proxy": true
+      "use_proxy": true,
+      "auth_sync": {
+        "master_device_id": "macbook-pro",
+        "slave_device_ids": ["linux-builder"]
+      }
     }
   }
 }
@@ -87,19 +93,26 @@ executor injects the proxy URL into the Codex SDK environment as `HTTP_PROXY`, `
 - If the executor environment already has `NO_PROXY` or `no_proxy`, keep that value.
 - Otherwise, use `localhost,127.0.0.1,::1,host.docker.internal` so local stdio/localhost style access bypasses the proxy.
 
-## Heartbeat Sync
+## Master/Slave Device Sync
 
-After the user enables personal configuration, executor heartbeat reports whether the local Codex auth file exists. When Backend sees an online device missing `~/.codex/auth.json`, and the user's preferences enable Codex personal configuration with saved auth content, Backend syncs the auth file to that device in the background.
+Users can choose one master device and multiple slave devices in Codex Auth settings. The master device is the source of `auth.json` and is never overwritten by Backend. Slave devices are receivers; Backend overwrites their `~/.codex/auth.json` with the currently saved master version.
+
+executor heartbeat reports Codex auth file existence, SHA-256 digest, and local modification time. Backend only applies sync policy to devices selected by the user:
+
+- Master heartbeat: if the reported digest differs and the local modification time is newer than the saved `sourceModifiedAt` or saved backend timestamp, Backend reads the master file through `read_runtime_auth_file`, validates the JSON, stores it encrypted, and records `sourceDeviceId` plus `sourceModifiedAt`. Backend then syncs the new auth to every slave device.
+- Slave heartbeat: if personal configuration is enabled and Backend has saved auth content, Backend calls `sync_runtime_auth_file` with an explicit overwrite flag and writes the saved auth directly to that slave device.
+- Heartbeats from devices that are not selected as master or slave do not trigger auth sync.
 
 The sync path reuses Local Device Command RPC: Backend calls the whitelisted `sync_runtime_auth_file` command and passes auth content through environment variables so the command line logs do not contain auth data. Session startup only injects the personal-configuration state; it no longer decrypts or sends the auth file.
 
 Device write rules:
 
 - The target path must stay inside the current user's home directory.
-- If the target file already exists, the command returns `skipped_existing` and does not overwrite it.
-- If the target file does not exist, the command creates the parent directory and writes the file with `0600` permissions.
+- Default sync does not overwrite existing files; when the target exists, the command returns `skipped_existing`.
+- Master/slave sync to slave devices sets `WEGENT_RUNTIME_CONFIG_OVERWRITE=true`; when the target exists, the device atomically replaces it and returns `overwritten`.
+- Writes create the parent directory and save the file with `0600` permissions.
 
-When importing from a device, Backend calls `read_runtime_auth_file`, validates the JSON, and stores it encrypted. The file content is not returned to Frontend.
+When importing from a device, Backend calls `read_runtime_auth_file`, validates the JSON, and stores it encrypted. The file content is not returned to Frontend. After a manual auth upload, Backend also best-effort syncs the saved auth to configured slave devices.
 
 ## Extending Runtimes
 
@@ -110,4 +123,4 @@ To add a runtime, extend the Backend runtime registry with:
 - Auth file target path
 - Validation strategy
 
-After that, the runtime can reuse the same `/users/me/runtime-configs/{runtime}` APIs, settings toggle, encrypted storage, and heartbeat sync flow.
+After that, the runtime can reuse the same `/users/me/runtime-configs/{runtime}` APIs, settings toggle, encrypted storage, and master/slave device sync flow.

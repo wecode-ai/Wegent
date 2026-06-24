@@ -28,6 +28,7 @@ USER_RUNTIME_CONFIG_API_VERSION = "agent.wecode.io/v1"
 USER_RUNTIME_CONFIG_NAMESPACE = "default"
 USER_PROXY_CONFIG_NAME = "default"
 USER_RUNTIME_CONFIG_PREFERENCE_KEY = "runtime_configs"
+AUTH_SYNC_PREFERENCE_KEY = "auth_sync"
 MAX_AUTH_JSON_BYTES = 512 * 1024
 MAX_PROXY_URL_BYTES = 2048
 
@@ -174,11 +175,146 @@ def is_runtime_proxy_enabled(preferences: Any, runtime: str) -> bool:
     return bool(config.get("use_proxy"))
 
 
+def _dedupe_device_ids(device_ids: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for raw_device_id in device_ids:
+        device_id = str(raw_device_id or "").strip()
+        if not device_id or device_id in seen:
+            continue
+        seen.add(device_id)
+        normalized.append(device_id)
+    return normalized
+
+
+def get_runtime_auth_sync(preferences: Any, runtime: str) -> dict[str, Any]:
+    """Return normalized auth sync topology for a runtime."""
+    normalized_runtime = _normalize_runtime(runtime)
+    parsed = load_runtime_preferences(preferences)
+    runtime_configs = parsed.get(USER_RUNTIME_CONFIG_PREFERENCE_KEY) or {}
+    if not isinstance(runtime_configs, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    config = runtime_configs.get(normalized_runtime) or {}
+    if not isinstance(config, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    auth_sync = config.get(AUTH_SYNC_PREFERENCE_KEY) or {}
+    if not isinstance(auth_sync, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    master_device_id = str(auth_sync.get("master_device_id") or "").strip() or None
+    slave_device_ids = _dedupe_device_ids(auth_sync.get("slave_device_ids") or [])
+    if master_device_id:
+        slave_device_ids = [
+            device_id for device_id in slave_device_ids if device_id != master_device_id
+        ]
+    return {
+        "master_device_id": master_device_id,
+        "slave_device_ids": slave_device_ids,
+    }
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _runtime_auth_report(
+    runtime_auth_files: Any,
+    runtime: str,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(runtime_auth_files, dict):
+        return None
+    report = runtime_auth_files.get(runtime)
+    return report if isinstance(report, dict) else None
+
+
+def _is_master_report_newer(auth: dict[str, Any], report: Any) -> bool:
+    if not isinstance(report, dict) or report.get("exists") is not True:
+        return False
+
+    report_sha = str(report.get("sha256") or "").strip()
+    report_modified_at = _parse_iso_datetime(report.get("modified_at"))
+    if not report_sha and not report_modified_at:
+        return False
+    if not auth.get("encryptedValue"):
+        return True
+    if report_sha and report_sha == str(auth.get("sha256") or ""):
+        return False
+
+    saved_source_modified_at = _parse_iso_datetime(auth.get("sourceModifiedAt"))
+    if saved_source_modified_at:
+        return bool(
+            report_modified_at and report_modified_at > saved_source_modified_at
+        )
+
+    saved_updated_at = _parse_iso_datetime(auth.get("updatedAt"))
+    if saved_updated_at and report_modified_at:
+        return report_modified_at > saved_updated_at
+    return True
+
+
+def _normalize_auth_sync_input(auth_sync: Any) -> dict[str, Any]:
+    if auth_sync is None:
+        return {"master_device_id": None, "slave_device_ids": []}
+    if not isinstance(auth_sync, dict):
+        raise UserRuntimeConfigError("auth_sync must be an object")
+    master_device_id = str(auth_sync.get("master_device_id") or "").strip() or None
+    slave_device_ids = _dedupe_device_ids(auth_sync.get("slave_device_ids") or [])
+    if master_device_id and master_device_id in slave_device_ids:
+        raise UserRuntimeConfigError("master device cannot be a slave")
+    return {
+        "master_device_id": master_device_id,
+        "slave_device_ids": slave_device_ids,
+    }
+
+
+def _known_device_ids(db: Session, user_id: int) -> set[str]:
+    rows = (
+        db.query(Kind.name)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Device",
+            Kind.namespace == USER_RUNTIME_CONFIG_NAMESPACE,
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _validate_auth_sync_devices(
+    db: Session,
+    *,
+    user_id: int,
+    auth_sync: dict[str, Any],
+) -> None:
+    selected = {
+        device_id
+        for device_id in [
+            auth_sync.get("master_device_id"),
+            *auth_sync.get("slave_device_ids", []),
+        ]
+        if device_id
+    }
+    if not selected:
+        return
+    missing = sorted(selected - _known_device_ids(db, user_id))
+    if missing:
+        raise UserRuntimeConfigError(f"unknown auth sync device: {', '.join(missing)}")
+
+
 def set_runtime_user_config_enabled(
     preferences: Any,
     runtime: str,
     enabled: bool,
     use_proxy: Optional[bool] = None,
+    auth_sync: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Return preferences with the runtime config enablement updated."""
     normalized_runtime = _normalize_runtime(runtime)
@@ -190,6 +326,8 @@ def set_runtime_user_config_enabled(
     runtime_config["use_user_config"] = bool(enabled)
     if use_proxy is not None:
         runtime_config["use_proxy"] = bool(use_proxy)
+    if auth_sync is not None:
+        runtime_config[AUTH_SYNC_PREFERENCE_KEY] = _normalize_auth_sync_input(auth_sync)
     runtime_configs[normalized_runtime] = runtime_config
     parsed[USER_RUNTIME_CONFIG_PREFERENCE_KEY] = runtime_configs
     return parsed
@@ -255,14 +393,25 @@ class UserRuntimeConfigService:
         runtime: str,
         use_user_config: bool,
         use_proxy: Optional[bool] = None,
+        auth_sync: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Update whether the runtime should use this user's saved config."""
         normalized_runtime = _normalize_runtime(runtime)
+        normalized_auth_sync = (
+            _normalize_auth_sync_input(auth_sync) if auth_sync is not None else None
+        )
+        if normalized_auth_sync is not None:
+            _validate_auth_sync_devices(
+                db,
+                user_id=user.id,
+                auth_sync=normalized_auth_sync,
+            )
         preferences = set_runtime_user_config_enabled(
             user.preferences,
             normalized_runtime,
             use_user_config,
             use_proxy,
+            normalized_auth_sync,
         )
         proxy_kind = self._get_proxy_kind(db, user_id=user.id)
         if use_proxy is True and not self._get_proxy_url(proxy_kind):
@@ -348,6 +497,8 @@ class UserRuntimeConfigService:
         runtime: str,
         auth_json: str,
         preferences: Any = None,
+        source_device_id: Optional[str] = None,
+        source_modified_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Validate and store encrypted auth JSON for a runtime."""
         normalized_runtime = _normalize_runtime(runtime)
@@ -366,6 +517,12 @@ class UserRuntimeConfigService:
             "sha256": digest,
             "updatedAt": now,
         }
+        normalized_source_device_id = str(source_device_id or "").strip()
+        normalized_source_modified_at = str(source_modified_at or "").strip()
+        if normalized_source_device_id:
+            spec["auth"]["sourceDeviceId"] = normalized_source_device_id
+        if normalized_source_modified_at:
+            spec["auth"]["sourceModifiedAt"] = normalized_source_modified_at
         spec["updatedAt"] = now
         data["spec"] = spec
         kind.json = data
@@ -389,6 +546,7 @@ class UserRuntimeConfigService:
         runtime: str,
         device_id: str,
         preferences: Any = None,
+        source_modified_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Read auth JSON from an online device and store it encrypted."""
         normalized_runtime = _normalize_runtime(runtime)
@@ -423,7 +581,130 @@ class UserRuntimeConfigService:
             runtime=normalized_runtime,
             auth_json=stdout["content"],
             preferences=preferences,
+            source_device_id=device_id,
+            source_modified_at=source_modified_at,
         )
+
+    async def sync_auth_for_heartbeat_device(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        device_id: str,
+        runtime_auth_files: Any,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        """Apply master/slave auth sync policy for one heartbeat device."""
+        normalized_runtime = _normalize_runtime(runtime)
+        auth_sync = get_runtime_auth_sync(preferences, normalized_runtime)
+        master_device_id = auth_sync["master_device_id"]
+        slave_device_ids = auth_sync["slave_device_ids"]
+
+        if device_id == master_device_id:
+            if not is_runtime_user_config_enabled(preferences, normalized_runtime):
+                return {
+                    "runtime": normalized_runtime,
+                    "device_id": device_id,
+                    "status": "master_not_newer",
+                }
+            return await self._sync_master_auth_for_heartbeat(
+                db,
+                user_id=user_id,
+                runtime=normalized_runtime,
+                device_id=device_id,
+                runtime_auth_files=runtime_auth_files,
+                preferences=preferences,
+            )
+
+        if device_id in slave_device_ids:
+            if not is_runtime_user_config_enabled(preferences, normalized_runtime):
+                return {
+                    "runtime": normalized_runtime,
+                    "device_id": device_id,
+                    "status": "slave_skipped_disabled",
+                }
+            sync_result = await self.sync_auth_to_devices(
+                db,
+                user_id=user_id,
+                runtime=normalized_runtime,
+                preferences=preferences,
+                device_ids=[device_id],
+                overwrite=True,
+            )
+            items = sync_result.get("items") if isinstance(sync_result, dict) else []
+            target_item = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and item.get("device_id") == device_id
+                ),
+                None,
+            )
+            status = (
+                "slave_synced"
+                if target_item and target_item.get("success")
+                else "slave_sync_failed"
+            )
+            return {
+                "runtime": normalized_runtime,
+                "device_id": device_id,
+                "status": status,
+                "sync": sync_result,
+            }
+
+        return {
+            "runtime": normalized_runtime,
+            "device_id": device_id,
+            "status": "not_configured_device",
+        }
+
+    async def _sync_master_auth_for_heartbeat(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        device_id: str,
+        runtime_auth_files: Any,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        report = _runtime_auth_report(runtime_auth_files, runtime)
+        kind = self._get_kind(db, user_id=user_id, runtime=runtime)
+        spec = self._get_spec(kind)
+        auth = dict(spec.get("auth") or {})
+        if not _is_master_report_newer(auth, report):
+            return {
+                "runtime": runtime,
+                "device_id": device_id,
+                "status": "master_not_newer",
+            }
+
+        source_modified_at = None
+        if isinstance(report, dict):
+            source_modified_at = str(report.get("modified_at") or "").strip() or None
+
+        imported = await self.import_auth_json_from_device(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            device_id=device_id,
+            preferences=preferences,
+            source_modified_at=source_modified_at,
+        )
+        sync_result = await self.sync_auth_to_slave_devices(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            preferences=preferences,
+        )
+        return {
+            "runtime": runtime,
+            "device_id": device_id,
+            "status": "master_imported",
+            "config": imported,
+            "sync": sync_result,
+        }
 
     async def sync_auth_to_devices(
         self,
@@ -433,8 +714,9 @@ class UserRuntimeConfigService:
         runtime: str,
         preferences: Any = None,
         device_ids: Optional[Iterable[str]] = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Sync a saved auth file to online devices without overwriting files."""
+        """Sync a saved auth file to online devices."""
         normalized_runtime = _normalize_runtime(runtime)
         kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
         spec = self._get_spec(kind)
@@ -475,6 +757,7 @@ class UserRuntimeConfigService:
                 runtime=normalized_runtime,
                 target_path=target_path,
                 auth_json=auth_json,
+                overwrite=overwrite,
             )
             results.append(result)
 
@@ -485,6 +768,42 @@ class UserRuntimeConfigService:
             "items": results,
         }
 
+    async def sync_auth_to_slave_devices(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        """Sync a saved auth file to selected slave devices, overwriting them."""
+        normalized_runtime = _normalize_runtime(runtime)
+        auth_sync = get_runtime_auth_sync(preferences, normalized_runtime)
+        slave_device_ids = auth_sync["slave_device_ids"]
+        if not slave_device_ids:
+            kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
+            spec = self._get_spec(kind)
+            auth = dict(spec.get("auth") or {})
+            target_path = (
+                auth.get("targetPath")
+                or RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
+            )
+            return {
+                "runtime": normalized_runtime,
+                "target_path": target_path,
+                "total": 0,
+                "items": [],
+            }
+
+        return await self.sync_auth_to_devices(
+            db,
+            user_id=user_id,
+            runtime=normalized_runtime,
+            preferences=preferences,
+            device_ids=slave_device_ids,
+            overwrite=True,
+        )
+
     async def _sync_auth_to_device(
         self,
         *,
@@ -494,18 +813,22 @@ class UserRuntimeConfigService:
         runtime: str,
         target_path: str,
         auth_json: str,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
+        env = {
+            "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
+            "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
+            "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
+        }
+        if overwrite:
+            env["WEGENT_RUNTIME_CONFIG_OVERWRITE"] = "true"
         try:
             result = await execute_configured_device_command(
                 db=db,
                 user_id=user_id,
                 device_id=device_id,
                 command_key="sync_runtime_auth_file",
-                env={
-                    "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
-                    "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
-                    "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
-                },
+                env=env,
                 timeout_seconds=DEFAULT_COMMAND_TIMEOUT_SECONDS,
             )
         except DeviceCommandError as exc:
@@ -660,9 +983,12 @@ class UserRuntimeConfigService:
             or RUNTIME_AUTH_FILES[runtime]["target_path"],
             "auth_json_sha256": auth.get("sha256"),
             "auth_json_updated_at": auth.get("updatedAt"),
+            "auth_json_source_device_id": auth.get("sourceDeviceId"),
+            "auth_json_source_modified_at": auth.get("sourceModifiedAt"),
             "proxy_configured": bool(proxy_url),
             "proxy_url_masked": _mask_proxy_url(proxy_url),
             "proxy_updated_at": dict(proxy_spec.get("proxy") or {}).get("updatedAt"),
+            "auth_sync": get_runtime_auth_sync(preferences, runtime),
             "updated_at": spec.get("updatedAt"),
         }
 

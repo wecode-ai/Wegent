@@ -204,6 +204,8 @@ Plugin reports must include the Skills contained inside each plugin. The executo
 
 Backend persists the complete capability state only when `capabilities.full = true`. Later heartbeats with the same `digest` refresh device liveness without rewriting the full capability lists.
 
+Codex local devices also report local `~/.codex/auth.json` metadata under `runtime_auth_files.codex_auth_json`, including existence, path, SHA-256 digest, and file modification time. Backend uses this metadata to decide whether the user's configured master device has a newer auth version. The master device is only a source and is not overwritten; slave devices overwrite their local auth file during sync.
+
 ### Global Capability Sync
 
 Backend can send desired global capability state to an online local device through `device:sync_capabilities`. The sync payload currently includes:

@@ -1654,6 +1654,40 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
     assert target.read_text(encoding="utf-8") == '{"token":"existing"}\n'
 
 
+def test_sync_runtime_auth_file_command_overwrites_existing_file_when_enabled(tmp_path):
+    """sync_runtime_auth_file should overwrite auth JSON when overwrite is enabled."""
+    from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
+
+    target = tmp_path / ".codex" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text('{"token":"existing"}\n', encoding="utf-8")
+    target.chmod(0o644)
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+        "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
+        "WEGENT_RUNTIME_CONFIG_OVERWRITE": "true",
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "status": "overwritten",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+    }
+    assert json.loads(target.read_text(encoding="utf-8")) == {"token": "new"}
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
     """read_runtime_auth_file should return the auth JSON content."""
     from app.services.device.command_registry import READ_RUNTIME_AUTH_FILE_SCRIPT

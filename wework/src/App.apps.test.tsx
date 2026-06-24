@@ -78,6 +78,7 @@ describe('App center route', () => {
             target_path: '~/.codex/auth.json',
             proxy_configured: false,
             proxy_url_masked: '',
+            auth_sync: { master_device_id: null, slave_device_ids: [] },
           }
         } else if (url.includes('/users/me/proxy-config')) {
           payload = {

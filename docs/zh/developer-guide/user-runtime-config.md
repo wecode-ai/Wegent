@@ -27,6 +27,8 @@ sidebar_position: 26
       "targetPath": "~/.codex/auth.json",
       "encryptedValue": "...",
       "sha256": "...",
+      "sourceDeviceId": "...",
+      "sourceModifiedAt": "...",
       "updatedAt": "..."
     },
     "updatedAt": "..."
@@ -64,7 +66,11 @@ sidebar_position: 26
   "runtime_configs": {
     "codex": {
       "use_user_config": true,
-      "use_proxy": true
+      "use_proxy": true,
+      "auth_sync": {
+        "master_device_id": "macbook-pro",
+        "slave_device_ids": ["linux-builder"]
+      }
     }
   }
 }
@@ -87,19 +93,26 @@ executor 启动 Codex SDK 时把代理 URL 注入为 `HTTP_PROXY`、`HTTPS_PROXY
 - 如果 executor 原有环境已经配置 `NO_PROXY` 或 `no_proxy`，沿用原值。
 - 如果没有配置，默认使用 `localhost,127.0.0.1,::1,host.docker.internal`，避免本地 stdio/localhost 类访问走代理。
 
-## 设备心跳同步
+## 主从设备同步
 
-用户启用个人配置后，executor 会在设备心跳中上报本机是否存在 Codex auth 文件。后端发现某个在线设备缺少 `~/.codex/auth.json`，且用户偏好启用了 Codex 个人配置、系统已保存 auth 内容时，会在后台把 auth 下发到该设备。
+用户可以在 Codex 认证设置中选择一台主设备和多台从设备。主设备是 `auth.json` 的来源，不会被后端覆盖；从设备是接收端，后端会用当前保存的主版本直接覆盖它们的 `~/.codex/auth.json`。
+
+executor 会在设备心跳中上报 Codex auth 文件的存在状态、SHA-256 摘要和本地修改时间。后端只对用户选择的设备执行同步策略：
+
+- 主设备心跳：如果上报的摘要不同，并且本地修改时间晚于后端已保存的 `sourceModifiedAt`（或后端保存时间），后端通过 `read_runtime_auth_file` 读取主设备文件，校验 JSON 后加密保存，并记录 `sourceDeviceId` 与 `sourceModifiedAt`。随后后端把新的 auth 下发给所有从设备。
+- 从设备心跳：如果用户启用了个人配置且后端已保存 auth，后端调用 `sync_runtime_auth_file`，携带显式覆盖标记，把保存的 auth 直接写入该从设备。
+- 未被选择为主设备或从设备的设备心跳不会触发 auth 同步。
 
 下发链路复用 Local Device Command RPC：后端调用白名单命令 `sync_runtime_auth_file`，通过环境变量传递认证内容，避免把密文或明文放到命令行日志。会话启动时只注入是否启用个人配置的状态，不再负责解密或下发 auth 文件。
 
 设备端写入规则：
 
 - 目标路径必须在当前用户 home 目录内。
-- 目标文件已存在时返回 `skipped_existing`，不覆盖。
-- 目标文件不存在时创建父目录，并以 `0600` 权限写入。
+- 默认同步不覆盖已有文件，目标文件已存在时返回 `skipped_existing`。
+- 主从同步到从设备时会设置 `WEGENT_RUNTIME_CONFIG_OVERWRITE=true`，目标文件已存在时直接原子替换并返回 `overwritten`。
+- 写入时会创建父目录，并以 `0600` 权限保存文件。
 
-从设备导入配置时，后端调用 `read_runtime_auth_file` 读取目标文件，校验 JSON 后加密保存；读取到的内容不会返回给前端。
+从设备导入配置时，后端调用 `read_runtime_auth_file` 读取目标文件，校验 JSON 后加密保存；读取到的内容不会返回给前端。手动上传 auth 后，如果已配置从设备，后端也会 best-effort 同步到这些从设备。
 
 ## 扩展运行时
 
@@ -110,4 +123,4 @@ executor 启动 Codex SDK 时把代理 URL 注入为 `HTTP_PROXY`、`HTTPS_PROXY
 - 认证文件目标路径
 - 格式校验策略
 
-扩展后可复用同一组 `/users/me/runtime-configs/{runtime}` API、设置页开关、加密存储和设备心跳同步逻辑。
+扩展后可复用同一组 `/users/me/runtime-configs/{runtime}` API、设置页开关、加密存储和主从设备同步逻辑。

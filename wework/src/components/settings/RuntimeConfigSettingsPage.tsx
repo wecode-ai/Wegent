@@ -5,6 +5,7 @@ import {
   Loader2,
   Network,
   RefreshCw,
+  Settings2,
   ShieldCheck,
   Upload,
 } from 'lucide-react'
@@ -78,8 +79,17 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
   const [proxyUpdating, setProxyUpdating] = useState(false)
+  const [syncSaving, setSyncSaving] = useState(false)
+  const [draftMasterDeviceId, setDraftMasterDeviceId] = useState('')
+  const [draftSlaveDeviceIds, setDraftSlaveDeviceIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  const applyRuntimeConfig = useCallback((nextConfig: UserRuntimeConfig) => {
+    setConfig(nextConfig)
+    setDraftMasterDeviceId(nextConfig.auth_sync.master_device_id ?? '')
+    setDraftSlaveDeviceIds([...nextConfig.auth_sync.slave_device_ids])
+  }, [])
 
   const onlineDevices = useMemo(
     () => devices.filter(device => device.status === 'online' && isClaudeCodeDevice(device)),
@@ -93,6 +103,10 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
     [onlineDevices, selectedImportDeviceId],
   )
   const effectiveImportDeviceId = selectedImportDevice?.device_id ?? ''
+  const slaveDevices = useMemo(
+    () => devices.filter(device => device.device_id !== draftMasterDeviceId),
+    [devices, draftMasterDeviceId],
+  )
 
   const loadRuntimeConfig = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -107,7 +121,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         userApi.getRuntimeConfig(runtime),
         deviceApi.getAllDevices(),
       ])
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setDevices(nextDevices.filter(isClaudeCodeDevice))
     } catch (loadError) {
       setError(
@@ -120,7 +134,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       setLoading(false)
       setRefreshing(false)
     }
-  }, [runtime, t])
+  }, [applyRuntimeConfig, runtime, t])
 
   useEffect(() => {
     void Promise.resolve().then(() => loadRuntimeConfig())
@@ -136,7 +150,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       const nextConfig = await userApi.updateRuntimeConfig(runtime, {
         use_user_config: !config.use_user_config,
       })
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
     } catch (updateError) {
       setError(
         getErrorMessage(
@@ -165,7 +179,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         use_user_config: config.use_user_config,
         use_proxy: !config.use_proxy,
       })
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
     } catch (proxyError) {
       setError(
         getErrorMessage(
@@ -175,6 +189,57 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       )
     } finally {
       setProxyUpdating(false)
+    }
+  }
+
+  const handleMasterDeviceChange = (deviceId: string) => {
+    setDraftMasterDeviceId(deviceId)
+    setDraftSlaveDeviceIds(previousDeviceIds =>
+      previousDeviceIds.filter(previousDeviceId => previousDeviceId !== deviceId),
+    )
+  }
+
+  const handleSlaveDeviceToggle = (deviceId: string, checked: boolean) => {
+    setDraftSlaveDeviceIds(previousDeviceIds => {
+      if (checked) {
+        return previousDeviceIds.includes(deviceId)
+          ? previousDeviceIds
+          : [...previousDeviceIds, deviceId]
+      }
+      return previousDeviceIds.filter(previousDeviceId => previousDeviceId !== deviceId)
+    })
+  }
+
+  const handleSaveAuthSync = async () => {
+    if (!config || syncSaving) return
+    const slaveDeviceIds = draftSlaveDeviceIds.filter(
+      deviceId => deviceId && deviceId !== draftMasterDeviceId,
+    )
+
+    setSyncSaving(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const { userApi } = createRuntimeSettingsApis()
+      const nextConfig = await userApi.updateRuntimeConfig(runtime, {
+        use_user_config: config.use_user_config,
+        use_proxy: config.use_proxy,
+        auth_sync: {
+          master_device_id: draftMasterDeviceId || null,
+          slave_device_ids: slaveDeviceIds,
+        },
+      })
+      applyRuntimeConfig(nextConfig)
+      setNotice(t('workbench.runtime_config_auth_sync_saved'))
+    } catch (syncError) {
+      setError(
+        getErrorMessage(
+          syncError,
+          t('workbench.runtime_config_auth_sync_save_failed'),
+        ),
+      )
+    } finally {
+      setSyncSaving(false)
     }
   }
 
@@ -194,7 +259,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       )
       const { userApi } = createRuntimeSettingsApis()
       const nextConfig = await userApi.uploadRuntimeAuthJson(runtime, content)
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setNotice(t('workbench.runtime_config_upload_success', 'auth.json 已保存'))
     } catch (uploadError) {
       setError(
@@ -219,7 +284,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         runtime,
         effectiveImportDeviceId,
       )
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setNotice(t('workbench.runtime_config_import_success', '已从设备导入 auth.json'))
     } catch (importError) {
       setError(
@@ -400,6 +465,99 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                     ? t('workbench.runtime_config_proxy_enabled')
                     : t('workbench.runtime_config_proxy_disabled')}
                 </button>
+              </div>
+            </div>
+
+            <div
+              data-testid="runtime-config-auth-sync-section"
+              className="mt-5 rounded-lg border border-border bg-surface p-3"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+                  <Settings2 className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.runtime_config_auth_sync_title')}
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    {t('workbench.runtime_config_auth_sync_description')}
+                  </p>
+
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_1.2fr]">
+                    <label className="block min-w-0">
+                      <span className="text-xs font-medium text-text-muted">
+                        {t('workbench.runtime_config_auth_sync_master')}
+                      </span>
+                      <select
+                        data-testid="runtime-config-master-device-select"
+                        value={draftMasterDeviceId}
+                        onChange={event => handleMasterDeviceChange(event.target.value)}
+                        disabled={devices.length === 0 || syncSaving}
+                        className="mt-1 h-9 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="">
+                          {devices.length === 0
+                            ? t('workbench.runtime_config_auth_sync_no_devices')
+                            : t('workbench.runtime_config_auth_sync_no_master')}
+                        </option>
+                        {devices.map(device => (
+                          <option key={device.device_id} value={device.device_id}>
+                            {device.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-text-muted">
+                        {t('workbench.runtime_config_auth_sync_slaves')}
+                      </div>
+                      <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                        {slaveDevices.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-border bg-background px-3 py-2 text-xs text-text-muted sm:col-span-2">
+                            {t('workbench.runtime_config_auth_sync_no_slaves')}
+                          </div>
+                        ) : (
+                          slaveDevices.map(device => (
+                            <label
+                              key={device.device_id}
+                              className="flex min-h-9 items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-text-primary"
+                            >
+                              <input
+                                type="checkbox"
+                                data-testid={`runtime-config-slave-device-${device.device_id}`}
+                                checked={draftSlaveDeviceIds.includes(device.device_id)}
+                                onChange={event =>
+                                  handleSlaveDeviceToggle(
+                                    device.device_id,
+                                    event.currentTarget.checked,
+                                  )
+                                }
+                                disabled={syncSaving}
+                                className="h-4 w-4 rounded border-border text-primary"
+                              />
+                              <span className="min-w-0 truncate">{device.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid="runtime-config-auth-sync-save-button"
+                    onClick={() => void handleSaveAuthSync()}
+                    disabled={!config || syncSaving}
+                    className="mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {syncSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {syncSaving
+                      ? t('workbench.runtime_config_auth_sync_saving')
+                      : t('workbench.runtime_config_auth_sync_save')}
+                  </button>
+                </div>
               </div>
             </div>
 

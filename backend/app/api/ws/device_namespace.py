@@ -494,6 +494,14 @@ def _runtime_auth_file_missing(runtime_auth_files: Any, runtime: str) -> bool:
     return state.get("exists") is False
 
 
+def _has_runtime_auth_report(runtime_auth_files: Any, runtime: str) -> bool:
+    """Return True when heartbeat includes runtime auth state for a runtime."""
+    if not isinstance(runtime_auth_files, dict):
+        return False
+    state = runtime_auth_files.get(runtime)
+    return isinstance(state, dict) and bool(state)
+
+
 def _is_runtime_task_terminal_status(status: Any) -> bool:
     """Return True when a runtime task update represents a completed turn."""
     normalized = _normalize_runtime_task_status(status)
@@ -1138,8 +1146,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
         device_id: str,
         runtime_auth_files: Any,
     ) -> None:
-        """Schedule best-effort runtime auth sync when heartbeat reports a missing file."""
-        if not _runtime_auth_file_missing(runtime_auth_files, CODEX_RUNTIME):
+        """Schedule best-effort runtime auth sync when heartbeat reports auth state."""
+        if not _has_runtime_auth_report(runtime_auth_files, CODEX_RUNTIME):
             return
 
         key = (user_id, device_id, CODEX_RUNTIME)
@@ -1152,6 +1160,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id=device_id,
                 runtime=CODEX_RUNTIME,
                 key=key,
+                runtime_auth_files=runtime_auth_files,
             )
         )
 
@@ -1162,8 +1171,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         device_id: str,
         runtime: str,
         key: tuple[int, str, str],
+        runtime_auth_files: Any,
     ) -> None:
-        """Best-effort sync of enabled user runtime auth to one heartbeat device."""
+        """Best-effort master/slave runtime auth sync for one heartbeat device."""
         try:
             with _db_session() as db:
                 user = db.query(User).filter(User.id == user_id).first()
@@ -1173,39 +1183,33 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         user_id,
                     )
                     return
-                status = user_runtime_config_service.get_config(
-                    db,
-                    user_id=user_id,
-                    runtime=runtime,
-                    preferences=user.preferences,
+                result = (
+                    await user_runtime_config_service.sync_auth_for_heartbeat_device(
+                        db,
+                        user_id=user_id,
+                        runtime=runtime,
+                        device_id=device_id,
+                        runtime_auth_files=runtime_auth_files,
+                        preferences=user.preferences,
+                    )
                 )
-                if not status.get("use_user_config") or not status.get("configured"):
-                    return
-                result = await user_runtime_config_service.sync_auth_to_devices(
-                    db,
-                    user_id=user_id,
-                    runtime=runtime,
-                    preferences=user.preferences,
-                    device_ids=[device_id],
-                )
-            items = result.get("items") if isinstance(result, dict) else None
-            target_item = next(
-                (
-                    item
-                    for item in (items or [])
-                    if isinstance(item, dict) and item.get("device_id") == device_id
-                ),
-                None,
+            status = result.get("status") if isinstance(result, dict) else None
+            if status in {
+                "master_imported",
+                "master_not_newer",
+                "slave_synced",
+                "slave_skipped_disabled",
+                "not_configured_device",
+            }:
+                return
+            logger.warning(
+                "[Device WS] Runtime auth heartbeat sync did not complete: "
+                "user=%s device=%s runtime=%s result=%s",
+                user_id,
+                device_id,
+                runtime,
+                result,
             )
-            if not target_item or not target_item.get("success"):
-                logger.warning(
-                    "[Device WS] Runtime auth heartbeat sync did not complete: "
-                    "user=%s device=%s runtime=%s result=%s",
-                    user_id,
-                    device_id,
-                    runtime,
-                    target_item,
-                )
         except (UserRuntimeConfigError, UserRuntimeConfigSyncError):
             logger.exception(
                 "[Device WS] Runtime auth heartbeat sync failed: user=%s device=%s runtime=%s",
