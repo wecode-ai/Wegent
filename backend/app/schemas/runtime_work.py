@@ -57,6 +57,7 @@ class NormalizedRuntimeMessage(BaseModel):
     source: Optional[RuntimeMessageSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
+    file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
 
 
 class RuntimeTaskAddressRef(RuntimeTaskAddress):

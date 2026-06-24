@@ -789,7 +789,34 @@ async def test_runtime_transcript_dispatches_pagination_payload(
             "localTaskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
-            "messages": [],
+            "messages": [
+                {
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "content": "done",
+                    "subtaskId": 2001,
+                    "fileChanges": {
+                        "version": 1,
+                        "status": "active",
+                        "artifact_id": "turn-2001",
+                        "device_id": "device-1",
+                        "workspace_path": "/repo/Wegent",
+                        "file_count": 1,
+                        "additions": 3,
+                        "deletions": 1,
+                        "files": [
+                            {
+                                "path": "src/app.ts",
+                                "change_type": "modified",
+                                "additions": 3,
+                                "deletions": 1,
+                                "binary": False,
+                            }
+                        ],
+                        "reverted_at": None,
+                    },
+                }
+            ],
             "hasMoreBefore": True,
             "beforeCursor": "offset:120",
         }
@@ -809,6 +836,8 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
     assert response.has_more_before is True
     assert response.before_cursor == "offset:120"
+    assert response.messages[0].file_changes is not None
+    assert response.messages[0].file_changes["artifact_id"] == "turn-2001"
     rpc.assert_awaited_once_with(
         user_id=test_user.id,
         device_id="device-1",

@@ -2288,7 +2288,29 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         executed_requests.append(request)
         await emitter.start(shell_type="ClaudeCode")
         await emitter.text_delta("Created")
-        await emitter.done(content="Created")
+        await emitter.done(
+            content="Created",
+            file_changes={
+                "version": 1,
+                "status": "active",
+                "artifact_id": "turn-2001",
+                "device_id": "device-1",
+                "workspace_path": "/repo/Wegent",
+                "file_count": 1,
+                "additions": 3,
+                "deletions": 1,
+                "files": [
+                    {
+                        "path": "src/app.ts",
+                        "change_type": "modified",
+                        "additions": 3,
+                        "deletions": 1,
+                        "binary": False,
+                    }
+                ],
+                "reverted_at": None,
+            },
+        )
 
     store = LocalTaskStore(tmp_path / "index.json")
     adapter = RuntimeAgentAdapter(
@@ -2344,6 +2366,8 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         "assistant",
     ]
     assert transcript["messages"][0]["content"] == "create the task"
+    assert transcript["messages"][1]["fileChanges"]["artifact_id"] == "turn-2001"
+    assert transcript["messages"][1]["fileChanges"]["files"][0]["path"] == "src/app.ts"
 
 
 @pytest.mark.asyncio

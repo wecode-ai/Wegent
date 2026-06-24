@@ -268,6 +268,11 @@ function RuntimeOpenProbe() {
           })
           .join('|')}
       </span>
+      <span data-testid="runtime-open-file-changes">
+        {workbench.messages
+          .map(message => message.fileChanges?.files.map(file => file.path).join(',') ?? '')
+          .join('|')}
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -512,6 +517,26 @@ describe('WorkbenchProvider runtime tasks', () => {
           role: 'assistant',
           content: '恢复的回答',
           subtaskId: 901,
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'turn-901',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project-alpha',
+            file_count: 1,
+            additions: 4,
+            deletions: 2,
+            files: [
+              {
+                path: 'src/runtime.ts',
+                change_type: 'modified',
+                additions: 4,
+                deletions: 2,
+                binary: false,
+              },
+            ],
+            reverted_at: null,
+          },
           blocks: [
             {
               id: 'thinking-901',
@@ -558,6 +583,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('text:处理完成:done')
+    expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('src/runtime.ts')
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',

@@ -253,6 +253,8 @@ export interface NormalizedRuntimeMessage {
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
+  fileChanges?: TurnFileChangesSummary | null
+  file_changes?: TurnFileChangesSummary | null
 }
 
 export interface LocalTaskSummary {

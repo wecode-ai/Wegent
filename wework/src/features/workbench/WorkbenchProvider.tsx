@@ -625,6 +625,7 @@ function runtimeMessageToWorkbenchMessage(
     source,
     attachments: message.attachments,
     blocks: blocks.length > 0 ? blocks : undefined,
+    fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
     createdAt: message.createdAt ?? new Date().toISOString(),
   }
 }

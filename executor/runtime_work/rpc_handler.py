@@ -1604,6 +1604,10 @@ class RuntimeWorkRpcHandler:
                 if normalized_blocks:
                     normalized_message["blocks"] = normalized_blocks
 
+            file_changes = message.get("fileChanges") or message.get("file_changes")
+            if isinstance(file_changes, dict):
+                normalized_message["fileChanges"] = file_changes
+
             source = message.get("source") or source_by_message_id.get(message_id)
             if isinstance(source, dict):
                 normalized_message["source"] = source
