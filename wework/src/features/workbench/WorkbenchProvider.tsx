@@ -56,6 +56,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   DeviceInfo,
+  IMBotPurpose,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -292,7 +293,7 @@ export interface WorkbenchContextValue {
   openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
-  listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
+  listImPrivateSessions: (botPurpose?: IMBotPurpose) => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
     sessionKeys: string[]
@@ -1625,8 +1626,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   ])
 
   const listImPrivateSessions = useCallback(
-    () =>
-      resolvedServices.imSessionApi?.listPrivateSessions() ??
+    (botPurpose?: IMBotPurpose) =>
+      resolvedServices.imSessionApi?.listPrivateSessions(botPurpose) ??
       Promise.resolve({ total: 0, items: [] }),
     [resolvedServices]
   )

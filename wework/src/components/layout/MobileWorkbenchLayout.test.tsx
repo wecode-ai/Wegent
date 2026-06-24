@@ -567,6 +567,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-continue-in-im-button')).toHaveClass('h-11', 'min-w-[44px]')
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
+    expect(onListImPrivateSessions).toHaveBeenCalledWith('wework_local')
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })
