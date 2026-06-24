@@ -28,6 +28,8 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -52,6 +54,7 @@ import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -62,6 +65,7 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -75,6 +79,7 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onSearchRuntimeWork?: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
@@ -164,6 +169,7 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  currentRuntimeTaskRunning = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -176,6 +182,7 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onSearchRuntimeWork = async () => ({ items: [] }),
   onLoadOlderRuntimeTranscript,
   onArchiveRuntimeLocalTask,
   onForkCurrentRuntimeTask,
@@ -244,6 +251,7 @@ export function DesktopWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
     useState<ImNotificationDialogMode | null>(null)
   const [imNotificationSettings, setImNotificationSettings] =
@@ -382,6 +390,18 @@ export function DesktopWorkbenchLayout({
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k') return
+      if (!event.metaKey && !event.ctrlKey) return
+      event.preventDefault()
+      setSearchOpen(true)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   useEffect(() => {
@@ -693,6 +713,7 @@ export function DesktopWorkbenchLayout({
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
+          onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
@@ -755,6 +776,7 @@ export function DesktopWorkbenchLayout({
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
+          currentRuntimeTaskRunning={currentRuntimeTaskRunning}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}
@@ -911,6 +933,15 @@ export function DesktopWorkbenchLayout({
         message={notice?.message ?? null}
         tone={notice?.tone}
         onClear={() => setNotice(null)}
+      />
+      <WorkbenchSearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearchRuntimeWork={onSearchRuntimeWork}
+        onOpenRuntimeLocalTask={async address => {
+          if (!onOpenRuntimeLocalTask) return
+          await onOpenRuntimeLocalTask(address)
+        }}
       />
     </div>
   )

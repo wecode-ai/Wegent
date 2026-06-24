@@ -357,6 +357,38 @@ export interface RuntimeWorkListResponse {
   totalLocalTasks: number
 }
 
+export interface RuntimeWorkSearchRequest {
+  query: string
+  limit?: number
+  includeArchived?: boolean
+  projectId?: number
+}
+
+export interface RuntimeWorkSearchProjectRef {
+  id: number
+  name: string
+}
+
+export interface RuntimeWorkSearchItem {
+  address: RuntimeTaskAddress
+  runtime: RuntimeName
+  title: string
+  snippet: string
+  matchStart: number
+  matchEnd: number
+  messageId?: string
+  messageRole?: string
+  messageCreatedAt?: string | null
+  updatedAt?: string | null
+  deviceName: string
+  workspacePath: string
+  project?: RuntimeWorkSearchProjectRef | null
+}
+
+export interface RuntimeWorkSearchResponse {
+  items: RuntimeWorkSearchItem[]
+}
+
 export interface RuntimeTranscriptResponse {
   localTaskId: string
   workspacePath: string
@@ -376,6 +408,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  attachmentIds?: number[]
   source?: RuntimeMessageSource | null
 }
 
@@ -455,6 +488,13 @@ export interface RuntimeTaskIMNotificationSubscriptionResponse {
 }
 
 export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath?: string | null
+  error?: string | null
+}
+
+export interface RuntimeTaskCancelResponse {
   accepted: boolean
   localTaskId: string
   workspacePath?: string | null
@@ -1250,7 +1290,9 @@ export interface ChatBlock {
   tool_input?: Record<string, unknown>
   tool_output?: unknown
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
-  timestamp?: number
+  timestamp?: number | string | null
+  created_at?: number | string | null
+  createdAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -1367,6 +1409,7 @@ export interface Attachment {
   subtask_id?: number | null
   file_extension: string
   created_at: string
+  local_preview_url?: string
 }
 
 export interface AttachmentUploadProgress {

@@ -24,7 +24,10 @@ from executor.runtime_work.local_task_store import (
     normalize_workspace_path,
     utc_now_iso,
 )
-from executor.services.turn_file_changes import TurnFileChangeArtifactStore
+from executor.services.turn_file_changes import (
+    NativeTurnFileChangeTracker,
+    TurnFileChangeArtifactStore,
+)
 from shared.logger import setup_logger
 
 DEFAULT_CODEX_SESSION_LIMIT = 100
@@ -56,6 +59,13 @@ class _TranscriptCacheEntry:
     complete: bool
 
 
+@dataclass(frozen=True)
+class _ThreadResumeConfig:
+    codex_bin: str
+    config_overrides: tuple[str, ...]
+    env: Optional[dict[str, str]]
+
+
 class CodexSessionDiscovery:
     """Read Codex SDK thread metadata and expose user sessions as LocalTasks."""
 
@@ -71,6 +81,7 @@ class CodexSessionDiscovery:
         self.limit = max(1, limit)
         self.codex_client_factory = codex_client_factory
         self._transcript_cache: dict[str, _TranscriptCacheEntry] = {}
+        self._thread_resume_configs: dict[str, _ThreadResumeConfig] = {}
 
     def discover(self) -> list[LocalTaskRecord]:
         try:
@@ -118,6 +129,38 @@ class CodexSessionDiscovery:
         from openai_codex import AsyncCodex
 
         return AsyncCodex(config=codex_config)
+
+    def _create_async_codex_client_for_thread(
+        self,
+        thread_id: str,
+        *,
+        cwd: Optional[str],
+    ) -> Any:
+        resume_config = self._thread_resume_configs.get(thread_id)
+        if resume_config is None:
+            return self._create_async_codex_client()
+
+        client_config = self._codex_config_type()(
+            codex_bin=resume_config.codex_bin,
+            config_overrides=resume_config.config_overrides,
+            cwd=cwd,
+            env=_codex_env(self.codex_home, resume_config.env),
+        )
+        return self._create_async_codex_client_with_config(client_config)
+
+    def _remember_thread_resume_config(
+        self,
+        thread_id: str,
+        codex_config: Any,
+    ) -> None:
+        clean_thread_id = thread_id.strip()
+        if not clean_thread_id:
+            return
+        self._thread_resume_configs[clean_thread_id] = _ThreadResumeConfig(
+            codex_bin=str(getattr(codex_config, "codex_bin", "") or ""),
+            config_overrides=tuple(getattr(codex_config, "config_overrides", ()) or ()),
+            env=dict(getattr(codex_config, "env", None) or {}),
+        )
 
     def _codex_config_type(self) -> Any:
         from openai_codex import CodexConfig
@@ -261,10 +304,19 @@ class CodexSessionDiscovery:
         from executor.agents.codex.codex_agent import _full_access_sandbox
         from executor.agents.codex.event_mapper import CodeXEventMapper
 
-        client = self._create_async_codex_client()
+        client = self._create_async_codex_client_for_thread(thread_id, cwd=cwd)
         async with client as codex:
             thread = await codex.thread_resume(thread_id, cwd=cwd)
-            mapper = CodeXEventMapper(emitter)
+            turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                emitter=emitter,
+                workspace_path=cwd,
+                task_id=getattr(emitter, "task_id", 0),
+                subtask_id=getattr(emitter, "subtask_id", 0),
+            )
+            mapper = CodeXEventMapper(
+                emitter,
+                turn_file_change_tracker=turn_file_change_tracker,
+            )
             await emitter.start(shell_type="Codex")
             turn = await thread.turn(
                 message,
@@ -353,10 +405,19 @@ class CodexSessionDiscovery:
                         raise RuntimeError(
                             "Codex thread_start did not return a threadId"
                         )
+                    self._remember_thread_resume_config(thread_id, codex_config)
 
                     emitter = emitter_factory(thread_id)
+                    turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                        emitter=emitter,
+                        workspace_path=cwd,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        device_id=getattr(request, "device_id", None),
+                    )
                     mapper = CodeXEventMapper(
                         emitter,
+                        turn_file_change_tracker=turn_file_change_tracker,
                         executor_session_provider=lambda: {
                             "agent": "CodeX",
                             "threadId": thread_id,
@@ -1665,6 +1726,41 @@ def _codex_display_path(path: str, workspace_path: str) -> str:
     with contextlib.suppress(ValueError):
         return candidate.relative_to(workspace).as_posix()
     return path
+
+
+def _attach_native_turn_file_change_tracker(
+    *,
+    emitter: Any,
+    workspace_path: Optional[str],
+    task_id: Any,
+    subtask_id: Any,
+    device_id: Any = None,
+) -> Optional[NativeTurnFileChangeTracker]:
+    if not workspace_path:
+        return None
+    tracker = NativeTurnFileChangeTracker(
+        workspace=Path(workspace_path),
+        task_id=_safe_positive_int(task_id),
+        subtask_id=_safe_positive_int(subtask_id),
+        executor_home=Path(config.WEGENT_EXECUTOR_HOME),
+        device_id=device_id if isinstance(device_id, str) and device_id else None,
+    )
+    set_completion_fields_provider = getattr(
+        emitter,
+        "set_completion_fields_provider",
+        None,
+    )
+    if callable(set_completion_fields_provider):
+        set_completion_fields_provider(tracker.finalize)
+    return tracker
+
+
+def _safe_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value > 0:
+        return value
+    return 0
 
 
 def _record_timestamp(record: dict[str, Any], payload: dict[str, Any]) -> str:

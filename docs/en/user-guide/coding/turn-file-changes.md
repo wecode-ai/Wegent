@@ -33,6 +33,6 @@ After selecting **Revert** and confirming, the device first checks whether the r
 
 ## Supported Workspaces
 
-Turn file changes currently support Codex and Claude Code in Git project workspaces. Non-Git directories do not produce a file changes card.
+Turn file changes currently support Codex and Claude Code in Git workspaces, including Wework runtime LocalTasks. Non-Git directories do not produce a file changes card.
 
-The complete patch is stored as a compressed artifact in the task directory on the execution device. Backend stores only the file count, line statistics, file list, status, device, and artifact identifier in the assistant message's `Subtask.result`.
+The complete patch is stored as a compressed artifact in the task directory on the execution device. Backend stores only the file count, line statistics, file list, status, device, and artifact identifier. Traditional Task/Subtask runs write that summary to the assistant message's `Subtask.result`; runtime LocalTasks without central task rows keep the same summary on the runtime transcript assistant message's `fileChanges` field.

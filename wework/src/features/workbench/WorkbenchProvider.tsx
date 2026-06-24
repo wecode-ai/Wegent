@@ -60,12 +60,14 @@ import type {
   DeviceInfo,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
+  LocalTaskSummary,
   ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   NormalizedRuntimeMessage,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeDeviceWorkspace,
@@ -75,6 +77,8 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   RuntimeWorkListResponse,
   SkillRef,
   TurnFileChangesSummary,
@@ -109,6 +113,7 @@ import { WorkbenchContext } from './useWorkbench'
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
+const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
@@ -202,8 +207,7 @@ function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
 }
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
-  payload: ChatSendPayload
-  activeDeviceId?: string
+  runtimeAddress?: RuntimeTaskAddress
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
 }
@@ -263,6 +267,7 @@ export interface WorkbenchContextValue {
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts: CodeCommentContext[]
+  currentRuntimeTaskRunning: boolean
   isRuntimeTranscriptLoading: boolean
   runtimeTranscriptHasMoreBefore: boolean
   isRuntimeTranscriptLoadingMore: boolean
@@ -302,6 +307,7 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadOlderRuntimeTranscript: () => Promise<void>
   archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
@@ -478,10 +484,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function isDeviceStatus(value: unknown): value is DeviceInfo['status'] {
+  return value === 'online' || value === 'offline' || value === 'busy'
+}
+
+function getDeviceEventId(payload: unknown): string | null {
+  if (!isRecord(payload) || typeof payload.device_id !== 'string') return null
+  const deviceId = payload.device_id.trim()
+  return deviceId || null
+}
+
+function getDeviceEventName(payload: unknown): string | null {
+  if (!isRecord(payload) || typeof payload.name !== 'string') return null
+  const name = payload.name.trim()
+  return name || null
+}
+
 function getBlockTimestamp(value: unknown, fallbackTimestamp = Date.now()): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return fallbackTimestamp
+  if (typeof value === 'string' && value.trim()) {
+    const numericValue = Number(value)
+    if (Number.isFinite(numericValue)) {
+      return getBlockTimestamp(numericValue, fallbackTimestamp)
+    }
+
+    const parsed = new Date(value).getTime()
+    return Number.isFinite(parsed) ? parsed : fallbackTimestamp
   }
+
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallbackTimestamp
+
   if (value > 1_000_000_000_000) return value
   if (value > 1_000_000_000) return value * 1000
   return fallbackTimestamp
@@ -495,7 +526,10 @@ function normalizeProcessingBlock(
 ): ProcessingBlock | null {
   if (!isRecord(block)) return null
 
-  const timestamp = getBlockTimestamp(block.timestamp, fallbackTimestamp)
+  const timestamp = getBlockTimestamp(
+    block.timestamp ?? block.created_at ?? block.createdAt,
+    fallbackTimestamp
+  )
   const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
@@ -617,9 +651,12 @@ function runtimeMessageToWorkbenchMessage(
     role === 'user' && message.source?.source === 'im'
       ? ({ ...message.source, source: 'im' } as MessageSource)
       : undefined
+  const createdAt = message.createdAt ?? new Date().toISOString()
+  const messageCreatedAtMs = getBlockTimestamp(createdAt)
   const blocks = normalizeProcessingBlocks(
     getRuntimeMessageBlockSubtaskId(message, subtaskId),
-    message.blocks
+    message.blocks,
+    messageCreatedAtMs
   )
   return {
     id: `runtime-${address.localTaskId}-${message.id}`,
@@ -632,7 +669,7 @@ function runtimeMessageToWorkbenchMessage(
     attachments: message.attachments,
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
-    createdAt: message.createdAt ?? new Date().toISOString(),
+    createdAt,
   }
 }
 
@@ -664,6 +701,17 @@ function chatMessageToWorkbenchMessage(payload: ChatMessagePayload): WorkbenchMe
   }
 }
 
+function findFileChangesBySubtaskId(
+  messages: WorkbenchMessage[],
+  subtaskId: number
+): TurnFileChangesSummary | undefined {
+  return messages.find(message => message.subtaskId === subtaskId)?.fileChanges
+}
+
+function getCommandStdoutObject(stdout: unknown): Record<string, unknown> | null {
+  return isRecord(stdout) ? stdout : null
+}
+
 function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
@@ -678,6 +726,45 @@ function writeLastProjectId(userId: number, projectId: number) {
 
 function getNewChatModelSelection(user: User | null): ModelSelectionConfig | null {
   return user?.preferences?.wework_new_chat_model_selection ?? null
+}
+
+function findRuntimeLocalTask(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): LocalTaskSummary | null {
+  if (!runtimeWork || !address) return null
+  const workspaces = [
+    ...runtimeWork.unmappedDeviceWorkspaces,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+
+  for (const workspace of workspaces) {
+    if (workspace.deviceId !== address.deviceId) continue
+    const task = workspace.localTasks.find(item => item.localTaskId === address.localTaskId)
+    if (task) return task
+  }
+
+  return null
+}
+
+function getRuntimeCompatibilityFamily(runtime?: string | null): string | null {
+  if (runtime === 'codex') return OPENAI_RESPONSES_RUNTIME_FAMILY
+  if (runtime === 'claude_code' || runtime === 'claude') return CLAUDE_CODE_RUNTIME_FAMILY
+  return null
+}
+
+function getCurrentRuntimeTaskCompatibilityFamily(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): string | null {
+  return getRuntimeCompatibilityFamily(findRuntimeLocalTask(runtimeWork, address)?.runtime)
+}
+
+function isRuntimeLocalTaskRunning(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): boolean {
+  return Boolean(findRuntimeLocalTask(runtimeWork, address)?.running)
 }
 
 function getStringConfigValue(
@@ -846,6 +933,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const currentRuntimeTaskKey = state.currentRuntimeTask
     ? getRuntimeTaskRouteKey(state.currentRuntimeTask)
     : null
+  const currentRuntimeTaskRunning = useMemo(
+    () => isRuntimeLocalTaskRunning(state.runtimeWork, state.currentRuntimeTask),
+    [state.currentRuntimeTask, state.runtimeWork]
+  )
 
   useEffect(() => {
     messagesRef.current = messages
@@ -854,10 +945,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     Boolean(currentRuntimeTaskKey) && runtimeTranscriptLoadingKey === currentRuntimeTaskKey
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
-  const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentProject: activeProject,
-    standaloneDeviceId: state.standaloneDeviceId,
-  })
+  const activeDeviceId =
+    state.currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject: activeProject,
+      standaloneDeviceId: state.standaloneDeviceId,
+    })
 
   useEffect(() => {
     currentRuntimeTaskRef.current = state.currentRuntimeTask
@@ -939,6 +1032,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser])
   const modelCompatibilityConfig = useMemo(() => null, [])
+  const modelCompatibilityFamily = useMemo(
+    () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
+    [state.currentRuntimeTask, state.runtimeWork]
+  )
   const defaultModelSelectionConfig = useCallback(() => null, [])
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
@@ -986,6 +1083,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     locked: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
+    compatibilityFamily: modelCompatibilityFamily,
     defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
@@ -1070,25 +1168,31 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     })
   }, [resolvedServices, state.projects, state.standaloneDeviceId])
 
-  const refreshDevices = useCallback(async () => {
-    let devices: DeviceInfo[]
-    try {
-      devices = await resolvedServices.deviceApi.listDevices()
-    } catch (error) {
-      const cachedDevices = readCachedDeviceList()
-      if (cachedDevices.length > 0) {
-        devices = cachedDevices
-      } else {
-        throw error
+  const refreshDevices = useCallback(
+    async (options?: { useCacheFallback?: boolean }) => {
+      let devices: DeviceInfo[]
+      try {
+        devices = await resolvedServices.deviceApi.listDevices()
+      } catch (error) {
+        if (options?.useCacheFallback === false) {
+          throw error
+        }
+        const cachedDevices = readCachedDeviceList()
+        if (cachedDevices.length > 0) {
+          devices = cachedDevices
+        } else {
+          throw error
+        }
       }
-    }
-    devices = resolveDeviceListWithCache(devices)
-    dispatch({
-      type: 'devices_refreshed',
-      devices,
-      standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
-    })
-  }, [resolvedServices, state.standaloneDeviceId])
+      devices = resolveDeviceListWithCache(devices)
+      dispatch({
+        type: 'devices_refreshed',
+        devices,
+        standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
+      })
+    },
+    [resolvedServices, state.standaloneDeviceId]
+  )
 
   const clearUpgradeStateTimer = useCallback((deviceId: string) => {
     const timer = upgradeClearTimersRef.current[deviceId]
@@ -1170,8 +1274,43 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   useEffect(() => {
-    const handleDeviceChanged = () => {
-      void refreshDevices()
+    const refreshDevicesAfterEvent = () => {
+      void refreshDevices({ useCacheFallback: false }).catch(() => undefined)
+    }
+    const handleDeviceOnline = (payload: unknown) => {
+      const deviceId = getDeviceEventId(payload)
+      if (deviceId) {
+        dispatch({
+          type: 'device_status_changed',
+          deviceId,
+          status: 'online',
+          name: getDeviceEventName(payload),
+        })
+      }
+      refreshDevicesAfterEvent()
+    }
+    const handleDeviceOffline = (payload: unknown) => {
+      const deviceId = getDeviceEventId(payload)
+      if (deviceId) {
+        dispatch({
+          type: 'device_status_changed',
+          deviceId,
+          status: 'offline',
+        })
+      }
+      refreshDevicesAfterEvent()
+    }
+    const handleDeviceStatus = (payload: unknown) => {
+      const deviceId = getDeviceEventId(payload)
+      const status = isRecord(payload) ? payload.status : undefined
+      if (deviceId && isDeviceStatus(status)) {
+        dispatch({
+          type: 'device_status_changed',
+          deviceId,
+          status,
+        })
+      }
+      refreshDevicesAfterEvent()
     }
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
@@ -1186,10 +1325,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     }
 
     return resolvedServices.chatStream.subscribe({
-      onDeviceOnline: handleDeviceChanged,
-      onDeviceOffline: handleDeviceChanged,
-      onDeviceStatus: handleDeviceChanged,
-      onDeviceSlotUpdate: handleDeviceChanged,
+      onDeviceOnline: handleDeviceOnline,
+      onDeviceOffline: handleDeviceOffline,
+      onDeviceStatus: handleDeviceStatus,
+      onDeviceSlotUpdate: refreshDevicesAfterEvent,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatMessage: payload => {
         if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
@@ -1203,6 +1342,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         setIsAwaitingAssistantStart(false)
         dispatchMessages({
           type: 'assistant_started',
+          taskId: payload.task_id,
           subtaskId: payload.subtask_id,
           shellType: payload.shell_type,
         })
@@ -1643,6 +1783,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [refreshWorkLists, resolvedServices.runtimeWorkApi, state.currentRuntimeTask]
   )
 
+  const searchRuntimeWork = useCallback(
+    async (request: RuntimeWorkSearchRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        return { items: [] }
+      }
+      return resolvedServices.runtimeWorkApi.searchRuntimeWork(request)
+    },
+    [resolvedServices.runtimeWorkApi]
+  )
+
   const forkCurrentRuntimeTask = useCallback(
     async (target: RuntimeTaskForkTarget) => {
       if (!resolvedServices.runtimeWorkApi) {
@@ -1672,27 +1822,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       resolvedServices.runtimeWorkApi,
       state.currentRuntimeTask,
     ]
-  )
-
-  const refreshRuntimeTranscript = useCallback(
-    async (address: RuntimeTaskAddress, shouldApply: () => boolean = () => true) => {
-      if (!resolvedServices.runtimeWorkApi) return
-      const transcript = await resolvedServices.runtimeWorkApi.getRuntimeTranscript({
-        ...address,
-        limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
-      })
-      if (!shouldApply()) return
-      dispatchMessages({
-        type: 'reset',
-        messages: runtimeMessagesToWorkbenchMessages(address, transcript.messages),
-      })
-      setRuntimeTranscriptPage({
-        hasMoreBefore: Boolean(transcript.hasMoreBefore),
-        beforeCursor: transcript.beforeCursor ?? null,
-        loadingMore: false,
-      })
-    },
-    [resolvedServices.runtimeWorkApi]
   )
 
   const loadOlderRuntimeTranscript = useCallback(async () => {
@@ -2109,7 +2238,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     async (
       displayMessage: string,
       payload: ChatSendPayload,
-      activeDeviceId?: string
+      activeDeviceId?: string,
+      displayAttachments: Attachment[] = []
     ): Promise<boolean> => {
       if (!resolvedServices.runtimeWorkApi) {
         reportSendBlocked('Local runtime work is unavailable')
@@ -2177,10 +2307,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           id: `runtime-local-${Date.now()}`,
           role: 'user',
           content: displayMessage,
+          attachments: displayAttachments,
           status: 'done',
           createdAt: new Date().toISOString(),
         },
       })
+      attachmentSelection.resetAttachments()
 
       try {
         const response = await resolvedServices.runtimeWorkApi.createRuntimeTask(createRequest)
@@ -2202,7 +2334,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           project: runtimeProject,
         })
         await refreshWorkLists()
-        await refreshRuntimeTranscript(address)
+        // A freshly created task has no prior history, so reset pagination
+        // directly instead of re-fetching the transcript. Re-fetching here would
+        // reset the message list with a stale snapshot and clobber both the
+        // optimistic user message and the live WebSocket "thinking" turn, causing
+        // the indicator to flicker (appear -> disappear -> reappear).
+        setRuntimeTranscriptPage({
+          hasMoreBefore: false,
+          beforeCursor: null,
+          loadingMore: false,
+        })
         handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(address)
         navigateTo(buildRuntimeTaskRoute(address))
         return true
@@ -2217,10 +2358,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       }
     },
     [
+      attachmentSelection,
       modelSelection.models,
       modelSelection.selectedModel,
       refreshWorkLists,
-      refreshRuntimeTranscript,
       rememberExecutionDevice,
       reportSendBlocked,
       resolvedServices.runtimeWorkApi,
@@ -2245,8 +2386,25 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
 
     if (state.currentRuntimeTask) {
-      if (hasAttachments || hasCodeComments) {
-        reportSendBlocked('当前 LocalTask 暂不支持附件或代码评论')
+      if (hasCodeComments) {
+        reportSendBlocked('当前 LocalTask 暂不支持代码评论')
+        return
+      }
+      if (currentRuntimeTaskRunning || hasActiveTurn) {
+        const currentAttachments = attachmentSelection.attachments
+        setQueuedSends(items => [
+          ...items,
+          {
+            id: `queued-runtime-${Date.now()}-${items.length}`,
+            content: payloadMessage,
+            status: 'queued',
+            createdAt: new Date().toISOString(),
+            runtimeAddress: state.currentRuntimeTask ?? undefined,
+            attachments: currentAttachments,
+          },
+        ])
+        dispatch({ type: 'input_changed', input: '' })
+        attachmentSelection.resetAttachments()
         return
       }
       if (!resolvedServices.runtimeWorkApi) {
@@ -2254,6 +2412,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
+      const currentAttachments = attachmentSelection.attachments
       dispatch({ type: 'input_changed', input: '' })
       dispatch({ type: 'sending_started' })
       dispatchMessages({
@@ -2262,16 +2421,23 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           id: `runtime-local-${Date.now()}`,
           role: 'user',
           content: payloadMessage,
+          attachments: currentAttachments,
           status: 'done',
           createdAt: new Date().toISOString(),
         },
       })
+      attachmentSelection.resetAttachments()
 
       try {
-        const response = await resolvedServices.runtimeWorkApi.sendRuntimeMessage({
+        const runtimeSendRequest: RuntimeSendRequest = {
           address: state.currentRuntimeTask,
           message: payloadMessage,
-        })
+        }
+        if (currentAttachments.length > 0) {
+          runtimeSendRequest.attachmentIds = currentAttachments.map(attachment => attachment.id)
+        }
+        const response =
+          await resolvedServices.runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
@@ -2335,7 +2501,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const sent = await sendPreparedRuntimeMessage(
       message,
       prepared.payload,
-      prepared.activeDeviceId
+      prepared.activeDeviceId,
+      attachmentSelection.attachments
     )
     if (sent) {
       attachmentSelection.resetAttachments()
@@ -2346,6 +2513,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     buildSendPayload,
     clearCodeCommentContexts,
     codeCommentContexts,
+    currentRuntimeTaskRunning,
+    hasActiveTurn,
     reportSendBlocked,
     sendPreparedRuntimeMessage,
     state.devices,
@@ -2355,6 +2524,79 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     state.input,
     refreshWorkLists,
     resolvedServices.runtimeWorkApi,
+  ])
+
+  useEffect(() => {
+    const queuedMessage = queuedSends.find(item => item.status === 'queued')
+    if (!queuedMessage) return
+    if (!state.currentRuntimeTask || currentRuntimeTaskRunning || hasActiveTurn) return
+    if (queuedSends.some(item => item.status === 'sending')) return
+    const runtimeWorkApi = resolvedServices.runtimeWorkApi
+    if (!runtimeWorkApi) return
+
+    const runtimeWorkApiToUse: NonNullable<WorkbenchServices['runtimeWorkApi']> = runtimeWorkApi
+    const queuedMessageToSend = queuedMessage
+    const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
+
+    setQueuedSends(items =>
+      items.map(item =>
+        item.id === queuedMessageToSend.id ? { ...item, status: 'sending' } : item
+      )
+    )
+
+    async function sendQueuedRuntimeMessage() {
+      try {
+        const runtimeSendRequest: RuntimeSendRequest = {
+          address: runtimeAddress,
+          message: queuedMessageToSend.content,
+        }
+        if (queuedMessageToSend.attachments && queuedMessageToSend.attachments.length > 0) {
+          runtimeSendRequest.attachmentIds = queuedMessageToSend.attachments.map(
+            attachment => attachment.id
+          )
+        }
+
+        dispatchMessages({
+          type: 'user_added',
+          message: {
+            id: `runtime-local-${Date.now()}`,
+            role: 'user',
+            content: queuedMessageToSend.content,
+            attachments: queuedMessageToSend.attachments,
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        })
+
+        const response = await runtimeWorkApiToUse.sendRuntimeMessage(runtimeSendRequest)
+        if (!response.accepted) {
+          throw new Error(response.error || '发送失败')
+        }
+        setQueuedSends(items => items.filter(item => item.id !== queuedMessageToSend.id))
+        await refreshWorkLists()
+      } catch (error) {
+        setQueuedSends(items =>
+          items.map(item =>
+            item.id === queuedMessageToSend.id
+              ? {
+                  ...item,
+                  status: 'failed',
+                  error: error instanceof Error ? error.message : '发送失败',
+                }
+              : item
+          )
+        )
+      }
+    }
+
+    void sendQueuedRuntimeMessage()
+  }, [
+    currentRuntimeTaskRunning,
+    hasActiveTurn,
+    queuedSends,
+    refreshWorkLists,
+    resolvedServices.runtimeWorkApi,
+    state.currentRuntimeTask,
   ])
 
   const retryFailedMessage = useCallback(
@@ -2378,6 +2620,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       }
 
       if (state.currentRuntimeTask) {
+        if (currentRuntimeTaskRunning) {
+          reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
+          return
+        }
         if (!resolvedServices.runtimeWorkApi) {
           reportSendBlocked('Local runtime work is unavailable')
           return
@@ -2407,6 +2653,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       refreshWorkLists,
       reportSendBlocked,
       resolvedServices.runtimeWorkApi,
+      currentRuntimeTaskRunning,
       state.currentRuntimeTask,
     ]
   )
@@ -2436,28 +2683,62 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: number) => {
-      const runtimeSummary = messagesRef.current.find(
-        message => message.subtaskId === subtaskId && message.fileChanges?.diff
-      )?.fileChanges
-      if (runtimeSummary?.diff) return runtimeSummary.diff
+      const runtimeFileChanges = state.currentRuntimeTask
+        ? findFileChangesBySubtaskId(messagesRef.current, subtaskId)
+        : undefined
+      if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
+      if (runtimeFileChanges) {
+        const response = await resolvedServices.deviceApi.executeCommand(
+          runtimeFileChanges.device_id,
+          {
+            command_key: 'turn_file_changes_review',
+            path: runtimeFileChanges.workspace_path,
+            args: [runtimeFileChanges.artifact_id],
+            timeout_seconds: 30,
+            max_output_bytes: 5 * 1024 * 1024,
+          }
+        )
+        const stdout = getCommandStdoutObject(response.stdout)
+        if (
+          !response.success ||
+          !stdout ||
+          stdout.success !== true ||
+          typeof stdout.diff !== 'string'
+        ) {
+          if (stdout?.status === 'artifact_missing') {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges: { ...runtimeFileChanges, status: 'artifact_missing' },
+            })
+          }
+          throw new Error(
+            String(
+              stdout?.error || response.error || response.stderr || 'File changes review failed'
+            )
+          )
+        }
+        return stdout.diff
+      }
+
       const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff
       if (!loadDiff) throw new Error('File changes review is unavailable')
       const response = await loadDiff(subtaskId)
       return response.diff
     },
-    [resolvedServices.taskApi]
+    [resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
   )
 
   const revertTurnFileChanges = useCallback(
     async (subtaskId: number) => {
-      const runtimeSummary = messagesRef.current.find(
-        message => message.subtaskId === subtaskId && message.fileChanges?.diff
-      )?.fileChanges
-      if (runtimeSummary && state.currentRuntimeTask && resolvedServices.runtimeWorkApi) {
+      const runtimeFileChanges = state.currentRuntimeTask
+        ? findFileChangesBySubtaskId(messagesRef.current, subtaskId)
+        : undefined
+      if (runtimeFileChanges && state.currentRuntimeTask && resolvedServices.runtimeWorkApi) {
         try {
           const response = await resolvedServices.runtimeWorkApi.revertRuntimeFileChanges({
             address: state.currentRuntimeTask,
-            fileChanges: runtimeSummary,
+            fileChanges: runtimeFileChanges,
           })
           const fileChanges = normalizeTurnFileChanges(
             response.fileChanges ?? response.file_changes
@@ -2465,20 +2746,30 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           if (!fileChanges) {
             throw new Error('Invalid file changes response')
           }
+          const nextFileChanges = {
+            ...fileChanges,
+            diff: runtimeFileChanges.diff,
+            revertible: runtimeFileChanges.revertible ?? true,
+          }
           dispatchMessages({
             type: 'file_changes_updated',
             subtaskId,
-            fileChanges: { ...fileChanges, diff: runtimeSummary.diff, revertible: true },
+            fileChanges: nextFileChanges,
           })
-          return { ...fileChanges, diff: runtimeSummary.diff, revertible: true }
+          return nextFileChanges
         } catch (error) {
           if (error instanceof ApiError && isRecord(error.detail)) {
             const fileChanges = normalizeTurnFileChanges(error.detail.file_changes)
             if (fileChanges) {
+              const nextFileChanges = {
+                ...fileChanges,
+                diff: runtimeFileChanges.diff,
+                revertible: runtimeFileChanges.revertible ?? true,
+              }
               dispatchMessages({
                 type: 'file_changes_updated',
                 subtaskId,
-                fileChanges: { ...fileChanges, diff: runtimeSummary.diff, revertible: true },
+                fileChanges: nextFileChanges,
               })
             }
           }
@@ -2540,15 +2831,167 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     })
   }, [activeAssistantMessage, resolvedServices.chatStream])
 
-  const sendQueuedAsGuidance = useCallback(async (id: string) => {
-    setQueuedSends(items =>
-      items.map(queued =>
-        queued.id === id
-          ? { ...queued, status: 'failed', error: '当前 LocalTask 暂不支持引导' }
-          : queued
-      )
-    )
-  }, [])
+  const sendQueuedAsGuidance = useCallback(
+    async (id: string) => {
+      const queuedMessage = queuedSends.find(item => item.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+
+      const taskId = activeAssistantMessage?.taskId
+      const subtaskId = activeAssistantMessage?.subtaskId
+      const teamId = state.defaultTeam?.id
+      if (!taskId || !subtaskId || !teamId) {
+        const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
+        if (runtimeAddress) {
+          const runtimeWorkApi = resolvedServices.runtimeWorkApi
+          if (!runtimeWorkApi) {
+            setQueuedSends(items =>
+              items.map(item =>
+                item.id === id ? { ...item, status: 'failed', error: 'Runtime API 不可用' } : item
+              )
+            )
+            return
+          }
+
+          setQueuedSends(items =>
+            items.map(item =>
+              item.id === id
+                ? {
+                    ...item,
+                    status: 'sending',
+                    error: undefined,
+                    notice: '正在暂停当前回复并发送',
+                  }
+                : item
+            )
+          )
+
+          try {
+            const cancelResponse = await runtimeWorkApi.cancelRuntimeTask(runtimeAddress)
+            if (!cancelResponse.accepted) {
+              throw new Error(cancelResponse.error || '暂停当前回复失败')
+            }
+
+            if (activeAssistantMessage?.subtaskId) {
+              dispatchMessages({
+                type: 'assistant_done',
+                subtaskId: activeAssistantMessage.subtaskId,
+                content: activeAssistantMessage.content,
+              })
+            }
+
+            const runtimeSendRequest: RuntimeSendRequest = {
+              address: runtimeAddress,
+              message: queuedMessage.content,
+            }
+            if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
+              runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
+                attachment => attachment.id
+              )
+            }
+            dispatchMessages({
+              type: 'user_added',
+              message: {
+                id: `runtime-guidance-${Date.now()}`,
+                role: 'user',
+                content: queuedMessage.content,
+                attachments: queuedMessage.attachments,
+                status: 'done',
+                createdAt: new Date().toISOString(),
+              },
+            })
+            const sendResponse = await runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
+            if (!sendResponse.accepted) {
+              throw new Error(sendResponse.error || '发送失败')
+            }
+            setQueuedSends(items => items.filter(item => item.id !== id))
+            await refreshWorkLists()
+          } catch (error) {
+            setQueuedSends(items =>
+              items.map(item =>
+                item.id === id
+                  ? {
+                      ...item,
+                      status: 'failed',
+                      notice: undefined,
+                      error: error instanceof Error ? error.message : '引导发送失败',
+                    }
+                  : item
+              )
+            )
+          }
+          return
+        }
+
+        setQueuedSends(items =>
+          items.map(item =>
+            item.id === id ? { ...item, status: 'failed', error: '当前回复缺少引导上下文' } : item
+          )
+        )
+        return
+      }
+
+      const guidanceId = `guidance-${subtaskId}-${Date.now()}`
+      setQueuedSends(items => items.filter(item => item.id !== id))
+      setGuidanceMessages(items => [
+        ...items,
+        {
+          id: guidanceId,
+          content: queuedMessage.content,
+          status: 'sending',
+          createdAt: new Date().toISOString(),
+        },
+      ])
+
+      try {
+        const ack = await resolvedServices.chatStream.sendGuidance({
+          task_id: taskId,
+          subtask_id: subtaskId,
+          team_id: teamId,
+          message: queuedMessage.content,
+          guidance: queuedMessage.content,
+          client_guidance_id: guidanceId,
+        })
+
+        if (ack.error || ack.success === false) {
+          throw new Error(normalizeGuidanceError(ack.error))
+        }
+
+        setGuidanceMessages(items =>
+          items.map(item =>
+            item.id === guidanceId
+              ? {
+                  ...item,
+                  id: ack.guidance_id ?? item.id,
+                  status: 'queued',
+                }
+              : item
+          )
+        )
+      } catch (error) {
+        setGuidanceMessages(items =>
+          items.map(item =>
+            item.id === guidanceId
+              ? {
+                  ...item,
+                  status: 'failed',
+                  error:
+                    error instanceof Error ? normalizeGuidanceError(error.message) : '引导发送失败',
+                }
+              : item
+          )
+        )
+      }
+    },
+    [
+      activeAssistantMessage,
+      queuedSends,
+      refreshWorkLists,
+      resolvedServices.chatStream,
+      resolvedServices.runtimeWorkApi,
+      state.currentRuntimeTask,
+      state.defaultTeam?.id,
+    ]
+  )
 
   const listLocalSkills = useCallback(async () => {
     if (!activeDeviceId) return []
@@ -2572,6 +3015,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     queuedMessages: queuedSends,
     guidanceMessages,
     codeCommentContexts,
+    currentRuntimeTaskRunning,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore: runtimeTranscriptPage.hasMoreBefore,
     isRuntimeTranscriptLoadingMore: runtimeTranscriptPage.loadingMore,
@@ -2611,6 +3055,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    searchRuntimeWork,
     loadOlderRuntimeTranscript,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,

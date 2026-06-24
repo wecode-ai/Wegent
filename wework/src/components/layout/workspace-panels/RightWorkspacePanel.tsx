@@ -24,6 +24,7 @@ interface RightWorkspaceReviewState {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
 }
 
 interface RightWorkspacePanelProps {
@@ -125,6 +126,7 @@ export function RightWorkspacePanel({
             defaultFileTreeVisible={review.defaultFileTreeVisible}
             branchName={review.branchName}
             targetBranchName={review.targetBranchName}
+            focusFilePath={review.focusFilePath}
             viewOptions={reviewViewOptions}
             onRefresh={onRefreshReview}
           />

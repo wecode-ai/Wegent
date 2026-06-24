@@ -12,6 +12,7 @@ const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
   loading?: boolean
+  isWaitingForAssistant?: boolean
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
   className?: string
@@ -29,6 +30,7 @@ interface ScrollableMessageAreaProps {
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
   onLoadMoreBefore?: () => Promise<void> | void
@@ -37,6 +39,7 @@ interface ScrollableMessageAreaProps {
 export function ScrollableMessageArea({
   messages,
   loading = false,
+  isWaitingForAssistant = false,
   hasMoreBefore = false,
   loadingMoreBefore = false,
   className,
@@ -83,8 +86,9 @@ export function ScrollableMessageArea({
       lastMessage.status,
       lastMessage.content.length,
       blockSignature,
+      isWaitingForAssistant ? 'waiting' : 'idle',
     ].join(':')
-  }, [lastMessage, messages.length])
+  }, [isWaitingForAssistant, lastMessage, messages.length])
 
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
@@ -185,7 +189,7 @@ export function ScrollableMessageArea({
 
   useLayoutEffect(() => {
     updateScrollState()
-  }, [messages, updateScrollState])
+  }, [isWaitingForAssistant, messages, updateScrollState])
 
   useEffect(() => {
     const content = contentRef.current
@@ -215,7 +219,11 @@ export function ScrollableMessageArea({
         className={cn('h-full overflow-x-hidden overflow-y-auto', scrollerClassName)}
         onScroll={updateScrollState}
       >
-        <div ref={contentRef} className="min-w-0 overflow-x-hidden">
+        <div
+          ref={contentRef}
+          data-testid={`${scrollTestId}-content`}
+          className={cn('min-w-0 overflow-x-hidden')}
+        >
           {messages.length === 0 ? (
             loading ? (
               <div
@@ -259,6 +267,7 @@ export function ScrollableMessageArea({
               )}
               <MessageList
                 messages={messages}
+                isWaitingForAssistant={isWaitingForAssistant}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
                 onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}

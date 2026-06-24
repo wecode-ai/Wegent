@@ -373,6 +373,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'pb-40'
     )
+    expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
@@ -1824,17 +1825,101 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
-    expect(screen.getByTestId('composer-disabled-reason')).toHaveTextContent(
-      'Offline Device 暂不可用，恢复后可继续对话'
-    )
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
       'Offline Device 已离线，恢复在线后可继续对话'
     )
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('send-message-button'))
     expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('keeps the composer available without an inline notice while runtime task is running', async () => {
+    const onSend = vi.fn()
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        currentRuntimeTaskRunning
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-a',
+          },
+          input: '继续修',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: '执行pwd',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+        }}
+        onSend={onSend}
+      />
+    )
+
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).not.toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides inline composer notice while a send request is in flight', async () => {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          standaloneDeviceId: 'device-1',
+          input: '正在发送的消息',
+          isSending: true,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+          currentStandaloneDeviceId: 'device-1',
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
   test('shows an external upgrade action for the active low-version device', async () => {

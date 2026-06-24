@@ -151,6 +151,12 @@ describe('model-ui', () => {
       type: 'user',
       runtime: { family: 'openai.openai-responses' },
     }
+    const chatGptModel: UnifiedModel = {
+      name: 'gpt-5-2025-08-07',
+      type: 'public',
+      provider: 'openai',
+      runtime: { family: 'openai', provider: 'openai' },
+    }
     const geminiModel: UnifiedModel = {
       name: 'gemini-2.5-pro',
       type: 'public',
@@ -161,6 +167,7 @@ describe('model-ui', () => {
     expect(getModelCompatibilityFamily(claudeCompatibleDeepseek)).toBe('claude.claude')
     expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, claudeModel)).toBe(true)
     expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, gptModel)).toBe(false)
+    expect(areModelsProtocolCompatible(gptModel, chatGptModel)).toBe(true)
     expect(areModelsProtocolCompatible(gptModel, geminiModel)).toBe(false)
   })
 

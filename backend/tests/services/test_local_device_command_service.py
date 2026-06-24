@@ -24,7 +24,7 @@ def _run_git(repo, *args):
     ).stdout
 
 
-def _create_turn_file_changes_artifact(tmp_path):
+def _create_turn_file_changes_artifact(tmp_path, task_id=10, subtask_id=20):
     repo = tmp_path / "repo"
     repo.mkdir()
     _run_git(repo, "init", "-q")
@@ -37,15 +37,21 @@ def _create_turn_file_changes_artifact(tmp_path):
     changed_file.write_text("after\n", encoding="utf-8")
     patch = _run_git(repo, "diff", "--binary", "HEAD")
     executor_home = tmp_path / "executor-home"
-    artifact_dir = executor_home / "artifacts" / "turn-file-changes" / "10" / "20"
+    artifact_dir = (
+        executor_home
+        / "artifacts"
+        / "turn-file-changes"
+        / str(task_id)
+        / str(subtask_id)
+    )
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "changes.patch.gz").write_bytes(gzip.compress(patch))
     (artifact_dir / "metadata.json").write_text(
         json.dumps(
             {
                 "version": 1,
-                "task_id": 10,
-                "subtask_id": 20,
+                "task_id": task_id,
+                "subtask_id": subtask_id,
                 "workspace_path": str(repo.resolve()),
                 "checksum": hashlib.sha256(patch).hexdigest(),
             }
@@ -198,6 +204,33 @@ def test_turn_file_changes_review_returns_validated_diff(tmp_path):
             TURN_FILE_CHANGES_SCRIPT,
             "review",
             "turn-file-changes/10/20",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
+
+
+def test_runtime_local_turn_file_changes_review_accepts_zero_task_id(tmp_path):
+    """Native Codex runtime turns persist artifacts with task_id=0 (no DB task)."""
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(
+        tmp_path, task_id=0, subtask_id=1700000000000
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "review",
+            "turn-file-changes/0/1700000000000",
         ],
         cwd=repo,
         env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
@@ -2161,6 +2194,60 @@ async def test_execute_device_command_endpoint_allows_explicit_root_project_work
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["env"] == {"EXISTING": "1", "WEGENT_WORKSPACE_ROOTS": "/"}
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
+    monkeypatch,
+    test_db,
+):
+    """Workspace file commands should allow paths under runtime device workspaces."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services.runtime_work_kind_store import upsert_device_workspace_kind
+
+    workspace_path = "/Users/test/runtime/repo"
+    upsert_device_workspace_kind(
+        db=test_db,
+        user_id=7,
+        project_id=11,
+        payload=DeviceWorkspaceUpsert(
+            projectId=11,
+            deviceId="device-abc",
+            workspacePath=workspace_path,
+        ),
+        workspace_path=workspace_path,
+        workspace_path_hash="hash-runtime-repo",
+    )
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"path": f"{workspace_path}/src", "entries": []},
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(
+            command_key="workspace_tree",
+            path=f"{workspace_path}/src",
+            env={"EXISTING": "1"},
+        ),
+        db=test_db,
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    service_mock.assert_awaited_once()
+    _, kwargs = service_mock.await_args
+    assert kwargs["env"]["EXISTING"] == "1"
+    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == workspace_path
 
 
 @pytest.mark.asyncio

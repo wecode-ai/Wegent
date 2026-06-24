@@ -4,6 +4,7 @@
 
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
+import asyncio
 import json
 import logging
 import posixpath
@@ -48,6 +49,7 @@ from app.schemas.runtime_work import (
     RuntimeSendResponse,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
+    RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
@@ -58,6 +60,10 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
+    RuntimeWorkSearchItem,
+    RuntimeWorkSearchProjectRef,
+    RuntimeWorkSearchRequest,
+    RuntimeWorkSearchResponse,
     RuntimeWorkspaceOpenRequest,
     RuntimeWorkspaceOpenResponse,
 )
@@ -80,7 +86,9 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
+RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
+RUNTIME_CANCEL_TIMEOUT_SECONDS = 30
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
@@ -366,6 +374,73 @@ async def get_runtime_transcript(
     return RuntimeTranscriptResponse.model_validate(result)
 
 
+async def search_runtime_work(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkSearchRequest,
+) -> RuntimeWorkSearchResponse:
+    """Search runtime transcripts on online or busy devices owned by the user."""
+
+    devices = await device_service.get_all_devices(db, user_id)
+    searchable_devices: list[tuple[str, dict[str, Any]]] = []
+    for device in devices:
+        device_id = str(device.get("device_id") or "")
+        if not device_id or _device_status(device) not in {"online", "busy"}:
+            continue
+        searchable_devices.append((device_id, device))
+
+    device_results = await asyncio.gather(
+        *(
+            _search_runtime_work_device(
+                user_id=user_id,
+                device_id=device_id,
+                device=device,
+                request=request,
+            )
+            for device_id, device in searchable_devices
+        )
+    )
+    items = [item for device_items in device_results for item in device_items]
+
+    items.sort(
+        key=lambda item: _parse_optional_timestamp(item.updated_at),
+        reverse=True,
+    )
+    return RuntimeWorkSearchResponse(items=items[: request.limit])
+
+
+async def _search_runtime_work_device(
+    *,
+    user_id: int,
+    device_id: str,
+    device: dict[str, Any],
+    request: RuntimeWorkSearchRequest,
+) -> list[RuntimeWorkSearchItem]:
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.search",
+            payload={
+                "query": request.query,
+                "limit": request.limit,
+                "includeArchived": request.include_archived,
+            },
+            timeout_seconds=RUNTIME_SEARCH_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError:
+        return []
+    if result.get("success") is False:
+        return []
+    return _runtime_search_items_from_result(
+        result=result,
+        device=device,
+        device_id=device_id,
+        project_id=request.project_id,
+    )
+
+
 async def revert_runtime_file_changes(
     *,
     db: Session,
@@ -448,6 +523,9 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if attachments:
+        payload["attachments"] = attachments
     if request.source:
         payload["source"] = request.source.model_dump()
     try:
@@ -633,6 +711,33 @@ async def archive_runtime_task(
             detail=str(exc),
         ) from exc
     return _runtime_archive_response(result, normalized_address)
+
+
+async def cancel_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    """Cancel a running LocalTask through the owning local executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.cancel",
+            payload=_runtime_task_address_payload(normalized_address),
+            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_cancel_response(result, normalized_address)
 
 
 async def create_runtime_task(
@@ -1353,6 +1458,25 @@ def _runtime_archive_response(
     )
 
 
+def _runtime_cancel_response(
+    result: dict[str, Any],
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    if result.get("success") is False:
+        return RuntimeTaskCancelResponse(
+            accepted=False,
+            localTaskId=str(result.get("localTaskId") or address.local_task_id),
+            workspacePath=result.get("workspacePath") or address.workspace_path,
+            error=str(result.get("error") or "Runtime cancel failed"),
+        )
+    return RuntimeTaskCancelResponse(
+        accepted=bool(result.get("accepted", True)),
+        localTaskId=str(result.get("localTaskId") or address.local_task_id),
+        workspacePath=result.get("workspacePath") or address.workspace_path,
+        error=result.get("error"),
+    )
+
+
 def _im_notification_session_out(
     session: IMPrivateSession,
 ) -> RuntimeIMNotificationSession:
@@ -1935,6 +2059,81 @@ def _task_timestamp(task: LocalTaskSummary) -> float:
     return 0.0
 
 
+def _parse_optional_timestamp(value: Optional[str]) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _runtime_search_items_from_result(
+    *,
+    result: dict[str, Any],
+    device: dict[str, Any],
+    device_id: str,
+    project_id: Optional[int],
+) -> list[RuntimeWorkSearchItem]:
+    raw_items = result.get("items", [])
+    if not isinstance(raw_items, list):
+        return []
+
+    items: list[RuntimeWorkSearchItem] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        workspace_path = str(raw_item.get("workspacePath") or "").strip()
+        local_task_id = str(raw_item.get("localTaskId") or "").strip()
+        if not workspace_path or not local_task_id:
+            continue
+        project = _runtime_search_project_ref(device_id, workspace_path)
+        if project_id is not None and (project is None or project.id != project_id):
+            continue
+        items.append(
+            RuntimeWorkSearchItem(
+                address=RuntimeTaskAddress(
+                    deviceId=device_id,
+                    workspacePath=workspace_path,
+                    localTaskId=local_task_id,
+                ),
+                runtime=raw_item.get("runtime") or "codex",
+                title=str(raw_item.get("title") or local_task_id),
+                snippet=str(raw_item.get("snippet") or ""),
+                matchStart=int(raw_item.get("matchStart") or 0),
+                matchEnd=int(raw_item.get("matchEnd") or 0),
+                messageId=str(raw_item.get("messageId") or ""),
+                messageRole=str(raw_item.get("messageRole") or ""),
+                messageCreatedAt=raw_item.get("messageCreatedAt"),
+                updatedAt=raw_item.get("updatedAt"),
+                deviceName=_device_name(device, device_id),
+                workspacePath=workspace_path,
+                project=project,
+            )
+        )
+    return items
+
+
+def _runtime_search_project_ref(
+    device_id: str,
+    workspace_path: str,
+) -> Optional[RuntimeWorkSearchProjectRef]:
+    if _runtime_workspace_kind_fields(workspace_path)["workspaceKind"] == "chat":
+        return None
+    project = _runtime_project_ref_from_workspace(device_id, workspace_path)
+    return RuntimeWorkSearchProjectRef(
+        id=_runtime_project_ui_id(project),
+        name=project.name,
+    )
+
+
+def _runtime_project_ui_id(project: RuntimeProjectRef) -> int:
+    hash_value = 0
+    for char in project.key:
+        hash_value = (hash_value * 31 + ord(char)) & 0xFFFFFFFF
+    return (hash_value % 1_000_000_000) + 1
+
+
 def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:
     raw_workspaces = result.get("workspaces", [])
     if not isinstance(raw_workspaces, list):
@@ -2510,8 +2709,20 @@ def _apply_runtime_attachments(
 ) -> None:
     """Attach existing uploaded contexts without linking them to transient subtasks."""
 
+    execution_request.attachments = _runtime_attachment_payloads(
+        db,
+        user_id,
+        attachment_ids,
+    )
+
+
+def _runtime_attachment_payloads(
+    db: Session,
+    user_id: int,
+    attachment_ids: list[int],
+) -> list[dict[str, Any]]:
     if not attachment_ids:
-        return
+        return []
 
     contexts = (
         db.query(SubtaskContext)
@@ -2524,13 +2735,14 @@ def _apply_runtime_attachments(
         .order_by(SubtaskContext.id.asc())
         .all()
     )
-    execution_request.attachments = [
+    return [
         {
             "id": context.id,
             "original_filename": context.original_filename,
             "mime_type": context.mime_type,
             "file_size": context.file_size,
             "subtask_id": context.subtask_id,
+            "file_extension": context.file_extension,
         }
         for context in contexts
     ]

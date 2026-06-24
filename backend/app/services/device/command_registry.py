@@ -935,8 +935,10 @@ import tempfile
 from pathlib import Path
 
 MAX_PATCH_BYTES = 20 * 1024 * 1024
+# task_id is 0 for runtime-local work (no DB task row); subtask_id is always
+# positive. Both segments are pure digits, so fullmatch still blocks traversal.
 ARTIFACT_PATTERN = re.compile(
-    r"turn-file-changes/([1-9][0-9]*)/([1-9][0-9]*)"
+    r"turn-file-changes/([0-9]+)/([0-9]+)"
 )
 
 

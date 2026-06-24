@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    currentRuntimeTaskRunning,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore,
     isRuntimeTranscriptLoadingMore,
@@ -31,6 +32,7 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    searchRuntimeWork,
     loadOlderRuntimeTranscript,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,
@@ -106,6 +108,7 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      currentRuntimeTaskRunning={currentRuntimeTaskRunning}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
       isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
@@ -118,6 +121,7 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onSearchRuntimeWork={searchRuntimeWork}
       onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}

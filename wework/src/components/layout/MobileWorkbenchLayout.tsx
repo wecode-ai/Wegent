@@ -62,6 +62,7 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -302,10 +303,12 @@ export function MobileWorkbenchLayout({
           }
         : undefined,
   }
-  const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentProject: activeConversationProject,
-    standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
-  })
+  const activeDeviceId =
+    state.currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject: activeConversationProject,
+      standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
+    })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
@@ -315,6 +318,7 @@ export function MobileWorkbenchLayout({
   )
   const noStandaloneCompatibleDevice =
     !activeConversationProject &&
+    !state.currentRuntimeTask &&
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
@@ -322,20 +326,21 @@ export function MobileWorkbenchLayout({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
-  const composerDisabledReason = state.isSending
-    ? t('workbench.sending_message')
-    : activeDeviceUnavailable
-      ? t('workbench.device_status_active_unavailable', {
+  const composerDisabledReason = activeDeviceUnavailable
+    ? t('workbench.device_status_active_unavailable', {
+        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+      })
+    : activeDeviceVersionUnsupported
+      ? t('workbench.device_status_active_upgrade_required', {
           device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
-      : activeDeviceVersionUnsupported
-        ? t('workbench.device_status_active_upgrade_required', {
-            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-            version: WEWORK_MIN_EXECUTOR_VERSION,
-          })
-        : noStandaloneCompatibleDevice
-          ? t('workbench.device_status_no_online_device')
-          : undefined
+      : noStandaloneCompatibleDevice
+        ? t('workbench.device_status_no_online_device')
+        : undefined
+  const inlineComposerDisabledReason = showConversationDeviceBanner
+    ? undefined
+    : composerDisabledReason
 
   useEffect(() => {
     const handlePopState = () => {
@@ -519,6 +524,7 @@ export function MobileWorkbenchLayout({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
+              isWaitingForAssistant={state.isSending}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={state.currentRuntimeTask?.localTaskId ?? null}
@@ -560,7 +566,7 @@ export function MobileWorkbenchLayout({
                   onSubmit={onSend}
                   disabled={composerDisabled}
                   error={state.error}
-                  disabledReason={composerDisabledReason}
+                  disabledReason={inlineComposerDisabledReason}
                   placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
@@ -648,7 +654,7 @@ export function MobileWorkbenchLayout({
                 onSubmit={onSend}
                 disabled={composerDisabled}
                 error={state.error}
-                disabledReason={composerDisabledReason}
+                disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
