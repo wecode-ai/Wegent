@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.core.security import get_password_hash
 from app.models.im_session import IMPrivateSession, IMSessionMode
+from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.im.session_service import im_session_service
@@ -68,6 +69,39 @@ def _create_task(
     )
     db.add(task)
     return task
+
+
+def _create_messager(
+    db: Session,
+    *,
+    channel_id: int,
+    name: str,
+    channel_type: str,
+    bot_purpose: str,
+) -> Kind:
+    channel = Kind(
+        id=channel_id,
+        user_id=0,
+        kind="Messager",
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Messager",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "channelType": channel_type,
+                "botPurpose": bot_purpose,
+                "isEnabled": True,
+                "config": {},
+            },
+        },
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+    )
+    db.add(channel)
+    return channel
 
 
 def _create_session(
@@ -180,6 +214,95 @@ def test_list_private_sessions_returns_discord_channel_label(
         item["session_key"]: item["channel_label"] for item in payload["items"]
     }
     assert labels_by_key[session.session_key] == "Discord"
+
+
+def test_list_private_sessions_includes_bot_purpose_and_current_target(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    _create_messager(
+        test_db,
+        channel_id=188,
+        name="wework-main",
+        channel_type="weibo",
+        bot_purpose="wework_local",
+    )
+    session = _create_session(
+        test_db,
+        user_id=test_user.id,
+        channel_type="weibo",
+        channel_id=188,
+        conversation_id="wework-runtime",
+    )
+    session.active_runtime_task = {"localTaskId": "local-1", "title": "Fix login"}
+    asyncio.run(im_session_service.save_session(session))
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/im/private-sessions",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    item = next(
+        item
+        for item in response.json()["items"]
+        if item["session_key"] == session.session_key
+    )
+    assert item["bot_purpose"] == "wework_local"
+    assert item["current_target_type"] == "wework_runtime_task"
+    assert item["current_target_label"] == "Fix login"
+
+
+def test_list_private_sessions_filters_by_bot_purpose(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    _create_messager(
+        test_db,
+        channel_id=198,
+        name="wegent-main",
+        channel_type="telegram",
+        bot_purpose="wegent_chat",
+    )
+    _create_messager(
+        test_db,
+        channel_id=199,
+        name="wework-main",
+        channel_type="weibo",
+        bot_purpose="wework_local",
+    )
+    wegent_session = _create_session(
+        test_db,
+        user_id=test_user.id,
+        channel_type="telegram",
+        channel_id=198,
+        conversation_id="wegent-chat",
+    )
+    wework_session = _create_session(
+        test_db,
+        user_id=test_user.id,
+        channel_type="weibo",
+        channel_id=199,
+        conversation_id="wework-chat",
+    )
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/im/private-sessions?bot_purpose=wework_local",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    item_keys = {item["session_key"] for item in payload["items"]}
+    assert payload["total"] == 1
+    assert item_keys == {wework_session.session_key}
+    assert wegent_session.session_key not in item_keys
 
 
 def test_bind_task_private_sessions_returns_bound_keys_and_notified_count(

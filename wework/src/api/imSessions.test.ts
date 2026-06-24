@@ -11,4 +11,13 @@ describe('createImSessionApi', () => {
 
     expect(get).toHaveBeenCalledWith('/im/private-sessions')
   })
+
+  test('filters private IM sessions by bot purpose', async () => {
+    const get = vi.fn().mockResolvedValue({ total: 0, items: [] })
+    const api = createImSessionApi({ get } as unknown as HttpClient)
+
+    await api.listPrivateSessions('wework_local')
+
+    expect(get).toHaveBeenCalledWith('/im/private-sessions?bot_purpose=wework_local')
+  })
 })
