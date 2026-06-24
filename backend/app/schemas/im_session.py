@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 IMSessionModeValue = Literal["chat", "task"]
+IMBotPurposeValue = Literal["wegent_chat", "wework_local"]
 IMSessionStateValue = Literal[
     "idle",
     "pending_new_flow",
@@ -23,12 +24,15 @@ class IMPrivateSessionOut(BaseModel):
     channel_type: str
     channel_label: str
     channel_id: int
+    bot_purpose: IMBotPurposeValue = "wegent_chat"
     conversation_id: str
     sender_id: str
     display_name: str
     mode: IMSessionModeValue
     state: IMSessionStateValue
     active_task_id: int | None = None
+    current_target_type: str | None = None
+    current_target_label: str | None = None
     last_seen_at: datetime
 
 

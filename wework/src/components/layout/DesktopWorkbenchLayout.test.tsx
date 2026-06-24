@@ -460,6 +460,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
 
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
+    expect(onListImPrivateSessions).toHaveBeenCalledWith('wework_local')
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })

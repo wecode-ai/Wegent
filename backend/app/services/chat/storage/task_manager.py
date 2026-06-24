@@ -299,6 +299,7 @@ def create_new_task(
         knowledge_base_id=params.knowledge_base_id,
     )
     task_execution = _build_task_execution(params.execution_workspace)
+    im_context = _build_task_im_context(params.message_source)
     task_name = params.task_name or f"task-{new_task_id}"
 
     task_json = {
@@ -320,6 +321,7 @@ def create_new_task(
                 else {}
             ),
             **({"execution": task_execution} if task_execution else {}),
+            **({"im_context": im_context} if im_context else {}),
         },
         "status": {
             "state": "Available",
@@ -401,6 +403,31 @@ def _build_task_execution(
     if path:
         workspace["path"] = path
     return {"workspace": workspace}
+
+
+def _build_task_im_context(
+    message_source: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Build Task spec IM context from private IM message source metadata."""
+
+    if not isinstance(message_source, dict) or message_source.get("source") != "im":
+        return None
+
+    session_key = str(message_source.get("session_key") or "").strip()
+    if not session_key:
+        return None
+
+    context: Dict[str, Any] = {"session_key": session_key}
+    channel_id = message_source.get("channel_id")
+    if channel_id is not None:
+        try:
+            context["channel_id"] = int(channel_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[create_new_task] Ignoring invalid IM channel_id in message_source: %r",
+                channel_id,
+            )
+    return context
 
 
 def _requires_git_worktree_preparation(

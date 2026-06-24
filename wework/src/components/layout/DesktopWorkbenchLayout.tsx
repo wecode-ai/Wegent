@@ -19,6 +19,7 @@ import type {
   DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
+  IMBotPurpose,
   IMPrivateSession,
   IMPrivateSessionListResponse,
   ProjectWithTasks,
@@ -87,7 +88,7 @@ interface DesktopWorkbenchLayoutProps {
   onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
-  onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
+  onListImPrivateSessions?: (botPurpose?: IMBotPurpose) => Promise<IMPrivateSessionListResponse>
   onBindRuntimeTaskToImSessions?: (
     address: RuntimeTaskAddress,
     sessionKeys: string[]
@@ -463,7 +464,7 @@ export function DesktopWorkbenchLayout({
     imSessionsRequestSequence.current = requestId
     setImSessionsLoading(true)
     setImSessions([])
-    void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
+    void (onListImPrivateSessions?.('wework_local') ?? Promise.resolve({ total: 0, items: [] }))
       .then(response => {
         if (imSessionsRequestSequence.current === requestId) {
           setImSessions(response.items)

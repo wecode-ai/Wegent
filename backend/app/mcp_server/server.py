@@ -10,6 +10,8 @@ This module provides MCP servers for Wegent Backend with these endpoints:
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
 - /mcp/knowledge-external - Trusted external knowledge integration MCP root
   - /mcp/knowledge-external/sse - External knowledge MCP streamable HTTP transport endpoint
+- /mcp/im-control - Private IM session control MCP module root
+  - /mcp/im-control/sse - Private IM session control MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
@@ -65,6 +67,8 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+IM_CONTROL_MCP_MOUNT_PATH = "/mcp/im-control"
+IM_CONTROL_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -521,6 +525,50 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+# ============== IM Control MCP Server ==============
+# Provides private IM session state control tools
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+im_control_mcp_server = FastMCP(
+    "wegent-im-control-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for im_control MCP request context (used by McpAppSpec)
+_im_control_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_im_control_request_token_info", default=None)
+)
+
+# Flag to track if tools have been registered
+_im_control_tools_registered = False
+
+
+def _register_im_control_tools() -> None:
+    """Register im_control tools from @mcp_tool decorated functions."""
+    global _im_control_tools_registered
+    if _im_control_tools_registered:
+        return
+
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        im_control,
+    )
+
+    count = register_tools_to_server(im_control_mcp_server, "im_control")
+    logger.info(f"[MCP:IMControl] Registered {count} tools from decorated endpoints")
+
+    _im_control_tools_registered = True
+
+
+def ensure_im_control_tools_registered() -> None:
+    """Ensure im_control MCP tools are registered."""
+    _register_im_control_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -578,12 +626,24 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_IM_CONTROL_MCP_SPEC = McpAppSpec(
+    name="im_control",
+    service_name="wegent-im-control-mcp",
+    mount_path=IM_CONTROL_MCP_MOUNT_PATH,
+    transport_path=IM_CONTROL_MCP_TRANSPORT_PATH,
+    server=im_control_mcp_server,
+    token_context=_im_control_request_token_info,
+    log_prefix="IMControl",
+    include_root_metadata=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _IM_CONTROL_MCP_SPEC,
 )
 
 
@@ -617,6 +677,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "im_control":
+        ensure_im_control_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -663,6 +725,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     "interactive_form_question",
                     "prompt_optimization",
                     "subscription",
+                    "im_control",
                 ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
@@ -845,6 +908,24 @@ def get_mcp_prompt_optimization_config(
         url=f"{backend_url}{PROMPT_OPTIMIZATION_MCP_MOUNT_PATH}{PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=300,  # 5 minutes for prompt optimization
+    )
+
+
+def get_mcp_im_control_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Get im_control MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-im-control",
+        url=f"{backend_url}{IM_CONTROL_MCP_MOUNT_PATH}{IM_CONTROL_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=60,
     )
 
 

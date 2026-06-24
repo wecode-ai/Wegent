@@ -97,6 +97,7 @@ def _kind_to_response(kind: Kind) -> IMChannelResponse:
         name=kind.name,
         namespace=kind.namespace,
         channel_type=spec.get("channelType", "dingtalk"),
+        bot_purpose=spec.get("botPurpose", "wegent_chat"),
         is_enabled=spec.get("isEnabled", True),
         config=_mask_config(config),  # Mask sensitive fields
         default_team_id=spec.get("defaultTeamId", 0),
@@ -110,6 +111,7 @@ def _create_messager_json(
     name: str,
     namespace: str,
     channel_type: str,
+    bot_purpose: str,
     is_enabled: bool,
     config: Dict[str, Any],
     default_team_id: int,
@@ -125,12 +127,27 @@ def _create_messager_json(
         },
         "spec": {
             "channelType": channel_type,
+            "botPurpose": bot_purpose,
             "isEnabled": is_enabled,
             "config": _encrypt_config(config),  # Encrypt sensitive fields
             "defaultTeamId": default_team_id,
             "defaultModelName": default_model_name,
         },
     }
+
+
+def _validate_bot_purpose_update(
+    *,
+    existing_purpose: str,
+    requested_purpose: Optional[str],
+) -> None:
+    """Reject changing IM bot purpose after channel creation."""
+    if requested_purpose is None or requested_purpose == existing_purpose:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="IM bot purpose cannot be changed after creation",
+    )
 
 
 class IMChannelAdapter:
@@ -142,6 +159,7 @@ class IMChannelAdapter:
         self.id = kind.id
         self.name = kind.name
         self.channel_type = spec.get("channelType", "dingtalk")
+        self.bot_purpose = spec.get("botPurpose", "wegent_chat")
         self.is_enabled = spec.get("isEnabled", True)
         # Decrypt config for actual use
         self.config = _decrypt_config(spec.get("config", {}))
@@ -261,6 +279,7 @@ async def create_im_channel(
         name=channel_data.name,
         namespace=channel_data.namespace,
         channel_type=channel_data.channel_type,
+        bot_purpose=channel_data.bot_purpose,
         is_enabled=channel_data.is_enabled,
         config=channel_data.config,
         default_team_id=channel_data.default_team_id or 0,
@@ -338,6 +357,10 @@ async def update_im_channel(
     spec = current_json.get("spec", {})
     was_enabled = spec.get("isEnabled", True)
     needs_restart = False
+    _validate_bot_purpose_update(
+        existing_purpose=spec.get("botPurpose", "wegent_chat"),
+        requested_purpose=channel_data.bot_purpose,
+    )
 
     # Update fields
     if channel_data.name is not None:

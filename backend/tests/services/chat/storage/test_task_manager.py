@@ -346,6 +346,38 @@ def test_create_new_task_writes_execution_workspace(
     }
 
 
+def test_create_new_task_writes_im_context_from_message_source(
+    test_db: Session,
+    test_user: User,
+):
+    """Private IM tasks should persist session context for MCP task tokens."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="continue this task",
+        message_source={
+            "source": "im",
+            "session_key": "session-1",
+            "channel_id": 9,
+        },
+    )
+
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    assert task.json["spec"]["im_context"] == {
+        "session_key": "session-1",
+        "channel_id": 9,
+    }
+
+
 def test_create_new_task_uses_real_task_row_without_placeholder(
     test_db: Session,
     test_user: User,

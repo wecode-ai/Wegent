@@ -578,17 +578,22 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export type IMBotPurpose = 'wegent_chat' | 'wework_local'
+
 export interface IMPrivateSession {
   session_key: string
   channel_type: string
   channel_label: string
   channel_id: number
+  bot_purpose: IMBotPurpose
   conversation_id: string
   sender_id: string
   display_name: string
   mode: 'chat' | 'task'
   state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
   active_task_id?: number | null
+  current_target_type?: string | null
+  current_target_label?: string | null
   last_seen_at: string
 }
 

@@ -45,6 +45,7 @@ from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+IM_CONTROL_PRELOAD_SKILL = "im-control"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
@@ -229,6 +230,10 @@ class TaskRequestBuilder:
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
         effective_preload_skills = list(preload_skills or [])
+        effective_preload_skills = self._inject_im_control_skill(
+            effective_preload_skills,
+            task,
+        )
 
         # When clarification mode is enabled, auto-inject the interactive skill.
         # This replaces the old prompt-injection approach with the MCP skill approach,
@@ -2044,6 +2049,35 @@ Response template:
         return preload_skills
 
     @staticmethod
+    def _inject_im_control_skill(preload_skills: list, task: TaskResource) -> list:
+        """Inject the IM control skill for private IM-originated tasks."""
+
+        if not TaskRequestBuilder._extract_task_im_context(task):
+            return preload_skills
+
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+        if IM_CONTROL_PRELOAD_SKILL in existing_names:
+            return preload_skills
+
+        merged_preload_skills = list(preload_skills)
+        merged_preload_skills.append(
+            {
+                "name": IM_CONTROL_PRELOAD_SKILL,
+                "namespace": "default",
+                "is_public": True,
+            }
+        )
+        logger.info(
+            "[TaskRequestBuilder] Injected IM control skill '%s' into preload_skills",
+            IM_CONTROL_PRELOAD_SKILL,
+        )
+        return merged_preload_skills
+
+    @staticmethod
     def _inject_subscription_manager_skill(
         is_subscription: bool = False,
     ) -> list:
@@ -2783,12 +2817,41 @@ Response template:
         """
         from app.services.auth import create_task_token
 
+        im_context = self._extract_task_im_context(task) or {}
         return create_task_token(
             task_id=task.id,
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+            im_session_key=im_context.get("session_key"),
+            im_channel_id=im_context.get("channel_id"),
         )
+
+    @staticmethod
+    def _extract_task_im_context(task: TaskResource) -> dict[str, Any] | None:
+        """Extract private IM task context from Task spec."""
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        context = spec.get("im_context")
+        if not isinstance(context, dict):
+            return None
+
+        session_key = str(context.get("session_key") or "").strip()
+        if not session_key:
+            return None
+
+        result: dict[str, Any] = {"session_key": session_key}
+        channel_id = context.get("channel_id")
+        if channel_id is not None:
+            try:
+                result["channel_id"] = int(channel_id)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "[TaskRequestBuilder] Ignoring invalid IM channel_id in task spec: %r",
+                    channel_id,
+                )
+        return result
 
     def _generate_skill_identity_token(
         self, task: TaskResource, subtask: Subtask, user: User

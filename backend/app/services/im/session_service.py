@@ -130,6 +130,35 @@ class IMSessionService:
             await self._remove_user_sessions(user_id, missing_keys)
         return sessions
 
+    async def get_session_bot_purpose(
+        self,
+        db: Session | None,
+        session: IMPrivateSession,
+    ) -> str:
+        """Resolve the bot purpose for a private IM session's channel."""
+        if db is None:
+            return "wegent_chat"
+
+        from app.models.kind import Kind
+
+        channel = (
+            db.query(Kind)
+            .filter(
+                Kind.id == session.channel_id,
+                Kind.kind == "Messager",
+                Kind.user_id == 0,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if channel is None or not isinstance(channel.json, dict):
+            return "wegent_chat"
+        spec = channel.json.get("spec", {})
+        if not isinstance(spec, dict):
+            return "wegent_chat"
+        purpose = spec.get("botPurpose") or "wegent_chat"
+        return str(purpose)
+
     async def get_global_notification_settings(
         self, user_id: int
     ) -> "IMGlobalNotificationSettings":

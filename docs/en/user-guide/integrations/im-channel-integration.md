@@ -187,6 +187,19 @@ In IM channels that support private chats, use commands to choose chat or task m
 
 Weibo DM Task mode only supports local runtime tasks bound from Wework. First click **Continue in private chat** from the Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. If you use `/task` or `/switch` directly in Weibo without a bound local task, Wegent prompts you to return to Wework and choose a target private chat.
 
+### Natural-Language Session Control
+
+Private chat bots automatically load IM session control capability. Users can express session control intent in natural language instead of memorizing commands. For example:
+
+| User Says | Behavior |
+|-----------|----------|
+| "Which task is this connected to?" | Checks the Chat, Task, or Wework local task currently bound to the private chat |
+| "Do not continue the previous one" | Clears the current private chat target so later messages start from a new context |
+| "Start over" | Starts a new private chat session |
+| "Confirm" / "Cancel" | Confirms or cancels the previous session control action that required confirmation |
+
+When clearing would disconnect a Wework local task, the bot asks for confirmation first to avoid accidentally detaching an active local task continuation.
+
 ---
 
 ## ⚙️ Management Features
@@ -217,6 +230,17 @@ When editing a channel:
 - **Sensitive fields** (Client Secret) are masked with `***`
 - Leave sensitive fields **empty** to keep existing values
 - Enter new values to update credentials
+
+### Bot Purpose
+
+When creating or editing an IM channel, choose the bot purpose:
+
+| Purpose | Description |
+|---------|-------------|
+| **Wegent Chat** | For regular Wegent agent conversations, including daily Q&A, Chat tasks, and ordinary multi-turn chats |
+| **Wework Local** | For continuing Wework local tasks in IM private chats after selecting a local runtime task from Wework |
+
+You can configure two bots for the same IM platform, one for each purpose. The Wework **Continue in private chat** session list only shows private chats from **Wework Local** bots, so users do not accidentally select a regular chat bot.
 
 ### Weibo DM Configuration
 

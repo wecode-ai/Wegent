@@ -41,6 +41,8 @@ class TaskTokenData(BaseModel):
     user_id: int
     user_name: str
     exp: Optional[int] = None  # Expiration timestamp
+    im_session_key: Optional[str] = None
+    im_channel_id: Optional[int] = None
 
 
 @dataclass
@@ -51,6 +53,8 @@ class TaskTokenInfo:
     subtask_id: int
     user_id: int
     user_name: str
+    im_session_key: Optional[str] = None
+    im_channel_id: Optional[int] = None
 
 
 def create_task_token(
@@ -59,6 +63,8 @@ def create_task_token(
     user_id: int,
     user_name: str,
     expires_delta_minutes: int = 1440,  # 24 hours
+    im_session_key: Optional[str] = None,
+    im_channel_id: Optional[int] = None,
 ) -> str:
     """Create a task token for executor and MCP Server authentication.
 
@@ -85,6 +91,10 @@ def create_task_token(
         "exp": expire,
         "type": "task_token",
     }
+    if im_session_key:
+        payload["im_session_key"] = im_session_key
+    if im_channel_id is not None:
+        payload["im_channel_id"] = im_channel_id
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return token
 
@@ -113,6 +123,8 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             subtask_id=payload["subtask_id"],
             user_id=payload["user_id"],
             user_name=payload["user_name"],
+            im_session_key=payload.get("im_session_key"),
+            im_channel_id=payload.get("im_channel_id"),
         )
     except jwt.ExpiredSignatureError:
         logger.warning("Task token has expired")
