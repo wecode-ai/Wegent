@@ -42,6 +42,11 @@ import {
 } from '@/lib/workspace-target'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import {
+  StandaloneBlankProjectDialog,
+  StandaloneFolderProjectDialog,
+  type StandaloneWorkspaceDialogMode,
+} from '@/components/projects/StandaloneProjectDialogs'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
@@ -73,6 +78,7 @@ interface DesktopWorkbenchLayoutProps {
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
+  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
@@ -172,6 +178,7 @@ export function DesktopWorkbenchLayout({
   onArchiveRuntimeLocalTask,
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
+  onOpenStandaloneWorkspace,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
@@ -220,7 +227,9 @@ export function DesktopWorkbenchLayout({
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
-  const [projectWorkCreateMode, setProjectWorkCreateMode] = useState<ProjectCreateMode | null>(null)
+  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
+  const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
+    useState<StandaloneWorkspaceDialogMode | null>(null)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
   )
@@ -254,8 +263,7 @@ export function DesktopWorkbenchLayout({
       }),
     [state.currentRuntimeTask, state.projects, state.runtimeWork]
   )
-  const activeConversationProject =
-    state.currentProject ?? runtimeWorkspaceContext?.project ?? null
+  const activeConversationProject = state.currentProject ?? runtimeWorkspaceContext?.project ?? null
   const environmentProject = useMemo(() => {
     if (state.currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
@@ -406,7 +414,10 @@ export function DesktopWorkbenchLayout({
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
-      setProjectWorkCreateMode(mode)
+      setBlankProjectDialogOpen(mode === 'scratch')
+      setStandaloneWorkspaceDialogMode(
+        mode === 'existing' ? 'existing' : mode === 'git' ? 'remote' : null
+      )
       setProjectWorkEditProject(null)
       void onRefreshDevices?.().catch(() => undefined)
     },
@@ -418,7 +429,8 @@ export function DesktopWorkbenchLayout({
       const project = state.projects.find(item => item.id === projectId)
       if (!project) return
       setProjectWorkEditProject(project)
-      setProjectWorkCreateMode(null)
+      setBlankProjectDialogOpen(false)
+      setStandaloneWorkspaceDialogMode(null)
       void onRefreshDevices?.().catch(() => undefined)
     },
     [onRefreshDevices, state.projects]
@@ -669,6 +681,8 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          standaloneDeviceId={state.standaloneDeviceId}
+          standaloneWorkspacePath={state.standaloneWorkspacePath}
           imNotificationSettings={imNotificationSettings}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
@@ -687,6 +701,7 @@ export function DesktopWorkbenchLayout({
             openImNotificationTargetDialog({ type: 'global' })
           }
           onRememberExecutionDevice={onRememberExecutionDevice}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onUpgradeDevice={onUpgradeDevice}
@@ -798,17 +813,41 @@ export function DesktopWorkbenchLayout({
           }
         />
       )}
+      <StandaloneBlankProjectDialog
+        open={blankProjectDialogOpen}
+        devices={state.devices}
+        preferredDeviceId={
+          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+        }
+        onClose={() => setBlankProjectDialogOpen(false)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
+      <StandaloneFolderProjectDialog
+        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        open={standaloneWorkspaceDialogMode !== null}
+        mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        devices={state.devices}
+        preferredDeviceId={
+          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+        }
+        onClose={() => setStandaloneWorkspaceDialogMode(null)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
       <ProjectCreateDialog
-        open={projectWorkCreateMode !== null || projectWorkEditProject !== null}
-        mode={projectWorkEditProject ? 'existing' : (projectWorkCreateMode ?? 'scratch')}
+        open={projectWorkEditProject !== null}
+        mode="existing"
         project={projectWorkEditProject}
         devices={state.devices}
         onClose={() => {
-          setProjectWorkCreateMode(null)
           setProjectWorkEditProject(null)
         }}
         onOpenCloudDeviceSettings={() => {
-          setProjectWorkCreateMode(null)
           setProjectWorkEditProject(null)
           setAutoOpenAddCloudDeviceDialog(true)
           setSettingsOpen(true)

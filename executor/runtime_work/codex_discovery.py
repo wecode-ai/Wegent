@@ -275,6 +275,27 @@ class CodexSessionDiscovery:
 
         await emitter.error("Codex turn ended without completion", "execution_error")
 
+    async def open_workspace(self, workspace_path: str) -> dict[str, Any]:
+        """Open a Codex thread for a workspace without starting a turn."""
+
+        normalized_workspace_path = normalize_workspace_path(workspace_path)
+        client = self._create_async_codex_client()
+        async with client as codex:
+            thread = await codex.thread_start(
+                cwd=normalized_workspace_path,
+                service_name="wegent",
+            )
+        thread_id = _object_text(thread, "id", "session_id")
+        if not thread_id:
+            raise RuntimeError("Codex thread_start did not return a threadId")
+        return {
+            "threadId": thread_id,
+            "workspacePath": normalized_workspace_path,
+            "title": _object_text(thread, "name", "preview", "title")
+            or Path(normalized_workspace_path).name
+            or normalized_workspace_path,
+        }
+
     async def stream_new_thread(
         self,
         request: Any,

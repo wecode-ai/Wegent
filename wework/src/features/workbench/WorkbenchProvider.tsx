@@ -36,6 +36,7 @@ import { getModelCompatibilityFamily } from '@/lib/model-ui'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import type { RuntimeTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -295,6 +296,7 @@ export interface WorkbenchContextValue {
   selectProject: (projectId: number | null) => void
   selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
+  openStandaloneWorkspace: (deviceId: string, workspacePath: string) => void
   startNewChat: () => void
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
@@ -741,7 +743,9 @@ function getSelectableProjectDeviceWorkspaces(
   projectId: number | null | undefined
 ): RuntimeDeviceWorkspace[] {
   if (!projectId) return []
-  const projectWork = runtimeWork?.projects.find(item => item.project.id === projectId)
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
   return projectWork?.deviceWorkspaces.filter(workspace => workspace.available) ?? []
 }
 
@@ -755,7 +759,7 @@ function getSingleProjectDeviceWorkspaceId(
 
 function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
   return {
-    id: projectWork.project.id,
+    id: runtimeProjectUiId(projectWork.project),
     name: projectWork.project.name,
     description: projectWork.project.description,
     color: projectWork.project.color,
@@ -770,7 +774,9 @@ function findSelectableProject(
 ): ProjectWithTasks | null {
   const project = projects.find(item => item.id === projectId)
   if (project) return project
-  const runtimeProject = runtimeWork?.projects.find(item => item.project.id === projectId)
+  const runtimeProject = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
   return runtimeProject ? runtimeProjectToProject(runtimeProject) : null
 }
 
@@ -1350,6 +1356,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             state.devices,
             state.standaloneDeviceId
           ),
+          standaloneWorkspacePath: null,
         })
         dispatchMessages({ type: 'reset', messages: [] })
         setQueuedSends([])
@@ -1416,6 +1423,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
+        standaloneWorkspacePath: null,
       })
       dispatchMessages({ type: 'reset', messages: [] })
       setQueuedSends([])
@@ -1434,6 +1442,42 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     ]
   )
 
+  const openStandaloneWorkspace = useCallback(
+    (deviceId: string, workspacePath: string) => {
+      const normalizedDeviceId = deviceId.trim()
+      const normalizedWorkspacePath = workspacePath.trim()
+      if (!normalizedDeviceId || !normalizedWorkspacePath) return
+
+      rememberExecutionDevice(normalizedDeviceId)
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId: normalizedDeviceId,
+        standaloneWorkspacePath: normalizedWorkspacePath,
+      })
+      dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
+      setCodeCommentContexts([])
+      cancelRuntimeTranscriptLoad()
+      handledRuntimeTaskRouteRef.current = null
+      navigateTo('/')
+      void resolvedServices.runtimeWorkApi
+        ?.openRuntimeWorkspace({
+          deviceId: normalizedDeviceId,
+          workspacePath: normalizedWorkspacePath,
+          runtime: 'codex',
+        })
+        .then(() => refreshWorkLists())
+        .catch(() => undefined)
+    },
+    [
+      cancelRuntimeTranscriptLoad,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      resolvedServices.runtimeWorkApi,
+    ]
+  )
+
   const startNewChat = useCallback(() => {
     dispatch({
       type: 'project_cleared',
@@ -1442,6 +1486,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         state.devices,
         state.standaloneDeviceId
       ),
+      standaloneWorkspacePath: null,
     })
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
@@ -1449,7 +1494,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setCodeCommentContexts([])
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
-    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+    navigateTo('/')
   }, [cancelRuntimeTranscriptLoad, state.devices, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
@@ -1460,6 +1505,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         state.devices,
         state.standaloneDeviceId
       ),
+      standaloneWorkspacePath: null,
     })
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
@@ -1467,7 +1513,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setCodeCommentContexts([])
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
-    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+    navigateTo('/')
   }, [cancelRuntimeTranscriptLoad, state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
@@ -1498,8 +1544,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         )
       )
       const project = runtimeProjectWork
-        ? (state.projects.find(item => item.id === runtimeProjectWork.project.id) ?? {
-            id: runtimeProjectWork.project.id,
+        ? (state.projects.find(
+            item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
+          ) ?? {
+            id: runtimeProjectUiId(runtimeProjectWork.project),
             name: runtimeProjectWork.project.name,
             color: runtimeProjectWork.project.color,
             tasks: [],
@@ -2080,7 +2128,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
       } else {
-        const workspacePath = findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
+        const workspacePath =
+          state.standaloneWorkspacePath ??
+          findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
         if (!activeDeviceId || !workspacePath) {
           reportSendBlocked('请选择项目或打开设备工作区后再发送')
           return false
@@ -2165,6 +2215,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       state.projects,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
+      state.standaloneWorkspacePath,
     ]
   )
 
@@ -2503,6 +2554,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     selectProject,
     selectProjectWorkspace,
     selectStandaloneDevice,
+    openStandaloneWorkspace,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,

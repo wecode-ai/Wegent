@@ -56,6 +56,8 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
+    RuntimeWorkspaceOpenRequest,
+    RuntimeWorkspaceOpenResponse,
 )
 from app.services.device.command_service import execute_configured_device_command
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
@@ -77,6 +79,7 @@ RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
+RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
 DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
@@ -280,7 +283,7 @@ async def list_runtime_work(
         if workspace.workspace_kind == "chat":
             conversations.append(workspace)
             continue
-        project_ref = _runtime_project_ref_from_workspace(workspace_path)
+        project_ref = _runtime_project_ref_from_workspace(device_id, workspace_path)
         projects.append(
             RuntimeProjectWork(
                 project=project_ref,
@@ -601,6 +604,42 @@ async def create_runtime_task(
         request.runtime,
         target.device_id,
         target.workspace_path,
+    )
+
+
+async def open_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceOpenRequest,
+) -> RuntimeWorkspaceOpenResponse:
+    """Open/register a runtime workspace without creating a task row or turn."""
+
+    device_id = request.device_id.strip()
+    workspace_path = normalize_workspace_path(request.workspace_path)
+    _ensure_owned_device(db, user_id, device_id)
+    payload = {
+        "runtime": request.runtime,
+        "workspacePath": workspace_path,
+    }
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspaces.open",
+            payload=payload,
+            timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_workspace_open_response(
+        result=result,
+        runtime=request.runtime,
+        device_id=device_id,
+        workspace_path=workspace_path,
     )
 
 
@@ -1314,6 +1353,32 @@ def _runtime_create_response(
     )
 
 
+def _runtime_workspace_open_response(
+    *,
+    result: dict[str, Any],
+    runtime: str,
+    device_id: str,
+    workspace_path: str,
+) -> RuntimeWorkspaceOpenResponse:
+    if result.get("success") is False:
+        return RuntimeWorkspaceOpenResponse(
+            accepted=False,
+            deviceId=str(result.get("deviceId") or device_id),
+            workspacePath=str(result.get("workspacePath") or workspace_path),
+            runtime=result.get("runtime") or runtime,
+            threadId=result.get("threadId"),
+            error=str(result.get("error") or "Runtime workspace open failed"),
+        )
+    return RuntimeWorkspaceOpenResponse(
+        accepted=bool(result.get("accepted", True)),
+        deviceId=str(result.get("deviceId") or device_id),
+        workspacePath=str(result.get("workspacePath") or workspace_path),
+        runtime=result.get("runtime") or runtime,
+        threadId=result.get("threadId"),
+        error=result.get("error"),
+    )
+
+
 def _runtime_fork_response(
     *,
     result: dict[str, Any],
@@ -1775,8 +1840,7 @@ async def _list_online_runtime_workspaces(
                 for task in workspace["localTasks"]
                 if isinstance(task, dict)
             ]
-            if tasks:
-                grouped[(device_id, workspace_path)] = tasks
+            grouped[(device_id, workspace_path)] = tasks
     return grouped
 
 
@@ -1905,12 +1969,13 @@ def _path_basename(path: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _runtime_project_ref_from_workspace(workspace_path: str) -> RuntimeProjectRef:
+def _runtime_project_ref_from_workspace(
+    device_id: str,
+    workspace_path: str,
+) -> RuntimeProjectRef:
     normalized_path = normalize_workspace_path(workspace_path)
-    project_id = int(sha256(normalized_path.encode("utf-8")).hexdigest()[:12], 16)
-    project_id = project_id % 1_000_000_000 + 1
     return RuntimeProjectRef(
-        id=project_id,
+        key=f"{device_id}:{normalized_path}",
         name=_path_basename(normalized_path) or normalized_path,
         description=normalized_path,
         color=None,

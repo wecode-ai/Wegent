@@ -19,6 +19,7 @@ Conversation
 - Project is a display group inferred from the runtime workspace information returned by the executor.
 - Conversation is a Codex chat thread that does not belong to a Project workspace.
 - LocalTask is executor-local state and remains on the device.
+- A Project's runtime identity is a workspace key derived from `deviceId + workspacePath`, not a central `projects.id`. Wework may create temporary UI ids inside components, but those ids must not be written back to Backend or placed in URLs as project identity.
 - A LocalTask's stable identity is `deviceId + localTaskId`. `workspacePath` is only device-workspace context for list grouping, task creation, and right-side workspace tools; task URLs, IM notification subscriptions, and native Codex update deduplication do not use the path as an identity field.
 - The executor returns `workspaceKind` to distinguish Project work from Conversations. Codex App-style directories such as `~/Documents/Codex/YYYY-MM-DD/<name>` are marked as `chat` and shown under "Conversations"; other workspaces are shown under "Projects".
 
@@ -43,7 +44,7 @@ Wework requests the task list on startup, explicit refresh, or device-state chan
 
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.
 
-When there is only one device, Wework does not show an IP next to Project names. When there are multiple devices, the local device still omits the IP, while online remote devices show a usable non-loopback runtime transfer host or client IP with a green online dot.
+When there is only one device, Wework does not show an IP next to Project names. When there are multiple devices, the local device still omits the IP, while online remote devices show a usable non-loopback runtime transfer host or client IP with a green online dot. Remote project and remote host pickers also use that IP/host as the primary display label; the device id is only a technical fallback when no network address is available.
 
 ## Open And Continue
 
@@ -92,14 +93,14 @@ The runtime owns persistence for newly created tasks:
 - Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
 - Attachments still go through the executor Codex attachment pipeline: Backend sends attachment ids only, and the executor downloads and converts them on the target device for the Codex SDK. The frontend does not send local attachment paths.
 
-Project-backed creation must use a trusted Device Workspace mapping:
+Project-backed creation uses a runtime workspace reference:
 
-- Wework sends `projectId + deviceWorkspaceId`; it does not send `workspacePath`.
-- Backend verifies that `deviceWorkspaceId` belongs to the current user and the requested `projectId`, then resolves the trusted `deviceId + workspacePath` from that mapping.
-- If a Project has exactly one available Device Workspace, the frontend may select it directly. If it has multiple available Device Workspaces, the frontend must ask the user to confirm the runtime location before sending.
-- Legacy Project configuration that stores `execution.deviceId + workspace.localPath` is materialized into a Device Workspace mapping during runtime work list refresh, so older Projects use the same trusted mapping path.
+- Wework sends a workspace key or an explicitly selected `deviceId + workspacePath`; it does not send a central `projectId`.
+- Backend validates the workspace against the current user's online runtime workspace list and resolves the trusted `deviceId + workspacePath`.
+- If no project is selected, Wework uses the local device's empty workspace context for a regular conversation; that state has no remote IP and does not write `projectId=0` into the URL.
+- Creating a blank project creates a directory under `~/Documents` on the target device. If the name already exists, the frontend must ask the user to rename it instead of treating the existing directory as the project.
 
-Standalone non-Project device workspaces still use `deviceId + workspacePath` for task creation. That path only applies to explicitly selected unmapped device workspaces and must not be used as a frontend-supplied Project task target.
+Empty projects are runtime-owned as well. After Wework creates or selects a directory, it calls the workspace open/register flow so the executor includes that workspace in the `runtime.tasks.list` project group. The project should be visible even before the directory has any LocalTask or Codex conversation. This flow does not write `TaskResource`, `Subtask`, or Backend `projects` rows.
 
 ## Fork And Cross-Device Transfer
 
@@ -143,6 +144,8 @@ Wework runtime task URLs use:
 ```
 
 The URL does not contain `workspacePath`. On refresh or shared links, the frontend opens the task from `deviceId + localTaskId` and then restores its workspace context from the latest runtime work list.
+
+New conversation and no-project entry points use the root path or regular conversation path, not placeholder parameters such as `projectId=0`. Project selection state is restored from the runtime workspace reference and the current conversation context.
 
 ## Compatibility
 

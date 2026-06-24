@@ -16,6 +16,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { cn } from '@/lib/utils'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -151,7 +152,7 @@ export function MobileDrawer({
   )
   const runtimeWorkByProjectId = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return new Map(items.map(item => [item.project.id, item]))
+    return new Map(items.map(item => [runtimeProjectUiId(item.project), item]))
   }, [runtimeWork])
   const unmappedWorkspaces = useMemo(
     () => runtimeWork?.unmappedDeviceWorkspaces ?? [],

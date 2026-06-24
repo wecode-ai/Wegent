@@ -78,6 +78,7 @@ interface MobileWorkbenchLayoutProps {
   onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
+  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -263,6 +264,8 @@ export function MobileWorkbenchLayout({
   const baseProjectWork = projectWork ?? {
     projects: state.projects,
     devices: state.devices,
+    runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     executionMode: 'current_workspace',
@@ -370,10 +373,7 @@ export function MobileWorkbenchLayout({
     return () => {
       cancelled = true
     }
-  }, [
-    activeConversationProject,
-    workspaceTargetResolverApi,
-  ])
+  }, [activeConversationProject, workspaceTargetResolverApi])
 
   const openContinueInImDialog = useCallback(() => {
     if (!state.currentRuntimeTask) return

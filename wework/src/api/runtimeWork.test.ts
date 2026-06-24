@@ -94,6 +94,37 @@ describe('createRuntimeWorkApi', () => {
     })
   })
 
+  test('opens a runtime workspace without creating a task', async () => {
+    const post = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+      threadId: 'thread-1',
+    })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.openRuntimeWorkspace({
+        deviceId: 'device-1',
+        workspacePath: '/Users/crystal/Documents/hello-0',
+        runtime: 'codex',
+      })
+    ).resolves.toEqual({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+      threadId: 'thread-1',
+    })
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/open', {
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+    })
+  })
+
   test('binds private IM sessions to a runtime task address', async () => {
     const post = vi.fn().mockResolvedValue({
       address: {

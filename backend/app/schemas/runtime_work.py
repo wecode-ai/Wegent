@@ -153,9 +153,9 @@ class DeviceWorkspacePrepareResponse(BaseModel):
 
 
 class RuntimeProjectRef(BaseModel):
-    """Small project shape used by runtime work lists."""
+    """Runtime workspace identity used by runtime work lists."""
 
-    id: int
+    key: str
     name: str
     description: str = ""
     color: Optional[str] = None
@@ -247,6 +247,29 @@ class RuntimeSendResponse(BaseModel):
 
     accepted: bool
     local_task_id: str = Field(..., alias="localTaskId")
+    error: Optional[str] = None
+
+
+class RuntimeWorkspaceOpenRequest(BaseModel):
+    """Request to register/open a device-local runtime workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    runtime: RuntimeName = "codex"
+
+
+class RuntimeWorkspaceOpenResponse(BaseModel):
+    """Acknowledgement from opening a runtime workspace without a turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    device_id: str = Field(..., alias="deviceId")
+    workspace_path: str = Field(..., alias="workspacePath")
+    runtime: RuntimeName
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     error: Optional[str] = None
 
 
