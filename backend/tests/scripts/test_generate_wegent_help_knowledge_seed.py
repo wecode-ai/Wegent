@@ -42,15 +42,16 @@ def test_generate_seed_writes_stable_manifest_and_docs(tmp_path: Path) -> None:
     assert manifest["documents"][0]["title"] == "Setup"
     assert manifest["documents"][1]["language"] == "zh"
     assert manifest["documents"][1]["title"] == "快速开始"
-    assert manifest["documents"][1]["content_sha256"] == hashlib.sha256(
-        zh_content.encode("utf-8")
-    ).hexdigest()
     assert (
-        output_dir / "docs" / "zh" / "user-guide" / "quick-start.md"
-    ).read_text(encoding="utf-8") == zh_content
-    assert (
-        output_dir / "docs" / "en" / "developer-guide" / "setup.md"
-    ).read_text(encoding="utf-8") == en_content
+        manifest["documents"][1]["content_sha256"]
+        == hashlib.sha256(zh_content.encode("utf-8")).hexdigest()
+    )
+    assert (output_dir / "docs" / "zh" / "user-guide" / "quick-start.md").read_text(
+        encoding="utf-8"
+    ) == zh_content
+    assert (output_dir / "docs" / "en" / "developer-guide" / "setup.md").read_text(
+        encoding="utf-8"
+    ) == en_content
 
 
 def test_generate_seed_rejects_missing_language_roots(tmp_path: Path) -> None:
@@ -59,3 +60,25 @@ def test_generate_seed_rejects_missing_language_roots(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="docs/zh and docs/en"):
         generate_seed(docs_root=docs_root, output_dir=tmp_path / "seed")
+
+
+def test_generate_seed_rejects_output_dir_that_contains_docs_root(
+    tmp_path: Path,
+) -> None:
+    docs_root = tmp_path / "docs"
+    (docs_root / "en").mkdir(parents=True)
+    (docs_root / "zh").mkdir()
+
+    with pytest.raises(ValueError, match="overlap docs_root"):
+        generate_seed(docs_root=docs_root, output_dir=tmp_path)
+
+    assert docs_root.exists()
+
+
+def test_generate_seed_rejects_output_dir_inside_docs_root(tmp_path: Path) -> None:
+    docs_root = tmp_path / "docs"
+    (docs_root / "en").mkdir(parents=True)
+    (docs_root / "zh").mkdir()
+
+    with pytest.raises(ValueError, match="overlap docs_root"):
+        generate_seed(docs_root=docs_root, output_dir=docs_root / "seed")

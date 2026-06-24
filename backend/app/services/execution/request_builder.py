@@ -250,9 +250,6 @@ class TaskRequestBuilder:
         extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
-        extra_available_skills = self._inject_default_help_skills(
-            extra_available_skills
-        )
         binding_context = self._build_skill_binding_context(task=task, team=team)
         user_default_skill_refs = skill_binding_service.list_user_default_skill_refs(
             self.db,
@@ -264,6 +261,9 @@ class TaskRequestBuilder:
                 effective_preload_skills.append(skill_ref)
             else:
                 extra_available_skills.append(skill_ref)
+        extra_available_skills = self._inject_default_help_skills(
+            extra_available_skills
+        )
 
         user_preload_skills = None
         if effective_preload_skills:

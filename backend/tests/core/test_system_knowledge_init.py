@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from app.core.system_knowledge_init import run_system_knowledge_initialization
+from app.core.system_knowledge_init import (
+    SeedDocument,
+    SystemKnowledgeSeed,
+    ensure_system_help_knowledge_base,
+    ensure_system_namespace,
+    load_system_knowledge_seed,
+    run_system_knowledge_initialization,
+    sync_system_documents,
+)
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -130,6 +138,110 @@ def test_system_knowledge_init_updates_changed_document(
     doc = test_db.query(KnowledgeDocument).one()
     assert result["documents_updated"] == 1
     assert doc.source_config["content_sha256"] == "hash-2"
+
+
+def test_load_system_knowledge_seed_returns_none_for_invalid_manifest(
+    tmp_path: Path,
+) -> None:
+    seed_dir = tmp_path / "system_knowledge" / "wegent-help"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    assert load_system_knowledge_seed(seed_dir) is None
+
+
+def test_load_system_knowledge_seed_skips_invalid_document_entries(
+    tmp_path: Path,
+) -> None:
+    seed_dir = tmp_path / "system_knowledge" / "wegent-help"
+    valid_doc = seed_dir / "docs" / "en" / "quick-start.md"
+    valid_doc.parent.mkdir(parents=True)
+    valid_doc.write_text("# Quick Start\n\nUse Wegent.", encoding="utf-8")
+    manifest = {
+        "seed_id": "wegent-help",
+        "documents": [
+            {"seed_path": "docs/en/missing-source-path.md"},
+            {
+                "source_path": "docs/en/outside.md",
+                "seed_path": "../outside.md",
+                "content_sha256": "hash-outside",
+            },
+            {
+                "source_path": "docs/en/quick-start.md",
+                "seed_path": "docs/en/quick-start.md",
+                "language": "en",
+                "title": "Quick Start",
+                "category": "",
+                "content_sha256": "hash-1",
+            },
+        ],
+    }
+    (seed_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    seed = load_system_knowledge_seed(seed_dir)
+
+    assert seed is not None
+    assert [document.source_path for document in seed.documents] == [
+        "docs/en/quick-start.md"
+    ]
+
+
+def test_load_system_knowledge_seed_uses_defaults_for_invalid_kb_metadata(
+    tmp_path: Path,
+) -> None:
+    seed_dir = tmp_path / "system_knowledge" / "wegent-help"
+    seed_dir.mkdir(parents=True)
+    manifest = {
+        "seed_id": "wegent-help",
+        "knowledge_base": "invalid",
+        "documents": [],
+    }
+    (seed_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    seed = load_system_knowledge_seed(seed_dir)
+
+    assert seed is not None
+    assert seed.kb_name == "Wegent Help"
+    assert seed.namespace == "system"
+
+
+def test_run_system_knowledge_initialization_records_missing_manifest_trace(
+    test_db, tmp_path: Path, mocker
+) -> None:
+    add_event = mocker.patch(
+        "app.core.system_knowledge_init.add_span_event", create=True
+    )
+    set_attribute = mocker.patch(
+        "app.core.system_knowledge_init.set_span_attribute", create=True
+    )
+
+    result = run_system_knowledge_initialization(
+        db=test_db,
+        admin_user_id=123,
+        init_data_dir=tmp_path,
+    )
+
+    assert result == {"status": "skipped", "reason": "missing_manifest"}
+    set_attribute.assert_any_call("system_knowledge.status", "skipped")
+    set_attribute.assert_any_call("system_knowledge.reason", "missing_manifest")
+    add_event.assert_any_call(
+        "system_knowledge.initialization.skipped",
+        {"reason": "missing_manifest"},
+    )
+
+
+def test_public_system_knowledge_apis_have_docstrings() -> None:
+    public_objects = [
+        SeedDocument,
+        SystemKnowledgeSeed,
+        load_system_knowledge_seed,
+        ensure_system_namespace,
+        ensure_system_help_knowledge_base,
+        sync_system_documents,
+        run_system_knowledge_initialization,
+    ]
+
+    assert all(item.__doc__ for item in public_objects)
 
 
 def test_yaml_initialization_calls_system_knowledge_init(test_db, mocker) -> None:

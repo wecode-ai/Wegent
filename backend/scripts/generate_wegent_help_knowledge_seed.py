@@ -14,7 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_SEED_ID = "wegent-help"
 DEFAULT_KB_NAME = "Wegent Help"
 DEFAULT_KB_DISPLAY_NAME = "Wegent 帮助文档"
@@ -74,10 +73,22 @@ def _build_document_entry(docs_root: Path, path: Path, content: str) -> dict[str
     }
 
 
+def _validate_output_dir(*, docs_root: Path, output_dir: Path) -> None:
+    if output_dir == Path(output_dir.anchor):
+        raise ValueError("Refusing to use filesystem root as output_dir")
+    if (
+        output_dir == docs_root
+        or docs_root in output_dir.parents
+        or output_dir in docs_root.parents
+    ):
+        raise ValueError("output_dir must not overlap docs_root")
+
+
 def generate_seed(*, docs_root: Path, output_dir: Path) -> Path:
     """Generate a deterministic system knowledge seed from Markdown docs."""
     docs_root = docs_root.resolve()
-    output_dir = output_dir.absolute()
+    output_dir = output_dir.resolve()
+    _validate_output_dir(docs_root=docs_root, output_dir=output_dir)
 
     if output_dir.exists():
         shutil.rmtree(output_dir)

@@ -23,6 +23,7 @@ from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeDocumentCreate
 from app.schemas.namespace import GroupLevel
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import KnowledgeService
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,13 @@ SYSTEM_SOURCE = "system_knowledge_seed"
 
 @dataclass(frozen=True)
 class SeedDocument:
+    """A Markdown document copied into a system knowledge seed package.
+
+    The source and seed paths identify the original docs location and the
+    packaged file path. The content hash is used to decide whether an existing
+    system knowledge document needs to be updated during startup.
+    """
+
     source_path: str
     seed_path: str
     language: str
@@ -44,6 +52,12 @@ class SeedDocument:
 
 @dataclass(frozen=True)
 class SystemKnowledgeSeed:
+    """A complete system knowledge seed manifest loaded from init data.
+
+    The seed describes the target knowledge base metadata and the Markdown
+    documents that should be synchronized into that built-in knowledge base.
+    """
+
     seed_id: str
     kb_name: str
     kb_display_name: str
@@ -61,26 +75,60 @@ def _safe_seed_file(seed_root: Path, seed_path: str) -> Path:
 
 
 def load_system_knowledge_seed(seed_root: Path) -> SystemKnowledgeSeed | None:
+    """Load a system knowledge seed manifest and its packaged documents.
+
+    Args:
+        seed_root: Directory containing `manifest.json` and copied seed files.
+
+    Returns:
+        Parsed seed data, or None when the manifest is missing or malformed.
+        Invalid document entries are skipped so one bad file does not abort
+        startup initialization.
+    """
+
     manifest_path = seed_root / "manifest.json"
     if not manifest_path.exists():
         logger.info("System knowledge manifest not found: %s", manifest_path)
         return None
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error("Invalid system knowledge manifest at %s: %s", manifest_path, exc)
+        return None
+
+    if not isinstance(manifest, dict):
+        logger.error("Invalid system knowledge manifest shape at %s", manifest_path)
+        return None
+
     kb = manifest.get("knowledge_base") or {}
+    if not isinstance(kb, dict):
+        logger.warning("Invalid knowledge_base metadata in %s", manifest_path)
+        kb = {}
     documents: list[SeedDocument] = []
 
-    for item in manifest.get("documents") or []:
-        seed_path = item["seed_path"]
-        content = _safe_seed_file(seed_root, seed_path).read_text(encoding="utf-8")
+    document_items = manifest.get("documents") or []
+    if not isinstance(document_items, list):
+        logger.warning("Invalid documents metadata in %s", manifest_path)
+        document_items = []
+
+    for item in document_items:
+        try:
+            seed_path = item["seed_path"]
+            source_path = item["source_path"]
+            content_sha256 = item["content_sha256"]
+            content = _safe_seed_file(seed_root, seed_path).read_text(encoding="utf-8")
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            logger.warning("Skipping invalid seed document entry %r: %s", item, exc)
+            continue
         documents.append(
             SeedDocument(
-                source_path=item["source_path"],
+                source_path=source_path,
                 seed_path=seed_path,
                 language=item.get("language", ""),
                 title=item.get("title") or Path(seed_path).stem,
                 category=item.get("category", ""),
-                content_sha256=item["content_sha256"],
+                content_sha256=content_sha256,
                 content=content,
             )
         )
@@ -101,6 +149,17 @@ def ensure_system_namespace(
     name: str,
     owner_user_id: int,
 ) -> Namespace:
+    """Create or normalize the namespace used by built-in system knowledge.
+
+    Args:
+        db: SQLAlchemy session used for reads and writes.
+        name: Namespace name to create or update.
+        owner_user_id: User id that owns newly created namespace records.
+
+    Returns:
+        Active organization-level namespace with internal visibility.
+    """
+
     namespace = db.query(Namespace).filter(Namespace.name == name).first()
     if namespace:
         changed = False
@@ -148,6 +207,17 @@ def ensure_system_help_knowledge_base(
     seed: SystemKnowledgeSeed,
     admin_user: User,
 ) -> Kind:
+    """Create or locate the built-in help knowledge base for a seed.
+
+    Args:
+        db: SQLAlchemy session used for reads and writes.
+        seed: Parsed system knowledge seed metadata.
+        admin_user: Admin user that owns the system knowledge base.
+
+    Returns:
+        KnowledgeBase Kind labeled with the seed source and seed id.
+    """
+
     labels = _system_labels(seed)
     candidates = (
         db.query(Kind)
@@ -328,6 +398,18 @@ def sync_system_documents(
     knowledge_base: Kind,
     admin_user: User,
 ) -> dict[str, int]:
+    """Synchronize seed documents into the target knowledge base.
+
+    Args:
+        db: SQLAlchemy session used for reads and writes.
+        seed: Parsed seed documents and metadata.
+        knowledge_base: KnowledgeBase Kind that receives the documents.
+        admin_user: Admin user used for document creation and indexing.
+
+    Returns:
+        Counts for created, updated, and skipped documents.
+    """
+
     existing = _find_existing_system_docs(db, knowledge_base.id)
     stats = {"created": 0, "updated": 0, "skipped": 0}
 
@@ -370,18 +452,43 @@ def sync_system_documents(
     return stats
 
 
+@trace_sync("system_knowledge.initialization", "backend.system_knowledge")
 def run_system_knowledge_initialization(
     db: Session,
     admin_user_id: int,
     init_data_dir: Path,
 ) -> dict[str, Any]:
+    """Initialize built-in system knowledge from packaged init data.
+
+    Args:
+        db: SQLAlchemy session used for startup initialization.
+        admin_user_id: Admin user id that owns created system resources.
+        init_data_dir: Base init data directory containing system knowledge seeds.
+
+    Returns:
+        Summary dictionary with status, reason when skipped or errored, and
+        document synchronization counts when initialization completes.
+    """
+
     seed_root = init_data_dir / SYSTEM_KNOWLEDGE_DIR / DEFAULT_SEED_ID
     seed = load_system_knowledge_seed(seed_root)
     if seed is None:
+        set_span_attribute("system_knowledge.status", "skipped")
+        set_span_attribute("system_knowledge.reason", "missing_manifest")
+        add_span_event(
+            "system_knowledge.initialization.skipped",
+            {"reason": "missing_manifest"},
+        )
         return {"status": "skipped", "reason": "missing_manifest"}
 
     admin_user = db.query(User).filter(User.id == admin_user_id).first()
     if not admin_user:
+        set_span_attribute("system_knowledge.status", "error")
+        set_span_attribute("system_knowledge.reason", "admin_user_not_found")
+        add_span_event(
+            "system_knowledge.initialization.error",
+            {"reason": "admin_user_not_found"},
+        )
         return {"status": "error", "reason": "admin_user_not_found"}
 
     ensure_system_namespace(db, name=seed.namespace, owner_user_id=admin_user.id)
@@ -397,10 +504,25 @@ def run_system_knowledge_initialization(
         admin_user=admin_user,
     )
 
-    return {
+    result = {
         "status": "completed",
         "knowledge_base_id": knowledge_base.id,
         "documents_created": stats["created"],
         "documents_updated": stats["updated"],
         "documents_skipped": stats["skipped"],
     }
+    set_span_attribute("system_knowledge.status", result["status"])
+    set_span_attribute("system_knowledge.knowledge_base_id", knowledge_base.id)
+    set_span_attribute("system_knowledge.documents_created", stats["created"])
+    set_span_attribute("system_knowledge.documents_updated", stats["updated"])
+    set_span_attribute("system_knowledge.documents_skipped", stats["skipped"])
+    add_span_event(
+        "system_knowledge.initialization.completed",
+        {
+            "knowledge_base_id": knowledge_base.id,
+            "documents_created": stats["created"],
+            "documents_updated": stats["updated"],
+            "documents_skipped": stats["skipped"],
+        },
+    )
+    return result
