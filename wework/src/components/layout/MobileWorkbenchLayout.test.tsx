@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { UnifiedModel } from '@/types/api'
+import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
 import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
 import '@/i18n'
 
@@ -54,6 +54,38 @@ const baseProjectChat = {
   removeAttachment: vi.fn().mockResolvedValue(undefined),
 }
 
+function runtimeWork(
+  items: Array<{
+    id: number
+    name: string
+    workspaceId?: number | null
+    deviceId?: string
+    deviceName?: string
+    workspacePath?: string
+  }>
+): RuntimeWorkListResponse {
+  return {
+    projects: items.map(item => ({
+      project: { id: item.id, name: item.name },
+      deviceWorkspaces: [
+        {
+          id: item.workspaceId ?? null,
+          projectId: item.id,
+          deviceId: item.deviceId ?? 'device-1',
+          deviceName: item.deviceName ?? 'Local Device',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
+          mapped: true,
+          localTasks: [],
+        },
+      ],
+    })),
+    unmappedDeviceWorkspaces: [],
+    totalLocalTasks: 0,
+  }
+}
+
 describe('MobileWorkbenchLayout', () => {
   function createDeferred<T>() {
     let resolve!: (value: T) => void
@@ -85,11 +117,33 @@ describe('MobileWorkbenchLayout', () => {
 
   test('uses the project selector instead of a static project work shortcut', async () => {
     const onSelectProject = vi.fn()
+    const onSelectProjectWorkspace = vi.fn()
 
     render(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
+        projectWork={{
+          projects: baseState.projects,
+          devices: [],
+          runtimeWork: runtimeWork([
+            {
+              id: 1,
+              name: 'github_wegent',
+              workspaceId: 10,
+            },
+          ]),
+          currentProject: null,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: null,
+          selectedDeviceWorkspaceId: null,
+          executionMode: 'current_workspace',
+          executionModeLocked: false,
+          onSelectProject,
+          onSelectProjectWorkspace,
+          onSelectStandaloneDevice: vi.fn(),
+          onExecutionModeChange: vi.fn(),
+        }}
         onSelectProject={onSelectProject}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
@@ -102,7 +156,8 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('project-option-1'))
 
-    expect(onSelectProject).toHaveBeenCalledWith(1)
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(1, 10)
+    expect(onSelectProject).not.toHaveBeenCalled()
   })
 
   test('does not show the user avatar on the mobile empty chat page', () => {
@@ -416,10 +471,22 @@ describe('MobileWorkbenchLayout', () => {
         projectWork={{
           projects: [currentProject],
           devices: [],
+          runtimeWork: runtimeWork([
+            {
+              id: currentProject.id,
+              name: currentProject.name,
+              workspaceId: 10,
+              workspacePath: '/workspace/github_wegent',
+            },
+          ]),
+          currentProject,
           currentProjectId: currentProject.id,
+          currentStandaloneDeviceId: null,
+          selectedDeviceWorkspaceId: 10,
           executionMode: 'current_workspace',
           executionModeLocked: false,
           onSelectProject: vi.fn(),
+          onSelectProjectWorkspace: vi.fn(),
           onSelectStandaloneDevice: vi.fn(),
           onExecutionModeChange: vi.fn(),
         }}

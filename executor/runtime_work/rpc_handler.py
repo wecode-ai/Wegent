@@ -22,6 +22,7 @@ from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     LocalTaskStore,
+    LocalWorkspaceRecord,
     normalize_workspace_path,
     utc_now_iso,
 )
@@ -170,6 +171,9 @@ class RuntimeWorkRpcHandler:
             if method == "runtime.tasks.list":
                 response = self._list_tasks(payload)
                 return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.workspaces.open":
+                response = await self._open_workspace(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.transcript":
                 response = await self._transcript(payload)
                 return _compress_runtime_rpc_response(response, method=method)
@@ -221,6 +225,10 @@ class RuntimeWorkRpcHandler:
             workspace_path=workspace_path,
             include_archived=include_archived,
         )
+        store_workspaces = self.store.list_workspaces(
+            workspace_path=workspace_path,
+            include_archived=include_archived,
+        )
         tasks = self._list_visible_tasks(
             store_tasks=store_tasks,
             discovered_tasks=discovered_tasks,
@@ -229,6 +237,8 @@ class RuntimeWorkRpcHandler:
         )
 
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for workspace in store_workspaces:
+            grouped[workspace.workspace_path] = []
         for task in tasks:
             grouped[task.workspace_path].append(self._task_summary(task))
 
@@ -241,6 +251,48 @@ class RuntimeWorkRpcHandler:
                 }
                 for workspace_path, workspace_tasks in sorted(grouped.items())
             ],
+        }
+
+    async def _open_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime = str(payload.get("runtime") or "codex").strip()
+        if not self._is_codex_runtime(runtime):
+            return self._error(
+                "Only Codex runtime workspaces can be opened without a turn",
+                code="unsupported_runtime",
+            )
+        workspace_path = payload.get("workspacePath") or payload.get("workspace_path")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("workspacePath is required")
+
+        normalized_workspace_path = normalize_workspace_path(workspace_path)
+        open_workspace = getattr(self.codex_discovery, "open_workspace", None)
+        if not callable(open_workspace):
+            return self._error(
+                "Codex SDK workspace adapter is not available",
+                code="unsupported_runtime",
+            )
+
+        result = await self._maybe_await(open_workspace(normalized_workspace_path))
+        if not isinstance(result, dict):
+            result = {}
+        thread_id = result.get("threadId")
+        runtime_handle = {"openedBy": "wegent"}
+        if isinstance(thread_id, str) and thread_id.strip():
+            runtime_handle["threadId"] = thread_id.strip()
+        self.store.upsert_workspace(
+            LocalWorkspaceRecord(
+                workspace_path=normalized_workspace_path,
+                runtime="codex",
+                title=self._workspace_title(result, normalized_workspace_path),
+                runtime_handle=runtime_handle,
+            )
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "runtime": "codex",
+            "workspacePath": normalized_workspace_path,
+            "threadId": runtime_handle.get("threadId"),
         }
 
     def _refresh_discovered_tasks(self) -> list[LocalTaskRecord]:
@@ -1553,6 +1605,17 @@ class RuntimeWorkRpcHandler:
         if isinstance(git_info, dict) and git_info:
             summary["gitInfo"] = git_info
         return summary
+
+    def _workspace_title(
+        self,
+        result: dict[str, Any],
+        workspace_path: str,
+    ) -> str:
+        title = result.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        parts = [part for part in workspace_path.rstrip("/").split("/") if part]
+        return parts[-1] if parts else workspace_path
 
     def _normalize_messages(
         self,

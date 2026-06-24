@@ -575,9 +575,10 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
         "spike",
         "Wegent",
     ]
-    assert {project_work.project.id for project_work in response.projects}.isdisjoint(
-        {project.id}
-    )
+    assert [project_work.project.key for project_work in response.projects] == [
+        "device-1:/tmp/spike",
+        "device-1:/repo/Wegent",
+    ]
     assert response.projects[0].device_workspaces[0].workspace_path == "/tmp/spike"
     assert response.projects[0].device_workspaces[0].id is None
     assert response.projects[0].device_workspaces[0].project_id is None
@@ -593,6 +594,58 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     )
     rpc.assert_awaited_once()
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_work_keeps_empty_executor_workspaces(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "device-1",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "workspaces": [
+                    {
+                        "workspacePath": "/Users/crystal/Documents/hello-0",
+                        "localTasks": [],
+                    }
+                ]
+            }
+        ),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert response.total_local_tasks == 0
+    assert [project_work.project.name for project_work in response.projects] == [
+        "hello-0"
+    ]
+    workspace = response.projects[0].device_workspaces[0]
+    assert workspace.workspace_path == "/Users/crystal/Documents/hello-0"
+    assert workspace.local_tasks == []
+    assert workspace.mapped is True
 
 
 @pytest.mark.asyncio
@@ -1010,6 +1063,57 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
             },
         },
         timeout_seconds=600,
+    )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkspaceOpenRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+            "threadId": "thread-1",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.open_runtime_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkspaceOpenRequest(
+            deviceId="device-1",
+            workspacePath="/Users/crystal/Documents/hello-0/",
+            runtime="codex",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.thread_id == "thread-1"
+    assert response.workspace_path == "/Users/crystal/Documents/hello-0"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspaces.open",
+        payload={
+            "runtime": "codex",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+        },
+        timeout_seconds=60,
     )
     assert test_db.query(TaskResource).count() == 0
 

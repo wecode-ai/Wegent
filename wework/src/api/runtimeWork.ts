@@ -21,6 +21,8 @@ import type {
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeWorkspaceOpenRequest,
+  RuntimeWorkspaceOpenResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { HttpClient } from './http'
@@ -53,6 +55,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
+    },
+    openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
+      return client.post('/runtime-work/workspaces/open', data)
     },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest

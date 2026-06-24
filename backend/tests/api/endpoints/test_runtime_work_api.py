@@ -228,6 +228,46 @@ def test_runtime_archive_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_workspace_open_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+            "threadId": "thread-1",
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "open_runtime_workspace",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/workspaces/open",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["threadId"] == "thread-1"
+    request = service_mock.await_args.kwargs["request"]
+    assert request.device_id == "device-1"
+    assert request.workspace_path == "/Users/crystal/Documents/hello-0"
+
+
 def test_runtime_im_notification_settings_endpoint_uses_current_user(
     test_client,
     test_token,

@@ -26,6 +26,7 @@ export function WorkbenchPage() {
     selectProject,
     selectProjectWorkspace,
     selectStandaloneDevice,
+    openStandaloneWorkspace,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
@@ -80,6 +81,7 @@ export function WorkbenchPage() {
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
@@ -120,6 +122,7 @@ export function WorkbenchPage() {
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
+      onOpenStandaloneWorkspace={openStandaloneWorkspace}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}

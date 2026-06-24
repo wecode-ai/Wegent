@@ -120,6 +120,13 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       accepted: true,
       localTaskId: 'runtime-a',
     }),
+    openRuntimeWorkspace: vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/workspace/direct-codex',
+      runtime: 'codex',
+      threadId: 'thread-1',
+    }),
     bindRuntimeTaskImSessions: vi.fn(),
     getImNotificationSettings: vi.fn().mockResolvedValue({
       global: { enabled: false, sessionKey: null, session: null },
@@ -229,6 +236,12 @@ function ProjectSendProbe() {
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <button type="button" onClick={() => workbench.selectProjectWorkspace(7, null)}>
         select project
+      </button>
+      <button
+        type="button"
+        onClick={() => workbench.openStandaloneWorkspace('device-1', '/workspace/direct-codex')}
+      >
+        open standalone workspace
       </button>
       <button type="button" onClick={() => workbench.setInput('修复 CI')}>
         set input
@@ -424,6 +437,56 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'resolved-device',
       localTaskId: 'runtime-created',
     })
+  })
+
+  test('creates a runtime local task from an explicitly opened standalone workspace', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        localTaskId: 'standalone-created',
+        workspacePath: '/workspace/direct-codex',
+        runtime: 'codex',
+      }),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'standalone-created',
+        workspacePath: '/workspace/direct-codex',
+        runtime: 'codex',
+        messages: [{ id: 'assistant-1', role: 'assistant', content: 'started' }],
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('open standalone workspace')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('open standalone workspace'))
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/direct-codex',
+      runtime: 'codex',
+    })
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/')
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/direct-codex',
+        teamId: 2,
+        message: '修复 CI',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'deviceWorkspaceId'
+    )
   })
 
   test('renders streaming local task chunks when the socket connects after chat start', async () => {

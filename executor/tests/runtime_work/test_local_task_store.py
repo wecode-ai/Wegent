@@ -16,6 +16,19 @@ class EmptyDiscovery:
         return []
 
 
+class OpenWorkspaceDiscovery(EmptyDiscovery):
+    def __init__(self):
+        self.opened = []
+
+    async def open_workspace(self, workspace_path):
+        self.opened.append(workspace_path)
+        return {
+            "threadId": "thread-1",
+            "workspacePath": workspace_path,
+            "title": "hello-0",
+        }
+
+
 class SequenceDiscovery:
     def __init__(self, batches):
         self.batches = list(batches)
@@ -134,6 +147,34 @@ def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
         reopened.get_task("codex-1", workspace_path="/other")
 
 
+def test_local_task_store_persists_empty_workspaces(tmp_path):
+    from executor.runtime_work.local_task_store import (
+        LocalTaskStore,
+        LocalWorkspaceRecord,
+    )
+
+    index_path = tmp_path / "index.json"
+    store = LocalTaskStore(index_path)
+    store.upsert_workspace(
+        LocalWorkspaceRecord(
+            workspace_path="/Users/crystal/Documents/hello-0",
+            title="hello-0",
+            runtime="codex",
+            runtime_handle={"threadId": "thread-1"},
+            created_at="2026-06-24T03:10:00Z",
+            updated_at="2026-06-24T03:10:00Z",
+        )
+    )
+
+    reopened = LocalTaskStore(index_path)
+    workspaces = reopened.list_workspaces()
+
+    assert [workspace.workspace_path for workspace in workspaces] == [
+        "/Users/crystal/Documents/hello-0"
+    ]
+    assert workspaces[0].runtime_handle == {"threadId": "thread-1"}
+
+
 def test_local_task_store_update_keeps_original_primary_key(tmp_path):
     from dataclasses import replace
 
@@ -230,6 +271,47 @@ async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
     workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
     assert workspaces["/repo/Wegent"]["localTasks"][0]["localTaskId"] == "claude-repo-1"
     assert workspaces["/repo/Other"]["localTasks"][0]["runtime"] == "claude_code"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_opens_and_lists_empty_codex_workspace(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    discovery = OpenWorkspaceDiscovery()
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=discovery)
+
+    open_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+            },
+        }
+    )
+    list_result = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.list", "payload": {}}
+    )
+
+    assert open_result == {
+        "success": True,
+        "accepted": True,
+        "runtime": "codex",
+        "workspacePath": "/Users/crystal/Documents/hello-0",
+        "threadId": "thread-1",
+    }
+    assert discovery.opened == ["/Users/crystal/Documents/hello-0"]
+    assert list_result == {
+        "success": True,
+        "workspaces": [
+            {
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+                "localTasks": [],
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio

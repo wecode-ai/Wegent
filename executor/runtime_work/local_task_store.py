@@ -44,6 +44,17 @@ class LocalTaskRecord:
     status: str = "active"
 
 
+@dataclass
+class LocalWorkspaceRecord:
+    workspace_path: str
+    runtime: str
+    title: str
+    runtime_handle: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    status: str = "active"
+
+
 class LocalTaskStore:
     """JSON-backed local index of native runtime sessions."""
 
@@ -81,6 +92,55 @@ class LocalTaskStore:
             index = self._read_index()
             index["tasks"][normalized.local_task_id] = asdict(normalized)
             self._write_index(index)
+
+    def upsert_workspace(self, workspace: LocalWorkspaceRecord) -> None:
+        workspace_path = normalize_workspace_path(workspace.workspace_path)
+        now = utc_now_iso()
+        normalized = LocalWorkspaceRecord(
+            workspace_path=workspace_path,
+            runtime=workspace.runtime,
+            title=workspace.title,
+            runtime_handle=workspace.runtime_handle,
+            created_at=workspace.created_at or now,
+            updated_at=workspace.updated_at or now,
+            status=workspace.status or "active",
+        )
+
+        with self._lock:
+            index = self._read_index()
+            index["workspaces"][workspace_path] = asdict(normalized)
+            self._write_index(index)
+
+    def list_workspaces(
+        self,
+        workspace_path: Optional[str] = None,
+        include_archived: bool = False,
+    ) -> list[LocalWorkspaceRecord]:
+        normalized_workspace = (
+            normalize_workspace_path(workspace_path) if workspace_path else None
+        )
+        with self._lock:
+            records = [
+                self._payload_to_workspace_record(payload)
+                for payload in self._read_index()["workspaces"].values()
+            ]
+
+        filtered = []
+        for record in records:
+            if normalized_workspace and record.workspace_path != normalized_workspace:
+                continue
+            if not include_archived and record.status == "archived":
+                continue
+            filtered.append(record)
+
+        return sorted(
+            filtered,
+            key=lambda record: (
+                parse_task_time(record.updated_at),
+                parse_task_time(record.created_at),
+            ),
+            reverse=True,
+        )
 
     def list_tasks(
         self,
@@ -180,7 +240,7 @@ class LocalTaskStore:
 
     def _read_index(self) -> dict[str, Any]:
         if not self.index_path.exists():
-            return {"version": INDEX_VERSION, "tasks": {}}
+            return {"version": INDEX_VERSION, "tasks": {}, "workspaces": {}}
 
         try:
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
@@ -190,7 +250,16 @@ class LocalTaskStore:
         tasks = data.get("tasks")
         if not isinstance(tasks, dict):
             raise ValueError("Invalid local task index: tasks must be an object")
-        return {"version": data.get("version", INDEX_VERSION), "tasks": tasks}
+        workspaces = data.get("workspaces")
+        if workspaces is None:
+            workspaces = {}
+        if not isinstance(workspaces, dict):
+            raise ValueError("Invalid local task index: workspaces must be an object")
+        return {
+            "version": data.get("version", INDEX_VERSION),
+            "tasks": tasks,
+            "workspaces": workspaces,
+        }
 
     def _write_index(self, index: dict[str, Any]) -> None:
         payload = json.dumps(index, ensure_ascii=False, indent=2, sort_keys=True)
@@ -214,6 +283,19 @@ class LocalTaskStore:
             created_at=str(payload.get("created_at") or utc_now_iso()),
             updated_at=str(payload.get("updated_at") or utc_now_iso()),
             running=bool(payload.get("running", False)),
+            status=str(payload.get("status") or "active"),
+        )
+
+    def _payload_to_workspace_record(self, payload: Any) -> LocalWorkspaceRecord:
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid local workspace record")
+        return LocalWorkspaceRecord(
+            workspace_path=normalize_workspace_path(str(payload["workspace_path"])),
+            runtime=str(payload["runtime"]),
+            title=str(payload.get("title") or payload["workspace_path"]),
+            runtime_handle=self._dict_value(payload.get("runtime_handle")),
+            created_at=str(payload.get("created_at") or utc_now_iso()),
+            updated_at=str(payload.get("updated_at") or utc_now_iso()),
             status=str(payload.get("status") or "active"),
         )
 

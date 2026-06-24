@@ -11,6 +11,7 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
@@ -23,6 +24,7 @@ export const initialWorkbenchState: WorkbenchState = {
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
+  standaloneWorkspacePath: null,
   input: '',
   isBootstrapping: true,
   isSending: false,
@@ -39,6 +41,7 @@ export type WorkbenchAction =
       runtimeWork?: RuntimeWorkListResponse | null
       currentProject?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
     }
   | {
       type: 'lists_refreshed'
@@ -46,11 +49,13 @@ export type WorkbenchAction =
       devices: DeviceInfo[]
       runtimeWork?: RuntimeWorkListResponse | null
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
     }
   | {
       type: 'devices_refreshed'
       devices: DeviceInfo[]
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
@@ -62,7 +67,11 @@ export type WorkbenchAction =
       deviceWorkspaceId: number | null
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
-  | { type: 'project_cleared'; standaloneDeviceId?: string | null }
+  | {
+      type: 'project_cleared'
+      standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
+    }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
   | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | {
@@ -115,6 +124,7 @@ function upsertPreparedRuntimeWorkspace(
 ): RuntimeWorkListResponse {
   const project = projects.find(item => item.id === mapping.projectId)
   const projectRef = {
+    key: `project:${mapping.projectId}`,
     id: mapping.projectId,
     name: project?.name ?? '',
     description: project?.description,
@@ -126,10 +136,12 @@ function upsertPreparedRuntimeWorkspace(
     totalLocalTasks: 0,
   }
   const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
-  const hasProject = currentRuntimeWork.projects.some(item => item.project.id === mapping.projectId)
+  const hasProject = currentRuntimeWork.projects.some(
+    item => runtimeProjectUiId(item.project) === mapping.projectId
+  )
   const projectsWithTarget = hasProject
     ? currentRuntimeWork.projects.map(item => {
-        if (item.project.id !== mapping.projectId) return item
+        if (runtimeProjectUiId(item.project) !== mapping.projectId) return item
         const workspaces = item.deviceWorkspaces.filter(
           workspace =>
             !(
@@ -183,6 +195,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
         isBootstrapping: false,
         error: null,
       }
@@ -199,6 +215,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
       }
       return refreshedState
     }
@@ -210,6 +230,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
@@ -227,6 +251,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: action.project,
         selectedDeviceWorkspaceId: null,
         pendingProjectWorkspaceProjectId: null,
+        standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
     case 'device_workspace_prepared':
@@ -248,6 +273,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         selectedDeviceWorkspaceId: action.deviceWorkspaceId,
         pendingProjectWorkspaceProjectId:
           action.deviceWorkspaceId === null ? action.project.id : null,
+        standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
     case 'project_updated':
@@ -269,6 +295,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
         currentRuntimeTask: null,
       }
     case 'user_preferences_updated':
@@ -285,6 +315,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
+        standaloneWorkspacePath: null,
       }
     case 'runtime_task_opened':
       return {

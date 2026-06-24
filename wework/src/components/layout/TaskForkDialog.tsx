@@ -3,6 +3,7 @@ import { ArrowLeftRight, Check, FolderPlus, HardDrive, Loader2, X } from 'lucide
 import { Button } from '@/components/ui/button'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeleteDeviceWorkspaceRequest,
@@ -74,7 +75,11 @@ function findSourceProjectWork(
   }
 
   if (currentProject) {
-    return runtimeWork.projects.find(project => project.project.id === currentProject.id) ?? null
+    return (
+      runtimeWork.projects.find(
+        project => runtimeProjectUiId(project.project) === currentProject.id
+      ) ?? null
+    )
   }
 
   if (runtimeWork.projects.length === 1) {
@@ -115,7 +120,8 @@ export function TaskForkDialog({
     () => findSourceProjectWork(runtimeWork, source, currentProject),
     [currentProject, runtimeWork, source]
   )
-  const targetProjectId = currentProject?.id ?? sourceProjectWork?.project.id ?? null
+  const targetProjectId =
+    currentProject?.id ?? (sourceProjectWork ? runtimeProjectUiId(sourceProjectWork.project) : null)
   const projectWorkspaces = useMemo(
     () => sourceProjectWork?.deviceWorkspaces ?? [],
     [sourceProjectWork]
@@ -178,7 +184,7 @@ export function TaskForkDialog({
     currentProject ??
     (sourceProjectWork
       ? {
-          id: sourceProjectWork.project.id,
+          id: runtimeProjectUiId(sourceProjectWork.project),
           name: sourceProjectWork.project.name,
           description: sourceProjectWork.project.description,
           tasks: [],
@@ -275,7 +281,10 @@ export function TaskForkDialog({
           )}
 
           <p data-testid="task-fork-guidance" className="mt-4 text-xs leading-5 text-text-muted">
-            {t('workbench.task_fork_guidance', '选择其他设备上的项目工作区，复制后会在目标设备继续。')}
+            {t(
+              'workbench.task_fork_guidance',
+              '选择其他设备上的项目工作区，复制后会在目标设备继续。'
+            )}
           </p>
 
           <div className="mt-4 space-y-2" role="radiogroup">
