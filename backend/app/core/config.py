@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     EXECUTOR_DELETE_TASK_URL: str = (
         "http://localhost:8001/executor-manager/executor/delete"
     )
+    EXECUTOR_DELETE_BY_TASK_ID_URL: str = (
+        "http://localhost:8001/executor-manager/executor/delete-by-task-id"
+    )
     EXECUTOR_CANCEL_TASK_URL: str = (
         "http://localhost:8001/executor-manager/tasks/cancel"
     )

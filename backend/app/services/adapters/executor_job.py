@@ -204,10 +204,15 @@ class JobService(BaseService[Kind, None, None]):
 
         subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
         if not subtasks:
-            return self._build_cleanup_result(
-                task_id,
-                "executor_not_found",
-                details={"inactive_hours": inactive_hours, "dry_run": dry_run},
+            if dry_run:
+                return self._build_cleanup_result(
+                    task_id,
+                    "executor_not_found",
+                    details={"inactive_hours": inactive_hours, "dry_run": dry_run},
+                )
+            return await self._cleanup_orphan_pod(
+                task_id=task_id,
+                inactive_hours=inactive_hours,
             )
 
         cutoff = datetime.now() - timedelta(hours=inactive_hours)
@@ -727,6 +732,61 @@ class JobService(BaseService[Kind, None, None]):
 
         return deleted_count
 
+    async def _cleanup_orphan_pod(
+        self,
+        *,
+        task_id: int,
+        inactive_hours: int,
+    ) -> Dict[str, object]:
+        """Delete K8s pod(s) for a task that has no DB subtask records.
+
+        This handles the executor_not_found case where the pod still exists in
+        K8s but the backend has no subtask row for it (orphan pod).
+        """
+        try:
+            result = await executor_kinds_service.delete_executor_by_task_id_async(
+                task_id
+            )
+        except Exception as exc:
+            logger.warning(
+                "[executor_job] Failed to delete orphan pod " "task_id=%s error=%s",
+                task_id,
+                exc,
+            )
+            return self._build_cleanup_result(
+                task_id,
+                "executor_not_found",
+                details={"inactive_hours": inactive_hours, "dry_run": False},
+            )
+
+        k8s_status = result.get("status")
+        deleted_pods = result.get("deleted_pods", [])
+        if k8s_status == "success" and deleted_pods:
+            logger.info(
+                "[executor_job] Deleted orphan pod(s) task_id=%s pods=%s",
+                task_id,
+                deleted_pods,
+            )
+            return self._build_cleanup_result(
+                task_id,
+                "pod_deleted",
+                details={
+                    "inactive_hours": inactive_hours,
+                    "dry_run": False,
+                    "deleted_pods": deleted_pods,
+                },
+            )
+
+        return self._build_cleanup_result(
+            task_id,
+            "executor_not_found",
+            details={
+                "inactive_hours": inactive_hours,
+                "dry_run": False,
+                "k8s_status": k8s_status,
+            },
+        )
+
     def _build_cleanup_result(
         self,
         task_id: int,
@@ -735,10 +795,11 @@ class JobService(BaseService[Kind, None, None]):
         details: Dict[str, Any] | None = None,
     ) -> Dict[str, object]:
         """Build a consistent cleanup result payload."""
+        deleted = reason in ("executor_deleted", "pod_deleted")
         result = {
             "task_id": task_id,
-            "deleted": reason == "executor_deleted",
-            "skipped": reason != "executor_deleted",
+            "deleted": deleted,
+            "skipped": not deleted,
             "reason": reason,
             "executors": executors or [],
         }

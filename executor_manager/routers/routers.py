@@ -350,6 +350,41 @@ class DeleteExecutorRequest(BaseModel):
     executor_namespace: Optional[str] = None
 
 
+class DeleteExecutorByTaskIdRequest(BaseModel):
+    task_id: int
+
+
+@api_router.post("/executor/delete-by-task-id")
+async def delete_executor_by_task_id(
+    request: DeleteExecutorByTaskIdRequest, http_request: Request
+):
+    """Delete executor pod(s) by task_id label for orphan pod cleanup.
+
+    Used when no DB subtask records exist for a task but K8s pods remain.
+    Searches pods by the aigc.weibo.com/executor-task-id label and deletes them.
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            "Received request to delete executor by task_id: %s from %s",
+            request.task_id,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "delete_executor_by_task_id"):
+            raise HTTPException(
+                status_code=501,
+                detail="delete_executor_by_task_id is not supported by this executor",
+            )
+        result = executor.delete_executor_by_task_id(str(request.task_id))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting executor by task_id '%s': %s", request.task_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post("/executor/delete")
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:

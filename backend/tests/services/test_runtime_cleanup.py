@@ -360,3 +360,154 @@ async def test_cleanup_stale_task_executor_works_for_stuck_running_task():
         "executor-stuck", "default"
     )
     mark_deleted.assert_awaited_once_with([20])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_deletes_orphan_pod():
+    """When no subtask records exist, the orphan K8s pod should be deleted."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(400, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            return_value={"status": "success", "deleted_pods": ["wegent-task-400-abc"]}
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=400, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is True
+    assert result["reason"] == "pod_deleted"
+    assert result["deleted_pods"] == ["wegent-task-400-abc"]
+    executor_service.delete_executor_by_task_id_async.assert_awaited_once_with(400)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_not_found():
+    """When no subtask records exist and no K8s pod found, returns executor_not_found."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(401, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            return_value={"status": "not_found", "error_msg": "No pod found"}
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=401, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
+    executor_service.delete_executor_by_task_id_async.assert_awaited_once_with(401)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_dry_run():
+    """dry_run=True should skip pod deletion and return executor_not_found immediately."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(402, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock()
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=402, inactive_hours=24, dry_run=True
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
+    assert result["dry_run"] is True
+    executor_service.delete_executor_by_task_id_async.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_error_fallback():
+    """When delete_executor_by_task_id_async raises, return executor_not_found gracefully."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(403, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            side_effect=Exception("executor_manager unreachable")
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=403, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
