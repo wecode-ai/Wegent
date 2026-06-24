@@ -19,6 +19,7 @@ import type {
   RuntimeTaskForkResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
@@ -47,8 +48,8 @@ export function createRuntimeWorkApi(client: HttpClient) {
       })
       return client.delete(`/runtime-work/device-workspaces?${params.toString()}`)
     },
-    getRuntimeTranscript(address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse> {
-      return client.post('/runtime-work/transcript', address)
+    getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
+      return client.post('/runtime-work/transcript', request)
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)

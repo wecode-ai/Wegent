@@ -4,7 +4,11 @@
 
 """Typed runtime task RPC over the existing local executor Socket.IO channel."""
 
+import base64
+import gzip
+import json
 import logging
+import time
 from typing import Any, Optional
 
 from socketio.exceptions import BadNamespaceError, DisconnectedError
@@ -18,6 +22,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS = 30
 MAX_RUNTIME_RPC_TIMEOUT_SECONDS = 600
 SOCKET_ACK_GRACE_SECONDS = 5
+RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
+RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
 
 
 class RuntimeRpcError(RuntimeError):
@@ -48,11 +54,14 @@ class RuntimeRpcService:
             raise RuntimeRpcError(f"Device '{device_id}' has no socket information")
 
         request = {"method": method, "payload": payload}
+        started_at = time.perf_counter()
         logger.info(
-            "[RuntimeRpcService] Sending runtime RPC: user_id=%s device_id=%s method=%s",
+            "[RuntimeRpcService] Sending runtime RPC: user_id=%s device_id=%s method=%s timeout_seconds=%s payload_keys=%s",
             user_id,
             device_id,
             method,
+            normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
+            sorted(payload.keys()),
         )
         try:
             result = await get_sio().call(
@@ -63,6 +72,15 @@ class RuntimeRpcService:
                 timeout=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
             )
         except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC failed: user_id=%s device_id=%s method=%s elapsed_ms=%s error_type=%s",
+                user_id,
+                device_id,
+                method,
+                elapsed_ms,
+                exc.__class__.__name__,
+            )
             raise RuntimeRpcError(
                 self._format_rpc_error(
                     exc,
@@ -72,9 +90,47 @@ class RuntimeRpcService:
                 )
             ) from exc
 
+        result = self._decode_response(result, method=method)
         if not isinstance(result, dict):
             raise RuntimeRpcError("Runtime RPC returned an invalid response")
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "[RuntimeRpcService] Runtime RPC completed: user_id=%s device_id=%s method=%s elapsed_ms=%s result_keys=%s",
+            user_id,
+            device_id,
+            method,
+            elapsed_ms,
+            sorted(result.keys()),
+        )
         return result
+
+    @staticmethod
+    def _decode_response(result: Any, *, method: str) -> Any:
+        if not (
+            isinstance(result, dict)
+            and result.get(RUNTIME_RPC_ENCODING_KEY) == RUNTIME_RPC_COMPRESSED_ENCODING
+        ):
+            return result
+
+        payload = result.get("payload")
+        if not isinstance(payload, str):
+            raise RuntimeRpcError("Runtime RPC returned an invalid compressed payload")
+
+        try:
+            compressed = base64.b64decode(payload.encode("ascii"), validate=True)
+            decoded = gzip.decompress(compressed)
+            response = json.loads(decoded.decode("utf-8"))
+        except Exception as exc:
+            raise RuntimeRpcError("Runtime RPC returned an unreadable payload") from exc
+
+        logger.info(
+            "[RuntimeRpcService] Runtime RPC response decompressed: method=%s raw_bytes=%s compressed_bytes=%s encoded_bytes=%s",
+            method,
+            len(decoded),
+            len(compressed),
+            len(payload),
+        )
+        return response
 
     @staticmethod
     def _normalize_timeout(timeout_seconds: Any) -> int:

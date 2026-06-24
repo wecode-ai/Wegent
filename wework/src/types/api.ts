@@ -360,6 +360,14 @@ export interface RuntimeTranscriptResponse {
   runtime: RuntimeName
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+  parseError?: string | null
+}
+
+export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
+  limit?: number
+  beforeCursor?: string | null
 }
 
 export interface RuntimeSendRequest {

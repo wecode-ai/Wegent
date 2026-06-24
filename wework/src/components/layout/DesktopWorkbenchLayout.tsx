@@ -57,6 +57,8 @@ interface DesktopWorkbenchLayoutProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
   isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -67,6 +69,7 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
@@ -154,6 +157,8 @@ export function DesktopWorkbenchLayout({
   guidanceMessages = [],
   codeCommentContexts = [],
   isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
@@ -163,6 +168,7 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onLoadOlderRuntimeTranscript,
   onArchiveRuntimeLocalTask,
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
@@ -727,6 +733,8 @@ export function DesktopWorkbenchLayout({
           upgradingDevices={upgradingDevices}
           messages={messages}
           isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
+          runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
+          isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
@@ -760,6 +768,7 @@ export function DesktopWorkbenchLayout({
           onInputChange={onInputChange}
           onSend={onSend}
           onRetryFailedMessage={onRetryFailedMessage}
+          onLoadOlderRuntimeTranscript={onLoadOlderRuntimeTranscript}
           isResponseStreaming={isResponseStreaming}
           onPauseResponse={onPauseResponse}
           onCancelQueuedMessage={onCancelQueuedMessage}

@@ -5,6 +5,8 @@
 """Runtime work RPC dispatcher for local executor mode."""
 
 import asyncio
+import base64
+import gzip
 import inspect
 import json
 import time
@@ -29,6 +31,11 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport, ResponsesAPIEmitter
 
 logger = setup_logger("runtime_work_rpc_handler")
+RUNTIME_TRANSCRIPT_DEFAULT_LIMIT = 50
+RUNTIME_TRANSCRIPT_MAX_LIMIT = 200
+RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES = 512 * 1024
+RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
+RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
 CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
     "done",
     "complete",
@@ -40,6 +47,32 @@ CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+
+
+def _compress_runtime_rpc_response(
+    response: dict[str, Any], *, method: str | None
+) -> dict[str, Any]:
+    raw = json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    if len(raw) <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES:
+        return response
+
+    compressed = gzip.compress(raw)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    logger.info(
+        "[RuntimeWorkRpc] Compressed runtime RPC response: method=%s raw_bytes=%s compressed_bytes=%s encoded_bytes=%s",
+        method,
+        len(raw),
+        len(compressed),
+        len(encoded),
+    )
+    return {
+        RUNTIME_RPC_ENCODING_KEY: RUNTIME_RPC_COMPRESSED_ENCODING,
+        "payload": encoded,
+        "rawBytes": len(raw),
+        "compressedBytes": len(compressed),
+    }
 
 
 class LocalTaskResponsesTransport(EventTransport):
@@ -135,31 +168,43 @@ class RuntimeWorkRpcHandler:
 
         try:
             if method == "runtime.tasks.list":
-                return self._list_tasks(payload)
+                response = self._list_tasks(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.transcript":
-                return await self._transcript(payload)
+                response = await self._transcript(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.send":
-                return await self._send(payload)
+                response = await self._send(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.archive":
-                return await self._archive(payload)
+                response = await self._archive(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.status":
-                return self._status(payload)
+                response = self._status(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.prepare_fork_transfer":
-                return await self._prepare_fork_transfer(payload)
+                response = await self._prepare_fork_transfer(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.prepare_fork_receiver":
-                return await self._prepare_fork_receiver(payload)
+                response = await self._prepare_fork_receiver(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.push_fork_transfer":
-                return await self._push_fork_transfer(payload)
+                response = await self._push_fork_transfer(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.upload_fork_transfer":
-                return await self._upload_fork_transfer(payload)
+                response = await self._upload_fork_transfer(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.import_fork":
-                return await self._import_fork(payload)
+                response = await self._import_fork(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method in {
                 "runtime.tasks.create",
                 "runtime.tasks.cancel",
             }:
-                return await self._adapter_method(method, payload)
-            return self._error(f"Unsupported runtime RPC method: {method}")
+                response = await self._adapter_method(method, payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            response = self._error(f"Unsupported runtime RPC method: {method}")
+            return _compress_runtime_rpc_response(response, method=method)
         except KeyError as exc:
             return self._error(str(exc), code="not_found")
         except ValueError as exc:
@@ -416,17 +461,113 @@ class RuntimeWorkRpcHandler:
         }
 
     async def _transcript(self, payload: dict[str, Any]) -> dict[str, Any]:
-        discovered_tasks = self._refresh_discovered_tasks()
-        task = self._load_payload_task(payload, discovered_tasks=discovered_tasks)
-        messages = await self._task_transcript_messages(task)
+        started_at = time.perf_counter()
+        local_task_id = payload.get("localTaskId")
+        workspace_path = payload.get("workspacePath")
+        logger.info(
+            "[RuntimeWorkRpc] Transcript request received: local_task_id=%s workspace_path=%s limit=%s before_cursor=%s",
+            local_task_id,
+            workspace_path,
+            payload.get("limit"),
+            payload.get("beforeCursor"),
+        )
+        task = self._load_payload_transcript_task(payload)
+        task_loaded_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "[RuntimeWorkRpc] Transcript task loaded: local_task_id=%s runtime=%s workspace_path=%s elapsed_ms=%s",
+            task.local_task_id,
+            task.runtime,
+            task.workspace_path,
+            task_loaded_ms,
+        )
+        limit = self._transcript_limit(payload.get("limit"))
+        before_cursor = payload.get("beforeCursor")
+        if not isinstance(before_cursor, str):
+            before_cursor = None
+        page = await self._task_transcript_page(
+            task,
+            limit=limit,
+            before_cursor=before_cursor,
+        )
+        page_loaded_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "[RuntimeWorkRpc] Transcript page loaded: local_task_id=%s runtime=%s elapsed_ms=%s message_count=%s has_more_before=%s before_cursor=%s",
+            task.local_task_id,
+            task.runtime,
+            page_loaded_ms,
+            len(page["messages"]) if isinstance(page.get("messages"), list) else None,
+            page.get("hasMoreBefore"),
+            page.get("beforeCursor"),
+        )
 
-        return {
+        response = {
             "success": True,
             "localTaskId": task.local_task_id,
             "workspacePath": task.workspace_path,
             "runtime": task.runtime,
             "title": task.title,
-            "messages": self._normalize_messages(task, messages),
+            "messages": self._normalize_messages(task, page["messages"]),
+            "hasMoreBefore": page["hasMoreBefore"],
+            "beforeCursor": page["beforeCursor"],
+        }
+        completed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "[RuntimeWorkRpc] Transcript response ready: local_task_id=%s elapsed_ms=%s normalized_message_count=%s",
+            task.local_task_id,
+            completed_ms,
+            len(response["messages"]),
+        )
+        return response
+
+    async def _task_transcript_page(
+        self,
+        task: LocalTaskRecord,
+        *,
+        limit: int,
+        before_cursor: Optional[str],
+    ) -> dict[str, Any]:
+        if self._is_codex_runtime(task.runtime):
+            started_at = time.perf_counter()
+            codex_page = self._codex_session_page(
+                task,
+                limit=limit,
+                before_cursor=before_cursor,
+            )
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "[RuntimeWorkRpc] Codex transcript page attempt finished: local_task_id=%s elapsed_ms=%s found=%s message_count=%s",
+                task.local_task_id,
+                elapsed_ms,
+                codex_page is not None,
+                (
+                    len(codex_page["messages"])
+                    if codex_page is not None
+                    and isinstance(codex_page.get("messages"), list)
+                    else None
+                ),
+            )
+            if codex_page is not None and (
+                codex_page["messages"] or before_cursor is not None
+            ):
+                return codex_page
+
+        fallback_started_at = time.perf_counter()
+        messages = await self._task_transcript_messages(task)
+        fallback_elapsed_ms = int((time.perf_counter() - fallback_started_at) * 1000)
+        logger.info(
+            "[RuntimeWorkRpc] Transcript fallback loaded: local_task_id=%s runtime=%s elapsed_ms=%s message_count=%s before_cursor=%s",
+            task.local_task_id,
+            task.runtime,
+            fallback_elapsed_ms,
+            len(messages) if isinstance(messages, list) else None,
+            before_cursor,
+        )
+        page_messages = messages[-limit:] if before_cursor is None else []
+        return {
+            "messages": page_messages,
+            "hasMoreBefore": before_cursor is None
+            and len(messages) > len(page_messages),
+            "beforeCursor": None,
         }
 
     async def _task_transcript_messages(
@@ -470,6 +611,38 @@ class RuntimeWorkRpcHandler:
         if not isinstance(session_path, str):
             session_path = None
         return self.codex_discovery.read_transcript(thread_id, session_path)
+
+    def _codex_session_page(
+        self,
+        task: LocalTaskRecord,
+        *,
+        limit: int,
+        before_cursor: Optional[str],
+    ) -> Optional[dict[str, Any]]:
+        if not self._is_codex_runtime(task.runtime) or self.codex_discovery is None:
+            return None
+        if not hasattr(self.codex_discovery, "read_transcript_page"):
+            return None
+
+        thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            return None
+
+        session_path = task.runtime_handle.get("sessionPath")
+        if not isinstance(session_path, str):
+            session_path = None
+
+        page = self.codex_discovery.read_transcript_page(
+            thread_id,
+            session_path,
+            limit=limit,
+            before_cursor=before_cursor,
+        )
+        return {
+            "messages": page.messages,
+            "hasMoreBefore": page.has_more_before,
+            "beforeCursor": page.before_cursor,
+        }
 
     async def _send(self, payload: dict[str, Any]) -> dict[str, Any]:
         task = self._load_payload_task(payload)
@@ -1180,6 +1353,46 @@ class RuntimeWorkRpcHandler:
 
         raise KeyError(f"Local task not found: {local_task_id}")
 
+    def _load_payload_transcript_task(self, payload: dict[str, Any]) -> LocalTaskRecord:
+        local_task_id = payload.get("localTaskId")
+        if not isinstance(local_task_id, str) or not local_task_id.strip():
+            raise ValueError("localTaskId is required")
+
+        workspace_path = payload.get("workspacePath")
+        if workspace_path is not None and not isinstance(workspace_path, str):
+            raise ValueError("workspacePath must be a string")
+
+        try:
+            task = self.store.get_task(local_task_id, workspace_path=workspace_path)
+            if self._is_codex_runtime(task.runtime):
+                handle = dict(task.runtime_handle)
+                handle.pop("messages", None)
+                return replace(task, runtime_handle=handle)
+            return task
+        except KeyError:
+            pass
+
+        sdk_task = self._find_sdk_codex_task(
+            local_task_id,
+            workspace_path=workspace_path,
+        )
+        if sdk_task is not None:
+            return sdk_task
+
+        return LocalTaskRecord(
+            local_task_id=local_task_id.strip(),
+            workspace_path=(
+                normalize_workspace_path(workspace_path) if workspace_path else ""
+            ),
+            title=local_task_id.strip(),
+            runtime="codex",
+            runtime_handle={"threadId": local_task_id.strip()},
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+            running=False,
+            status="active",
+        )
+
     def _remember_sdk_codex_task(self, task: LocalTaskRecord) -> None:
         if self._is_sdk_codex_task(task):
             self._sdk_codex_task_records[task.local_task_id] = task
@@ -1431,6 +1644,12 @@ class RuntimeWorkRpcHandler:
             parsed = int(value)
             return parsed if parsed > 0 else None
         return None
+
+    def _transcript_limit(self, value: Any) -> int:
+        parsed = self._positive_int(value)
+        if parsed is None:
+            return RUNTIME_TRANSCRIPT_DEFAULT_LIMIT
+        return min(parsed, RUNTIME_TRANSCRIPT_MAX_LIMIT)
 
     def _string_content(self, content: Any) -> str:
         if content is None:

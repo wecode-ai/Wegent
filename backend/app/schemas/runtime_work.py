@@ -24,6 +24,13 @@ class RuntimeTaskAddress(BaseModel):
     local_task_id: str = Field(..., alias="localTaskId", min_length=1)
 
 
+class RuntimeTranscriptRequest(RuntimeTaskAddress):
+    """Request a page of a device-local runtime transcript."""
+
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+
+
 class RuntimeMessageSource(BaseModel):
     """Optional source overlay for runtime transcript messages."""
 
@@ -220,6 +227,8 @@ class RuntimeTranscriptResponse(BaseModel):
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
+    has_more_before: bool = Field(default=False, alias="hasMoreBefore")
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     parse_error: Optional[str] = Field(default=None, alias="parseError")
 
 

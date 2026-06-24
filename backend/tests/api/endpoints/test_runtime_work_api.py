@@ -182,12 +182,16 @@ def test_runtime_transcript_endpoint_dispatches_address(
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
             "localTaskId": "codex-1",
+            "limit": 25,
+            "beforeCursor": "offset:120",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["localTaskId"] == "codex-1"
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
+    assert service_mock.await_args.kwargs["address"].limit == 25
+    assert service_mock.await_args.kwargs["address"].before_cursor == "offset:120"
 
 
 def test_runtime_archive_endpoint_dispatches_address(

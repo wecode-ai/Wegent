@@ -8,7 +8,9 @@ import contextlib
 import json
 import os
 import re
+import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -24,10 +26,31 @@ from shared.logger import setup_logger
 
 DEFAULT_CODEX_SESSION_LIMIT = 100
 CODEX_SESSION_RUNNING_TAIL_LINES = 200
+CODEX_TRANSCRIPT_DEFAULT_LIMIT = 50
+CODEX_TRANSCRIPT_MAX_LIMIT = 200
+CODEX_TRANSCRIPT_INITIAL_WINDOW_BYTES = 1024 * 1024
+CODEX_TRANSCRIPT_MAX_WINDOW_BYTES = 64 * 1024 * 1024
 CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
 CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CODEX_TRANSCRIPT_CURSOR_PATTERN = re.compile(r"^offset:(\d+)$")
 
 logger = setup_logger("codex_session_discovery")
+
+
+@dataclass(frozen=True)
+class CodexTranscriptPage:
+    """A page of user-visible Codex transcript messages."""
+
+    messages: list[dict[str, Any]]
+    has_more_before: bool = False
+    before_cursor: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _TranscriptCacheEntry:
+    stat_key: tuple[int, int, int]
+    messages: list[dict[str, Any]]
+    complete: bool
 
 
 class CodexSessionDiscovery:
@@ -44,6 +67,7 @@ class CodexSessionDiscovery:
         ).expanduser()
         self.limit = max(1, limit)
         self.codex_client_factory = codex_client_factory
+        self._transcript_cache: dict[str, _TranscriptCacheEntry] = {}
 
     def discover(self) -> list[LocalTaskRecord]:
         try:
@@ -115,6 +139,92 @@ class CodexSessionDiscovery:
         if path is None:
             return []
         return _read_session_transcript(path, thread_id)
+
+    def read_transcript_page(
+        self,
+        thread_id: str,
+        session_path: Optional[str] = None,
+        *,
+        limit: int = CODEX_TRANSCRIPT_DEFAULT_LIMIT,
+        before_cursor: Optional[str] = None,
+    ) -> CodexTranscriptPage:
+        started_at = time.perf_counter()
+        path = self._resolve_session_path(thread_id, session_path)
+        if path is None:
+            logger.info(
+                "[CodexTranscript] Session path not found: thread_id=%s requested_session_path=%s elapsed_ms=%s",
+                thread_id,
+                session_path,
+                int((time.perf_counter() - started_at) * 1000),
+            )
+            return CodexTranscriptPage(messages=[])
+
+        safe_limit = _normalize_transcript_limit(limit)
+        before_offset = _parse_transcript_cursor(before_cursor)
+        cache_key = str(path)
+        stat_key = _transcript_stat_key(path)
+        if stat_key is None:
+            logger.info(
+                "[CodexTranscript] Session stat failed: thread_id=%s path=%s elapsed_ms=%s",
+                thread_id,
+                path,
+                int((time.perf_counter() - started_at) * 1000),
+            )
+            return CodexTranscriptPage(messages=[])
+
+        cached = self._transcript_cache.get(cache_key)
+        if (
+            cached
+            and cached.stat_key == stat_key
+            and (cached.complete or before_offset is None)
+        ):
+            page = _paginate_transcript_messages(
+                cached.messages,
+                limit=safe_limit,
+                before_offset=before_offset,
+                complete=cached.complete,
+            )
+            logger.info(
+                "[CodexTranscript] Page served from cache: thread_id=%s path=%s limit=%s before_cursor=%s elapsed_ms=%s message_count=%s has_more_before=%s next_cursor=%s complete=%s",
+                thread_id,
+                path,
+                safe_limit,
+                before_cursor,
+                int((time.perf_counter() - started_at) * 1000),
+                len(page.messages),
+                page.has_more_before,
+                page.before_cursor,
+                cached.complete,
+            )
+            return page
+
+        page = _read_session_transcript_page(
+            path,
+            thread_id,
+            limit=safe_limit,
+            before_offset=before_offset,
+        )
+        messages_for_cache = page.messages
+        complete = not page.has_more_before
+        if complete or before_offset is None:
+            self._transcript_cache[cache_key] = _TranscriptCacheEntry(
+                stat_key=stat_key,
+                messages=messages_for_cache,
+                complete=complete,
+            )
+        logger.info(
+            "[CodexTranscript] Page read from session file: thread_id=%s path=%s limit=%s before_cursor=%s elapsed_ms=%s message_count=%s has_more_before=%s next_cursor=%s cached=%s",
+            thread_id,
+            path,
+            safe_limit,
+            before_cursor,
+            int((time.perf_counter() - started_at) * 1000),
+            len(page.messages),
+            page.has_more_before,
+            page.before_cursor,
+            complete or before_offset is None,
+        )
+        return page
 
     def _resolve_session_path(
         self,
@@ -305,9 +415,7 @@ def _is_codex_app_conversation_path(cwd: str) -> bool:
         return False
 
     parts = relative.parts
-    return len(parts) >= 2 and bool(
-        CODEX_CONVERSATION_DATE_PATTERN.fullmatch(parts[0])
-    )
+    return len(parts) >= 2 and bool(CODEX_CONVERSATION_DATE_PATTERN.fullmatch(parts[0]))
 
 
 def _thread_title(thread: Any, thread_id: str) -> str:
@@ -791,6 +899,276 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
     return messages
 
 
+def _read_session_transcript_page(
+    path: Path,
+    thread_id: str,
+    *,
+    limit: int,
+    before_offset: Optional[int],
+) -> CodexTranscriptPage:
+    started_at = time.perf_counter()
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        return CodexTranscriptPage(messages=[])
+
+    if file_size <= 0:
+        return CodexTranscriptPage(messages=[])
+
+    window_size = min(CODEX_TRANSCRIPT_INITIAL_WINDOW_BYTES, file_size)
+    max_window_size = min(CODEX_TRANSCRIPT_MAX_WINDOW_BYTES, file_size)
+
+    while True:
+        segment_end = min(before_offset or file_size, file_size)
+        window_start = max(0, segment_end - window_size)
+        window_started_at = time.perf_counter()
+        messages = _read_session_transcript_window(
+            path,
+            thread_id,
+            window_start,
+            segment_end,
+        )
+        window_elapsed_ms = int((time.perf_counter() - window_started_at) * 1000)
+        complete = window_start == 0
+        page = _paginate_transcript_messages(
+            messages,
+            limit=limit,
+            before_offset=before_offset,
+            complete=complete,
+        )
+        logger.info(
+            "[CodexTranscript] Window parsed: thread_id=%s path=%s file_size=%s window_start=%s segment_end=%s window_bytes=%s window_elapsed_ms=%s total_elapsed_ms=%s parsed_messages=%s page_messages=%s complete=%s has_more_before=%s",
+            thread_id,
+            path,
+            file_size,
+            window_start,
+            segment_end,
+            segment_end - window_start,
+            window_elapsed_ms,
+            int((time.perf_counter() - started_at) * 1000),
+            len(messages),
+            len(page.messages),
+            complete,
+            page.has_more_before,
+        )
+
+        if len(page.messages) >= limit or complete:
+            return page
+
+        if window_size >= max_window_size:
+            return page
+
+        window_size = min(window_size * 2, max_window_size)
+
+
+def _read_session_transcript_window(
+    path: Path,
+    thread_id: str,
+    window_start: int,
+    segment_end: int,
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    pending_agent_message: Optional[dict[str, Any]] = None
+    processing_blocks: list[dict[str, Any]] = []
+    tool_blocks_by_call_id: dict[str, dict[str, Any]] = {}
+    turn_started_at: Optional[str] = None
+    turn_counter = 0
+
+    try:
+        with path.open("rb") as handle:
+            if window_start > 0:
+                handle.seek(window_start)
+                handle.readline()
+            for raw_line in handle:
+                line_start = handle.tell() - len(raw_line)
+                if line_start >= segment_end:
+                    break
+                record = _parse_json_line(raw_line)
+                if record is None:
+                    continue
+
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+
+                event_type = payload.get("type")
+                timestamp = _record_timestamp(record, payload)
+                if record.get("type") == "response_item":
+                    if turn_counter > 0:
+                        _append_response_item_block(
+                            payload=payload,
+                            timestamp=timestamp,
+                            thread_id=thread_id,
+                            turn_counter=turn_counter,
+                            processing_blocks=processing_blocks,
+                            tool_blocks_by_call_id=tool_blocks_by_call_id,
+                        )
+                    continue
+
+                if event_type == "user_message":
+                    global_turn = _payload_turn_index(payload)
+                    if global_turn is None:
+                        turn_counter += 1
+                        global_turn = turn_counter
+                    else:
+                        turn_counter = global_turn
+                    pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = timestamp
+                    message = _first_text(payload, "message")
+                    if message:
+                        messages.append(
+                            _transcript_message_from_offset(
+                                thread_id=thread_id,
+                                offset=line_start,
+                                role="user",
+                                content=message,
+                                created_at=timestamp,
+                                status="done",
+                            )
+                        )
+                elif event_type == "agent_message":
+                    message = _first_text(payload, "message")
+                    if message:
+                        pending_agent_message = _transcript_message_from_offset(
+                            thread_id=thread_id,
+                            offset=line_start,
+                            role="assistant",
+                            content=message,
+                            created_at=turn_started_at or timestamp,
+                            status="streaming",
+                            blocks=processing_blocks,
+                        )
+                elif event_type == "task_complete":
+                    message = _first_text(payload, "last_agent_message")
+                    _finish_processing_blocks(processing_blocks, timestamp)
+                    if message:
+                        messages.append(
+                            _transcript_message_from_offset(
+                                thread_id=thread_id,
+                                offset=line_start,
+                                role="assistant",
+                                content=message,
+                                created_at=turn_started_at or timestamp,
+                                status="done",
+                                blocks=processing_blocks,
+                            )
+                        )
+                    pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = None
+                elif event_type == "turn_aborted":
+                    reason = _first_text(payload, "reason") or "Codex turn aborted"
+                    _finish_processing_blocks(processing_blocks, timestamp)
+                    messages.append(
+                        _transcript_message_from_offset(
+                            thread_id=thread_id,
+                            offset=line_start,
+                            role="assistant",
+                            content=reason,
+                            created_at=turn_started_at or timestamp,
+                            status="cancelled",
+                            blocks=processing_blocks,
+                        )
+                    )
+                    pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = None
+    except OSError:
+        return []
+
+    if pending_agent_message:
+        _set_message_blocks(pending_agent_message, processing_blocks)
+        messages.append(pending_agent_message)
+    return messages
+
+
+def _paginate_transcript_messages(
+    messages: list[dict[str, Any]],
+    *,
+    limit: int,
+    before_offset: Optional[int],
+    complete: bool,
+) -> CodexTranscriptPage:
+    eligible = [
+        message
+        for message in messages
+        if before_offset is None or _message_cursor_offset(message) < before_offset
+    ]
+    page_messages = eligible[-limit:]
+    first_offset = _first_message_offset(page_messages)
+    has_more_before = False
+    if first_offset is not None:
+        has_more_before = (
+            any(_message_cursor_offset(message) < first_offset for message in eligible)
+            or not complete
+        )
+
+    before_cursor = (
+        f"offset:{first_offset}" if has_more_before and first_offset else None
+    )
+    return CodexTranscriptPage(
+        messages=page_messages,
+        has_more_before=has_more_before,
+        before_cursor=before_cursor,
+    )
+
+
+def _normalize_transcript_limit(value: Any) -> int:
+    if isinstance(value, bool):
+        return CODEX_TRANSCRIPT_DEFAULT_LIMIT
+    if isinstance(value, int):
+        return min(max(1, value), CODEX_TRANSCRIPT_MAX_LIMIT)
+    return CODEX_TRANSCRIPT_DEFAULT_LIMIT
+
+
+def _parse_transcript_cursor(value: Optional[str]) -> Optional[int]:
+    if not isinstance(value, str):
+        return None
+    match = CODEX_TRANSCRIPT_CURSOR_PATTERN.match(value.strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _transcript_stat_key(path: Path) -> Optional[tuple[int, int, int]]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (int(stat.st_ino), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _payload_turn_index(payload: dict[str, Any]) -> Optional[int]:
+    for key in ("turn_counter", "turnCounter", "turn_index", "turnIndex"):
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
+def _message_cursor_offset(message: dict[str, Any]) -> int:
+    value = message.get("_cursorOffset")
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value >= 0:
+        return value
+    return 0
+
+
+def _first_message_offset(messages: list[dict[str, Any]]) -> Optional[int]:
+    for message in messages:
+        offset = _message_cursor_offset(message)
+        if offset > 0:
+            return offset
+    return None
+
+
 def _append_response_item_block(
     *,
     payload: dict[str, Any],
@@ -922,6 +1300,28 @@ def _transcript_message(
         "content": content,
         "createdAt": created_at,
         "status": status,
+    }
+    _set_message_blocks(message, blocks or [])
+    return message
+
+
+def _transcript_message_from_offset(
+    *,
+    thread_id: str,
+    offset: int,
+    role: str,
+    content: str,
+    created_at: str,
+    status: str,
+    blocks: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    message = {
+        "id": f"{thread_id}:{role}:o{max(offset, 0)}",
+        "role": role,
+        "content": content,
+        "createdAt": created_at,
+        "status": status,
+        "_cursorOffset": max(offset, 0),
     }
     _set_message_blocks(message, blocks or [])
     return message
