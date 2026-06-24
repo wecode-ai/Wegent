@@ -16,11 +16,11 @@ Use this skill when the user asks about Wegent product usage, setup, configurati
 
 ## Required Workflow
 
-1. Use the existing `wegent-knowledge` skill tools to find the built-in knowledge base named `Wegent Help`.
-2. Search the `Wegent Help` knowledge base with the user's full question.
+1. Load the `wegent-help-knowledge` skill when you need documentation lookup.
+2. Use `wegent_help_query` with the user's full question.
 3. Answer from retrieved Wegent documentation first.
 4. Use the same language as the user's question whenever possible.
-5. Include source document names or source references from the knowledge tool response.
+5. Include source document names or source references from the query response.
 
 ## Failure Handling
 

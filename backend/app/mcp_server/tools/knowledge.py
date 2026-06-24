@@ -27,6 +27,10 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
+from app.mcp_server.tools.knowledge_utils import (
+    build_search_sources,
+    get_user_from_task_token,
+)
 from app.models.user import User
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
@@ -40,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
     """Get user from token info."""
-    return db.query(User).filter(User.id == token_info.user_id).first()
+    return get_user_from_task_token(db, token_info)
 
 
 @mcp_tool(
@@ -112,23 +116,7 @@ async def search_knowledge_base(
         # MCP expects: chunks, sources, total, mode, query
         chunks = result.get("records", [])
 
-        # Build sources from chunks
-        sources = []
-        seen_docs = set()
-        for chunk in chunks:
-            doc_key = (chunk.get("knowledge_base_id"), chunk.get("document_id"))
-            if doc_key not in seen_docs:
-                seen_docs.add(doc_key)
-                sources.append(
-                    {
-                        "document_id": chunk.get("document_id"),
-                        "document_name": chunk.get("document_name", "Unknown"),
-                        "knowledge_base_id": chunk.get("knowledge_base_id"),
-                        "knowledge_base_name": chunk.get(
-                            "knowledge_base_name", "Unknown"
-                        ),
-                    }
-                )
+        sources = build_search_sources(chunks)
 
         return {
             "query": result.get("query", query),

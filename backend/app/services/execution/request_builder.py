@@ -2092,7 +2092,7 @@ Response template:
                 "is_public": True,
             },
             {
-                "name": "wegent-knowledge",
+                "name": "wegent-help-knowledge",
                 "namespace": "default",
                 "is_public": True,
             },

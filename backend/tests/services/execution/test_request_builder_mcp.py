@@ -96,7 +96,11 @@ class TestDefaultAvailableHelpSkills:
         assert refs == [
             {"name": "subscription-manager", "namespace": "default", "is_public": True},
             {"name": "wegent-help", "namespace": "default", "is_public": True},
-            {"name": "wegent-knowledge", "namespace": "default", "is_public": True},
+            {
+                "name": "wegent-help-knowledge",
+                "namespace": "default",
+                "is_public": True,
+            },
         ]
 
     def test_inject_default_help_skills_deduplicates_existing_refs(self):
@@ -106,7 +110,7 @@ class TestDefaultAvailableHelpSkills:
 
         assert [item["name"] for item in refs] == [
             "wegent-help",
-            "wegent-knowledge",
+            "wegent-help-knowledge",
         ]
 
     def test_inject_default_help_skills_preserves_user_ref_on_name_collision(self):

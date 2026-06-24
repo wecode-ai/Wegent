@@ -21,10 +21,12 @@ from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
     ExternalKnowledgeUser,
     _build_external_knowledge_mcp_app,
+    _create_help_knowledge_mcp_app,
     _create_knowledge_mcp_app,
     _default_external_auth_handler,
     external_knowledge_mcp_server,
     get_mcp_knowledge_config,
+    help_knowledge_mcp_server,
     knowledge_mcp_server,
     set_external_knowledge_auth_handler,
 )
@@ -128,6 +130,23 @@ def test_knowledge_mcp_root_returns_metadata_json():
     }
 
 
+def test_help_knowledge_mcp_root_returns_metadata_json():
+    app = _create_help_knowledge_mcp_app()
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "wegent-help-knowledge-mcp",
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": "/mcp/help-knowledge/sse",
+            "health": "/mcp/help-knowledge/health",
+        },
+    }
+
+
 def test_external_knowledge_mcp_root_returns_metadata_json():
     app = _build_external_knowledge_mcp_app()
     client = TestClient(app)
@@ -192,6 +211,25 @@ def test_knowledge_mcp_sse_without_trailing_slash_does_not_redirect():
         return_value=fake_streamable_app,
     ):
         app = _create_knowledge_mcp_app()
+
+    client = TestClient(app)
+    response = client.get("/sse", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_help_knowledge_mcp_sse_without_trailing_slash_does_not_redirect():
+    fake_streamable_app = Starlette(
+        routes=[Route("/", lambda request: PlainTextResponse("ok"), methods=["GET"])]
+    )
+
+    with patch.object(
+        help_knowledge_mcp_server,
+        "streamable_http_app",
+        return_value=fake_streamable_app,
+    ):
+        app = _create_help_knowledge_mcp_app()
 
     client = TestClient(app)
     response = client.get("/sse", follow_redirects=False)
