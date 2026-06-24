@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 # Channel type literals
 ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram", "discord", "weibo"]
+BotPurpose = Literal["wegent_chat", "wework_local"]
 
 
 class MessagerSpec(BaseModel):
@@ -23,6 +24,10 @@ class MessagerSpec(BaseModel):
     channelType: ChannelType = Field(
         ...,
         description="Channel type: dingtalk, feishu, wechat, telegram, discord, weibo",
+    )
+    botPurpose: BotPurpose = Field(
+        default="wegent_chat",
+        description="IM bot purpose: wegent_chat or wework_local",
     )
     isEnabled: bool = Field(default=True, description="Whether channel is enabled")
     config: Dict[str, Any] = Field(
@@ -44,6 +49,10 @@ class IMChannelCreate(BaseModel):
     channel_type: ChannelType = Field(
         ...,
         description="Channel type: dingtalk, feishu, wechat, telegram, discord, weibo",
+    )
+    bot_purpose: BotPurpose = Field(
+        default="wegent_chat",
+        description="IM bot purpose: wegent_chat or wework_local",
     )
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (varies by type)"
@@ -70,6 +79,10 @@ class IMChannelUpdate(BaseModel):
         None, min_length=1, max_length=100, description="Channel display name"
     )
     is_enabled: Optional[bool] = Field(None, description="Whether channel is enabled")
+    bot_purpose: Optional[BotPurpose] = Field(
+        None,
+        description="IM bot purpose. Cannot be changed after creation.",
+    )
     config: Optional[Dict[str, Any]] = Field(None, description="Channel configuration")
     default_team_id: Optional[int] = Field(
         None, description="Default team ID for messages"
@@ -86,6 +99,7 @@ class IMChannelResponse(BaseModel):
     name: str
     namespace: str = "default"
     channel_type: str
+    bot_purpose: BotPurpose = "wegent_chat"
     is_enabled: bool
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (sensitive fields masked with ***)"
