@@ -30,6 +30,7 @@ import {
   MessageSquare,
   Monitor,
   LayoutTemplate,
+  Boxes,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -37,6 +38,7 @@ export type AdminTabId =
   | 'public-models'
   | 'public-retrievers'
   | 'public-skills'
+  | 'plugins'
   | 'public-ghosts'
   | 'public-shells'
   | 'public-teams'
@@ -73,6 +75,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
     { id: 'public-retrievers', label: t('admin:tabs.public_retrievers'), icon: Database },
     { id: 'public-skills', label: t('admin:tabs.public_skills'), icon: Sparkles },
+    { id: 'plugins', label: t('admin:tabs.plugins'), icon: Boxes },
     { id: 'public-ghosts', label: t('admin:tabs.public_ghosts'), icon: Ghost },
     { id: 'public-shells', label: t('admin:tabs.public_shells'), icon: Terminal },
     { id: 'public-teams', label: t('admin:tabs.public_teams'), icon: UsersRound },

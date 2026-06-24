@@ -17,6 +17,7 @@ from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
+    PluginCatalogListResponse,
 )
 from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.device.capability_sync_service import device_capability_sync_service
@@ -37,6 +38,57 @@ def list_installed_plugins(
         db=db,
         user_id=current_user.id,
     )
+
+
+@router.get("/catalog", response_model=PluginCatalogListResponse)
+def list_system_plugin_catalog(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginCatalogListResponse:
+    """List system-managed plugins available to the current user."""
+    return installed_plugin_service.list_system_plugin_catalog(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.post(
+    "/catalog/{system_plugin_id}/install",
+    response_model=InstalledPluginListResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def install_system_plugin(
+    system_plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> InstalledPluginListResponse:
+    """Install a system-managed plugin into the current user's inventory."""
+    installed = installed_plugin_service.install_system_plugin(
+        db=db,
+        user_id=current_user.id,
+        system_plugin_id=system_plugin_id,
+    )
+    await _sync_global_capabilities(db, current_user.id)
+    return installed
+
+
+@router.post(
+    "/catalog/{system_plugin_id}/update",
+    response_model=InstalledPluginListResponse,
+)
+async def update_system_plugin_installation(
+    system_plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> InstalledPluginListResponse:
+    """Manually update the current user's installation from the system catalog."""
+    installed = installed_plugin_service.update_installed_plugin_from_system(
+        db=db,
+        user_id=current_user.id,
+        system_plugin_id=system_plugin_id,
+    )
+    await _sync_global_capabilities(db, current_user.id)
+    return installed
 
 
 @router.post(

@@ -37,6 +37,9 @@ const PublicRetrieverList = dynamic(
 const PublicSkillList = dynamic(() => import('@/features/admin/components/PublicSkillList'), {
   ssr: false,
 })
+const SystemPluginList = dynamic(() => import('@/features/admin/components/SystemPluginList'), {
+  ssr: false,
+})
 const PublicGhostList = dynamic(() => import('@/features/admin/components/PublicGhostList'), {
   ssr: false,
 })
@@ -110,6 +113,7 @@ function AdminContent() {
         'public-models',
         'public-retrievers',
         'public-skills',
+        'plugins',
         'public-ghosts',
         'public-shells',
         'public-teams',
@@ -171,6 +175,8 @@ function AdminContent() {
         return <PublicRetrieverList />
       case 'public-skills':
         return <PublicSkillList />
+      case 'plugins':
+        return <SystemPluginList />
       case 'public-ghosts':
         return <PublicGhostList />
       case 'public-shells':

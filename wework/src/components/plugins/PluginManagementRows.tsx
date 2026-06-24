@@ -1,6 +1,6 @@
 import { Boxes, Globe, Sparkles, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginRuntime } from '@/types/api'
 
 export interface InstalledSkillItem {
   id: number
@@ -20,12 +20,28 @@ export interface InstalledMcpItem {
 
 export interface InstalledPluginItem {
   id: number
+  ids: number[]
   name: string
   description: string
   enabled: boolean
   version?: string | null
+  sourceType: InstalledPlugin['spec']['source']['type']
+  runtimes: PluginRuntime[]
   componentCounts: Record<string, number>
   raw: InstalledPlugin
+  rawVariants: InstalledPlugin[]
+}
+
+const pluginSourceFallback: Record<InstalledPluginItem['sourceType'], string> = {
+  system: '系统插件',
+  upload: '上传插件',
+  marketplace: '市场插件',
+  local: '本地插件',
+}
+
+const pluginRuntimeFallback: Record<PluginRuntime, string> = {
+  claudecode: 'ClaudeCode',
+  codex: 'Codex',
 }
 
 export function InstalledSkillRow({
@@ -45,9 +61,7 @@ export function InstalledSkillRow({
         <Sparkles className="h-7 w-7" />
       </div>
       <div className="min-w-0">
-        <h2 className="truncate text-[17px] font-semibold leading-6">
-          {skill.name}
-        </h2>
+        <h2 className="truncate text-[17px] font-semibold leading-6">{skill.name}</h2>
         <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
           {skill.description}
         </p>
@@ -104,16 +118,12 @@ export function InstalledMcpRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">
-            {mcp.name}
-          </h2>
+          <h2 className="truncate text-[17px] font-semibold leading-6">{mcp.name}</h2>
           <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
             {mcp.serverType}
           </span>
         </div>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
-          {mcp.description}
-        </p>
+        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">{mcp.description}</p>
       </div>
       <div className="flex items-center justify-end gap-3">
         <button
@@ -164,6 +174,13 @@ export function InstalledPluginRow({
   const componentLabels = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => `${key} ${count}`)
+  const sourceLabel = t(
+    `workbench.plugin_source_${plugin.sourceType}`,
+    pluginSourceFallback[plugin.sourceType]
+  )
+  const runtimeLabel = plugin.runtimes
+    .map(runtime => t(`workbench.plugin_runtime_${runtime}`, pluginRuntimeFallback[runtime]))
+    .join(' + ')
 
   return (
     <article
@@ -172,7 +189,7 @@ export function InstalledPluginRow({
       data-testid={`installed-plugin-row-${plugin.id}`}
       className="grid cursor-pointer grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4 rounded-xl transition-colors hover:bg-surface/70"
       onClick={onOpen}
-      onKeyDown={(event) => {
+      onKeyDown={event => {
         if (!onOpen) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
@@ -185,12 +202,24 @@ export function InstalledPluginRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">
-            {plugin.name}
-          </h2>
+          <h2 className="truncate text-[17px] font-semibold leading-6">{plugin.name}</h2>
           {plugin.version && (
             <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
+            </span>
+          )}
+          <span
+            className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
+            data-testid={`installed-plugin-source-${plugin.id}`}
+          >
+            {sourceLabel}
+          </span>
+          {runtimeLabel && (
+            <span
+              className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
+              data-testid={`installed-plugin-runtime-${plugin.id}`}
+            >
+              {runtimeLabel}
             </span>
           )}
         </div>
@@ -199,7 +228,7 @@ export function InstalledPluginRow({
         </p>
         {componentLabels.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {componentLabels.map((label) => (
+            {componentLabels.map(label => (
               <span
                 key={label}
                 className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
@@ -216,7 +245,7 @@ export function InstalledPluginRow({
           aria-label={t('workbench.plugins_uninstall', '卸载')}
           data-testid={`installed-plugin-uninstall-${plugin.id}`}
           className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-red-500"
-          onClick={(event) => {
+          onClick={event => {
             event.stopPropagation()
             onUninstall()
           }}
@@ -233,7 +262,7 @@ export function InstalledPluginRow({
             'relative h-7 w-12 rounded-full transition-colors',
             plugin.enabled ? 'bg-blue-500' : 'bg-border',
           ].join(' ')}
-          onClick={(event) => {
+          onClick={event => {
             event.stopPropagation()
             onToggle()
           }}

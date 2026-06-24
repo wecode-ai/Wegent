@@ -419,31 +419,41 @@ class GlobalCapabilityStore:
                 runtime = record.get("runtime") or {}
                 if not isinstance(runtime, dict):
                     runtime = {}
-                claude_link_raw = runtime.get("claude_link") or record.get(
-                    "install_path"
-                )
-                if not claude_link_raw:
-                    continue
-                claude_link = Path(str(claude_link_raw)).expanduser()
+                target_runtime = record.get("target_runtime")
+                claude_link_raw = runtime.get("claude_link")
+                if target_runtime != "codex":
+                    claude_link_raw = claude_link_raw or record.get("install_path")
                 if not store_path.is_dir():
                     continue
 
-                if self._ensure_runtime_symlink(
-                    claude_link, store_path, self.plugins_dir
-                ):
-                    restored.append(key)
+                claude_link = None
+                if claude_link_raw:
+                    claude_link = Path(str(claude_link_raw)).expanduser()
+                    if self._ensure_runtime_symlink(
+                        claude_link, store_path, self.plugins_dir
+                    ):
+                        restored.append(key)
 
                 codex_link_raw = runtime.get("codex_link")
                 if codex_link_raw:
                     codex_link = Path(str(codex_link_raw)).expanduser()
-                    self._ensure_runtime_symlink(
-                        codex_link,
-                        store_path,
-                        self.codex_plugins_dir,
-                        optional=True,
-                    )
+                    if (
+                        self._ensure_runtime_symlink(
+                            codex_link,
+                            store_path,
+                            self.codex_plugins_dir,
+                            optional=True,
+                        )
+                        and key not in restored
+                    ):
+                        restored.append(key)
 
-                entry = self._plugin_install_entry(record, claude_link)
+                install_path = claude_link
+                if install_path is None and codex_link_raw:
+                    install_path = Path(str(codex_link_raw)).expanduser()
+                if install_path is None:
+                    continue
+                entry = self._plugin_install_entry(record, install_path)
                 entries = installed_map.get(key)
                 if not isinstance(entries, list):
                     entries = []
@@ -547,8 +557,13 @@ class GlobalCapabilityStore:
                 continue
             if record.get("marketplace") != "wegent":
                 continue
+            if record.get("target_runtime") == "codex":
+                continue
             store_path = Path(str(record.get("store_path") or "")).expanduser()
             if not store_path.is_dir():
+                continue
+            runtime = record.get("runtime") or {}
+            if isinstance(runtime, dict) and not runtime.get("claude_link"):
                 continue
             plugin_name = record.get("name")
             if not plugin_name:
@@ -1257,13 +1272,14 @@ class CapabilitySyncHandler:
                 continue
             name = item.get("name")
             marketplace = self._plugin_marketplace(item)
+            runtime = self._plugin_runtime(item)
             if not name:
                 results.append(
                     {"name": None, "status": "failed", "error": "Invalid Plugin entry"}
                 )
                 continue
-            key = self._plugin_key(name, marketplace)
-            runtime_link = self._plugin_runtime_path(item, name, marketplace)
+            key = self._plugin_key(name, marketplace, runtime)
+            runtime_link = self._plugin_runtime_path(item, name, marketplace, runtime)
             store_path = self._plugin_store_path(item, name, marketplace)
             expected_checksum = item.get("checksum")
             should_download = not store_path.exists()
@@ -1315,7 +1331,14 @@ class CapabilitySyncHandler:
                 continue
             if store_path != runtime_link:
                 self._ensure_runtime_symlink(runtime_link, store_path)
-            codex_link = self._ensure_codex_plugin_link(key, store_path)
+            codex_link = None
+            if runtime == "all":
+                codex_link = self._ensure_codex_plugin_link(
+                    self._plugin_key(name, marketplace),
+                    store_path,
+                )
+            elif runtime == "codex":
+                codex_link = runtime_link
 
             scope = item.get("scope", "user")
             existing_installs = [
@@ -1337,7 +1360,7 @@ class CapabilitySyncHandler:
             )
             installed_map[key] = existing_installs
             records[key] = self._plugin_record(
-                item, key, marketplace, store_path, runtime_link, codex_link
+                item, key, marketplace, store_path, runtime_link, codex_link, runtime
             )
             logger.info(
                 "Configured global plugin: key=%s installed_plugin_id=%s path=%s",
@@ -1469,22 +1492,39 @@ class CapabilitySyncHandler:
         marketplace = item.get("marketplace") or source.get("marketplace")
         if marketplace:
             return marketplace
-        if source.get("type") == "upload":
+        if source.get("type") in {"upload", "system"}:
             return "wegent"
         return None
 
-    def _plugin_key(self, name: str, marketplace: str | None) -> str:
-        return f"{name}@{marketplace}" if marketplace else name
+    def _plugin_runtime(self, item: dict[str, Any]) -> str:
+        source = item.get("source") or {}
+        runtime = item.get("runtime") or source.get("runtime")
+        if runtime in {"claudecode", "codex"}:
+            return str(runtime)
+        return "all"
+
+    def _plugin_key(
+        self, name: str, marketplace: str | None, runtime: str | None = None
+    ) -> str:
+        base_key = f"{name}@{marketplace}" if marketplace else name
+        if runtime in {"claudecode", "codex"}:
+            return f"{base_key}#{runtime}"
+        return base_key
 
     def _plugin_runtime_path(
         self,
         item: dict[str, Any],
         name: str,
         marketplace: str | None,
+        runtime: str = "all",
     ) -> Path:
         raw_path = item.get("installPath") or item.get("install_path")
         if raw_path:
             return Path(str(raw_path)).expanduser()
+        if runtime == "codex":
+            return self.codex_plugins_dir / self._safe_path_segment(
+                self._plugin_key(name, marketplace)
+            )
         return (
             self.plugins_dir
             / "cache"
@@ -1551,8 +1591,13 @@ class CapabilitySyncHandler:
         store_path: Path,
         runtime_link: Path,
         codex_link: Path | None,
+        target_runtime: str,
     ) -> dict[str, Any]:
-        runtime = {"claude_link": str(runtime_link)}
+        runtime: dict[str, str] = {}
+        if target_runtime in {"all", "claudecode"}:
+            runtime["claude_link"] = str(runtime_link)
+        if target_runtime == "codex":
+            runtime["codex_link"] = str(runtime_link)
         if codex_link:
             runtime["codex_link"] = str(codex_link)
         return {
@@ -1569,6 +1614,7 @@ class CapabilitySyncHandler:
             "components": item.get("components") or {},
             "store_path": str(store_path),
             "runtime": runtime,
+            "target_runtime": target_runtime,
             "install_path": str(runtime_link),
             "managed": True,
             "updated_at": utc_now_iso(),

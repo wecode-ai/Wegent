@@ -1191,12 +1191,16 @@ export interface InstalledPluginComponents {
   settings?: Record<string, unknown> | null
 }
 
+export type PluginRuntime = 'claudecode' | 'codex'
+
 export interface InstalledPluginSource {
-  type: 'upload' | 'marketplace' | 'local'
+  type: 'upload' | 'marketplace' | 'local' | 'system'
   providerKey: string
   pluginKey: string
   catalogItemId?: string | null
   marketplace?: string | null
+  systemPluginId?: number | null
+  runtime?: PluginRuntime | null
 }
 
 export interface InstalledPluginPackageRef {
@@ -1215,6 +1219,7 @@ export interface InstalledPlugin {
     description: string
     version?: string | null
     author?: string | null
+    runtime: PluginRuntime
     installState: PluginInstallState
     enabled: boolean
     componentStates?: Record<string, boolean>
@@ -1230,6 +1235,27 @@ export interface InstalledPlugin {
 
 export interface InstalledPluginListResponse {
   items: InstalledPlugin[]
+}
+
+export interface PluginCatalogItem {
+  id: number
+  name: string
+  displayName: string
+  description: string
+  version?: string | null
+  author?: string | null
+  enabled: boolean
+  installState: PluginInstallState
+  installedPluginId?: number | null
+  installedPluginIds?: Partial<Record<PluginRuntime, number>>
+  variantIds?: Partial<Record<PluginRuntime, number>>
+  sourceChecksum?: string | null
+  installedChecksum?: string | null
+  components: InstalledPluginComponents
+}
+
+export interface PluginCatalogListResponse {
+  items: PluginCatalogItem[]
 }
 
 export interface InstalledPluginUpdateRequest {

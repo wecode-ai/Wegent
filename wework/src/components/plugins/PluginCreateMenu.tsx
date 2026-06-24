@@ -1,4 +1,4 @@
-import { Boxes, ChevronDown, Plus, Server, Sparkles } from 'lucide-react'
+import { ChevronDown, Plus, Server, Sparkles } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -8,7 +8,6 @@ export function PluginCreateMenu({
   onToggle,
   onCreateSkill,
   onCreateMcp,
-  onCreatePlugin,
   buttonTestId = 'plugins-create-button',
   compact = false,
 }: {
@@ -16,7 +15,6 @@ export function PluginCreateMenu({
   onToggle: () => void
   onCreateSkill: () => void
   onCreateMcp: () => void
-  onCreatePlugin?: () => void
   buttonTestId?: string
   compact?: boolean
 }) {
@@ -53,7 +51,7 @@ export function PluginCreateMenu({
           'flex min-w-[44px] items-center justify-center text-text-primary transition-colors',
           compact
             ? 'h-11 w-11 gap-0 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
-            : 'h-7 gap-1.5 rounded-lg bg-transparent px-2 text-[13px] font-medium leading-[18px] hover:bg-black/[0.06] active:bg-black/[0.10]',
+            : 'h-7 gap-1.5 rounded-lg bg-transparent px-2 text-[13px] font-medium leading-[18px] hover:bg-black/[0.06] active:bg-black/[0.10]'
         )}
         onClick={onToggle}
       >
@@ -89,17 +87,6 @@ export function PluginCreateMenu({
             <Server className="h-4 w-4 text-primary" />
             {t('workbench.plugins_create_mcp', 'MCP')}
           </button>
-          {onCreatePlugin && (
-            <button
-              type="button"
-              data-testid="plugins-create-plugin-option"
-              className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
-              onClick={onCreatePlugin}
-            >
-              <Boxes className="h-4 w-4 text-violet-500" />
-              {t('workbench.plugins_create_plugin', '插件')}
-            </button>
-          )}
         </div>
       )}
     </div>

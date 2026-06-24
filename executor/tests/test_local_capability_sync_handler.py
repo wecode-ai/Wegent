@@ -588,6 +588,105 @@ def test_apply_sync_downloads_uploaded_plugin_into_store(tmp_path, monkeypatch):
     )
 
 
+def test_apply_sync_installs_claudecode_and_codex_plugin_variants_separately(
+    tmp_path, monkeypatch
+):
+    skills_dir = tmp_path / "skills"
+    plugins_dir = tmp_path / "plugins"
+    codex_plugins_dir = tmp_path / ".codex" / "plugins"
+    store_dir = tmp_path / "store"
+    manifest_path = tmp_path / "capabilities.json"
+    claudecode_package = create_nested_plugin_zip(
+        "superpowers",
+        "1.0.0",
+        {"commands/claude.md": "# Claude"},
+    )
+    codex_package = create_nested_plugin_zip(
+        "superpowers",
+        "1.0.0",
+        {"commands/codex.md": "# Codex"},
+    )
+    packages = {
+        "/api/plugins/installed/501/download": claudecode_package,
+        "/api/plugins/installed/502/download": codex_package,
+    }
+
+    def fake_get(_self, path: str, **_kwargs):
+        return Response(packages[path])
+
+    monkeypatch.setattr(
+        "executor.modes.local.capabilities.ApiClient.get",
+        fake_get,
+    )
+
+    store = GlobalCapabilityStore(
+        manifest_path=manifest_path,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+        codex_plugins_dir=codex_plugins_dir,
+        store_dir=store_dir,
+    )
+    handler = CapabilitySyncHandler(
+        auth_token="token",
+        store=store,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+        codex_plugins_dir=codex_plugins_dir,
+    )
+
+    result = handler.apply_sync(
+        {
+            "mode": "replace",
+            "skills": [],
+            "plugins": [
+                {
+                    "installed_plugin_id": 501,
+                    "name": "superpowers",
+                    "version": "1.0.0",
+                    "runtime": "claudecode",
+                    "source": {
+                        "type": "system",
+                        "providerKey": "claude-code",
+                        "pluginKey": "superpowers",
+                        "runtime": "claudecode",
+                    },
+                    "download_path": "/api/plugins/installed/501/download",
+                    "checksum": "sha256:"
+                    + hashlib.sha256(claudecode_package).hexdigest(),
+                },
+                {
+                    "installed_plugin_id": 502,
+                    "name": "superpowers",
+                    "version": "1.0.0",
+                    "runtime": "codex",
+                    "source": {
+                        "type": "system",
+                        "providerKey": "codex",
+                        "pluginKey": "superpowers",
+                        "runtime": "codex",
+                    },
+                    "download_path": "/api/plugins/installed/502/download",
+                    "checksum": "sha256:" + hashlib.sha256(codex_package).hexdigest(),
+                },
+            ],
+            "mcps": [],
+        }
+    )
+
+    assert result["success"] is True
+    claudecode_link = plugins_dir / "cache" / "wegent" / "superpowers" / "1.0.0"
+    codex_link = codex_plugins_dir / "superpowers-wegent"
+    assert (claudecode_link / "commands" / "claude.md").read_text() == "# Claude"
+    assert not (claudecode_link / "commands" / "codex.md").exists()
+    assert (codex_link / "commands" / "codex.md").read_text() == "# Codex"
+    assert not (codex_link / "commands" / "claude.md").exists()
+    manifest = json.loads(manifest_path.read_text())
+    assert set(manifest["plugins"]) == {
+        "superpowers@wegent#claudecode",
+        "superpowers@wegent#codex",
+    }
+
+
 def test_extract_plugin_zip_keeps_existing_install_when_package_is_invalid(tmp_path):
     install_path = tmp_path / "plugins" / "context7"
     install_path.mkdir(parents=True)
