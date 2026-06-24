@@ -19,11 +19,14 @@ from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.main import _get_mcp_lifespan_servers, create_app
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
+    _IM_CONTROL_MCP_SPEC,
     ExternalKnowledgeUser,
     _build_external_knowledge_mcp_app,
+    _build_mcp_app,
     _create_knowledge_mcp_app,
     _default_external_auth_handler,
     external_knowledge_mcp_server,
+    get_mcp_im_control_config,
     get_mcp_knowledge_config,
     knowledge_mcp_server,
     set_external_knowledge_auth_handler,
@@ -128,6 +131,23 @@ def test_knowledge_mcp_root_returns_metadata_json():
     }
 
 
+def test_im_control_mcp_root_returns_metadata_json():
+    app = _build_mcp_app(_IM_CONTROL_MCP_SPEC)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "wegent-im-control-mcp",
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": "/mcp/im-control/sse",
+            "health": "/mcp/im-control/health",
+        },
+    }
+
+
 def test_external_knowledge_mcp_root_returns_metadata_json():
     app = _build_external_knowledge_mcp_app()
     client = TestClient(app)
@@ -178,6 +198,17 @@ def test_get_mcp_knowledge_config_uses_sse_endpoint():
 
     assert (
         config["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
+    )
+
+
+def test_get_mcp_im_control_config_uses_sse_endpoint():
+    config = get_mcp_im_control_config(
+        backend_url="http://localhost:8000",
+        auth_token="test-token",
+    )
+
+    assert (
+        config["wegent-im-control"]["url"] == "http://localhost:8000/mcp/im-control/sse"
     )
 
 
