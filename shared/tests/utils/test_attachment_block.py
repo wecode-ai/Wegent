@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from shared.utils.attachment_block import (
+    build_attachment_download_url,
+    build_attachment_header,
+    build_sandbox_path,
+    format_file_size,
+)
+
+
+def test_format_file_size_units():
+    assert format_file_size(512) == "512 bytes"
+    assert format_file_size(2048) == "2.0 KB"
+    assert format_file_size(3 * 1024 * 1024) == "3.0 MB"
+
+
+def test_build_attachment_download_url():
+    assert build_attachment_download_url(42) == "/api/attachments/42/download"
+
+
+def test_build_sandbox_path_requires_ids():
+    assert build_sandbox_path(None, 2, "a.pdf") is None
+    assert build_sandbox_path(1, None, "a.pdf") is None
+    assert (
+        build_sandbox_path(1, 2, "a.pdf") == "/home/user/1:executor:attachments/2/a.pdf"
+    )
+
+
+def test_build_sandbox_path_strips_control_chars():
+    assert (
+        build_sandbox_path(1, 2, "a\nb\r.pdf")
+        == "/home/user/1:executor:attachments/2/ab.pdf"
+    )
+
+
+def test_build_sandbox_path_defaults_missing_filename():
+    assert (
+        build_sandbox_path(1, 2, "") == "/home/user/1:executor:attachments/2/document"
+    )
+
+
+def test_document_header_with_sandbox_path():
+    header = build_attachment_header(
+        attachment_id=7,
+        filename="report.pdf",
+        mime_type="application/pdf",
+        file_size=2048,
+        sandbox_path="/home/user/1:executor:attachments/2/report.pdf",
+    )
+    assert header == (
+        "[Attachment: report.pdf | ID: 7 | Type: application/pdf | "
+        "Size: 2.0 KB | URL: /api/attachments/7/download | "
+        "File Path(already in sandbox): /home/user/1:executor:attachments/2/report.pdf]"
+    )
+
+
+def test_document_header_without_sandbox_path():
+    header = build_attachment_header(
+        attachment_id=7,
+        filename="report.pdf",
+        mime_type=None,
+        file_size=0,
+        sandbox_path=None,
+    )
+    assert header == (
+        "[Attachment: report.pdf | ID: 7 | Type: unknown | "
+        "Size: 0 bytes | URL: /api/attachments/7/download]"
+    )
+
+
+def test_image_header_uses_image_label_and_wording():
+    header = build_attachment_header(
+        attachment_id=9,
+        filename="pic.png",
+        mime_type="image/png",
+        file_size=1024,
+        sandbox_path="/home/user/1:executor:attachments/2/pic.png",
+        is_image=True,
+    )
+    assert header == (
+        "[Image Attachment: pic.png | ID: 9 | Type: image/png | "
+        "Size: 1.0 KB | URL: /api/attachments/9/download | "
+        "File Path in Sandbox: /home/user/1:executor:attachments/2/pic.png]"
+    )

@@ -24,6 +24,10 @@ from typing import Any, Optional
 from chat_shell.core.config import settings
 from chat_shell.messages.utils import group_tool_call_messages as _group_messages
 from shared.prompts.constants import parse_prompt_blocks
+from shared.utils.attachment_block import (
+    build_attachment_header,
+    build_sandbox_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -754,72 +758,21 @@ def _build_vision_content_block(context) -> dict[str, Any] | None:
     }
 
 
-def _format_file_size(size_bytes: int) -> str:
-    """Format file size in bytes to human-readable format."""
-    if size_bytes >= 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
-    elif size_bytes >= 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    else:
-        return f"{size_bytes} bytes"
-
-
-def _build_attachment_url(attachment_id: int) -> str:
-    """Build the download URL for an attachment."""
-    return f"/api/attachments/{attachment_id}/download"
-
-
-def _build_sandbox_path(
-    task_id: int | None,
-    subtask_id: int | None,
-    filename: str,
-) -> str | None:
-    """Build the sandbox file path for an attachment.
-
-    This path corresponds to where the Executor downloads attachments
-    in the sandbox environment.
-
-    Args:
-        task_id: Task ID
-        subtask_id: Subtask ID
-        filename: Original filename
-
-    Returns:
-        Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
-        Returns None if task_id or subtask_id is not provided.
-    """
-    if task_id is None or subtask_id is None:
-        return None
-    # Guard against None filename and strip control characters
-    safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
-    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
-
-
 def _build_image_metadata_header(
     context,
     task_id: int | None = None,
     subtask_id: int | None = None,
 ) -> str:
     """Build image attachment metadata header string."""
-    attachment_id = context.id
     filename = context.name or "image"
-    mime_type = context.mime_type or "unknown"
-    file_size = context.file_size if hasattr(context, "file_size") else 0
-    formatted_size = _format_file_size(file_size)
-    url = _build_attachment_url(attachment_id)
-
-    # Build sandbox path if task_id and subtask_id are provided
-    sandbox_path = _build_sandbox_path(task_id, subtask_id, filename)
-
-    if sandbox_path:
-        return (
-            f"[Image Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-            f"File Path in Sandbox: {sandbox_path}]"
-        )
-    return (
-        f"[Image Attachment: {filename} | ID: {attachment_id} | "
-        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+    sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+    return build_attachment_header(
+        attachment_id=context.id,
+        filename=filename,
+        mime_type=context.mime_type or "unknown",
+        file_size=context.file_size if hasattr(context, "file_size") else 0,
+        sandbox_path=sandbox_path,
+        is_image=True,
     )
 
 
@@ -838,29 +791,16 @@ def _build_document_text_prefix(
     if not context.extracted_text:
         return ""
 
-    # Build attachment metadata
-    attachment_id = context.id
     filename = context.name or "document"
-    mime_type = context.mime_type if hasattr(context, "mime_type") else "unknown"
-    file_size = context.file_size if hasattr(context, "file_size") else 0
-    formatted_size = _format_file_size(file_size)
-    url = _build_attachment_url(attachment_id)
-
-    # Build sandbox path if task_id and subtask_id are provided
-    sandbox_path = _build_sandbox_path(task_id, subtask_id, filename)
-
-    if sandbox_path:
-        return (
-            f"[Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-            f"File Path(already in sandbox): {sandbox_path}]\n"
-            f"{context.extracted_text}\n\n"
-        )
-    return (
-        f"[Attachment: {filename} | ID: {attachment_id} | "
-        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-        f"{context.extracted_text}\n\n"
+    sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+    header = build_attachment_header(
+        attachment_id=context.id,
+        filename=filename,
+        mime_type=context.mime_type if hasattr(context, "mime_type") else "unknown",
+        file_size=context.file_size if hasattr(context, "file_size") else 0,
+        sandbox_path=sandbox_path,
     )
+    return f"{header}\n{context.extracted_text}\n\n"
 
 
 def _build_knowledge_base_text_prefix(context) -> str:

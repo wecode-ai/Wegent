@@ -220,6 +220,26 @@ class RemoteHistoryStore(HistoryStoreInterface):
             if response is not None:
                 await response.aclose()
 
+    async def get_attachment_text(
+        self,
+        session_id: str,
+        attachment_id: int,
+        offset: int,
+        limit: int,
+    ) -> dict:
+        """Fetch a character slice of an attachment's extracted text.
+
+        Returns the backend ``AttachmentTextResponse`` payload
+        (``text`` / ``total_chars`` / ``has_more`` / ``name`` / ``mime_type``).
+        """
+        client = await self._get_client()
+        response = await client.get(
+            f"/chat/attachments/{attachment_id}/text",
+            params={"session_id": session_id, "offset": offset, "limit": limit},
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def append_message(
         self,
         session_id: str,

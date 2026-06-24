@@ -35,6 +35,12 @@ from app.services.attachment.storage_backend import StorageError, generate_stora
 from app.services.attachment.storage_factory import get_storage_backend
 from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_sync
+from shared.utils.attachment_block import (
+    build_attachment_download_url,
+    build_attachment_header,
+    build_sandbox_path,
+    format_file_size,
+)
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
 logger = logging.getLogger(__name__)
@@ -70,36 +76,19 @@ class ContextService:
 
     # ==================== Helper Methods ====================
 
+    # File-size / URL / sandbox-path formatting is shared with chat_shell's
+    # history loader (single source of truth in shared.utils.attachment_block)
+    # so the attachment block format stays consistent across first-send and
+    # history replay. These thin wrappers preserve the existing public API.
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """
-        Format file size in bytes to human-readable format.
-
-        Args:
-            size_bytes: File size in bytes
-
-        Returns:
-            Formatted string like "2.5 MB", "156.3 KB", or "512 bytes"
-        """
-        if size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes} bytes"
+        """Format file size in bytes to human-readable format."""
+        return format_file_size(size_bytes)
 
     @staticmethod
     def build_attachment_url(attachment_id: int) -> str:
-        """
-        Build the download URL for an attachment.
-
-        Args:
-            attachment_id: Attachment ID
-
-        Returns:
-            Relative URL path for downloading the attachment
-        """
-        return f"/api/attachments/{attachment_id}/download"
+        """Build the download URL for an attachment."""
+        return build_attachment_download_url(attachment_id)
 
     @staticmethod
     def build_sandbox_path(
@@ -107,26 +96,8 @@ class ContextService:
         subtask_id: Optional[int],
         filename: str,
     ) -> Optional[str]:
-        """
-        Build the sandbox file path for an attachment.
-
-        This path corresponds to where the Executor downloads attachments
-        in the sandbox environment.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            filename: Original filename
-
-        Returns:
-            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
-            Returns None if task_id or subtask_id is not provided.
-        """
-        if task_id is None or subtask_id is None:
-            return None
-        # Guard against None filename and strip control characters
-        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
-        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+        """Build the sandbox file path where the Executor downloads an attachment."""
+        return build_sandbox_path(task_id, subtask_id, filename)
 
     # ==================== Attachment Operations ====================
 
@@ -765,29 +736,19 @@ class ContextService:
         max_text_length = DocumentParser.get_max_text_length()
         is_truncated = context.text_length >= max_text_length
 
-        # Build attachment metadata header
-        attachment_id = context.id
+        # Build attachment metadata header (shared with chat_shell loader)
         filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-        url = self.build_attachment_url(attachment_id)
-
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
-
-        # Build the prefix with metadata and optional truncation notice
-        if sandbox_path:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]\n"
+        sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+        prefix = (
+            build_attachment_header(
+                attachment_id=context.id,
+                filename=filename,
+                mime_type=context.mime_type or "unknown",
+                file_size=context.file_size or 0,
+                sandbox_path=sandbox_path,
             )
-        else:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-            )
+            + "\n"
+        )
 
         if is_truncated:
             prefix += (

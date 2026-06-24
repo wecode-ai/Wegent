@@ -905,6 +905,78 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
+class AttachmentTextResponse(BaseModel):
+    """A character slice of an attachment's extracted text."""
+
+    attachment_id: int
+    name: str
+    mime_type: str
+    total_chars: int
+    offset: int
+    text: str
+    has_more: bool
+
+
+@router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
+async def get_attachment_text(
+    attachment_id: int,
+    session_id: str = Query(..., description="Conversation session, e.g. task-123"),
+    offset: int = Query(0, ge=0, description="Start character offset (codepoint)"),
+    limit: int = Query(..., gt=0, description="Max characters to return"),
+    db: Session = Depends(get_db),
+):
+    """Return a character slice of an attachment's extracted text.
+
+    Scoped to the conversation: the attachment must belong to a subtask of the
+    session's task (or be unlinked). This mirrors the visibility of attachments
+    already injected into the chat history, so group-chat members can read each
+    other's attachments while cross-task access is denied. Pagination/token
+    budgeting is done by the caller (chat_shell); this endpoint only slices.
+    """
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    context = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id == attachment_id,
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            SubtaskContext.status == ContextStatus.READY.value,
+        )
+        .first()
+    )
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Task scoping: the attachment's subtask must belong to this task (or be
+    # unlinked). Not user-scoped — attachments are shared conversation context.
+    task_subtask_ids = set(subtask_store.list_ids_by_task(db, task_id=task_id))
+    if not (context.subtask_id == 0 or context.subtask_id in task_subtask_ids):
+        raise HTTPException(
+            status_code=403, detail="Attachment does not belong to this conversation"
+        )
+
+    full_text = context.extracted_text or ""
+    total_chars = len(full_text)
+    chunk = full_text[offset : offset + limit]
+    return AttachmentTextResponse(
+        attachment_id=attachment_id,
+        name=context.name or "",
+        mime_type=context.mime_type or "",
+        total_chars=total_chars,
+        offset=offset,
+        text=chunk,
+        has_more=offset + len(chunk) < total_chars,
+    )
+
+
 def _build_subtask_content_fields(
     role: SubtaskRole,
     message: MessageCreate | MessageUpdate,

@@ -47,6 +47,20 @@ class ChatContextResult:
     mcp_clients: list = field(default_factory=list)
 
 
+def _content_has_attachment(content: Any) -> bool:
+    """Return True if a message content (str or block list) has an attachment."""
+    if isinstance(content, str):
+        return "<attachment>" in content
+    if isinstance(content, list):
+        return any(
+            isinstance(block, dict)
+            and isinstance(block.get("text"), str)
+            and "<attachment>" in block["text"]
+            for block in content
+        )
+    return False
+
+
 class ChatContext:
     """Manages chat context preparation and cleanup.
 
@@ -183,9 +197,18 @@ class ChatContext:
                         restored_tool_count,
                     )
 
+            # Only offer read_attachment when this conversation actually carries
+            # an attachment (current turn or history), to avoid bloating the
+            # tool list for plain chats.
+            has_attachments = _content_has_attachment(self._request.prompt) or any(
+                _content_has_attachment(message.get("content")) for message in history
+            )
+
             # Build extra_tools from all sources (including builtin tools)
             add_span_event("building_extra_tools")
-            extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)
+            extra_tools = self._build_extra_tools(
+                kb_result, skill_tools, mcp_result, has_attachments=has_attachments
+            )
 
             # Process KB tools result for system prompt
             system_prompt = self._request.system_prompt or ""
@@ -721,6 +744,7 @@ class ChatContext:
         kb_result,
         skill_tools: list,
         mcp_result: tuple[list, list],
+        has_attachments: bool = False,
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
@@ -814,6 +838,24 @@ class ChatContext:
             logger.info(
                 "[CHAT_CONTEXT] Added DataTableTool with %d table context(s)",
                 len(self._request.table_contexts),
+            )
+
+        # Add ReadAttachmentTool when the conversation carries an attachment, so
+        # the model can page the full extracted text beyond the inline preview.
+        if has_attachments:
+            from chat_shell.compression.token_counter import TokenCounter
+            from chat_shell.tools.builtin import ReadAttachmentTool
+
+            model_id = (self._request.model_config or {}).get("model_id")
+            extra_tools.append(
+                ReadAttachmentTool(
+                    task_id=self._request.task_id,
+                    token_counter=TokenCounter(model_name=model_id),
+                )
+            )
+            logger.info(
+                "[CHAT_CONTEXT] Added ReadAttachmentTool for task_id=%d",
+                self._request.task_id,
             )
 
         # Note: Subscription tools (preview_subscription, create_subscription) have been moved

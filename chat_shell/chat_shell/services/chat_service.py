@@ -393,6 +393,7 @@ class ChatService(ChatInterface):
                 config=agent_config,
                 model_id=model_id,
                 dynamic_context=dynamic_context,
+                model_config=request.model_config,
             )
             logger.info(
                 "[CHAT_SERVICE_PERF] build_messages: %.2fms",
