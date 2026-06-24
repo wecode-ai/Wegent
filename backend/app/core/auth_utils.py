@@ -151,15 +151,12 @@ def verify_jwt_token_with_db(db: Session, token: str) -> Optional[User]:
     Returns:
         User object if verification succeeds, None otherwise
     """
-    from jose import jwt as jose_jwt
     from jose.exceptions import JWTError
 
-    from app.core.config import settings
+    from app.core.jwt_compat import decode_jose_jwt
 
     try:
-        payload = jose_jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_jose_jwt(token)
         user_name = payload.get("sub")
         if not user_name:
             return None

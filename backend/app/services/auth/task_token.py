@@ -29,6 +29,7 @@ import jwt
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.jwt_compat import decode_pyjwt
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +100,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
         TaskTokenInfo if valid, None otherwise
     """
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_pyjwt(token, algorithms=[settings.ALGORITHM])
 
         # Verify it's a task token
         if payload.get("type") != "task_token":
