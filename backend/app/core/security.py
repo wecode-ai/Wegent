@@ -451,19 +451,22 @@ def get_auth_context(
     db: Session = Depends(get_db),
     api_key: str = Depends(get_api_key_from_header),
     wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
+    authorization: str = Header(default=""),
 ) -> AuthContext:
     """
-    Flexible authentication: supports personal API key and service key.
+    Flexible authentication: supports personal API key, service key, and JWT Bearer token.
 
     Authentication logic:
-    - Personal key: returns the key owner directly, ignores wegent-username
-    - Service key: requires username via wegent-username header OR api_key#username format
+    - Personal API key: returns the key owner directly, ignores wegent-username
+    - Service API key: requires username via wegent-username header OR api_key#username format
+    - JWT Bearer token: fallback when no API key is present; extracts user from JWT claims
 
     Args:
         db: Database session
         api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
                  For service keys, supports "api_key#username" format
         wegent_username: Username to impersonate (from wegent-username header, required for service keys)
+        authorization: Raw Authorization header for JWT Bearer token fallback
 
     Returns:
         AuthContext containing authenticated User and optional api_key_name
@@ -478,6 +481,31 @@ def get_auth_context(
             span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "api_key")
 
         if not api_key:
+            # Fallback: try JWT Bearer token from Authorization header
+            # (e.g. task tokens, session tokens)
+            if authorization.startswith("Bearer "):
+                token = authorization[7:]
+                # Skip wg- prefixed tokens: already handled by get_api_key_from_header
+                if not token.startswith("wg-"):
+                    from app.core.auth_utils import verify_jwt_token_with_db
+
+                    user = verify_jwt_token_with_db(db, token)
+                    if user and user.is_active:
+                        if is_telemetry_enabled():
+                            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                            span.set_attribute(
+                                SpanAttributes.AUTH_SOURCE,
+                                "authorization_header",
+                            )
+                            span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                            span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                            span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                            _set_user_context(
+                                user_id=str(user.id),
+                                user_name=user.user_name,
+                            )
+                        return AuthContext(user=user, api_key_name=None)
+
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
                 span.set_attribute(
