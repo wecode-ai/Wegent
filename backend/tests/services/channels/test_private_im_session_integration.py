@@ -1035,10 +1035,18 @@ async def test_private_task_creation_creates_runtime_task_and_binds_runtime_addr
             runtime=request.runtime,
         )
 
+    async def fake_private_im_runtime_model(**kwargs):
+        return "claude_code", None, None
+
     monkeypatch.setattr(
         handler,
         "_get_task_mode_team",
         lambda db, user_id: team,
+    )
+    monkeypatch.setattr(
+        handler,
+        "_private_im_runtime_model",
+        fake_private_im_runtime_model,
     )
     monkeypatch.setattr(
         "app.services.chat.storage.task_manager.create_chat_task",
@@ -1117,7 +1125,15 @@ async def test_private_task_creation_without_project_uses_runtime_chat_workspace
             }
         ]
 
+    async def fake_private_im_runtime_model(**kwargs):
+        return "claude_code", None, None
+
     monkeypatch.setattr(handler, "_get_task_mode_team", lambda db, user_id: team)
+    monkeypatch.setattr(
+        handler,
+        "_private_im_runtime_model",
+        fake_private_im_runtime_model,
+    )
     monkeypatch.setattr(
         "app.services.channels.handler.device_selection_manager.get_selection",
         fake_get_device_selection,
