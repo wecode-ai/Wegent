@@ -63,6 +63,8 @@ interface MobileWorkbenchLayoutProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
   isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -73,8 +75,10 @@ interface MobileWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
+  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -158,6 +162,8 @@ export function MobileWorkbenchLayout({
   guidanceMessages = [],
   codeCommentContexts = [],
   isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   upgradingDevices = {},
   activeItem,
   onNewChat,
@@ -167,6 +173,7 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenRuntimeLocalTask,
+  onLoadOlderRuntimeTranscript,
   onForkCurrentRuntimeTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
@@ -257,6 +264,8 @@ export function MobileWorkbenchLayout({
   const baseProjectWork = projectWork ?? {
     projects: state.projects,
     devices: state.devices,
+    runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     executionMode: 'current_workspace',
@@ -364,10 +373,7 @@ export function MobileWorkbenchLayout({
     return () => {
       cancelled = true
     }
-  }, [
-    activeConversationProject,
-    workspaceTargetResolverApi,
-  ])
+  }, [activeConversationProject, workspaceTargetResolverApi])
 
   const openContinueInImDialog = useCallback(() => {
     if (!state.currentRuntimeTask) return
@@ -513,11 +519,14 @@ export function MobileWorkbenchLayout({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
+              hasMoreBefore={runtimeTranscriptHasMoreBefore}
+              loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={state.currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onLoadMoreBefore={onLoadOlderRuntimeTranscript}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}

@@ -69,6 +69,7 @@ export interface WorkbenchState {
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
+  standaloneWorkspacePath: string | null
   input: string
   isBootstrapping: boolean
   isSending: boolean

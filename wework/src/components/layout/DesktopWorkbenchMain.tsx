@@ -136,6 +136,8 @@ interface DesktopWorkbenchMainProps {
   upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
   isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
@@ -156,6 +158,7 @@ interface DesktopWorkbenchMainProps {
   onInputChange: (value: string) => void
   onSend: () => void
   onRetryFailedMessage?: (messageId: string) => void
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
   isResponseStreaming: boolean
   onPauseResponse: () => void
   onCancelQueuedMessage: (id: string) => void
@@ -191,6 +194,8 @@ export function DesktopWorkbenchMain({
   upgradingDevices,
   messages,
   isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   queuedMessages,
   guidanceMessages,
   codeCommentContexts = [],
@@ -211,6 +216,7 @@ export function DesktopWorkbenchMain({
   onInputChange,
   onSend,
   onRetryFailedMessage,
+  onLoadOlderRuntimeTranscript,
   isResponseStreaming,
   onPauseResponse,
   onCancelQueuedMessage,
@@ -537,6 +543,8 @@ export function DesktopWorkbenchMain({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
+              hasMoreBefore={runtimeTranscriptHasMoreBefore}
+              loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
@@ -548,6 +556,7 @@ export function DesktopWorkbenchMain({
               }
               devices={devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onLoadMoreBefore={onLoadOlderRuntimeTranscript}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}

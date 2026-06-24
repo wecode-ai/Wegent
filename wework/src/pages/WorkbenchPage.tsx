@@ -15,6 +15,8 @@ export function WorkbenchPage() {
     guidanceMessages,
     codeCommentContexts,
     isRuntimeTranscriptLoading,
+    runtimeTranscriptHasMoreBefore,
+    isRuntimeTranscriptLoadingMore,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -24,11 +26,13 @@ export function WorkbenchPage() {
     selectProject,
     selectProjectWorkspace,
     selectStandaloneDevice,
+    openStandaloneWorkspace,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
     searchRuntimeWork,
+    loadOlderRuntimeTranscript,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
@@ -78,6 +82,7 @@ export function WorkbenchPage() {
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
@@ -103,6 +108,8 @@ export function WorkbenchPage() {
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
+      runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
+      isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -113,9 +120,11 @@ export function WorkbenchPage() {
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
       onSearchRuntimeWork={searchRuntimeWork}
+      onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
+      onOpenStandaloneWorkspace={openStandaloneWorkspace}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}

@@ -16,6 +16,19 @@ class EmptyDiscovery:
         return []
 
 
+class OpenWorkspaceDiscovery(EmptyDiscovery):
+    def __init__(self):
+        self.opened = []
+
+    async def open_workspace(self, workspace_path):
+        self.opened.append(workspace_path)
+        return {
+            "threadId": "thread-1",
+            "workspacePath": workspace_path,
+            "title": "hello-0",
+        }
+
+
 class SequenceDiscovery:
     def __init__(self, batches):
         self.batches = list(batches)
@@ -184,6 +197,34 @@ def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
         reopened.get_task("codex-1", workspace_path="/other")
 
 
+def test_local_task_store_persists_empty_workspaces(tmp_path):
+    from executor.runtime_work.local_task_store import (
+        LocalTaskStore,
+        LocalWorkspaceRecord,
+    )
+
+    index_path = tmp_path / "index.json"
+    store = LocalTaskStore(index_path)
+    store.upsert_workspace(
+        LocalWorkspaceRecord(
+            workspace_path="/Users/crystal/Documents/hello-0",
+            title="hello-0",
+            runtime="codex",
+            runtime_handle={"threadId": "thread-1"},
+            created_at="2026-06-24T03:10:00Z",
+            updated_at="2026-06-24T03:10:00Z",
+        )
+    )
+
+    reopened = LocalTaskStore(index_path)
+    workspaces = reopened.list_workspaces()
+
+    assert [workspace.workspace_path for workspace in workspaces] == [
+        "/Users/crystal/Documents/hello-0"
+    ]
+    assert workspaces[0].runtime_handle == {"threadId": "thread-1"}
+
+
 def test_local_task_store_update_keeps_original_primary_key(tmp_path):
     from dataclasses import replace
 
@@ -280,6 +321,47 @@ async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
     workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
     assert workspaces["/repo/Wegent"]["localTasks"][0]["localTaskId"] == "claude-repo-1"
     assert workspaces["/repo/Other"]["localTasks"][0]["runtime"] == "claude_code"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_opens_and_lists_empty_codex_workspace(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    discovery = OpenWorkspaceDiscovery()
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=discovery)
+
+    open_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+            },
+        }
+    )
+    list_result = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.list", "payload": {}}
+    )
+
+    assert open_result == {
+        "success": True,
+        "accepted": True,
+        "runtime": "codex",
+        "workspacePath": "/Users/crystal/Documents/hello-0",
+        "threadId": "thread-1",
+    }
+    assert discovery.opened == ["/Users/crystal/Documents/hello-0"]
+    assert list_result == {
+        "success": True,
+        "workspaces": [
+            {
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+                "localTasks": [],
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -1285,6 +1367,63 @@ def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     assert transcript[1]["status"] == "done"
 
 
+def test_codex_discovery_reads_transcript_pages(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789pg"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+
+    records = []
+    for index in range(1, 4):
+        records.extend(
+            [
+                {
+                    "timestamp": f"2026-06-20T05:52:{index * 2:02d}Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "user_message",
+                        "message": f"Question {index}",
+                    },
+                },
+                {
+                    "timestamp": f"2026-06-20T05:52:{index * 2 + 1:02d}Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "last_agent_message": f"Answer {index}",
+                    },
+                },
+            ]
+        )
+    _write_codex_session(session_path, *records)
+
+    discovery = CodexSessionDiscovery(codex_home=codex_home)
+    recent_page = discovery.read_transcript_page(thread_id, str(session_path), limit=2)
+
+    assert [message["content"] for message in recent_page.messages] == [
+        "Question 3",
+        "Answer 3",
+    ]
+    assert recent_page.has_more_before is True
+    assert recent_page.before_cursor
+
+    older_page = discovery.read_transcript_page(
+        thread_id,
+        str(session_path),
+        limit=2,
+        before_cursor=recent_page.before_cursor,
+    )
+
+    assert [message["content"] for message in older_page.messages] == [
+        "Question 2",
+        "Answer 2",
+    ]
+    assert older_page.has_more_before is True
+
+
 def test_codex_discovery_restores_processing_blocks_from_response_items(tmp_path):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 
@@ -1987,6 +2126,8 @@ async def test_runtime_work_handler_reads_discovered_codex_transcript(tmp_path):
         "Show project task",
         "Project task is visible",
     ]
+    assert result["hasMoreBefore"] is False
+    assert result["beforeCursor"] is None
     assert result["messages"][1]["createdAt"] == "2026-06-20T06:00:01Z"
     assert result["messages"][1]["blocks"] == [
         {
@@ -2011,6 +2152,58 @@ async def test_runtime_work_handler_reads_discovered_codex_transcript(tmp_path):
             ),
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_transcript_does_not_require_codex_discovery(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class TranscriptOnlyCodexDiscovery:
+        def discover(self):
+            raise AssertionError("transcript should not list Codex threads")
+
+        def read_transcript_page(self, thread_id, session_path=None, **_kwargs):
+            from executor.runtime_work.codex_discovery import CodexTranscriptPage
+
+            assert thread_id == "codex-thread-slow-list"
+            assert session_path is None
+            return CodexTranscriptPage(
+                messages=[
+                    {
+                        "id": f"{thread_id}:user:o1",
+                        "role": "user",
+                        "content": "recent question",
+                        "createdAt": "2026-06-20T06:00:01Z",
+                        "status": "done",
+                    }
+                ],
+                has_more_before=True,
+                before_cursor="offset:1",
+            )
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=TranscriptOnlyCodexDiscovery(),
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "codex-thread-slow-list",
+                "limit": 50,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["runtime"] == "codex"
+    assert result["messages"][0]["content"] == "recent question"
+    assert result["hasMoreBefore"] is True
+    assert result["beforeCursor"] == "offset:1"
 
 
 @pytest.mark.asyncio
@@ -3525,3 +3718,55 @@ async def test_runtime_work_handler_transcript_overlays_im_source(tmp_path):
     assert result["success"] is True
     assert result["messages"][0]["source"]["source"] == "im"
     assert result["messages"][0]["source"]["conversation_id"] == "conv-1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_compresses_large_transcript_ack(tmp_path):
+    import base64
+    import gzip
+    import json
+
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="claude-large",
+            workspace_path="/repo/Wegent",
+            title="Large transcript",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "assistant",
+                        "content": "large transcript " * 50000,
+                        "createdAt": "2026-06-20T01:00:00Z",
+                    }
+                ]
+            },
+            created_at="2026-06-20T01:00:00Z",
+            updated_at="2026-06-20T02:00:00Z",
+            running=False,
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": "claude-large",
+            },
+        }
+    )
+
+    assert result["__runtimeRpcEncoding"] == "gzip+base64+json"
+    compressed = base64.b64decode(result["payload"].encode("ascii"), validate=True)
+    decoded = json.loads(gzip.decompress(compressed).decode("utf-8"))
+    assert decoded["success"] is True
+    assert decoded["messages"][0]["content"].startswith("large transcript")

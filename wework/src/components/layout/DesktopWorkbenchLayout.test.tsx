@@ -185,6 +185,7 @@ describe('DesktopWorkbenchLayout', () => {
       currentProject: null,
       currentRuntimeTask: null,
       standaloneDeviceId: null,
+      standaloneWorkspacePath: null,
       input: '',
       isBootstrapping: false,
       isSending: false,
@@ -228,13 +229,14 @@ describe('DesktopWorkbenchLayout', () => {
     },
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
+    onOpenStandaloneWorkspace: vi.fn(),
     onCreateProject: vi.fn(),
     onCreateGitWorkspaceProject: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
-    onListDeviceDirectories: vi.fn(),
+    onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     onCreateDeviceDirectory: vi.fn(),
     onListGitRepositories: vi.fn().mockResolvedValue([]),
     onListGitBranches: vi.fn().mockResolvedValue([]),
@@ -1153,7 +1155,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(quotaLink).not.toHaveClass('text-primary')
   })
 
-  test('opens project creation directly from the sidebar project create button', async () => {
+  test('opens the project create menu from the sidebar project create button', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -1179,16 +1181,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '选择项目文件夹' })).toBeInTheDocument()
-    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
-    expect(screen.getByTestId('project-folder-create-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-blank-option')).toHaveTextContent('新建空白项目')
+    expect(screen.getByTestId('project-create-existing-option')).toHaveTextContent('使用现有文件夹')
+    expect(screen.getByTestId('project-create-remote-option')).toHaveTextContent('远程项目')
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
   })
 
-  test('opens project create dialog before device refresh completes', async () => {
+  test('opens project create menu before device refresh completes', async () => {
     let resolveRefreshDevices: (() => void) | undefined
     const onRefreshDevices = vi.fn(
       () =>
@@ -1220,14 +1221,161 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
-    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
-    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-existing-option')).toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
 
     resolveRefreshDevices?.()
   })
 
-  test('enables device upgrade from the sidebar project create dialog', async () => {
+  test('opens a standalone Codex workspace after creating a blank project in Documents', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
+    const onOpenStandaloneWorkspace = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: true,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-blank-option'))
+    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateDeviceDirectory).toHaveBeenCalledWith(
+        'local-device',
+        '/home/ubuntu/Documents/New project'
+      )
+    )
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+      'local-device',
+      '/home/ubuntu/Documents/New project'
+    )
+  })
+
+  test('renames a blank project directory when the requested name already exists', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['New project', 'New project 2'])
+    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
+    const onOpenStandaloneWorkspace = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: true,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-blank-option'))
+    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
+
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/ubuntu/Documents')
+    )
+    expect(onCreateDeviceDirectory).toHaveBeenCalledWith(
+      'local-device',
+      '/home/ubuntu/Documents/New project 3'
+    )
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+      'local-device',
+      '/home/ubuntu/Documents/New project 3'
+    )
+  })
+
+  test('remote project device picker includes cloud and remote devices but not local devices', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: true,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+            {
+              id: 2,
+              device_id: 'cloud-device',
+              name: 'Cloud Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+              runtime_transfer_host: '10.201.3.200',
+            },
+            {
+              id: 3,
+              device_id: 'remote-device',
+              name: 'Remote Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'remote',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+
+    const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveTextContent('10.201.3.200 · Cloud Device')
+    expect(select).toHaveTextContent('Remote Device')
+    expect(select).not.toHaveTextContent('Local Device')
+  })
+
+  test('remote project dialog excludes incompatible non-local devices', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -1254,44 +1402,39 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上'
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent(
+      '暂无可用远程或云设备'
     )
-
-    const upgradeButton = screen.getByTestId('upgrade-project-device-old-device')
-    expect(upgradeButton).not.toBeDisabled()
-
-    await userEvent.click(upgradeButton)
-
-    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
-  test('does not render a project create menu when opening the sidebar dialog', async () => {
+  test('closes the project create menu on outside pointer down', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
 
     fireEvent.pointerMove(document, { clientX: 500, clientY: 500 })
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
 
     await userEvent.hover(screen.getByTestId('project-row-1'))
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
 
     fireEvent.pointerDown(document.body)
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
   })
 
-  test('does not render a body-level project create flyout', async () => {
+  test('renders the project create menu as a right-floating overlay', async () => {
     const getBoundingClientRectSpy = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function () {
         const element = this as HTMLElement
 
-        if (element.querySelector('[data-testid="projects-create-button"]')) {
+        if (element.dataset.testid === 'projects-create-button') {
           return createRect({ left: 104, top: 246, width: 28, height: 28 })
         }
 
@@ -1317,19 +1460,24 @@ describe('DesktopWorkbenchLayout', () => {
       const trigger = screen.getByTestId('projects-create-button')
       await userEvent.click(trigger)
 
-      expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+      const menu = screen.getByTestId('projects-create-button-menu')
+      expect(menu).toBeInTheDocument()
+      expect(document.body).toContainElement(menu)
+      expect(document.querySelector('aside')).not.toContainElement(menu)
+      expect(menu).toHaveClass('fixed')
+      expect(menu).toHaveStyle({ left: '140px', top: '282px', width: '248px' })
     } finally {
       getBoundingClientRectSpy.mockRestore()
     }
   })
 
-  test('renders project create dialog as a page-level overlay', async () => {
+  test('renders standalone folder dialog as a page-level overlay', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
 
-    const dialog = screen.getByTestId('project-create-dialog')
+    const dialog = screen.getByTestId('standalone-folder-project-dialog')
     const overlay = dialog.parentElement
 
     expect(overlay).not.toBeNull()
@@ -1363,79 +1511,52 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     const menu = screen.getByTestId('project-work-menu')
-    const addProjectOption = screen.getByTestId('add-project-option')
+    const addLocalProjectOption = screen.getByTestId('add-local-project-option')
     expect([...menu.querySelectorAll('button')].map(button => button.dataset.testid)).toEqual([
-      'project-option-1',
-      'add-project-option',
+      'add-local-project-option',
+      'add-remote-project-option',
       'no-project-option',
     ])
 
-    await userEvent.click(addProjectOption)
+    await userEvent.hover(addLocalProjectOption)
+    await userEvent.click(screen.getByTestId('add-local-blank-project-option'))
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('create-project-submenu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
-    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
-    expect(screen.getByTestId('project-folder-create-button')).toBeInTheDocument()
-    expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
+    expect(screen.queryByTestId('add-local-project-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '为项目命名' })).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-blank-project-name-input')).toHaveValue('New project')
   })
 
-  test('opens connection settings cloud device creation from an empty sidebar project dialog', async () => {
+  test('shows an empty remote project dialog when there are no remote or cloud devices', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
 
     render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
-    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByText('创建项目需要一台可用设备。')).toBeInTheDocument()
-
-    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
-    expect(settingsLink).toHaveAttribute('href', '/settings')
-
-    await userEvent.click(settingsLink)
-
-    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
-    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent(
+      '暂无可用远程或云设备'
+    )
   })
 
-  test('opens connection settings cloud device creation from an empty project dialog', async () => {
+  test('opens the standalone remote dialog from the project work menu', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
-    createDeviceApiMock.mockReturnValue({
-      getAllDevices: vi.fn().mockResolvedValue([]),
-      getMetrics: vi.fn(),
-      getMetricsHistory: vi.fn(),
-      getVncConfig: vi.fn(),
-      createCloudDevice: vi.fn(),
-      startTerminal: vi.fn(),
-      startCodeServer: vi.fn(),
-      renameDevice: vi.fn(),
-      restartCloudDevice: vi.fn(),
-      deleteCloudDevice: vi.fn(),
-      deleteDevice: vi.fn(),
-      getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
-      getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
-      listDirectories: vi.fn().mockResolvedValue([]),
-      executeCommand: vi.fn(),
-    })
 
     render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
 
     await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('add-project-option'))
-    await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
+    await userEvent.click(screen.getByTestId('add-remote-project-option'))
 
-    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
-    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '添加远程项目' })).toBeInTheDocument()
   })
 
-  test('creates a project from an existing folder selected in the directory tree', async () => {
+  test('opens a standalone Codex workspace from an existing folder selected in the directory tree', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
     const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
       preparedAction: 'selected',
@@ -1455,6 +1576,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
     const onListDeviceDirectories = vi.fn().mockResolvedValue(['.cache', 'repo'])
+    const onOpenStandaloneWorkspace = vi.fn()
 
     render(
       <DesktopWorkbenchLayout
@@ -1463,6 +1585,7 @@ describe('DesktopWorkbenchLayout', () => {
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
         state={{
           ...baseProps.state,
           devices: [
@@ -1481,7 +1604,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-folder-select-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
@@ -1503,29 +1626,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('项目名：repo')
-    await userEvent.click(screen.getByTestId('create-project-button'))
-
-    await waitFor(() =>
-      expect(onCreateProject).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'repo',
-          config: {
-            mode: 'workspace',
-          },
-        }),
-        { refreshWorkLists: false }
-      )
-    )
-    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith(
-      {
-        projectId: 2,
-        deviceId: 'device-1',
-        workspacePath: '/home/ubuntu/repo',
-        action: 'select',
-      },
-      { refreshWorkLists: false }
-    )
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
+    expect(onCreateProject).not.toHaveBeenCalled()
+    expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
   })
 
   test('shows project device network status for non-local devices when multiple devices exist', () => {

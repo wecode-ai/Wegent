@@ -320,7 +320,8 @@ export interface DeviceWorkspacePrepareResponse {
 }
 
 export interface RuntimeProjectRef {
-  id: number
+  key: string
+  id?: number
   name: string
   description?: string | null
   color?: string | null
@@ -394,6 +395,14 @@ export interface RuntimeTranscriptResponse {
   runtime: RuntimeName
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+  parseError?: string | null
+}
+
+export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
+  limit?: number
+  beforeCursor?: string | null
 }
 
 export interface RuntimeSendRequest {
@@ -406,6 +415,21 @@ export interface RuntimeSendRequest {
 export interface RuntimeSendResponse {
   accepted: boolean
   localTaskId: string
+  error?: string | null
+}
+
+export interface RuntimeWorkspaceOpenRequest {
+  deviceId: string
+  workspacePath: string
+  runtime: RuntimeName
+}
+
+export interface RuntimeWorkspaceOpenResponse {
+  accepted: boolean
+  deviceId: string
+  workspacePath: string
+  runtime: RuntimeName
+  threadId?: string | null
   error?: string | null
 }
 

@@ -19,9 +19,12 @@ import type {
   RuntimeTaskForkResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceOpenRequest,
+  RuntimeWorkspaceOpenResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { HttpClient } from './http'
@@ -49,14 +52,17 @@ export function createRuntimeWorkApi(client: HttpClient) {
       })
       return client.delete(`/runtime-work/device-workspaces?${params.toString()}`)
     },
-    getRuntimeTranscript(address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse> {
-      return client.post('/runtime-work/transcript', address)
+    getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
+      return client.post('/runtime-work/transcript', request)
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
+    },
+    openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
+      return client.post('/runtime-work/workspaces/open', data)
     },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest

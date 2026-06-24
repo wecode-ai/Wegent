@@ -29,10 +29,13 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
     RuntimeWorkSearchRequest,
     RuntimeWorkSearchResponse,
+    RuntimeWorkspaceOpenRequest,
+    RuntimeWorkspaceOpenResponse,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -159,7 +162,7 @@ async def search_runtime_work_endpoint(
     response_model_by_alias=True,
 )
 async def get_runtime_transcript_endpoint(
-    address: RuntimeTaskAddress,
+    address: RuntimeTranscriptRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -358,6 +361,25 @@ async def create_runtime_task_endpoint(
     """Create a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.create_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/workspaces/open",
+    response_model=RuntimeWorkspaceOpenResponse,
+    response_model_by_alias=True,
+)
+async def open_runtime_workspace_endpoint(
+    request: RuntimeWorkspaceOpenRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Open a native runtime workspace without starting a turn."""
+
+    return await runtime_work_service.open_runtime_workspace(
         db=db,
         user_id=current_user.id,
         request=request,

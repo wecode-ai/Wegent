@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Edit3,
   FolderPlus,
+  Globe2,
   GitCompareArrows,
   Loader2,
   MessageSquarePlus,
@@ -17,12 +18,19 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import {
+  StandaloneBlankProjectDialog,
+  StandaloneFolderProjectDialog,
+  type StandaloneWorkspaceDialogMode,
+} from '@/components/projects/StandaloneProjectDialogs'
 import { useTranslation } from '@/hooks/useTranslation'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -66,6 +74,8 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null
   currentRuntimeTask?: RuntimeTaskAddress | null
+  standaloneDeviceId?: string | null
+  standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   preferredDeviceId?: string | null
   upgradingDevices?: Record<string, DeviceUpgradeState>
@@ -87,6 +97,7 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
+  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   onPrepareDeviceWorkspace: (
@@ -106,7 +117,84 @@ interface DesktopSidebarProps {
   onLogout: () => void
 }
 
-type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+type ProjectCreateMenuPosition = {
+  top: number
+  left: number
+}
+
+const PROJECT_CREATE_MENU_WIDTH = 248
+const PROJECT_CREATE_MENU_MARGIN = 8
+
+function getStandaloneDeviceLabel(device: DeviceInfo): string {
+  return device.name || device.device_id
+}
+
+function normalizeSidebarWorkspacePath(path: string): string {
+  const trimmedPath = path.trim()
+  if (trimmedPath === '/') return trimmedPath
+  return trimmedPath.replace(/\/+$/, '')
+}
+
+function getSidebarPathBasename(path: string): string {
+  const normalizedPath = normalizeSidebarWorkspacePath(path)
+  const parts = normalizedPath.split('/').filter(Boolean)
+  return parts.at(-1) ?? normalizedPath
+}
+
+function runtimeWorkHasWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  deviceId: string,
+  workspacePath: string
+): boolean {
+  const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
+  return (runtimeWork?.projects ?? []).some(projectWork =>
+    projectWork.deviceWorkspaces.some(
+      workspace =>
+        workspace.deviceId === deviceId &&
+        normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
+    )
+  )
+}
+
+function standaloneRuntimeProjectWork(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined,
+  workspacePath: string | null | undefined,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): RuntimeProjectWork | null {
+  const normalizedDeviceId = deviceId?.trim()
+  const normalizedWorkspacePath = workspacePath ? normalizeSidebarWorkspacePath(workspacePath) : ''
+  if (!normalizedDeviceId || !normalizedWorkspacePath) return null
+  if (runtimeWorkHasWorkspace(runtimeWork, normalizedDeviceId, normalizedWorkspacePath)) {
+    return null
+  }
+
+  const device = devices.find(item => item.device_id === normalizedDeviceId)
+  const deviceStatus = device?.status ?? 'unavailable'
+  return {
+    project: {
+      key: `${normalizedDeviceId}:${normalizedWorkspacePath}`,
+      name: getSidebarPathBasename(normalizedWorkspacePath),
+      description: normalizedWorkspacePath,
+      color: null,
+    },
+    deviceWorkspaces: [
+      {
+        id: null,
+        projectId: null,
+        deviceId: normalizedDeviceId,
+        deviceName: device ? getStandaloneDeviceLabel(device) : normalizedDeviceId,
+        deviceStatus,
+        available: deviceStatus === 'online' || deviceStatus === 'busy',
+        workspacePath: normalizedWorkspacePath,
+        workspaceKind: 'workspace',
+        worktreeId: null,
+        mapped: true,
+        localTasks: [],
+      },
+    ],
+  }
+}
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
@@ -308,7 +396,7 @@ interface SidebarDeviceState {
 
 function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
   return {
-    id: projectWork.project.id,
+    id: runtimeProjectUiId(projectWork.project),
     name: projectWork.project.name,
     description: projectWork.project.description,
     color: projectWork.project.color,
@@ -401,7 +489,9 @@ function getProjectDeviceWorkspaces(
   projectId: number | undefined
 ): DeviceWorkspaceResponse[] {
   if (!runtimeWork || projectId === undefined) return []
-  const projectWork = runtimeWork.projects.find(item => item.project.id === projectId)
+  const projectWork = runtimeWork.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
   return (
     projectWork?.deviceWorkspaces.map((workspace, index) => ({
       id: workspace.id ?? -(index + 1),
@@ -819,7 +909,7 @@ function ProjectItem({
             onToggleProject(project.id)
           }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 pr-16 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 pr-1 text-left"
         >
           <ProjectFolderIcon
             project={project}
@@ -936,6 +1026,8 @@ export function DesktopSidebar({
   devices,
   runtimeWork,
   currentRuntimeTask,
+  standaloneDeviceId,
+  standaloneWorkspacePath,
   imNotificationSettings,
   preferredDeviceId,
   upgradingDevices = {},
@@ -954,6 +1046,7 @@ export function DesktopSidebar({
   onOpenPlugins,
   onRefreshDevices,
   onUpgradeDevice,
+  onOpenStandaloneWorkspace,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
@@ -984,7 +1077,14 @@ export function DesktopSidebar({
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
-  const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
+  const projectCreateMenuRef = useRef<HTMLDivElement>(null)
+  const projectCreateMenuFloatingRef = useRef<HTMLDivElement>(null)
+  const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
+  const [projectCreateMenuPosition, setProjectCreateMenuPosition] =
+    useState<ProjectCreateMenuPosition | null>(null)
+  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
+  const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
+    useState<StandaloneWorkspaceDialogMode | null>(null)
   const [editingProject, setEditingProject] = useState<ProjectWithTasks | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [projectsExpanded, setProjectsExpanded] = useState(() =>
@@ -996,23 +1096,36 @@ export function DesktopSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
+  const standaloneProjectWork = useMemo(
+    () =>
+      standaloneRuntimeProjectWork(
+        devices,
+        standaloneDeviceId,
+        standaloneWorkspacePath,
+        runtimeWork
+      ),
+    [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
+  )
   const filteredRuntimeProjects = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return items
-  }, [runtimeWork?.projects])
+    return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
+  }, [runtimeWork?.projects, standaloneProjectWork])
   const sidebarProjects = useMemo(() => {
-    if (runtimeWork) {
+    if (runtimeWork || standaloneProjectWork) {
       return filteredRuntimeProjects.map(runtimeProjectToProject)
     }
     return projects
-  }, [filteredRuntimeProjects, projects, runtimeWork])
+  }, [filteredRuntimeProjects, projects, runtimeWork, standaloneProjectWork])
   const visibleExpandedProjectIds = useMemo(
     () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
     [expandedProjectIds, sidebarProjects]
   )
   const runtimeWorkByProjectId = useMemo(() => {
-    return new Map(filteredRuntimeProjects.map(item => [item.project.id, item]))
+    return new Map(filteredRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
   }, [filteredRuntimeProjects])
+  const standaloneProjectId = standaloneProjectWork
+    ? runtimeProjectUiId(standaloneProjectWork.project)
+    : null
   const unmappedWorkspaces = useMemo(
     () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
     [runtimeWork?.unmappedDeviceWorkspaces]
@@ -1058,15 +1171,28 @@ export function DesktopSidebar({
     })
   }
 
-  const openProjectCreateDialog = () => {
-    setProjectCreateMode('scratch')
+  const openProjectCreateMenu = (anchor: HTMLElement) => {
     setEditingProject(null)
+    setProjectCreateMenuOpen(open => {
+      if (open) return false
+
+      const anchorRect = anchor.getBoundingClientRect()
+      const maxLeft = Math.max(
+        PROJECT_CREATE_MENU_MARGIN,
+        window.innerWidth - PROJECT_CREATE_MENU_WIDTH - PROJECT_CREATE_MENU_MARGIN
+      )
+      setProjectCreateMenuPosition({
+        top: Math.max(PROJECT_CREATE_MENU_MARGIN, anchorRect.bottom + PROJECT_CREATE_MENU_MARGIN),
+        left: Math.min(anchorRect.right + PROJECT_CREATE_MENU_MARGIN, maxLeft),
+      })
+      return true
+    })
     void onRefreshDevices?.().catch(() => undefined)
   }
 
   const openProjectEditDialog = (project: ProjectWithTasks) => {
     setEditingProject(project)
-    setProjectCreateMode(null)
+    setProjectCreateMenuOpen(false)
     void onRefreshDevices?.().catch(() => undefined)
   }
 
@@ -1118,6 +1244,36 @@ export function DesktopSidebar({
       document.removeEventListener('mousedown', handleOutsidePointer)
     }
   }, [settingsMenuOpen])
+
+  useEffect(() => {
+    if (!projectCreateMenuOpen) return
+
+    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+      const target = event.target as Node
+      if (
+        !projectCreateMenuRef.current?.contains(target) &&
+        !projectCreateMenuFloatingRef.current?.contains(target)
+      ) {
+        setProjectCreateMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setProjectCreateMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer)
+    document.addEventListener('mousedown', handleOutsidePointer)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointer)
+      document.removeEventListener('mousedown', handleOutsidePointer)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [projectCreateMenuOpen])
 
   useEffect(() => {
     if (!currentRuntimeTask) return
@@ -1176,27 +1332,90 @@ export function DesktopSidebar({
         className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
         <section>
-          <SidebarSectionHeader
-            title={t('workbench.projects', '项目')}
-            expanded={displayedProjectsExpanded}
-            hasContent={sidebarProjects.length > 0}
-            toggleTestId="projects-section-toggle"
-            iconTestId="projects-section-chevron-right"
-            onToggle={() => setProjectsExpanded(expanded => !expanded)}
-          >
-            <button
-              type="button"
-              aria-label={t('workbench.new_project', '新建项目')}
-              data-testid="projects-create-button"
-              onClick={event => {
-                event.stopPropagation()
-                openProjectCreateDialog()
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+          <div ref={projectCreateMenuRef}>
+            <SidebarSectionHeader
+              title={t('workbench.projects', '项目')}
+              expanded={displayedProjectsExpanded}
+              hasContent={sidebarProjects.length > 0}
+              toggleTestId="projects-section-toggle"
+              iconTestId="projects-section-chevron-right"
+              onToggle={() => setProjectsExpanded(expanded => !expanded)}
             >
-              <FolderPlus className="h-4 w-4" />
-            </button>
-          </SidebarSectionHeader>
+              <div>
+                <button
+                  type="button"
+                  aria-label={t('workbench.new_project', '新建项目')}
+                  data-testid="projects-create-button"
+                  onClick={event => {
+                    event.stopPropagation()
+                    openProjectCreateMenu(event.currentTarget)
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                  aria-expanded={projectCreateMenuOpen}
+                >
+                  <FolderPlus className="h-4 w-4" />
+                </button>
+              </div>
+            </SidebarSectionHeader>
+          </div>
+          {projectCreateMenuOpen &&
+            projectCreateMenuPosition &&
+            createPortal(
+              <div
+                ref={projectCreateMenuFloatingRef}
+                data-testid="projects-create-button-menu"
+                className="fixed z-modal rounded-xl border border-border bg-surface p-1.5 text-[13px] text-text-primary shadow-lg"
+                style={{
+                  top: projectCreateMenuPosition.top,
+                  left: projectCreateMenuPosition.left,
+                  width: PROJECT_CREATE_MENU_WIDTH,
+                }}
+                onClick={event => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  data-testid="project-create-blank-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setBlankProjectDialogOpen(true)
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">
+                    {t('workbench.new_blank_project', '新建空白项目')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="project-create-existing-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setStandaloneWorkspaceDialogMode('existing')
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">
+                    {t('workbench.use_existing_folder', '使用现有文件夹')}
+                  </span>
+                </button>
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  data-testid="project-create-remote-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <Globe2 className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">{t('workbench.remote_project', '远程项目')}</span>
+                </button>
+              </div>,
+              document.body
+            )}
           {displayedProjectsExpanded && (
             <div className="space-y-1">
               {sidebarProjects.map(project => (
@@ -1211,7 +1430,17 @@ export function DesktopSidebar({
                   imNotificationSettings={imNotificationSettings}
                   showDeviceMarker={false}
                   onToggleProject={handleToggleProject}
-                  onSelectProject={onSelectProject}
+                  onSelectProject={projectId => {
+                    if (
+                      projectId === standaloneProjectId &&
+                      standaloneDeviceId &&
+                      standaloneWorkspacePath
+                    ) {
+                      onOpenStandaloneWorkspace?.(standaloneDeviceId, standaloneWorkspacePath)
+                      return
+                    }
+                    onSelectProject(projectId)
+                  }}
                   onStartNewProjectChat={onStartNewProjectChat}
                   onRemoveProject={onRemoveProject}
                   onEditProject={openProjectEditDialog}
@@ -1360,18 +1589,38 @@ export function DesktopSidebar({
         aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
       />
 
+      <StandaloneBlankProjectDialog
+        open={blankProjectDialogOpen}
+        devices={devices}
+        preferredDeviceId={preferredDeviceId}
+        onClose={() => setBlankProjectDialogOpen(false)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
+      <StandaloneFolderProjectDialog
+        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        open={standaloneWorkspaceDialogMode !== null}
+        mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        devices={devices}
+        preferredDeviceId={preferredDeviceId}
+        onClose={() => setStandaloneWorkspaceDialogMode(null)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
       <ProjectCreateDialog
-        open={projectCreateMode !== null || editingProject !== null}
-        mode={editingProject ? 'existing' : (projectCreateMode ?? 'scratch')}
+        open={editingProject !== null}
+        mode="existing"
         project={editingProject}
         deviceWorkspaces={getProjectDeviceWorkspaces(runtimeWork, editingProject?.id)}
         devices={devices}
         onClose={() => {
-          setProjectCreateMode(null)
           setEditingProject(null)
         }}
         onOpenCloudDeviceSettings={() => {
-          setProjectCreateMode(null)
           setEditingProject(null)
           onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
         }}

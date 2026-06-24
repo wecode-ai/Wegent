@@ -24,6 +24,13 @@ class RuntimeTaskAddress(BaseModel):
     local_task_id: str = Field(..., alias="localTaskId", min_length=1)
 
 
+class RuntimeTranscriptRequest(RuntimeTaskAddress):
+    """Request a page of a device-local runtime transcript."""
+
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+
+
 class RuntimeMessageSource(BaseModel):
     """Optional source overlay for runtime transcript messages."""
 
@@ -147,9 +154,9 @@ class DeviceWorkspacePrepareResponse(BaseModel):
 
 
 class RuntimeProjectRef(BaseModel):
-    """Small project shape used by runtime work lists."""
+    """Runtime workspace identity used by runtime work lists."""
 
-    id: int
+    key: str
     name: str
     description: str = ""
     color: Optional[str] = None
@@ -221,6 +228,8 @@ class RuntimeTranscriptResponse(BaseModel):
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
+    has_more_before: bool = Field(default=False, alias="hasMoreBefore")
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     parse_error: Optional[str] = Field(default=None, alias="parseError")
 
 
@@ -286,6 +295,29 @@ class RuntimeSendResponse(BaseModel):
 
     accepted: bool
     local_task_id: str = Field(..., alias="localTaskId")
+    error: Optional[str] = None
+
+
+class RuntimeWorkspaceOpenRequest(BaseModel):
+    """Request to register/open a device-local runtime workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    runtime: RuntimeName = "codex"
+
+
+class RuntimeWorkspaceOpenResponse(BaseModel):
+    """Acknowledgement from opening a runtime workspace without a turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    device_id: str = Field(..., alias="deviceId")
+    workspace_path: str = Field(..., alias="workspacePath")
+    runtime: RuntimeName
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     error: Optional[str] = None
 
 

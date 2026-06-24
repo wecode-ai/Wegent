@@ -6,7 +6,7 @@ import type {
   Attachment,
   DeviceInfo,
   LocalDeviceSkill,
-  ProjectWithTasks,
+  RuntimeWorkListResponse,
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
@@ -86,16 +86,55 @@ function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): Proj
           ? device.executor_version
           : (device.executor_version ?? '1.8.5'),
     })) ?? []
+  const currentProject =
+    overrides.currentProject ??
+    overrides.projects?.find(project => project.id === overrides.currentProjectId) ??
+    null
 
   return {
     projects: [],
     devices,
+    currentProject,
     currentProjectId: undefined,
     currentStandaloneDeviceId: null,
     onSelectProject: vi.fn(),
     onSelectStandaloneDevice: vi.fn(),
     ...overrides,
     devices,
+  }
+}
+
+function runtimeWork(
+  items: Array<{
+    id: number
+    name: string
+    workspaceId?: number | null
+    deviceId?: string
+    deviceName?: string
+    deviceStatus?: DeviceInfo['status']
+    available?: boolean
+    workspacePath?: string
+  }>
+): RuntimeWorkListResponse {
+  return {
+    projects: items.map(item => ({
+      project: { id: item.id, name: item.name },
+      deviceWorkspaces: [
+        {
+          id: item.workspaceId ?? item.id * 10,
+          projectId: item.id,
+          deviceId: item.deviceId ?? 'device-online',
+          deviceName: item.deviceName ?? 'Online Device',
+          deviceStatus: item.deviceStatus ?? 'online',
+          available: item.available ?? true,
+          workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
+          mapped: true,
+          localTasks: [],
+        },
+      ],
+    })),
+    unmappedDeviceWorkspaces: [],
+    totalLocalTasks: 0,
   }
 }
 
@@ -1719,11 +1758,7 @@ describe('ChatInput', () => {
   })
 
   test('opens project work menu and selects a project', async () => {
-    const onSelectProject = vi.fn()
-    const projects: ProjectWithTasks[] = [
-      { id: 7, name: 'Wegent', tasks: [] },
-      { id: 8, name: 'Docs', tasks: [] },
-    ]
+    const onSelectProjectWorkspace = vi.fn()
 
     render(
       <ChatInput
@@ -1733,9 +1768,13 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects,
+          runtimeWork: runtimeWork([
+            { id: 7, name: 'Wegent', workspaceId: 70 },
+            { id: 8, name: 'Docs', workspaceId: 80 },
+          ]),
           currentProjectId: 7,
-          onSelectProject,
+          selectedDeviceWorkspaceId: 70,
+          onSelectProjectWorkspace,
         })}
       />
     )
@@ -1749,7 +1788,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
-    expect(onSelectProject).toHaveBeenCalledWith(8)
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(8, 80)
   })
 
   test('shows no-project transition from the standalone entry', async () => {
@@ -1803,7 +1842,7 @@ describe('ChatInput', () => {
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
   })
 
-  test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
+  test('hides standalone devices and selects the local device for no-project mode', async () => {
     const onSelectStandaloneDevice = vi.fn()
     const devices: DeviceInfo[] = [
       {
@@ -1813,6 +1852,7 @@ describe('ChatInput', () => {
         status: 'online',
         is_default: false,
         device_type: 'local',
+        executor_version: '1.8.5',
       },
       {
         id: 2,
@@ -1821,6 +1861,7 @@ describe('ChatInput', () => {
         status: 'online',
         is_default: false,
         device_type: 'cloud',
+        executor_version: '1.8.5',
       },
       {
         id: 3,
@@ -1829,6 +1870,7 @@ describe('ChatInput', () => {
         status: 'offline',
         is_default: false,
         device_type: 'local',
+        executor_version: '1.8.5',
       },
     ]
 
@@ -1850,17 +1892,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
-    expect(screen.getByText('Cloud Online')).toBeInTheDocument()
-    expect(screen.getByText('Local Online')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
+    expect(screen.queryByTestId('standalone-device-list')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-device-option-cloud-online')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-device-option-local-online')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('no-project-option'))
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
-    expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-online')
   })
 
   test('marks the current project instead of a remembered standalone device', async () => {
@@ -1883,9 +1920,10 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          runtimeWork: runtimeWork([{ id: 7, name: 'hello', workspaceId: 70 }]),
           devices,
           currentProjectId: 7,
+          selectedDeviceWorkspaceId: 70,
           currentStandaloneDeviceId: 'cloud-online',
         })}
       />
@@ -1899,7 +1937,7 @@ describe('ChatInput', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('marks the current standalone device when no project is selected', async () => {
+  test('keeps standalone device details out of the trigger when no project is selected', async () => {
     const devices: DeviceInfo[] = [
       {
         id: 1,
@@ -1935,15 +1973,21 @@ describe('ChatInput', () => {
       />
     )
 
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('Local Online')
+
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('standalone-device-selected-icon-local-online')).toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-device-list')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('standalone-device-selected-icon-local-online')
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('standalone-device-selected-icon-cloud-online')
     ).not.toBeInTheDocument()
   })
 
-  test('shows the current standalone device in the project work trigger', () => {
+  test('uses the project work action as the standalone trigger accessible name', () => {
     const devices: DeviceInfo[] = [
       {
         id: 1,
@@ -1974,8 +2018,8 @@ describe('ChatInput', () => {
     const trigger = screen.getByTestId('project-work-button')
 
     expect(trigger).toHaveTextContent('进入项目工作')
-    expect(trigger).toHaveTextContent('Local Online')
-    expect(trigger).toHaveAccessibleName('进入项目工作，当前设备 Local Online')
+    expect(trigger).not.toHaveTextContent('Local Online')
+    expect(trigger).toHaveAccessibleName('进入项目工作')
   })
 
   test('does not include enter-project work as a menu item', async () => {
@@ -2001,22 +2045,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
-  test('renders only available project devices in the project menu', async () => {
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Wegent',
-        config: { execution: { targetType: 'cloud', deviceId: 'device-online' } },
-        tasks: [],
-      },
-      {
-        id: 8,
-        name: 'Docs',
-        config: { execution: { targetType: 'local', deviceId: 'device-offline' } },
-        tasks: [],
-      },
-    ]
-
+  test('renders remote project IPs and hides local device names in the project menu', async () => {
     render(
       <ChatInput
         value=""
@@ -2025,7 +2054,22 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects,
+          runtimeWork: runtimeWork([
+            {
+              id: 7,
+              name: 'Wegent',
+              workspaceId: 70,
+              deviceId: 'device-online',
+              deviceName: '10.201.3.200',
+            },
+            {
+              id: 8,
+              name: 'Docs',
+              workspaceId: 80,
+              deviceId: 'device-local',
+              deviceName: 'Local Device',
+            },
+          ]),
           devices: [
             {
               id: 1,
@@ -2033,13 +2077,16 @@ describe('ChatInput', () => {
               name: 'online-executor',
               status: 'online',
               is_default: false,
+              device_type: 'cloud',
+              client_ip: '10.201.3.200',
             },
             {
               id: 2,
-              device_id: 'device-offline',
-              name: 'offline-executor',
-              status: 'offline',
+              device_id: 'device-local',
+              name: 'Local Device',
+              status: 'online',
               is_default: false,
+              device_type: 'local',
             },
           ],
         })}
@@ -2048,31 +2095,16 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    const projectDeviceLabel = screen.getAllByText('online-executor')[0]
+    const projectDeviceLabel = screen.getAllByText('10.201.3.200')[0]
     expect(projectDeviceLabel).toHaveClass('text-text-secondary')
     expect(projectDeviceLabel).not.toHaveClass('text-primary')
     expect(
-      within(screen.getByTestId('project-options-list')).queryByText('offline-executor')
+      within(screen.getByTestId('project-option-8')).queryByText('Local Device')
     ).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
   })
 
-  test('hides projects with offline devices from project selection', async () => {
+  test('ignores the projects table when runtime work is empty', async () => {
     const onSelectProject = vi.fn()
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Online Project',
-        config: { execution: { targetType: 'cloud', deviceId: 'device-online' } },
-        tasks: [],
-      },
-      {
-        id: 8,
-        name: 'Offline Project',
-        config: { execution: { targetType: 'local', deviceId: 'device-offline' } },
-        tasks: [],
-      },
-    ]
 
     render(
       <ChatInput
@@ -2082,7 +2114,11 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects,
+          projects: [
+            { id: 7, name: 'Online Project', tasks: [] },
+            { id: 8, name: 'Offline Project', tasks: [] },
+          ],
+          runtimeWork: runtimeWork([]),
           onSelectProject,
           devices: [
             {
@@ -2106,11 +2142,10 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('project-option-7')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-unavailable-icon-8')).not.toBeInTheDocument()
-
-    expect(onSelectProject).not.toHaveBeenCalledWith(8)
+    expect(screen.getByText('暂无项目')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-option-7')).not.toBeInTheDocument()
+    expect(screen.queryByText('Online Project')).not.toBeInTheDocument()
+    expect(onSelectProject).not.toHaveBeenCalled()
   })
 
   test('keeps model selector enabled and omits skill selector when options are locked', () => {

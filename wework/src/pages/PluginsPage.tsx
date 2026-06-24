@@ -25,6 +25,7 @@ export function PluginsPage() {
     startNewProjectChat,
     openRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    openStandaloneWorkspace,
     refreshDevices,
     refreshWorkLists,
     createProject,
@@ -91,6 +92,8 @@ export function PluginsPage() {
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          standaloneDeviceId={state.standaloneDeviceId}
+          standaloneWorkspacePath={state.standaloneWorkspacePath}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
@@ -101,6 +104,7 @@ export function PluginsPage() {
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
           onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+          onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}

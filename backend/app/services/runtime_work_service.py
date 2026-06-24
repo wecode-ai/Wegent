@@ -9,6 +9,7 @@ import json
 import logging
 import posixpath
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
@@ -53,12 +54,15 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
     RuntimeWorkSearchItem,
     RuntimeWorkSearchProjectRef,
     RuntimeWorkSearchRequest,
     RuntimeWorkSearchResponse,
+    RuntimeWorkspaceOpenRequest,
+    RuntimeWorkspaceOpenResponse,
 )
 from app.services.device.command_service import execute_configured_device_command
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
@@ -81,6 +85,7 @@ RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
+RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
 DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
@@ -284,7 +289,7 @@ async def list_runtime_work(
         if workspace.workspace_kind == "chat":
             conversations.append(workspace)
             continue
-        project_ref = _runtime_project_ref_from_workspace(workspace_path)
+        project_ref = _runtime_project_ref_from_workspace(device_id, workspace_path)
         projects.append(
             RuntimeProjectWork(
                 project=project_ref,
@@ -303,27 +308,62 @@ async def get_runtime_transcript(
     *,
     db: Session,
     user_id: int,
-    address: RuntimeTaskAddress,
+    address: RuntimeTranscriptRequest,
 ) -> RuntimeTranscriptResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
     normalized_address = _normalized_address(address)
     _ensure_owned_device(db, user_id, normalized_address.device_id)
     _touch_workspace_mapping(db, user_id, normalized_address)
+    payload = _runtime_transcript_payload(address, normalized_address)
+    started_at = time.perf_counter()
+    logger.info(
+        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s",
+        user_id,
+        normalized_address.device_id,
+        normalized_address.local_task_id,
+        normalized_address.workspace_path,
+        payload.get("limit"),
+        payload.get("beforeCursor"),
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.transcript",
-            payload=_runtime_task_address_payload(normalized_address),
+            payload=payload,
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.warning(
+            "[RuntimeWork] Runtime transcript RPC failed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s detail=%s",
+            user_id,
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            elapsed_ms,
+            str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
     _raise_runtime_rpc_failure(result)
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "[RuntimeWork] Runtime transcript RPC completed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s message_count=%s has_more_before=%s before_cursor=%s",
+        user_id,
+        normalized_address.device_id,
+        normalized_address.local_task_id,
+        elapsed_ms,
+        (
+            len(result.get("messages", []))
+            if isinstance(result.get("messages"), list)
+            else None
+        ),
+        result.get("hasMoreBefore"),
+        result.get("beforeCursor"),
+    )
     return RuntimeTranscriptResponse.model_validate(result)
 
 
@@ -640,6 +680,42 @@ async def create_runtime_task(
         request.runtime,
         target.device_id,
         target.workspace_path,
+    )
+
+
+async def open_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceOpenRequest,
+) -> RuntimeWorkspaceOpenResponse:
+    """Open/register a runtime workspace without creating a task row or turn."""
+
+    device_id = request.device_id.strip()
+    workspace_path = normalize_workspace_path(request.workspace_path)
+    _ensure_owned_device(db, user_id, device_id)
+    payload = {
+        "runtime": request.runtime,
+        "workspacePath": workspace_path,
+    }
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspaces.open",
+            payload=payload,
+            timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_workspace_open_response(
+        result=result,
+        runtime=request.runtime,
+        device_id=device_id,
+        workspace_path=workspace_path,
     )
 
 
@@ -1353,6 +1429,32 @@ def _runtime_create_response(
     )
 
 
+def _runtime_workspace_open_response(
+    *,
+    result: dict[str, Any],
+    runtime: str,
+    device_id: str,
+    workspace_path: str,
+) -> RuntimeWorkspaceOpenResponse:
+    if result.get("success") is False:
+        return RuntimeWorkspaceOpenResponse(
+            accepted=False,
+            deviceId=str(result.get("deviceId") or device_id),
+            workspacePath=str(result.get("workspacePath") or workspace_path),
+            runtime=result.get("runtime") or runtime,
+            threadId=result.get("threadId"),
+            error=str(result.get("error") or "Runtime workspace open failed"),
+        )
+    return RuntimeWorkspaceOpenResponse(
+        accepted=bool(result.get("accepted", True)),
+        deviceId=str(result.get("deviceId") or device_id),
+        workspacePath=str(result.get("workspacePath") or workspace_path),
+        runtime=result.get("runtime") or runtime,
+        threadId=result.get("threadId"),
+        error=result.get("error"),
+    )
+
+
 def _runtime_fork_response(
     *,
     result: dict[str, Any],
@@ -1814,8 +1916,7 @@ async def _list_online_runtime_workspaces(
                 for task in workspace["localTasks"]
                 if isinstance(task, dict)
             ]
-            if tasks:
-                grouped[(device_id, workspace_path)] = tasks
+            grouped[(device_id, workspace_path)] = tasks
     return grouped
 
 
@@ -1866,7 +1967,7 @@ def _runtime_search_items_from_result(
         local_task_id = str(raw_item.get("localTaskId") or "").strip()
         if not workspace_path or not local_task_id:
             continue
-        project = _runtime_search_project_ref(workspace_path)
+        project = _runtime_search_project_ref(device_id, workspace_path)
         if project_id is not None and (project is None or project.id != project_id):
             continue
         items.append(
@@ -1894,12 +1995,23 @@ def _runtime_search_items_from_result(
 
 
 def _runtime_search_project_ref(
+    device_id: str,
     workspace_path: str,
 ) -> Optional[RuntimeWorkSearchProjectRef]:
     if _runtime_workspace_kind_fields(workspace_path)["workspaceKind"] == "chat":
         return None
-    project = _runtime_project_ref_from_workspace(workspace_path)
-    return RuntimeWorkSearchProjectRef(id=project.id, name=project.name)
+    project = _runtime_project_ref_from_workspace(device_id, workspace_path)
+    return RuntimeWorkSearchProjectRef(
+        id=_runtime_project_ui_id(project),
+        name=project.name,
+    )
+
+
+def _runtime_project_ui_id(project: RuntimeProjectRef) -> int:
+    hash_value = 0
+    for char in project.key:
+        hash_value = (hash_value * 31 + ord(char)) & 0xFFFFFFFF
+    return (hash_value % 1_000_000_000) + 1
 
 
 def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2008,12 +2120,13 @@ def _path_basename(path: str) -> str:
     return parts[-1] if parts else ""
 
 
-def _runtime_project_ref_from_workspace(workspace_path: str) -> RuntimeProjectRef:
+def _runtime_project_ref_from_workspace(
+    device_id: str,
+    workspace_path: str,
+) -> RuntimeProjectRef:
     normalized_path = normalize_workspace_path(workspace_path)
-    project_id = int(sha256(normalized_path.encode("utf-8")).hexdigest()[:12], 16)
-    project_id = project_id % 1_000_000_000 + 1
     return RuntimeProjectRef(
-        id=project_id,
+        key=f"{device_id}:{normalized_path}",
         name=_path_basename(normalized_path) or normalized_path,
         description=normalized_path,
         color=None,
@@ -2049,6 +2162,20 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
 
 def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]:
     return address.model_dump(by_alias=True, exclude_none=True)
+
+
+def _runtime_transcript_payload(
+    request: RuntimeTranscriptRequest,
+    normalized_address: RuntimeTaskAddress,
+) -> dict[str, Any]:
+    payload = _runtime_task_address_payload(normalized_address)
+    limit = getattr(request, "limit", None)
+    before_cursor = getattr(request, "before_cursor", None)
+    if limit is not None:
+        payload["limit"] = limit
+    if before_cursor:
+        payload["beforeCursor"] = before_cursor
+    return payload
 
 
 def _project_runtime_target(

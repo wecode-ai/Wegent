@@ -19,6 +19,7 @@ Conversation
 - Project 是 executor 线程所属工作区的展示分组，由运行时列表里的工作区信息推导。
 - Conversation 是没有项目归属的 Codex 对话线程展示分组。
 - LocalTask 是 executor 本机状态，只保存在设备上。
+- Project 的运行时身份是 `deviceId + workspacePath` 派生出的 workspace key，不使用中心库 `projects.id`。Wework 可以在组件内部生成临时 UI id，但不能把这个 id 写回 Backend 或放进 URL 作为项目身份。
 - LocalTask 的稳定身份是 `deviceId + localTaskId`。`workspacePath` 只作为设备工作区上下文使用，用于列表分组、创建任务和右侧工具定位目录；任务 URL、IM 通知订阅和原生 Codex 更新去重都不把路径作为身份字段。
 - executor 返回的 `workspaceKind` 用于区分 Project 与 Conversation。Codex App 风格的目录（例如 `~/Documents/Codex/YYYY-MM-DD/<name>`）会被标记为 `chat` 并展示到“对话”，其他工作区展示到“项目”。
 
@@ -43,7 +44,7 @@ $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 
 executor 不主动向 Backend 轮询或推送任务列表。离线设备不会贡献 LocalTask；Wework 可以显示映射目录离线，但不会从中心库缓存本地任务。
 
-如果只有一个设备，Wework 不在项目名后显示设备 IP；如果有多个设备，本地设备不显示 IP，远端在线设备显示可用的非 loopback runtime transfer host 或客户端 IP，并配绿色在线点。
+如果只有一个设备，Wework 不在项目名后显示设备 IP；如果有多个设备，本地设备不显示 IP，远端在线设备显示可用的非 loopback runtime transfer host 或客户端 IP，并配绿色在线点。远程项目和远程主机选择器的主显示文本也优先使用这个 IP/host；设备 id 只是缺少网络地址时的技术回退。
 
 ## 搜索
 
@@ -110,14 +111,14 @@ Backend 根据请求中的项目映射或独立设备工作区解析目标设备
 - Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
 - 附件仍由 executor 的 Codex attachment pipeline 处理：Backend 只传 attachment id，executor 在目标设备上下载并转换给 Codex SDK，前端不传本地附件路径。
 
-Project 场景必须使用可信的 Device Workspace 映射：
+Project 场景使用运行时 workspace 引用：
 
-- Wework 发送 `projectId + deviceWorkspaceId`，不发送 `workspacePath`。
-- Backend 校验 `deviceWorkspaceId` 属于当前用户和该 `projectId`，并且映射里包含可信的 `deviceId + workspacePath`。
-- 如果同一个 Project 只有一个可用 Device Workspace，前端可以直接选中；如果有多个可用 Device Workspace，前端必须让用户确认运行位置后再发送。
-- 旧版 Project 配置里保存的 `execution.deviceId + workspace.localPath` 会在 runtime work 列表刷新时物化为 Device Workspace 映射，以便旧项目也走同一套可信映射路径。
+- Wework 发送 workspace key 或显式选择的 `deviceId + workspacePath`，不发送中心库 `projectId`。
+- Backend 根据当前用户在线设备返回的 runtime workspace 列表校验该工作区，解析出可信的 `deviceId + workspacePath`。
+- 如果没有选中项目，Wework 使用本地设备的空工作区上下文进入普通对话；该状态不带远程 IP，也不把 `projectId=0` 写进 URL。
+- 新建空白项目会在目标设备的 `~/Documents` 下创建目录；如果目录名已存在，前端必须要求用户重命名，而不是把已有目录当成项目使用。
 
-非 Project 的独立设备工作区仍使用 `deviceId + workspacePath` 创建任务。该路径只适用于用户显式选择的未映射设备工作区，不能用于 Project 任务的前端透传。
+空项目也由运行时持有。Wework 创建或选择目录后调用 workspace open/register 流程，让 executor 把这个工作区纳入 `runtime.tasks.list` 的项目分组；即使目录下还没有 LocalTask 或 Codex 会话，也应显示为项目。这个流程不写 `TaskResource`、`Subtask`，也不写 Backend `projects` 表。
 
 ## 复制和跨设备转移
 
@@ -161,6 +162,8 @@ Wework 的运行时任务 URL 使用：
 ```
 
 URL 不包含 `workspacePath`。刷新页面或复制链接时，前端先用 URL 里的 `deviceId + localTaskId` 打开任务，再从最新的 runtime work 列表恢复该任务的工作区上下文。
+
+新对话和未选择项目的入口使用根路径或普通会话路径，不使用 `projectId=0` 这类占位参数。项目选择状态由 runtime workspace 引用和当前会话上下文恢复。
 
 ## 兼容性
 
