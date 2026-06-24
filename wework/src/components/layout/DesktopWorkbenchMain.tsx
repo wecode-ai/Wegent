@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -27,6 +27,7 @@ import type {
 } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { EnvironmentDiffMode } from '@/api/environment'
 import type {
   GuidanceWorkbenchMessage,
   QueuedWorkbenchMessage,
@@ -121,8 +122,23 @@ interface DesktopReviewState {
   loading: boolean
   diff: string
   error?: string
+  reviewTitle?: string
+  reviewMode?: DesktopReviewMode
+  defaultFileTreeVisible?: boolean
+  branchName?: string
+  targetBranchName?: string
   reloadDiff?: () => Promise<string>
 }
+
+interface DesktopReviewMetadata {
+  reviewTitle?: string
+  reviewMode?: DesktopReviewMode
+  defaultFileTreeVisible?: boolean
+  branchName?: string
+  targetBranchName?: string
+}
+
+type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
@@ -149,7 +165,10 @@ interface DesktopWorkbenchMainProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onLoadEnvironmentDiff?: (workspaceTarget: WorkspaceTarget) => Promise<string>
+  onLoadEnvironmentDiff?: (
+    workspaceTarget: WorkspaceTarget,
+    mode?: EnvironmentDiffMode
+  ) => Promise<string>
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
@@ -238,16 +257,23 @@ export function DesktopWorkbenchMain({
   onCreateDeviceDirectory,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
+  const { t: tChat } = useTranslation('chat')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
+  const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
     error: undefined,
+    reviewTitle: undefined,
+    reviewMode: undefined,
+    defaultFileTreeVisible: undefined,
+    branchName: undefined,
+    targetBranchName: undefined,
     reloadDiff: undefined,
   })
   const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
@@ -255,6 +281,20 @@ export function DesktopWorkbenchMain({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const reviewRequestSequence = useRef(0)
+  const previousTurnReviewRef = useRef<{
+    loadDiff: () => Promise<string>
+    defaultFileTreeVisible?: boolean
+  } | null>(null)
+  const latestPreviousTurnSubtaskId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (message.fileChanges && typeof message.subtaskId === 'number') {
+        return message.subtaskId
+      }
+    }
+
+    return null
+  }, [messages])
   const rightPanelSessionKey = workbenchSessionKey({
     currentRuntimeTask,
     currentProject,
@@ -333,7 +373,7 @@ export function DesktopWorkbenchMain({
   )
 
   const openReviewFromDiffLoader = useCallback(
-    async (loadDiff: () => Promise<string>) => {
+    async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
       const requestId = reviewRequestSequence.current + 1
       reviewRequestSequence.current = requestId
       openRightPanelTab('review')
@@ -341,6 +381,11 @@ export function DesktopWorkbenchMain({
         loading: true,
         diff: '',
         error: undefined,
+        reviewTitle: metadata.reviewTitle,
+        reviewMode: metadata.reviewMode,
+        defaultFileTreeVisible: metadata.defaultFileTreeVisible,
+        branchName: metadata.branchName,
+        targetBranchName: metadata.targetBranchName,
         reloadDiff: loadDiff,
       })
       try {
@@ -350,6 +395,11 @@ export function DesktopWorkbenchMain({
             loading: false,
             diff,
             error: undefined,
+            reviewTitle: metadata.reviewTitle,
+            reviewMode: metadata.reviewMode,
+            defaultFileTreeVisible: metadata.defaultFileTreeVisible,
+            branchName: metadata.branchName,
+            targetBranchName: metadata.targetBranchName,
             reloadDiff: loadDiff,
           })
         }
@@ -363,6 +413,11 @@ export function DesktopWorkbenchMain({
               fallbackMessage: t('workbench.environment_review_failed'),
               deviceUnavailableMessage: t('workbench.environment_review_device_unavailable'),
             }),
+            reviewTitle: metadata.reviewTitle,
+            reviewMode: metadata.reviewMode,
+            defaultFileTreeVisible: metadata.defaultFileTreeVisible,
+            branchName: metadata.branchName,
+            targetBranchName: metadata.targetBranchName,
             reloadDiff: loadDiff,
           })
         }
@@ -371,14 +426,33 @@ export function DesktopWorkbenchMain({
     [openRightPanelTab, t]
   )
 
-  const openEnvironmentChangesReview = useCallback(async () => {
-    await openReviewFromDiffLoader(async () => {
-      if (!onLoadEnvironmentDiff || !workspaceTarget) {
-        throw new Error(t('workbench.environment_review_unavailable'))
-      }
-      return onLoadEnvironmentDiff(workspaceTarget)
-    })
-  }, [onLoadEnvironmentDiff, openReviewFromDiffLoader, t, workspaceTarget])
+  const openEnvironmentChangesReview = useCallback(
+    async (mode: EnvironmentDiffMode = 'branch') => {
+      await openReviewFromDiffLoader(
+        async () => {
+          if (!onLoadEnvironmentDiff || !workspaceTarget) {
+            throw new Error(t('workbench.environment_review_unavailable'))
+          }
+          return onLoadEnvironmentDiff(workspaceTarget, mode)
+        },
+        {
+          reviewTitle: tChat(`file_changes.${mode}_label`),
+          reviewMode: mode,
+          branchName: environmentInfo.branchName,
+          targetBranchName: projectWork.worktreeBaseBranch ?? undefined,
+        }
+      )
+    },
+    [
+      environmentInfo.branchName,
+      onLoadEnvironmentDiff,
+      openReviewFromDiffLoader,
+      projectWork.worktreeBaseBranch,
+      t,
+      tChat,
+      workspaceTarget,
+    ]
+  )
 
   const selectReviewView = useCallback(() => {
     if (reviewState.diff || reviewState.loading) {
@@ -411,8 +485,89 @@ export function DesktopWorkbenchMain({
       return
     }
 
-    void openReviewFromDiffLoader(reviewState.reloadDiff)
-  }, [openReviewFromDiffLoader, reviewState.reloadDiff])
+    void openReviewFromDiffLoader(reviewState.reloadDiff, {
+      reviewTitle: reviewState.reviewTitle,
+      reviewMode: reviewState.reviewMode,
+      defaultFileTreeVisible: reviewState.defaultFileTreeVisible,
+      branchName: reviewState.branchName,
+      targetBranchName: reviewState.targetBranchName,
+    })
+  }, [
+    openReviewFromDiffLoader,
+    reviewState.branchName,
+    reviewState.defaultFileTreeVisible,
+    reviewState.reloadDiff,
+    reviewState.reviewMode,
+    reviewState.reviewTitle,
+    reviewState.targetBranchName,
+  ])
+
+  const reviewViewOptions = useMemo(
+    () => [
+      {
+        id: 'unstaged',
+        label: tChat('file_changes.unstaged_label'),
+        active: reviewState.reviewMode === 'unstaged',
+        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        onSelect: () => void openEnvironmentChangesReview('unstaged'),
+      },
+      {
+        id: 'staged',
+        label: tChat('file_changes.staged_label'),
+        active: reviewState.reviewMode === 'staged',
+        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        onSelect: () => void openEnvironmentChangesReview('staged'),
+      },
+      {
+        id: 'commit',
+        label: tChat('file_changes.commit_label'),
+        active: reviewState.reviewMode === 'commit',
+        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        onSelect: () => void openEnvironmentChangesReview('commit'),
+      },
+      {
+        id: 'branch',
+        label: tChat('file_changes.branch_label'),
+        active: reviewState.reviewMode === 'branch',
+        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        onSelect: () => void openEnvironmentChangesReview('branch'),
+      },
+      {
+        id: 'previous-turn',
+        label: tChat('file_changes.previous_turn_label'),
+        active: reviewState.reviewMode === 'previous-turn',
+        disabled:
+          (!onLoadFileChangesDiff || latestPreviousTurnSubtaskId === null) &&
+          !hasPreviousTurnReview,
+        onSelect: () => {
+          const previousTurn =
+            onLoadFileChangesDiff && latestPreviousTurnSubtaskId !== null
+              ? {
+                  loadDiff: () => onLoadFileChangesDiff(latestPreviousTurnSubtaskId),
+                  defaultFileTreeVisible: false,
+                }
+              : previousTurnReviewRef.current
+          if (!previousTurn) return
+          void openReviewFromDiffLoader(previousTurn.loadDiff, {
+            reviewTitle: tChat('file_changes.previous_turn_label'),
+            reviewMode: 'previous-turn',
+            defaultFileTreeVisible: previousTurn.defaultFileTreeVisible,
+          })
+        },
+      },
+    ],
+    [
+      hasPreviousTurnReview,
+      latestPreviousTurnSubtaskId,
+      onLoadEnvironmentDiff,
+      onLoadFileChangesDiff,
+      openEnvironmentChangesReview,
+      openReviewFromDiffLoader,
+      reviewState.reviewMode,
+      tChat,
+      workspaceTarget,
+    ]
+  )
 
   const toggleRightPanel = useCallback(() => {
     setRightPanelOpen(open => {
@@ -491,12 +646,19 @@ export function DesktopWorkbenchMain({
 
     previousRightPanelSessionKey.current = rightPanelSessionKey
     reviewRequestSequence.current += 1
+    previousTurnReviewRef.current = null
+    setHasPreviousTurnReview(false)
     setRightPanelView('launcher')
     setRightPanelTabs([])
     setReviewState({
       loading: false,
       diff: '',
       error: undefined,
+      reviewTitle: undefined,
+      reviewMode: undefined,
+      defaultFileTreeVisible: undefined,
+      branchName: undefined,
+      targetBranchName: undefined,
       reloadDiff: undefined,
     })
   }, [rightPanelSessionKey])
@@ -514,7 +676,7 @@ export function DesktopWorkbenchMain({
       {!isTauri && (
         <div
           data-testid="workspace-panel-floating-actions"
-          className="pointer-events-auto absolute right-7 top-3 z-popover flex shrink-0 items-center gap-2"
+          className="pointer-events-auto absolute right-7 top-1.5 z-popover flex shrink-0 items-center gap-2"
         >
           {topRightActions}
         </div>
@@ -560,8 +722,17 @@ export function DesktopWorkbenchMain({
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
-              onOpenFileChangesReview={({ loadDiff }) => {
-                void openReviewFromDiffLoader(loadDiff)
+              onOpenFileChangesReview={({ loadDiff, reviewTitle, defaultFileTreeVisible }) => {
+                previousTurnReviewRef.current = {
+                  loadDiff,
+                  defaultFileTreeVisible,
+                }
+                setHasPreviousTurnReview(true)
+                void openReviewFromDiffLoader(loadDiff, {
+                  reviewTitle,
+                  reviewMode: 'previous-turn',
+                  defaultFileTreeVisible,
+                })
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
             />
@@ -693,6 +864,7 @@ export function DesktopWorkbenchMain({
             openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
+            reviewViewOptions={reviewViewOptions}
             canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={onAddCodeComment}
             onResizeStart={handleRightSplitResizeStart}

@@ -15,7 +15,12 @@ interface FileChangesCardProps {
   deviceOnline: boolean
   onLoadDiff: (subtaskId: number) => Promise<string>
   onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  onOpenReview?: (request: { subtaskId: number; loadDiff: () => Promise<string> }) => void
+  onOpenReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
+  }) => void
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -75,12 +80,14 @@ export function FileChangesCard({
   const visibleFiles = expanded ? summary.files : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT)
   const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
   const reviewDisabled = actionsDisabled || !onOpenReview
-  const canRevert = summary.status === 'active'
+  const canRevert = summary.status === 'active' && summary.revertible !== false
 
   const openReview = () => {
     onOpenReview?.({
       subtaskId,
       loadDiff: () => onLoadDiff(subtaskId),
+      reviewTitle: t('file_changes.previous_turn_label'),
+      defaultFileTreeVisible: false,
     })
   }
 

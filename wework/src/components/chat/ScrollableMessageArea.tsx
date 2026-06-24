@@ -27,6 +27,8 @@ interface ScrollableMessageAreaProps {
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
   onLoadMoreBefore?: () => Promise<void> | void

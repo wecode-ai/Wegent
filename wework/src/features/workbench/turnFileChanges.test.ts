@@ -26,6 +26,20 @@ describe('normalizeTurnFileChanges', () => {
     expect(normalizeTurnFileChanges(summary)).toEqual(summary)
   })
 
+  test('keeps runtime inline diff metadata', () => {
+    expect(
+      normalizeTurnFileChanges({
+        ...summary,
+        diff: 'diff --git a/src/main.ts b/src/main.ts',
+        revertible: false,
+      }),
+    ).toEqual({
+      ...summary,
+      diff: 'diff --git a/src/main.ts b/src/main.ts',
+      revertible: false,
+    })
+  })
+
   test('rejects malformed files and inconsistent file counts', () => {
     expect(
       normalizeTurnFileChanges({

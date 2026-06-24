@@ -17,6 +17,8 @@ from app.schemas.runtime_work import (
     DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
+    RuntimeFileChangesRevertRequest,
+    RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
@@ -149,6 +151,25 @@ async def get_runtime_transcript_endpoint(
         db=db,
         user_id=current_user.id,
         address=address,
+    )
+
+
+@router.post(
+    "/file-changes/revert",
+    response_model=RuntimeFileChangesRevertResponse,
+    response_model_by_alias=True,
+)
+async def revert_runtime_file_changes_endpoint(
+    request: RuntimeFileChangesRevertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Revert a native runtime file-change artifact on the owning device."""
+
+    return await runtime_work_service.revert_runtime_file_changes(
+        db=db,
+        user_id=current_user.id,
+        request=request,
     )
 
 

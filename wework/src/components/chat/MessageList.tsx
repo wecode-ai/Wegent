@@ -24,6 +24,8 @@ interface MessageListProps {
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }
@@ -79,6 +81,36 @@ export function MessageList({
 function getTurnStartMs(createdAt: string): number | undefined {
   const ms = new Date(createdAt).getTime()
   return Number.isFinite(ms) ? ms : undefined
+}
+
+function formatCompactDuration(durationMs: number): string {
+  const seconds = Math.max(0, Math.floor(durationMs / 1000))
+  if (seconds < 60) return `${seconds}s`
+
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+}
+
+function getStoppedElapsedDuration(message: WorkbenchMessage): string {
+  const startedAt = getTurnStartMs(message.createdAt)
+  if (startedAt === undefined) return '0s'
+
+  const blockEndTimes =
+    message.blocks
+      ?.map(block => block.createdAt)
+      .filter((createdAt): createdAt is number => Number.isFinite(createdAt)) ?? []
+  const endedAt = blockEndTimes.length > 0 ? Math.max(...blockEndTimes) : startedAt
+
+  return formatCompactDuration(endedAt - startedAt)
+}
+
+function isCancelledAssistantMessage(message: WorkbenchMessage): boolean {
+  return message.runtimeStatus === 'cancelled'
 }
 
 function formatMessageTime(createdAt: string) {
@@ -379,12 +411,16 @@ function AssistantMessage({
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const shouldHideContent = shouldHideFailedAssistantContent(message)
+  const { t } = useTranslation('chat')
+  const isCancelled = isCancelledAssistantMessage(message)
+  const shouldHideContent = isCancelled || shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
-  const hiddenErrorContent = shouldHideContent ? message.content.trim() : undefined
+  const hiddenErrorContent = shouldHideContent && !isCancelled ? message.content.trim() : undefined
   const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -397,6 +433,8 @@ function AssistantMessage({
           blocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
+          forceExpanded={isCancelled}
+          showSummary={!isCancelled}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       )}
@@ -500,9 +538,21 @@ function AssistantMessage({
           onOpenReview={onOpenFileChangesReview}
         />
       ) : null}
-      {message.status !== 'streaming' && (hasVisibleContent || message.status === 'failed') && (
-        <MessageHoverActions message={message} align="left" />
-      )}
+      {isCancelled ? (
+        <div
+          data-testid="assistant-stopped-notice"
+          className="mt-4 flex justify-end border-b border-border pb-2 text-sm font-medium text-text-muted"
+        >
+          {t('assistant_status.stopped_after', {
+            duration: getStoppedElapsedDuration(message),
+          })}
+        </div>
+      ) : null}
+      {message.status !== 'streaming' &&
+        !isCancelled &&
+        (hasVisibleContent || message.status === 'failed') && (
+          <MessageHoverActions message={message} align="left" />
+        )}
     </div>
   )
 }

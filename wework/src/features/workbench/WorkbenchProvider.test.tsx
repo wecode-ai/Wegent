@@ -591,6 +591,48 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
+  test('restores a runtime local task from the URL even when it is missing from the work list', async () => {
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&localTaskId=codex-hidden')
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'codex-hidden',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-hidden', role: 'user', content: 'hidden user message' },
+        { id: 'assistant-hidden', role: 'assistant', content: 'hidden assistant message' },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [],
+          unmappedDeviceWorkspaces: [],
+          totalLocalTasks: 0,
+        })
+      ),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:codex-hidden'
+      )
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent(
+      'hidden user message|hidden assistant message'
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      localTaskId: 'codex-hidden',
+      limit: 50,
+    })
+  })
+
   test('loads older runtime transcript messages before the current page', async () => {
     const getRuntimeTranscript = vi.fn(request => {
       if (request.beforeCursor === 'offset:120') {
