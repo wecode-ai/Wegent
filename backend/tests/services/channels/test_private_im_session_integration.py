@@ -115,12 +115,12 @@ def _message(
 
 
 async def _private_session(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, *, channel_type: str = "dingtalk"
 ) -> IMPrivateSession | None:
     return await im_session_service.get_session(
         im_session_service.build_session_key(
             user_id=test_user.id,
-            channel_type="dingtalk",
+            channel_type=channel_type,
             channel_id=77,
             conversation_id="conv-private",
         )
@@ -1008,7 +1008,7 @@ async def test_private_task_creation_creates_runtime_task_and_binds_runtime_addr
 
     team = _create_team(test_db, test_user)
     project = _create_wework_project(test_db, test_user)
-    handler = FakeChannelHandler(test_user)
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
     calls: dict[str, Any] = {}
 
     async def fake_create_chat_task(
@@ -1050,13 +1050,13 @@ async def test_private_task_creation_creates_runtime_task_and_binds_runtime_addr
         fake_create_runtime_task,
     )
 
-    await handler.handle_message(_message("/task"))
-    await handler.handle_message(_message("new"))
+    await handler.handle_message(_message("/new"))
+    await handler.handle_message(_message("2"))
     await handler.handle_message(_message("1"))
     handled = await handler.handle_message(_message("创建新的任务需求"))
 
     test_db.expire_all()
-    session = await _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user, channel_type="weibo")
     assert handled is True
     request = calls["runtime_create"]["request"]
     assert calls["runtime_create"]["user_id"] == test_user.id
@@ -1090,7 +1090,7 @@ async def test_private_task_creation_without_project_uses_runtime_chat_workspace
     from app.services.device_service import device_service
 
     team = _create_team(test_db, test_user)
-    handler = FakeChannelHandler(test_user)
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
     calls: dict[str, Any] = {}
 
     async def fake_create_runtime_task(**kwargs):
@@ -1133,13 +1133,13 @@ async def test_private_task_creation_without_project_uses_runtime_chat_workspace
         fake_create_runtime_task,
     )
 
-    await handler.handle_message(_message("/task"))
-    await handler.handle_message(_message("new"))
+    await handler.handle_message(_message("/new"))
+    await handler.handle_message(_message("2"))
     await handler.handle_message(_message("0"))
     handled = await handler.handle_message(_message("创建无项目任务"))
 
     test_db.expire_all()
-    session = await _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user, channel_type="weibo")
     assert handled is True
     request = calls["runtime_create"]["request"]
     assert request.project_id is None
