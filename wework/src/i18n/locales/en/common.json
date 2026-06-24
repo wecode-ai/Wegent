@@ -11,6 +11,8 @@
     "search": "Search",
     "search_conversations": "Search conversations",
     "search_projects": "Search projects",
+    "search_loading": "Searching",
+    "search_failed": "Search failed",
     "recent_conversations": "Recent conversations",
     "search_no_results": "No matching conversations",
     "project_search_no_results": "No matching projects",

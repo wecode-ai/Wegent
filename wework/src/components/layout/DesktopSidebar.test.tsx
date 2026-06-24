@@ -35,6 +35,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     devices: [localDevice()],
     onCollapse: vi.fn(),
     onNewChat: vi.fn(),
+    onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenPlugins: vi.fn(),
@@ -125,6 +126,23 @@ describe('DesktopSidebar', () => {
     )
     expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
     expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+  })
+
+  test('opens runtime search from the sidebar', async () => {
+    const onOpenSearch = vi.fn()
+    renderSidebar({ onOpenSearch })
+
+    await userEvent.click(screen.getByTestId('runtime-search-button'))
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides plugins navigation while the feature is not released', () => {
+    const onOpenPlugins = vi.fn()
+    renderSidebar({ onOpenPlugins })
+
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

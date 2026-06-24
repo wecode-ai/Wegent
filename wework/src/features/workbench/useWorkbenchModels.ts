@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  type ModelCompatibilityFamily,
   areModelsProtocolCompatible,
   getDefaultModelOptions,
   getModelCompatibilityFamily,
@@ -24,6 +25,7 @@ interface UseWorkbenchModelsOptions {
   locked: boolean
   selectionConfig?: ModelSelectionConfig | null
   compatibilityConfig?: ModelSelectionConfig | null
+  compatibilityFamily?: ModelCompatibilityFamily | null
   defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
@@ -99,10 +101,36 @@ function getCompatibilityDisabledReason(
   return areModelsProtocolCompatible(currentModel, nextModel) ? null : 'runtime_family_mismatch'
 }
 
+function getCompatibilityDisabledReasonForFamily(
+  currentFamily: ModelCompatibilityFamily,
+  nextModel: UnifiedModel
+): ModelCompatibilityDisabledReason | null {
+  const nextFamily = getModelCompatibilityFamily(nextModel)
+  if (!nextFamily) return 'missing_target_runtime_family'
+
+  return currentFamily === nextFamily ? null : 'runtime_family_mismatch'
+}
+
 function annotateModelsByCompatibility(
   models: UnifiedModel[],
-  compatibilityConfig?: ModelSelectionConfig | null
+  compatibilityConfig?: ModelSelectionConfig | null,
+  compatibilityFamily?: ModelCompatibilityFamily | null
 ): UnifiedModel[] {
+  if (compatibilityFamily) {
+    return models.map(model => {
+      const compatibilityDisabledReason = getCompatibilityDisabledReasonForFamily(
+        compatibilityFamily,
+        model
+      )
+      if (!compatibilityDisabledReason) return model
+      return {
+        ...model,
+        compatibilityDisabled: true,
+        compatibilityDisabledReason,
+      }
+    })
+  }
+
   const currentModel = findConfiguredModel(models, compatibilityConfig)
   if (!currentModel) return models
   return models.map(model => {
@@ -121,6 +149,7 @@ export function useWorkbenchModels({
   locked,
   selectionConfig,
   compatibilityConfig,
+  compatibilityFamily,
   defaultSelectionConfig,
   selectionReady = true,
   onSelectionChange,
@@ -128,8 +157,8 @@ export function useWorkbenchModels({
 }: UseWorkbenchModelsOptions) {
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
   const models = useMemo(
-    () => annotateModelsByCompatibility(availableModels, compatibilityConfig),
-    [availableModels, compatibilityConfig]
+    () => annotateModelsByCompatibility(availableModels, compatibilityConfig, compatibilityFamily),
+    [availableModels, compatibilityConfig, compatibilityFamily]
   )
   const [selectedModel, setSelectedModelState] = useState<UnifiedModel | null>(null)
   const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})

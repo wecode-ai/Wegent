@@ -40,6 +40,9 @@ CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+RUNTIME_SEARCH_DEFAULT_LIMIT = 20
+RUNTIME_SEARCH_MAX_LIMIT = 50
+RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS = 60
 
 
 class LocalTaskResponsesTransport(EventTransport):
@@ -136,6 +139,8 @@ class RuntimeWorkRpcHandler:
         try:
             if method == "runtime.tasks.list":
                 return self._list_tasks(payload)
+            if method == "runtime.tasks.search":
+                return await self._search(payload)
             if method == "runtime.tasks.transcript":
                 return await self._transcript(payload)
             if method == "runtime.tasks.send":
@@ -197,6 +202,156 @@ class RuntimeWorkRpcHandler:
                 for workspace_path, workspace_tasks in sorted(grouped.items())
             ],
         }
+
+    async def _search(self, payload: dict[str, Any]) -> dict[str, Any]:
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            return {"success": True, "query": "", "items": []}
+
+        limit = self._bounded_search_limit(payload.get("limit"))
+        workspace_path = payload.get("workspacePath")
+        include_archived = bool(payload.get("includeArchived", False))
+        discovered_tasks = self._refresh_discovered_tasks()
+        store_tasks = self.store.list_tasks(
+            workspace_path=workspace_path,
+            include_archived=include_archived,
+        )
+        tasks = self._list_visible_tasks(
+            store_tasks=store_tasks,
+            discovered_tasks=discovered_tasks,
+            workspace_path=workspace_path,
+            include_archived=include_archived,
+        )
+
+        items: list[dict[str, Any]] = []
+        metadata_matched_task_ids: set[str] = set()
+        for task in tasks:
+            task_matches = self._search_task_metadata(task, query)
+            if not task_matches:
+                continue
+            metadata_matched_task_ids.add(task.local_task_id)
+            items.extend(task_matches)
+            if len(items) >= limit:
+                return {
+                    "success": True,
+                    "query": query,
+                    "items": items[:limit],
+                }
+
+        for task in tasks:
+            if task.local_task_id in metadata_matched_task_ids:
+                continue
+            messages = await self._task_transcript_messages(task)
+            normalized_messages = self._normalize_messages(task, messages)
+            task_matches = self._search_task_messages(task, normalized_messages, query)
+            items.extend(task_matches)
+            if len(items) >= limit:
+                break
+
+        return {
+            "success": True,
+            "query": query,
+            "items": items[:limit],
+        }
+
+    def _bounded_search_limit(self, value: Any) -> int:
+        if isinstance(value, bool):
+            return RUNTIME_SEARCH_DEFAULT_LIMIT
+        if isinstance(value, int):
+            return max(1, min(value, RUNTIME_SEARCH_MAX_LIMIT))
+        if isinstance(value, str) and value.isdigit():
+            return max(1, min(int(value), RUNTIME_SEARCH_MAX_LIMIT))
+        return RUNTIME_SEARCH_DEFAULT_LIMIT
+
+    def _search_task_metadata(
+        self,
+        task: LocalTaskRecord,
+        query: str,
+    ) -> list[dict[str, Any]]:
+        fields = [
+            ("title", task.title, task.updated_at),
+            ("workspace", task.workspace_path, task.updated_at),
+        ]
+        query_lower = query.lower()
+        for role, content, created_at in fields:
+            match_start = content.lower().find(query_lower)
+            if match_start < 0:
+                continue
+            match_end = match_start + len(query)
+            return [
+                self._search_item(
+                    task=task,
+                    content=content,
+                    match_start=match_start,
+                    match_end=match_end,
+                    message_id="",
+                    message_role=role,
+                    message_created_at=created_at,
+                )
+            ]
+        return []
+
+    def _search_task_messages(
+        self,
+        task: LocalTaskRecord,
+        messages: list[dict[str, Any]],
+        query: str,
+    ) -> list[dict[str, Any]]:
+        query_lower = query.lower()
+        matches: list[dict[str, Any]] = []
+        for message in messages:
+            content = self._string_content(message.get("content"))
+            match_start = content.lower().find(query_lower)
+            if match_start < 0:
+                continue
+            match_end = match_start + len(query)
+            matches.append(
+                self._search_item(
+                    task=task,
+                    content=content,
+                    match_start=match_start,
+                    match_end=match_end,
+                    message_id=str(message.get("id") or ""),
+                    message_role=str(message.get("role") or ""),
+                    message_created_at=message.get("createdAt"),
+                )
+            )
+            break
+        return matches
+
+    def _search_item(
+        self,
+        *,
+        task: LocalTaskRecord,
+        content: str,
+        match_start: int,
+        match_end: int,
+        message_id: str,
+        message_role: str,
+        message_created_at: Any,
+    ) -> dict[str, Any]:
+        return {
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+            "runtime": task.runtime,
+            "title": task.title,
+            "updatedAt": task.updated_at,
+            "messageId": message_id,
+            "messageRole": message_role,
+            "messageCreatedAt": message_created_at,
+            "snippet": self._search_snippet(content, match_start, match_end),
+            "matchStart": match_start,
+            "matchEnd": match_end,
+        }
+
+    def _search_snippet(self, content: str, match_start: int, match_end: int) -> str:
+        if len(content) <= RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS * 2:
+            return content
+        start = max(0, match_start - RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS)
+        end = min(len(content), match_end + RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS)
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(content) else ""
+        return f"{prefix}{content[start:end]}{suffix}"
 
     def _refresh_discovered_tasks(self) -> list[LocalTaskRecord]:
         if self.codex_discovery is None:
@@ -1390,6 +1545,10 @@ class RuntimeWorkRpcHandler:
                 ]
                 if normalized_blocks:
                     normalized_message["blocks"] = normalized_blocks
+
+            file_changes = message.get("fileChanges") or message.get("file_changes")
+            if isinstance(file_changes, dict):
+                normalized_message["fileChanges"] = file_changes
 
             source = message.get("source") or source_by_message_id.get(message_id)
             if isinstance(source, dict):

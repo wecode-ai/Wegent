@@ -10,6 +10,7 @@ import {
   Pin,
   Plus,
   RotateCw,
+  Search,
   Settings,
   Sparkles,
   X,
@@ -20,6 +21,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -70,6 +72,7 @@ interface DesktopSidebarProps {
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
+  onOpenSearch?: () => void
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -939,6 +942,7 @@ export function DesktopSidebar({
   activeItem = 'chat',
   onCollapse,
   onNewChat,
+  onOpenSearch,
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
@@ -1148,13 +1152,23 @@ export function DesktopSidebar({
           testId="new-chat-button"
           onClick={onNewChat}
         />
-        <SidebarButton
-          icon={Sparkles}
-          label={t('workbench.plugins', '插件')}
-          testId="plugins-button"
-          selected={activeItem === 'plugins'}
-          onClick={onOpenPlugins}
-        />
+        {onOpenSearch && (
+          <SidebarButton
+            icon={Search}
+            label={t('workbench.search')}
+            testId="runtime-search-button"
+            onClick={onOpenSearch}
+          />
+        )}
+        {SHOW_PLUGINS_NAVIGATION && (
+          <SidebarButton
+            icon={Sparkles}
+            label={t('workbench.plugins', '插件')}
+            testId="plugins-button"
+            selected={activeItem === 'plugins'}
+            onClick={onOpenPlugins}
+          />
+        )}
       </nav>
 
       <div

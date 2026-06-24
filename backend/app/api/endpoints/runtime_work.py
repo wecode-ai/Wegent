@@ -31,6 +31,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscriptionResponse,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
+    RuntimeWorkSearchRequest,
+    RuntimeWorkSearchResponse,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -130,6 +132,25 @@ def delete_device_workspace_endpoint(
         workspace_path=workspace_path,
     )
     return {"deleted": deleted}
+
+
+@router.post(
+    "/search",
+    response_model=RuntimeWorkSearchResponse,
+    response_model_by_alias=True,
+)
+async def search_runtime_work_endpoint(
+    request: RuntimeWorkSearchRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search online runtime transcripts owned by the current user."""
+
+    return await runtime_work_service.search_runtime_work(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
 
 
 @router.post(

@@ -253,6 +253,8 @@ export interface NormalizedRuntimeMessage {
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
+  fileChanges?: TurnFileChangesSummary | null
+  file_changes?: TurnFileChangesSummary | null
 }
 
 export interface LocalTaskSummary {
@@ -354,6 +356,38 @@ export interface RuntimeWorkListResponse {
   totalLocalTasks: number
 }
 
+export interface RuntimeWorkSearchRequest {
+  query: string
+  limit?: number
+  includeArchived?: boolean
+  projectId?: number
+}
+
+export interface RuntimeWorkSearchProjectRef {
+  id: number
+  name: string
+}
+
+export interface RuntimeWorkSearchItem {
+  address: RuntimeTaskAddress
+  runtime: RuntimeName
+  title: string
+  snippet: string
+  matchStart: number
+  matchEnd: number
+  messageId?: string
+  messageRole?: string
+  messageCreatedAt?: string | null
+  updatedAt?: string | null
+  deviceName: string
+  workspacePath: string
+  project?: RuntimeWorkSearchProjectRef | null
+}
+
+export interface RuntimeWorkSearchResponse {
+  items: RuntimeWorkSearchItem[]
+}
+
 export interface RuntimeTranscriptResponse {
   localTaskId: string
   workspacePath: string
@@ -365,6 +399,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  attachmentIds?: number[]
   source?: RuntimeMessageSource | null
 }
 

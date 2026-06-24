@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, CopyCheck, Package } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
-import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import { getAttachmentImageUrl, getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
@@ -30,6 +31,7 @@ interface MessageListProps {
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
+const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
 export function MessageList({
   messages,
@@ -360,6 +362,150 @@ function getDisplayProcessingBlocks(
   })
 }
 
+function getAttachmentDownloadId(src: string): number | null {
+  try {
+    const url = new URL(src)
+    const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
+  } catch {
+    const match = src.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
+  }
+}
+
+function isAuthenticatedAttachmentImageSrc(src: string): boolean {
+  return getAttachmentDownloadId(src) !== null
+}
+
+function getAuthenticatedImageFetchUrl(src: string): string {
+  if (src.startsWith('/api/')) return src
+  if (/^https?:\/\//i.test(src)) return src
+
+  const attachmentId = getAttachmentDownloadId(src)
+  return attachmentId === null ? src : getAttachmentImageUrl(attachmentId)
+}
+
+function isLocalImagePath(src: string): boolean {
+  if (src.startsWith('file://')) return true
+  if (/^[a-zA-Z]:[\\/]/.test(src)) return true
+
+  return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
+}
+
+function localPathFromMarkdownImageSrc(src: string): string {
+  if (!src.startsWith('file://')) return src
+
+  try {
+    const pathname = decodeURIComponent(new URL(src).pathname)
+    return pathname.match(/^\/[a-zA-Z]:\//) ? pathname.slice(1) : pathname
+  } catch {
+    return src
+  }
+}
+
+function resolveDirectMarkdownImageSrc(src: string): string {
+  return isLocalImagePath(src) ? convertFileSrc(localPathFromMarkdownImageSrc(src)) : src
+}
+
+function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const rawSrc = typeof src === 'string' ? src.trim() : ''
+  const [authenticatedPreview, setAuthenticatedPreview] = useState<{
+    rawSrc: string
+    url: string
+  } | null>(null)
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const isAuthenticatedSrc = rawSrc ? isAuthenticatedAttachmentImageSrc(rawSrc) : false
+  const resolvedSrc = isAuthenticatedSrc
+    ? authenticatedPreview?.rawSrc === rawSrc
+      ? authenticatedPreview.url
+      : null
+    : rawSrc
+      ? resolveDirectMarkdownImageSrc(rawSrc)
+      : null
+  const hasError = failedSrc === rawSrc
+
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let isMounted = true
+
+    if (!rawSrc || !isAuthenticatedSrc) {
+      return () => {
+        isMounted = false
+      }
+    }
+
+    async function loadAuthenticatedImage() {
+      try {
+        const token = localStorage.getItem('auth_token')
+        const response = await fetch(getAuthenticatedImageFetchUrl(rawSrc), {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to load markdown image: ${response.status}`)
+        }
+
+        const blob = await response.blob()
+        if (!blob.type.startsWith('image/')) {
+          throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
+        }
+
+        objectUrl = URL.createObjectURL(blob)
+        if (isMounted) {
+          setAuthenticatedPreview({ rawSrc, url: objectUrl })
+        } else {
+          URL.revokeObjectURL(objectUrl)
+        }
+      } catch {
+        if (isMounted) {
+          setFailedSrc(rawSrc)
+        }
+      }
+    }
+
+    void loadAuthenticatedImage()
+
+    return () => {
+      isMounted = false
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [isAuthenticatedSrc, rawSrc])
+
+  if (hasError) {
+    return (
+      <span
+        data-testid="assistant-markdown-image-error"
+        className="my-2 inline-flex max-w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-text-muted"
+      >
+        {alt || rawSrc}
+      </span>
+    )
+  }
+
+  if (!resolvedSrc) {
+    return (
+      <span
+        data-testid="assistant-markdown-image-loading"
+        className="my-2 inline-flex h-20 w-32 max-w-full items-center justify-center rounded-xl border border-border bg-surface text-xs text-text-muted"
+      >
+        {alt || 'Image'}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      data-testid="assistant-markdown-image"
+      src={resolvedSrc}
+      alt={alt || ''}
+      className="my-2 block max-h-[360px] max-w-full rounded-xl border border-border bg-base object-contain"
+      loading="lazy"
+    />
+  )
+}
+
 function AssistantMessage({
   message,
   devices,
@@ -463,6 +609,7 @@ function AssistantMessage({
                   {children}
                 </a>
               ),
+              img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
             }}
           >
             {visibleContent}

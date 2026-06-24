@@ -28,6 +28,7 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    searchRuntimeWork,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
@@ -111,6 +112,7 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onSearchRuntimeWork={searchRuntimeWork}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}

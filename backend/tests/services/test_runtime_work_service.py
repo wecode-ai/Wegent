@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -658,6 +659,143 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
 
 
 @pytest.mark.asyncio
+async def test_search_runtime_work_fans_out_to_online_and_busy_devices(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkSearchRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "online-device",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                },
+                {
+                    "device_id": "busy-device",
+                    "name": "Build box",
+                    "status": "busy",
+                    "device_type": "local",
+                },
+                {
+                    "device_id": "offline-device",
+                    "name": "Offline box",
+                    "status": "offline",
+                    "device_type": "local",
+                },
+            ]
+        ),
+    )
+
+    async def rpc(*, device_id, method, payload, **_kwargs):
+        if device_id == "online-device":
+            return {
+                "items": [
+                    {
+                        "localTaskId": "codex-1",
+                        "workspacePath": "/repo/Wegent",
+                        "runtime": "codex",
+                        "title": "执行 pwd",
+                        "updatedAt": "2026-06-21T12:00:01Z",
+                        "messageId": "m1",
+                        "messageRole": "user",
+                        "messageCreatedAt": "2026-06-21T12:00:00Z",
+                        "snippet": "执行 pwd",
+                        "matchStart": 3,
+                        "matchEnd": 6,
+                    }
+                ]
+            }
+        return {"items": []}
+
+    rpc_mock = AsyncMock(side_effect=rpc)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc_mock)
+
+    response = await runtime_work_service.search_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkSearchRequest(query="pwd", limit=20),
+    )
+
+    assert [call.kwargs["device_id"] for call in rpc_mock.await_args_list] == [
+        "online-device",
+        "busy-device",
+    ]
+    assert all(
+        call.kwargs["method"] == "runtime.tasks.search"
+        for call in rpc_mock.await_args_list
+    )
+    assert response.items[0].address.device_id == "online-device"
+    assert response.items[0].address.local_task_id == "codex-1"
+    assert response.items[0].device_name == "MacBook"
+    assert response.items[0].project is not None
+    assert response.items[0].project.name == "Wegent"
+
+
+@pytest.mark.asyncio
+async def test_search_runtime_work_queries_online_devices_concurrently(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkSearchRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "online-device",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                },
+                {
+                    "device_id": "busy-device",
+                    "name": "Build box",
+                    "status": "busy",
+                    "device_type": "local",
+                },
+            ]
+        ),
+    )
+
+    started_devices: list[str] = []
+    both_started = asyncio.Event()
+
+    async def rpc(*, device_id, **_kwargs):
+        started_devices.append(device_id)
+        if len(started_devices) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=0.2)
+        return {"items": []}
+
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(side_effect=rpc),
+    )
+
+    response = await runtime_work_service.search_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkSearchRequest(query="pwd", limit=20),
+    )
+
+    assert response.items == []
+    assert set(started_devices) == {"online-device", "busy-device"}
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_skips_offline_devices(
     test_db,
     test_user,
@@ -870,6 +1008,82 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         },
         timeout_seconds=600,
     )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_message_forwards_ready_attachments_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.schemas.runtime_work import (
+        DeviceWorkspaceUpsert,
+        RuntimeSendRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+        ),
+    )
+    attachment = SubtaskContext(
+        subtask_id=0,
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="photo.png",
+        status=ContextStatus.READY.value,
+        type_data={
+            "original_filename": "photo.png",
+            "file_extension": ".png",
+            "file_size": 1200,
+            "mime_type": "image/png",
+        },
+    )
+    test_db.add(attachment)
+    test_db.commit()
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="continue",
+            attachmentIds=[attachment.id],
+        ),
+    )
+
+    assert response.accepted is True
+    rpc.assert_awaited_once()
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["attachments"] == [
+        {
+            "id": attachment.id,
+            "original_filename": "photo.png",
+            "mime_type": "image/png",
+            "file_size": 1200,
+            "subtask_id": 0,
+            "file_extension": ".png",
+        }
+    ]
     assert test_db.query(TaskResource).count() == 0
 
 

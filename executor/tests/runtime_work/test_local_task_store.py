@@ -71,6 +71,30 @@ async def _drain_runtime_adapter(adapter):
         await asyncio.gather(*adapter._running_tasks)
 
 
+def _turn_file_changes():
+    return {
+        "version": 1,
+        "status": "active",
+        "artifact_id": "artifact-1",
+        "device_id": "device-1",
+        "workspace_path": "/repo/Wegent",
+        "file_count": 1,
+        "additions": 6,
+        "deletions": 4,
+        "files": [
+            {
+                "old_path": None,
+                "path": "wework/src/features/workbench/WorkbenchProvider.tsx",
+                "change_type": "modified",
+                "additions": 6,
+                "deletions": 4,
+                "binary": False,
+            }
+        ],
+        "reverted_at": None,
+    }
+
+
 def _sdk_codex_record(
     thread_id,
     *,
@@ -96,6 +120,32 @@ def _sdk_codex_record(
         running=running,
         status="active",
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_transcript_transport_persists_assistant_file_changes(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeTranscriptTransport
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from shared.models import EmitterBuilder
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="runtime-1",
+            workspace_path="/repo/Wegent",
+            title="Edit files",
+            runtime="codex",
+            runtime_handle={"messages": []},
+        )
+    )
+    transport = RuntimeTranscriptTransport(store, "runtime-1", runtime="codex")
+    emitter = EmitterBuilder().with_task(0, 10).with_transport(transport).build()
+
+    await emitter.done("done", file_changes=_turn_file_changes())
+
+    task = store.get_task("runtime-1")
+    assistant_message = task.runtime_handle["messages"][0]
+    assert assistant_message["fileChanges"] == _turn_file_changes()
 
 
 def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
@@ -2037,6 +2087,279 @@ async def test_runtime_work_handler_prefers_codex_transcript_over_imported_cache
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_searches_runtime_transcripts(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="task-1",
+            workspace_path="/repo/Wegent",
+            title="Debug shell command",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "please run pwd and show the workspace",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                        "status": "done",
+                    },
+                    {
+                        "id": "m2",
+                        "role": "assistant",
+                        "content": "The current directory is /repo/Wegent.",
+                        "createdAt": "2026-06-21T12:00:01Z",
+                        "status": "done",
+                    },
+                ]
+            },
+            created_at="2026-06-21T11:59:00Z",
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {
+                "query": "PWD",
+                "limit": 10,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["items"] == [
+        {
+            "localTaskId": "task-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+            "title": "Debug shell command",
+            "updatedAt": "2026-06-21T12:00:01Z",
+            "messageId": "m1",
+            "messageRole": "user",
+            "messageCreatedAt": "2026-06-21T12:00:00Z",
+            "snippet": "please run pwd and show the workspace",
+            "matchStart": 11,
+            "matchEnd": 14,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_searches_task_titles(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="task-title-1",
+            workspace_path="/repo/Wegent",
+            title="查找 WEGENT_EXECUTOR_HOME 默认值",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "hello",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                    }
+                ]
+            },
+            created_at="2026-06-21T11:59:00Z",
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "wegent"},
+        }
+    )
+
+    assert result["success"] is True
+    assert result["items"] == [
+        {
+            "localTaskId": "task-title-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+            "title": "查找 WEGENT_EXECUTOR_HOME 默认值",
+            "updatedAt": "2026-06-21T12:00:01Z",
+            "messageId": "",
+            "messageRole": "title",
+            "messageCreatedAt": "2026-06-21T12:00:01Z",
+            "snippet": "查找 WEGENT_EXECUTOR_HOME 默认值",
+            "matchStart": 3,
+            "matchEnd": 9,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_skips_transcripts_when_metadata_fills_limit(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class TranscriptCountingHandler(RuntimeWorkRpcHandler):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.transcript_reads = 0
+
+        async def _task_transcript_messages(self, task):
+            self.transcript_reads += 1
+            return task.runtime_handle.get("messages", [])
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    for index in range(3):
+        store.upsert_task(
+            LocalTaskRecord(
+                local_task_id=f"title-match-{index}",
+                workspace_path="/repo/Wegent",
+                title=f"排查沙箱启动 {index}",
+                runtime="claude_code",
+                runtime_handle={
+                    "messages": [
+                        {
+                            "id": f"m{index}",
+                            "role": "user",
+                            "content": "unrelated transcript content",
+                            "createdAt": "2026-06-21T12:00:00Z",
+                        }
+                    ]
+                },
+                updated_at=f"2026-06-21T12:00:0{index}Z",
+                status="active",
+            )
+        )
+
+    handler = TranscriptCountingHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    )
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "沙箱", "limit": 2},
+        }
+    )
+
+    assert result["success"] is True
+    assert [item["localTaskId"] for item in result["items"]] == [
+        "title-match-2",
+        "title-match-1",
+    ]
+    assert handler.transcript_reads == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_returns_one_result_per_task_preferring_title(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="duplicate-match",
+            workspace_path="/repo/Wegent",
+            title="排查沙箱启动",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "沙箱启动失败",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                    },
+                    {
+                        "id": "m2",
+                        "role": "assistant",
+                        "content": "已检查沙箱日志",
+                        "createdAt": "2026-06-21T12:00:01Z",
+                    },
+                ]
+            },
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "沙箱", "limit": 20},
+        }
+    )
+
+    assert result["success"] is True
+    assert [item["messageRole"] for item in result["items"]] == ["title"]
+    assert [item["localTaskId"] for item in result["items"]] == ["duplicate-match"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_excludes_archived_tasks_by_default(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="archived-1",
+            workspace_path="/repo/Wegent",
+            title="Old command",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "pwd",
+                        "createdAt": "2026-06-20T12:00:00Z",
+                    }
+                ]
+            },
+            status="archived",
+        )
+    )
+
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+    default_result = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.search", "payload": {"query": "pwd"}}
+    )
+    archived_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "pwd", "includeArchived": True},
+        }
+    )
+
+    assert default_result["success"] is True
+    assert default_result["items"] == []
+    assert [item["localTaskId"] for item in archived_result["items"]] == ["archived-1"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_does_not_fallback_to_imported_cache_for_sdk_codex(
     tmp_path,
 ):
@@ -3039,6 +3362,112 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
         "reply:first",
         "second",
         "reply:second",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_sends_followup_with_attachments(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyDiscovery:
+        def discover(self):
+            return []
+
+    executed_requests = []
+
+    async def execute_agent(request, emitter):
+        executed_requests.append(request)
+        await emitter.done(content=f"reply:{request.prompt}")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "first",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "team_id": 1,
+                    "prompt": "first",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {"model": "openai", "api_format": "responses"},
+                    "bot": [{"id": 7}],
+                },
+            },
+        }
+    )
+    local_task_id = create["localTaskId"]
+    await _drain_runtime_adapter(adapter)
+
+    send = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+                "message": "second",
+                "attachments": [
+                    {
+                        "id": 45,
+                        "original_filename": "photo.png",
+                        "mime_type": "image/png",
+                        "file_size": 1200,
+                        "subtask_id": 0,
+                        "file_extension": ".png",
+                    }
+                ],
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    assert send["success"] is True
+    assert executed_requests[1].attachments == [
+        {
+            "id": 45,
+            "original_filename": "photo.png",
+            "mime_type": "image/png",
+            "file_size": 1200,
+            "subtask_id": 0,
+            "file_extension": ".png",
+        }
+    ]
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+            },
+        }
+    )
+    assert transcript["messages"][2]["attachments"] == [
+        {
+            "id": 45,
+            "filename": "photo.png",
+            "file_size": 1200,
+            "mime_type": "image/png",
+            "status": "ready",
+            "subtask_id": 0,
+            "file_extension": ".png",
+            "created_at": transcript["messages"][2]["attachments"][0]["created_at"],
+        }
     ]
 
 

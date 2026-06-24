@@ -91,6 +91,7 @@ class RuntimeTranscriptTransport(EventTransport):
                 status="done",
                 subtask_id=subtask_id,
                 executor_session=data.get("executor_session"),
+                file_changes=_completed_file_changes(data),
                 blocks=self._consume_processing_blocks(terminal_status="done"),
             )
             self._assistant_draft = ""
@@ -359,6 +360,7 @@ class RuntimeTranscriptTransport(EventTransport):
         status: str,
         subtask_id: int,
         executor_session: Optional[Any] = None,
+        file_changes: Optional[dict[str, Any]] = None,
         blocks: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         message = {
@@ -369,6 +371,8 @@ class RuntimeTranscriptTransport(EventTransport):
             "status": status,
             "subtaskId": subtask_id,
         }
+        if file_changes:
+            message["fileChanges"] = file_changes
         if blocks:
             message["blocks"] = blocks
 
@@ -451,8 +455,14 @@ class RuntimeAgentAdapter:
         self, task: LocalTaskRecord, payload: dict[str, Any]
     ) -> dict[str, Any]:
         message = _required_text(payload, "message")
-        request = self._followup_request(task, message)
-        user_message = _user_message(task.local_task_id, message, request.subtask_id)
+        attachments = _payload_attachments(payload)
+        request = self._followup_request(task, message, attachments=attachments)
+        user_message = _user_message(
+            task.local_task_id,
+            message,
+            request.subtask_id,
+            attachments=_runtime_attachments(request.attachments),
+        )
 
         def update(current: LocalTaskRecord) -> LocalTaskRecord:
             handle = dict(current.runtime_handle)
@@ -567,6 +577,8 @@ class RuntimeAgentAdapter:
         self,
         task: LocalTaskRecord,
         message: str,
+        *,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> ExecutionRequest:
         raw_request = task.runtime_handle.get("executionRequest")
         if not isinstance(raw_request, dict):
@@ -582,6 +594,7 @@ class RuntimeAgentAdapter:
         request_data["new_session"] = False
         request_data["workspace_source"] = "local_path"
         request_data["project_workspace_path"] = task.workspace_path
+        request_data["attachments"] = attachments or []
         return ExecutionRequest.from_dict(request_data)
 
     def _mark_not_running(self, local_task_id: str) -> None:
@@ -662,6 +675,13 @@ def _runtime_attachments(attachments: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _payload_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    attachments = payload.get("attachments")
+    if not isinstance(attachments, list):
+        return []
+    return [attachment for attachment in attachments if isinstance(attachment, dict)]
+
+
 def _completed_content(data: dict[str, Any]) -> str:
     response = data.get("response")
     if not isinstance(response, dict):
@@ -683,6 +703,14 @@ def _completed_content(data: dict[str, Any]) -> str:
             if isinstance(text, str):
                 parts.append(text)
     return "\n".join(parts).strip()
+
+
+def _completed_file_changes(data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    response = data.get("response")
+    if not isinstance(response, dict):
+        return None
+    file_changes = response.get("file_changes")
+    return file_changes if isinstance(file_changes, dict) else None
 
 
 def _incomplete_content(data: dict[str, Any]) -> str:

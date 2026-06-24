@@ -58,12 +58,14 @@ import type {
   DeviceInfo,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
+  LocalTaskSummary,
   ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   NormalizedRuntimeMessage,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeDeviceWorkspace,
@@ -73,6 +75,8 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   RuntimeWorkListResponse,
   SkillRef,
   TurnFileChangesSummary,
@@ -107,6 +111,7 @@ import { WorkbenchContext } from './useWorkbench'
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
+const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
@@ -290,6 +295,7 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
@@ -615,6 +621,7 @@ function runtimeMessageToWorkbenchMessage(
     source,
     attachments: message.attachments,
     blocks: blocks.length > 0 ? blocks : undefined,
+    fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
     createdAt: message.createdAt ?? new Date().toISOString(),
   }
 }
@@ -640,6 +647,17 @@ function chatMessageToWorkbenchMessage(payload: ChatMessagePayload): WorkbenchMe
   }
 }
 
+function findFileChangesBySubtaskId(
+  messages: WorkbenchMessage[],
+  subtaskId: number
+): TurnFileChangesSummary | undefined {
+  return messages.find(message => message.subtaskId === subtaskId)?.fileChanges
+}
+
+function getCommandStdoutObject(stdout: unknown): Record<string, unknown> | null {
+  return isRecord(stdout) ? stdout : null
+}
+
 function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
@@ -654,6 +672,38 @@ function writeLastProjectId(userId: number, projectId: number) {
 
 function getNewChatModelSelection(user: User | null): ModelSelectionConfig | null {
   return user?.preferences?.wework_new_chat_model_selection ?? null
+}
+
+function findRuntimeLocalTask(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): LocalTaskSummary | null {
+  if (!runtimeWork || !address) return null
+  const workspaces = [
+    ...runtimeWork.unmappedDeviceWorkspaces,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+
+  for (const workspace of workspaces) {
+    if (workspace.deviceId !== address.deviceId) continue
+    const task = workspace.localTasks.find(item => item.localTaskId === address.localTaskId)
+    if (task) return task
+  }
+
+  return null
+}
+
+function getRuntimeCompatibilityFamily(runtime?: string | null): string | null {
+  if (runtime === 'codex') return OPENAI_RESPONSES_RUNTIME_FAMILY
+  if (runtime === 'claude_code' || runtime === 'claude') return CLAUDE_CODE_RUNTIME_FAMILY
+  return null
+}
+
+function getCurrentRuntimeTaskCompatibilityFamily(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): string | null {
+  return getRuntimeCompatibilityFamily(findRuntimeLocalTask(runtimeWork, address)?.runtime)
 }
 
 function getStringConfigValue(
@@ -816,10 +866,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     Boolean(currentRuntimeTaskKey) && runtimeTranscriptLoadingKey === currentRuntimeTaskKey
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
-  const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentProject: activeProject,
-    standaloneDeviceId: state.standaloneDeviceId,
-  })
+  const activeDeviceId =
+    state.currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject: activeProject,
+      standaloneDeviceId: state.standaloneDeviceId,
+    })
 
   useEffect(() => {
     currentRuntimeTaskRef.current = state.currentRuntimeTask
@@ -896,6 +948,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser])
   const modelCompatibilityConfig = useMemo(() => null, [])
+  const modelCompatibilityFamily = useMemo(
+    () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
+    [state.currentRuntimeTask, state.runtimeWork]
+  )
   const defaultModelSelectionConfig = useCallback(() => null, [])
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
@@ -943,6 +999,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     locked: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
+    compatibilityFamily: modelCompatibilityFamily,
     defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
@@ -1547,6 +1604,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [refreshWorkLists, resolvedServices.runtimeWorkApi, state.currentRuntimeTask]
   )
 
+  const searchRuntimeWork = useCallback(
+    async (request: RuntimeWorkSearchRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        return { items: [] }
+      }
+      return resolvedServices.runtimeWorkApi.searchRuntimeWork(request)
+    },
+    [resolvedServices.runtimeWorkApi]
+  )
+
   const forkCurrentRuntimeTask = useCallback(
     async (target: RuntimeTaskForkTarget) => {
       if (!resolvedServices.runtimeWorkApi) {
@@ -1961,7 +2028,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     async (
       displayMessage: string,
       payload: ChatSendPayload,
-      activeDeviceId?: string
+      activeDeviceId?: string,
+      displayAttachments: Attachment[] = []
     ): Promise<boolean> => {
       if (!resolvedServices.runtimeWorkApi) {
         reportSendBlocked('Local runtime work is unavailable')
@@ -2027,6 +2095,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           id: `runtime-local-${Date.now()}`,
           role: 'user',
           content: displayMessage,
+          attachments: displayAttachments,
           status: 'done',
           createdAt: new Date().toISOString(),
         },
@@ -2094,8 +2163,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
 
     if (state.currentRuntimeTask) {
-      if (hasAttachments || hasCodeComments) {
-        reportSendBlocked('当前 LocalTask 暂不支持附件或代码评论')
+      if (hasCodeComments) {
+        reportSendBlocked('当前 LocalTask 暂不支持代码评论')
         return
       }
       if (!resolvedServices.runtimeWorkApi) {
@@ -2103,6 +2172,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
+      const currentAttachments = attachmentSelection.attachments
       dispatch({ type: 'input_changed', input: '' })
       dispatch({ type: 'sending_started' })
       dispatchMessages({
@@ -2111,20 +2181,26 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           id: `runtime-local-${Date.now()}`,
           role: 'user',
           content: payloadMessage,
+          attachments: currentAttachments,
           status: 'done',
           createdAt: new Date().toISOString(),
         },
       })
 
       try {
-        const response = await resolvedServices.runtimeWorkApi.sendRuntimeMessage({
+        const runtimeSendRequest: RuntimeSendRequest = {
           address: state.currentRuntimeTask,
           message: payloadMessage,
-        })
+        }
+        if (currentAttachments.length > 0) {
+          runtimeSendRequest.attachmentIds = currentAttachments.map(attachment => attachment.id)
+        }
+        const response = await resolvedServices.runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
         await refreshWorkLists()
+        attachmentSelection.resetAttachments()
       } catch (error) {
         dispatch({
           type: 'error_set',
@@ -2184,7 +2260,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const sent = await sendPreparedRuntimeMessage(
       message,
       prepared.payload,
-      prepared.activeDeviceId
+      prepared.activeDeviceId,
+      attachmentSelection.attachments
     )
     if (sent) {
       attachmentSelection.resetAttachments()
@@ -2285,16 +2362,108 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: number) => {
+      const runtimeFileChanges = state.currentRuntimeTask
+        ? findFileChangesBySubtaskId(messages, subtaskId)
+        : undefined
+      if (runtimeFileChanges) {
+        const response = await resolvedServices.deviceApi.executeCommand(
+          runtimeFileChanges.device_id,
+          {
+            command_key: 'turn_file_changes_review',
+            path: runtimeFileChanges.workspace_path,
+            args: [runtimeFileChanges.artifact_id],
+            timeout_seconds: 30,
+            max_output_bytes: 5 * 1024 * 1024,
+          }
+        )
+        const stdout = getCommandStdoutObject(response.stdout)
+        if (
+          !response.success ||
+          !stdout ||
+          stdout.success !== true ||
+          typeof stdout.diff !== 'string'
+        ) {
+          if (stdout?.status === 'artifact_missing') {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges: { ...runtimeFileChanges, status: 'artifact_missing' },
+            })
+          }
+          throw new Error(
+            String(
+              stdout?.error || response.error || response.stderr || 'File changes review failed'
+            )
+          )
+        }
+        return stdout.diff
+      }
+
       const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff
       if (!loadDiff) throw new Error('File changes review is unavailable')
       const response = await loadDiff(subtaskId)
       return response.diff
     },
-    [resolvedServices.taskApi]
+    [messages, resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
   )
 
   const revertTurnFileChanges = useCallback(
     async (subtaskId: number) => {
+      const runtimeFileChanges = state.currentRuntimeTask
+        ? findFileChangesBySubtaskId(messages, subtaskId)
+        : undefined
+      if (runtimeFileChanges) {
+        const response = await resolvedServices.deviceApi.executeCommand(
+          runtimeFileChanges.device_id,
+          {
+            command_key: 'turn_file_changes_revert',
+            path: runtimeFileChanges.workspace_path,
+            args: [runtimeFileChanges.artifact_id],
+            timeout_seconds: 30,
+            max_output_bytes: 5 * 1024 * 1024,
+          }
+        )
+        const stdout = getCommandStdoutObject(response.stdout)
+        if (
+          !response.success ||
+          !stdout ||
+          stdout.success !== true ||
+          stdout.status !== 'reverted'
+        ) {
+          if (stdout?.status === 'conflicted') {
+            const conflictedChanges = { ...runtimeFileChanges, status: 'conflicted' as const }
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges: conflictedChanges,
+            })
+          } else if (stdout?.status === 'artifact_missing') {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges: { ...runtimeFileChanges, status: 'artifact_missing' },
+            })
+          }
+          throw new Error(
+            String(
+              stdout?.error || response.error || response.stderr || 'File changes revert failed'
+            )
+          )
+        }
+
+        const fileChanges = {
+          ...runtimeFileChanges,
+          status: 'reverted' as const,
+          reverted_at: new Date().toISOString(),
+        }
+        dispatchMessages({
+          type: 'file_changes_updated',
+          subtaskId,
+          fileChanges,
+        })
+        return fileChanges
+      }
+
       const revert = resolvedServices.taskApi.revertTurnFileChanges
       if (!revert) throw new Error('File changes revert is unavailable')
       try {
@@ -2323,7 +2492,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         throw error
       }
     },
-    [resolvedServices.taskApi]
+    [messages, resolvedServices.deviceApi, resolvedServices.taskApi, state.currentRuntimeTask]
   )
 
   const pauseCurrentResponse = useCallback(async () => {
@@ -2418,6 +2587,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    searchRuntimeWork,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,
     listImPrivateSessions,

@@ -190,6 +190,55 @@ def test_runtime_transcript_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_search_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "address": {
+                        "deviceId": "device-1",
+                        "workspacePath": "/repo/Wegent",
+                        "localTaskId": "codex-1",
+                    },
+                    "runtime": "codex",
+                    "title": "执行 pwd",
+                    "snippet": "执行 pwd",
+                    "matchStart": 3,
+                    "matchEnd": 6,
+                    "messageId": "m1",
+                    "messageRole": "user",
+                    "messageCreatedAt": "2026-06-21T12:00:00Z",
+                    "updatedAt": "2026-06-21T12:00:01Z",
+                    "deviceName": "MacBook",
+                    "workspacePath": "/repo/Wegent",
+                    "project": {"id": 1, "name": "Wegent"},
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "search_runtime_work", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/search",
+        headers=_auth_headers(test_token),
+        json={"query": "pwd", "limit": 20},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["snippet"] == "执行 pwd"
+    request = service_mock.await_args.kwargs["request"]
+    assert request.query == "pwd"
+    assert request.limit == 20
+
+
 def test_runtime_archive_endpoint_dispatches_address(
     test_client,
     test_token,

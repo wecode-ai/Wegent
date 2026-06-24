@@ -50,6 +50,7 @@ class NormalizedRuntimeMessage(BaseModel):
     source: Optional[RuntimeMessageSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
+    file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
 
 
 class RuntimeTaskAddressRef(RuntimeTaskAddress):
@@ -223,6 +224,52 @@ class RuntimeTranscriptResponse(BaseModel):
     parse_error: Optional[str] = Field(default=None, alias="parseError")
 
 
+class RuntimeWorkSearchRequest(BaseModel):
+    """Full-text search request for online runtime transcripts."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=20, ge=1, le=50)
+    include_archived: bool = Field(default=False, alias="includeArchived")
+    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+
+
+class RuntimeWorkSearchProjectRef(BaseModel):
+    """Project metadata attached to a runtime search hit."""
+
+    id: int
+    name: str
+
+
+class RuntimeWorkSearchItem(BaseModel):
+    """One message-level full-text search hit."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    runtime: RuntimeName
+    title: str
+    snippet: str
+    match_start: int = Field(..., alias="matchStart")
+    match_end: int = Field(..., alias="matchEnd")
+    message_id: str = Field("", alias="messageId")
+    message_role: str = Field("", alias="messageRole")
+    message_created_at: Optional[str] = Field(default=None, alias="messageCreatedAt")
+    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    device_name: str = Field(..., alias="deviceName")
+    workspace_path: str = Field(..., alias="workspacePath")
+    project: Optional[RuntimeWorkSearchProjectRef] = None
+
+
+class RuntimeWorkSearchResponse(BaseModel):
+    """Search hits merged across online runtime devices."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[RuntimeWorkSearchItem] = Field(default_factory=list)
+
+
 class RuntimeSendRequest(BaseModel):
     """Request to continue a native runtime task."""
 
@@ -230,6 +277,7 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     source: Optional[RuntimeMessageSource] = None
 
 

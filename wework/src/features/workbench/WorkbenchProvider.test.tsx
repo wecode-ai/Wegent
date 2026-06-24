@@ -1,16 +1,21 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
+import { MessageList } from '@/components/chat/MessageList'
 import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type {
+  Attachment,
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTranscriptResponse,
+  TurnFileChangesSummary,
   RuntimeWorkListResponse,
+  UnifiedModel,
 } from '@/types/api'
 
 function deferred<T>() {
@@ -101,6 +106,43 @@ function createRuntimeWork(
     ],
     unmappedDeviceWorkspaces: [],
     totalLocalTasks: 3,
+    ...overrides,
+  }
+}
+
+function createTurnFileChanges(): TurnFileChangesSummary {
+  return {
+    version: 1,
+    status: 'active',
+    artifact_id: 'artifact-1',
+    device_id: 'device-1',
+    workspace_path: '/workspace/project-alpha',
+    file_count: 1,
+    additions: 6,
+    deletions: 4,
+    files: [
+      {
+        old_path: null,
+        path: 'wework/src/features/workbench/WorkbenchProvider.tsx',
+        change_type: 'modified',
+        additions: 6,
+        deletions: 4,
+        binary: false,
+      },
+    ],
+    reverted_at: null,
+  }
+}
+
+function createImageAttachment(overrides: Partial<Attachment> = {}): Attachment {
+  return {
+    id: 45,
+    filename: 'photo.png',
+    file_size: 1200,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: '.png',
+    created_at: '2026-05-27T00:00:00.000Z',
     ...overrides,
   }
 }
@@ -213,6 +255,8 @@ function BootstrapProbe() {
 
 function ProjectSendProbe() {
   const workbench = useWorkbench()
+  const imageAttachment = createImageAttachment()
+
   return (
     <div>
       <span data-testid="current-runtime-task-address">
@@ -233,15 +277,22 @@ function ProjectSendProbe() {
       <button type="button" onClick={() => workbench.setInput('修复 CI')}>
         set input
       </button>
+      <button type="button" onClick={() => workbench.projectChat.addExistingAttachment(imageAttachment)}>
+        add image attachment
+      </button>
       <button type="button" onClick={() => void workbench.sendCurrentInput()}>
         send
       </button>
+      <MessageList messages={workbench.messages} />
     </div>
   )
 }
 
 function RuntimeOpenProbe() {
   const workbench = useWorkbench()
+  const [fileChangesDiff, setFileChangesDiff] = useState('')
+  const [fileChangesStatus, setFileChangesStatus] = useState('')
+  const fileChangesSubtaskId = workbench.messages.find(message => message.fileChanges)?.subtaskId
   return (
     <div>
       <span data-testid="current-runtime-task-address">
@@ -265,6 +316,41 @@ function RuntimeOpenProbe() {
           })
           .join('|')}
       </span>
+      <span data-testid="runtime-open-file-changes">
+        {workbench.messages
+          .map(message =>
+            message.fileChanges
+              ? `${message.fileChanges.file_count}:${message.fileChanges.additions}:${message.fileChanges.deletions}`
+              : ''
+          )
+          .filter(Boolean)
+          .join('|')}
+      </span>
+      <span data-testid="runtime-open-error">{workbench.state.error ?? ''}</span>
+      <span data-testid="runtime-file-changes-diff">{fileChangesDiff}</span>
+      <span data-testid="runtime-file-changes-status">{fileChangesStatus}</span>
+      <button
+        type="button"
+        onClick={() => {
+          if (fileChangesSubtaskId) {
+            void workbench.loadTurnFileChangesDiff(fileChangesSubtaskId).then(setFileChangesDiff)
+          }
+        }}
+      >
+        review runtime file changes
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (fileChangesSubtaskId) {
+            void workbench
+              .revertTurnFileChanges(fileChangesSubtaskId)
+              .then(fileChanges => setFileChangesStatus(fileChanges.status))
+          }
+        }}
+      >
+        revert runtime file changes
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -293,15 +379,72 @@ function RuntimeOpenProbe() {
   )
 }
 
+function RuntimeModelCompatibilityProbe() {
+  const workbench = useWorkbench()
+  const modelRows = workbench.projectChat.models.map(model => {
+    const disabledReason = model.compatibilityDisabledReason ?? 'enabled'
+    return `${model.name}:${model.compatibilityDisabled ? disabledReason : 'enabled'}`
+  })
+
+  return (
+    <div>
+      <span data-testid="runtime-model-compatibility">{modelRows.join('|')}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeLocalTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-a',
+          })
+        }
+      >
+        open runtime a
+      </button>
+    </div>
+  )
+}
+
 function FollowUpProbe() {
   const workbench = useWorkbench()
+  const imageAttachment = createImageAttachment()
+
   return (
     <div>
       <button type="button" onClick={() => workbench.setInput('继续修')}>
         set follow-up
       </button>
+      <button
+        type="button"
+        onClick={() => workbench.projectChat.addExistingAttachment(imageAttachment)}
+      >
+        add image attachment
+      </button>
       <button type="button" onClick={() => void workbench.sendCurrentInput()}>
         send follow-up
+      </button>
+    </div>
+  )
+}
+
+function RuntimeTaskSkillsProbe() {
+  const workbench = useWorkbench()
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeLocalTask({
+            deviceId: 'runtime-device',
+            workspacePath: '/workspace/runtime-device',
+            localTaskId: 'runtime-skill-task',
+          })
+        }
+      >
+        open runtime skill task
+      </button>
+      <button type="button" onClick={() => void workbench.projectChat.listLocalSkills()}>
+        list local skills
       </button>
     </div>
   )
@@ -344,6 +487,45 @@ describe('WorkbenchProvider runtime tasks', () => {
     unmount()
 
     expect(socketClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  test('locks existing runtime task model choices to its runtime protocol', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'wecode-claude-sonnet-4-5',
+        type: 'public',
+        runtime: { family: 'claude.claude' },
+      },
+      {
+        name: 'kimi-k2.5',
+        type: 'public',
+        runtime: { family: 'claude.claude' },
+      },
+      {
+        name: 'codex-gpt-5.5',
+        type: 'runtime',
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelCompatibilityProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
+        [
+          'wecode-claude-sonnet-4-5:enabled',
+          'kimi-k2.5:enabled',
+          'codex-gpt-5.5:runtime_family_mismatch',
+        ].join('|')
+      )
+    )
   })
 
   test('creates a runtime local task for a new project message', async () => {
@@ -418,6 +600,52 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'resolved-device',
       localTaskId: 'runtime-created',
     })
+  })
+
+  test('renders image attachments immediately when creating a runtime local task', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:runtime-message-image-preview')
+    URL.revokeObjectURL = vi.fn()
+    localStorage.setItem('auth_token', 'token-1')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+    const transcript = deferred<RuntimeTranscriptResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'resolved-device',
+        localTaskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+      }),
+      getRuntimeTranscript: vi.fn().mockReturnValue(transcript.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentIds: [45],
+      })
+    )
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'blob:runtime-message-image-preview'
+    )
   })
 
   test('renders streaming local task chunks when the socket connects after chat start', async () => {
@@ -558,6 +786,117 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
+  test('restores runtime transcript file changes onto assistant messages', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/runtime-tasks?deviceId=device-1&localTaskId=runtime-restored'
+    )
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'runtime-restored',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-1', role: 'user', content: '修复搜索' },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '已修复',
+          subtaskId: 902,
+          fileChanges: createTurnFileChanges(),
+        },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
+    )
+  })
+
+  test('reviews and reverts runtime transcript file changes through device commands', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/runtime-tasks?deviceId=device-1&localTaskId=runtime-restored'
+    )
+    const fileChanges = createTurnFileChanges()
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'runtime-restored',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-1', role: 'user', content: '修复搜索' },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '已修复',
+          subtaskId: 902,
+          fileChanges,
+        },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: true, diff: 'diff --git a/file b/file' },
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: true, status: 'reverted' },
+        stderr: '',
+      })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        getRuntimeTranscript,
+      }) as WorkbenchServices['runtimeWorkApi'],
+      deviceApi: {
+        executeCommand,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
+    )
+    await userEvent.click(screen.getByText('review runtime file changes'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-file-changes-diff')).toHaveTextContent(
+        'diff --git a/file b/file'
+      )
+    )
+    expect(executeCommand).toHaveBeenCalledWith('device-1', {
+      command_key: 'turn_file_changes_review',
+      path: fileChanges.workspace_path,
+      args: [fileChanges.artifact_id],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
+
+    await userEvent.click(screen.getByText('revert runtime file changes'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-file-changes-status')).toHaveTextContent('reverted')
+    )
+    expect(executeCommand).toHaveBeenLastCalledWith('device-1', {
+      command_key: 'turn_file_changes_revert',
+      path: fileChanges.workspace_path,
+      args: [fileChanges.artifact_id],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
+    expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
+  })
+
   test('switches the selected runtime task before transcript loading finishes', async () => {
     const firstTranscript = deferred<RuntimeTranscriptResponse>()
     const getRuntimeTranscript = vi.fn((address: RuntimeTaskAddress) => {
@@ -653,6 +992,100 @@ describe('WorkbenchProvider runtime tasks', () => {
       message: '继续修',
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('sends image attachments with current runtime task follow-up messages', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      localTaskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add image attachment'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-a',
+      },
+      message: '继续修',
+      attachmentIds: [45],
+    })
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
+  })
+
+  test('loads local skills from the current runtime task device', async () => {
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'device-1', name: 'Default Device' }),
+            createDevice({ id: 2, device_id: 'runtime-device', name: 'Runtime Device' }),
+          ]),
+        listSkills: vi.fn().mockResolvedValue([
+          {
+            name: 'env-context',
+            description: 'Environment facts',
+            path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+            source: 'codex',
+          },
+        ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
+          localTaskId: address.localTaskId,
+          workspacePath: address.workspacePath,
+          runtime: 'codex',
+          messages: [],
+        })),
+      }) as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskSkillsProbe />, services)
+
+    await userEvent.click(screen.getByText('open runtime skill task'))
+    await waitFor(() =>
+      expect(services.runtimeWorkApi?.getRuntimeTranscript).toHaveBeenCalledWith({
+        deviceId: 'runtime-device',
+        workspacePath: '/workspace/runtime-device',
+        localTaskId: 'runtime-skill-task',
+      })
+    )
+
+    await userEvent.click(screen.getByText('list local skills'))
+
+    await waitFor(() => {
+      expect(services.deviceApi.listSkills).toHaveBeenCalledWith('runtime-device')
+    })
   })
 
   test('ignores stream events from a previously selected runtime task', async () => {

@@ -6,6 +6,10 @@ import type { ProcessingBlock } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
+vi.mock('@tauri-apps/api/core', () => ({
+  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
+}))
+
 describe('MessageList', () => {
   test('renders one assistant turn file changes under its message', () => {
     render(
@@ -316,6 +320,67 @@ describe('MessageList', () => {
         headers: { Authorization: 'Bearer token-1' },
       })
     )
+  })
+
+  test('renders assistant markdown attachment images through authenticated blob previews', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:assistant-markdown-image')
+    URL.revokeObjectURL = vi.fn()
+    localStorage.setItem('auth_token', 'token-1')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image',
+            role: 'assistant',
+            content: '生成结果：\n\n![diagram](/api/attachments/43/download)',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
+      'src',
+      'blob:assistant-markdown-image'
+    )
+    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'diagram')
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/attachments/43/download',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer token-1' },
+      })
+    )
+  })
+
+  test('renders assistant markdown local image paths through Tauri asset URLs', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-local-image',
+            role: 'assistant',
+            content: '生成结果：\n\n![local result](/Users/yunpeng7/Pictures/result.png)',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/yunpeng7/Pictures/result.png'
+    )
+    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
   })
 
   test('opens an enlarged image from a user message attachment preview', async () => {

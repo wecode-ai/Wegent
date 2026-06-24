@@ -8,8 +8,9 @@ import {
   UserRound,
 } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import { useTranslation } from '@/hooks/useTranslation'
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
@@ -200,18 +201,20 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-plugins-button"
-          onClick={onOpenPlugins}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <Sparkles className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_plugins', '插件')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        {SHOW_PLUGINS_NAVIGATION && (
+          <button
+            type="button"
+            data-testid="mobile-settings-plugins-button"
+            onClick={onOpenPlugins}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Sparkles className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_plugins', '插件')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+        )}
         <button
           type="button"
           data-testid="mobile-settings-personal-button"
