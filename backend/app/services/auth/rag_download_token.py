@@ -14,6 +14,7 @@ from typing import Optional
 import jwt
 
 from app.core.config import settings
+from app.core.jwt_compat import decode_pyjwt
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,7 @@ def verify_rag_download_token(token: str) -> Optional[RagDownloadTokenInfo]:
     """Verify a short-lived token for internal RAG attachment download."""
 
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_pyjwt(token, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "rag_download_token":
             logger.warning("Invalid RAG download token type")
             return None
