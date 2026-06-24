@@ -731,6 +731,33 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message a')
   })
 
+  test('does not reload the currently selected runtime task when clicked again', async () => {
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'claude_code',
+      messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message a' }],
+    } satisfies RuntimeTranscriptResponse)
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByText('open runtime a'))
+
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
+  })
+
   test('reuses the current runtime task address for follow-up messages', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,

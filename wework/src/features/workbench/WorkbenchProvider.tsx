@@ -1527,6 +1527,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const openRuntimeLocalTask = useCallback(
     async (address: RuntimeTaskAddress) => {
+      if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) {
+        return
+      }
+
       if (!resolvedServices.runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
