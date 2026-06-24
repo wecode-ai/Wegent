@@ -9,6 +9,7 @@ import pytest
 
 from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace
+from app.schemas.device import DeviceType
 
 
 @pytest.mark.asyncio
@@ -118,6 +119,223 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
     assert first == {"success": True, "device_id": "device-1"}
     assert second == {"success": True, "device_id": "device-1"}
     assert upsert_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_device_register_does_not_mark_online_when_session_disappears(
+    monkeypatch,
+):
+    namespace = DeviceNamespace()
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "127.0.0.1",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        return True, "MacBook", None
+
+    set_device_online = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        namespace,
+        "save_session",
+        AsyncMock(side_effect=KeyError("Session not found")),
+    )
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "set_device_online",
+        set_device_online,
+    )
+
+    result = await namespace.on_device_register(
+        "sid-1",
+        {
+            "device_id": "device-1",
+            "name": "MacBook",
+            "executor_version": "1.8.0",
+        },
+    )
+
+    assert result == {"error": "Client disconnected during device registration"}
+    set_device_online.assert_not_awaited()
+    namespace.enter_room.assert_not_awaited()
+    namespace._broadcast_device_online.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypatch):
+    namespace = DeviceNamespace()
+    upsert_calls = []
+    match_cloud_device = AsyncMock(return_value="standalone-admin-device")
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "198.18.0.1",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        upsert_calls.append((func, args))
+        return True, "MacBook", None
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", match_cloud_device)
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    set_device_online = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", set_device_online
+    )
+
+    result = await namespace.on_device_register(
+        "sid-local",
+        {
+            "device_id": "hw-local",
+            "name": "MacBook",
+            "device_type": DeviceType.LOCAL.value,
+            "executor_version": "1.8.5",
+            "client_ip": "198.18.0.1",
+        },
+    )
+
+    assert result == {"success": True, "device_id": "hw-local"}
+    match_cloud_device.assert_not_awaited()
+    assert len(upsert_calls) == 1
+    assert upsert_calls[0][1][4] == DeviceType.LOCAL.value
+    set_device_online.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypatch):
+    namespace = DeviceNamespace()
+    upsert_calls = []
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "203.0.113.20",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        upsert_calls.append((func, args))
+        return True, "MacBook", None
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    set_device_online = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", set_device_online
+    )
+
+    result = await namespace.on_device_register(
+        "sid-local",
+        {
+            "device_id": "hw-local",
+            "name": "MacBook",
+            "device_type": DeviceType.LOCAL.value,
+            "executor_version": "1.8.5",
+            "client_ip": "192.168.0.190",
+        },
+    )
+
+    assert result == {"success": True, "device_id": "hw-local"}
+    assert upsert_calls[0][1][3] == "203.0.113.20"
+    assert upsert_calls[0][1][6] == "192.168.0.190"
+    assert set_device_online.await_args.kwargs["client_ip"] == "203.0.113.20"
+    assert (
+        set_device_online.await_args.kwargs["runtime_transfer_host"] == "192.168.0.190"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cloud_device_register_matches_cloud_device(monkeypatch):
+    namespace = DeviceNamespace()
+    match_cloud_device = AsyncMock(return_value="standalone-admin-device")
+    run_sync_in_executor = AsyncMock()
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "198.18.0.1",
+        }
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", match_cloud_device)
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        run_sync_in_executor,
+    )
+    set_device_online = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", set_device_online
+    )
+
+    result = await namespace.on_device_register(
+        "sid-cloud",
+        {
+            "device_id": "standalone-admin-device",
+            "name": "Standalone Device",
+            "device_type": DeviceType.CLOUD.value,
+            "executor_version": "1.8.5",
+            "client_ip": "198.18.0.1",
+        },
+    )
+
+    assert result == {"success": True, "device_id": "standalone-admin-device"}
+    match_cloud_device.assert_awaited_once_with(
+        7, "198.18.0.1", "standalone-admin-device"
+    )
+    run_sync_in_executor.assert_not_awaited()
+    set_device_online.assert_awaited_once()
 
 
 def test_connection_rate_limit_tracks_attempt_window():

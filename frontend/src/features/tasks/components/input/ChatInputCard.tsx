@@ -17,6 +17,7 @@ import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 
 export interface QueuedInputMessage {
   id: string
@@ -34,7 +35,7 @@ export interface GuidanceInputMessage {
 
 export interface ChatInputCardProps extends Omit<
   ChatInputControlsProps,
-  'taskInputMessage' | 'taskType'
+  'taskInputMessage' | 'taskType' | 'teamModeFilter'
 > {
   // Input message
   taskInputMessage: string
@@ -57,6 +58,7 @@ export interface ChatInputCardProps extends Omit<
 
   // Task type
   taskType: TaskType
+  teamModeFilter?: TeamModeFilter
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)
@@ -138,6 +140,7 @@ export function ChatInputCard({
   onRestoreDefaultTeam,
   isUsingDefaultTeam = false,
   taskType,
+  teamModeFilter,
   autoFocus = false,
   knowledgeBaseId,
   tipText,
@@ -653,6 +656,7 @@ export function ChatInputCard({
             skillSelectorRef={skillSelectorRef}
             // Video mode props
             taskType={taskType}
+            teamModeFilter={teamModeFilter}
             videoModels={videoModels}
             selectedVideoModel={selectedVideoModel}
             onVideoModelChange={onVideoModelChange}

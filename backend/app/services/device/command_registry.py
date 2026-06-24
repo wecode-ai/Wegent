@@ -195,8 +195,64 @@ print(
     "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
 ).strip()
 
+PROJECT_FOLDER_STATUS_SCRIPT = """
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def git_output(path, *args):
+    result = subprocess.run(
+        ["git", "-C", str(path), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+raw_path = sys.argv[1] if len(sys.argv) > 1 else ""
+path = Path(raw_path).expanduser()
+exists = path.exists()
+is_directory = path.is_dir() if exists else None
+is_empty = None
+is_git_repo = False
+remote_url = None
+head_commit = None
+
+if exists and is_directory:
+    try:
+        is_empty = next(path.iterdir(), None) is None
+    except OSError:
+        is_empty = False
+    is_git_repo = git_output(path, "rev-parse", "--is-inside-work-tree") == "true"
+    if is_git_repo:
+        remote_url = git_output(path, "remote", "get-url", "origin")
+        head_commit = git_output(path, "rev-parse", "HEAD")
+
+print(
+    json.dumps(
+        {
+            "exists": exists,
+            "isDirectory": is_directory,
+            "isEmpty": is_empty,
+            "isGitRepo": is_git_repo,
+            "remoteUrl": remote_url,
+            "headCommit": head_commit,
+        },
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
 LS_SKILLS_SCRIPT = """
 import json
+import os
 import re
 from pathlib import Path
 
@@ -325,6 +381,64 @@ def truncate(text, max_len=300):
     return text[: max_len - 1].rstrip() + "…"
 
 
+def real_directory_key(path):
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def matches_skill_pattern(skill_file, root, pattern):
+    if pattern == "**/SKILL.md":
+        return True
+    try:
+        relative_parts = skill_file.relative_to(root).parts
+    except ValueError:
+        relative_parts = skill_file.parts
+    if pattern == "**/skills/**/SKILL.md":
+        return "skills" in relative_parts[:-1]
+    return skill_file.match(pattern)
+
+
+def same_directory(left, right):
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def is_shared_legacy_skill_root(root, source):
+    if source not in {"claude", "codex"} or not root.is_symlink():
+        return False
+    return same_directory(root, Path.home() / ".agents" / "skills")
+
+
+def iter_skill_files(root, pattern):
+    visited = set()
+    for current, dirnames, filenames in os.walk(root, followlinks=True):
+        current_path = Path(current)
+        current_key = real_directory_key(current_path)
+        if current_key in visited:
+            dirnames[:] = []
+            continue
+        visited.add(current_key)
+
+        next_dirs = []
+        for dirname in sorted(dirnames):
+            child = current_path / dirname
+            child_key = real_directory_key(child)
+            if child_key not in visited:
+                next_dirs.append(dirname)
+        dirnames[:] = next_dirs
+
+        for filename in sorted(filenames):
+            if filename != "SKILL.md":
+                continue
+            skill_file = current_path / filename
+            if matches_skill_pattern(skill_file, root, pattern):
+                yield skill_file
+
+
 def skill_metadata(skill_file, source, source_kind, manifest):
     stat = skill_file.stat()
     frontmatter = read_frontmatter(skill_file)
@@ -354,7 +468,14 @@ seen_names = set()
 for root, source, pattern, source_kind in SKILL_SOURCES:
     if not root.is_dir():
         continue
-    for skill_file in sorted(root.glob(pattern)):
+    if is_shared_legacy_skill_root(root, source):
+        continue
+    skill_files = (
+        iter_skill_files(root, pattern)
+        if source_kind == "skill"
+        else sorted(root.glob(pattern))
+    )
+    for skill_file in skill_files:
         key = str(skill_file)
         if key in seen_paths:
             continue
@@ -636,6 +757,171 @@ READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
 )
 
+CODEX_THREADS_LIST_SCRIPT = """
+import json
+import os
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def parse_limit():
+    try:
+        value = int(os.environ.get("WEGENT_CODEX_THREADS_LIMIT", "100"))
+    except ValueError:
+        value = 100
+    return min(max(value, 1), 100)
+
+
+def parse_datetime(value):
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def object_value(value, *names):
+    current = value
+    for name in names:
+        if isinstance(current, dict):
+            current = current.get(name)
+        else:
+            current = getattr(current, name, None)
+    return current
+
+
+def first_object_value(value, *names):
+    for name in names:
+        raw = object_value(value, name)
+        if raw is not None:
+            return raw
+    return None
+
+
+def object_text(value, *names):
+    for name in names:
+        raw = object_value(value, name)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        root = object_value(raw, "root")
+        if isinstance(root, str) and root.strip():
+            return root.strip()
+    return None
+
+
+def time_to_iso(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, timezone.utc).isoformat()
+    if isinstance(value, str) and value.strip():
+        parsed = parse_datetime(value.strip())
+        return parsed.isoformat() if parsed else value.strip()
+    return None
+
+
+def is_thread_running(thread):
+    status = object_value(thread, "status")
+    if status is None:
+        return False
+    if isinstance(status, str):
+        status_type = status
+    else:
+        status_type = object_text(status, "type", "status")
+
+    normalized = (status_type or "").replace("_", "").lower()
+    return normalized not in ("", "notloaded", "completed", "archived", "idle")
+
+
+def enum_value(enum_name, value):
+    try:
+        from openai_codex.generated import v2_all
+
+        enum_type = getattr(v2_all, enum_name)
+        return enum_type(value)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return value
+
+
+def resolve_codex_binary():
+    value = os.environ.get("CODEX_BINARY_PATH") or os.environ.get("CODEX_BIN") or "codex"
+    if "/" in value or "\\\\" in value:
+        return value
+    if value == "codex" and sys.platform == "darwin":
+        app_binary = Path("/Applications/Codex.app/Contents/Resources/codex")
+        if app_binary.exists():
+            return str(app_binary)
+    return shutil.which(value) or value
+
+
+def normalize_thread(thread):
+    thread_id = object_text(thread, "id", "thread_id", "threadId", "conversation_id")
+    if not thread_id:
+        return None
+    title = object_text(thread, "name", "preview", "title") or thread_id
+    updated_at = time_to_iso(first_object_value(thread, "updated_at", "updatedAt"))
+    return {
+        "threadId": thread_id,
+        "title": title,
+        "cwd": object_text(thread, "cwd"),
+        "updatedAt": updated_at,
+        "archived": bool(object_value(thread, "archived")),
+        "running": is_thread_running(thread),
+    }
+
+
+def sort_key(record):
+    value = record.get("updatedAt") or ""
+    return parse_datetime(value) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+limit = parse_limit()
+codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+records = []
+discovery_error = None
+
+try:
+    codex_home.mkdir(parents=True, exist_ok=True)
+
+    from openai_codex import Codex, CodexConfig
+
+    with Codex(
+        CodexConfig(
+            codex_bin=resolve_codex_binary(),
+            client_name="wegent_device_command",
+            client_title="Wegent Device Command",
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
+        )
+    ) as codex:
+        response = codex.thread_list(
+            limit=limit,
+            archived=False,
+            sort_direction=enum_value("SortDirection", "desc"),
+            sort_key=enum_value("ThreadSortKey", "updated_at"),
+            use_state_db_only=True,
+        )
+
+    for thread in getattr(response, "data", []):
+        normalized = normalize_thread(thread)
+        if normalized:
+            records.append(normalized)
+except Exception as exc:
+    discovery_error = str(exc)
+
+records.sort(key=sort_key, reverse=True)
+payload = {"threads": records}
+if discovery_error:
+    payload["error"] = discovery_error
+print(json.dumps(payload, ensure_ascii=False))
+""".strip()
+
+CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
+
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -828,9 +1114,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=f"python3 -c {shlex.quote(WORKSPACE_READ_TEXT_FILE_SCRIPT)}",
         post_processor="json",
     ),
+    "project_folder_status": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(PROJECT_FOLDER_STATUS_SCRIPT)}",
+        post_processor="json",
+    ),
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_fetch": LocalDeviceCommandDefinition(command="git fetch --all --prune"),
     "git_config": LocalDeviceCommandDefinition(command="git config"),
     "git_worktree_list": LocalDeviceCommandDefinition(
         command="sh -c 'git -C \"$1\" worktree list --porcelain' --"
@@ -849,9 +1140,19 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_worktree_add": LocalDeviceCommandDefinition(
         command=(
             "sh -c '"
-            'if [ -n "$3" ]; then '
-            'git -C "$1" worktree add --detach "$2" "$3"; '
-            'else git -C "$1" worktree add --detach "$2"; fi'
+            "source=$1; target=$2; ref=$3; "
+            'mkdir -p "$(dirname "$target")"; '
+            'if git -C "$target" rev-parse --is-inside-work-tree '
+            ">/dev/null 2>&1; then "
+            'if [ -n "$ref" ]; then '
+            'git -C "$target" checkout --force --detach "$ref"; fi; '
+            "else "
+            'if [ -e "$target" ]; then '
+            'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+            'if [ -n "$ref" ]; then '
+            'git -C "$source" worktree add --detach "$target" "$ref"; '
+            'else git -C "$source" worktree add --detach "$target"; fi; '
+            "fi"
             "' --"
         )
     ),
@@ -888,10 +1189,17 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="git status --porcelain"
     ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_commit_available": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
+    ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "codex_threads_list": LocalDeviceCommandDefinition(
+        command=CODEX_THREADS_LIST_COMMAND,
         post_processor="json",
     ),
     "setup_shared_skills": LocalDeviceCommandDefinition(

@@ -10,6 +10,7 @@ export type {
 } from './api-types'
 export type { MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
+  isGenericTaskStatusError,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
 } from './workbench-message-reducer'
@@ -48,3 +49,15 @@ export type {
   TaskStatus as TaskStateStatus,
   UnifiedMessage,
 } from './task-state'
+export {
+  createAuthenticatedSocketClient,
+  createSocketClient,
+} from './socket'
+export type {
+  AuthenticatedSocketClient,
+  AuthenticatedSocketClientOptions,
+  SocketClientSocket,
+  SocketClientState,
+  SocketClientStateListener,
+  SocketReconnectCallback,
+} from './socket'

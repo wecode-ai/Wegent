@@ -6,7 +6,6 @@
 
 from types import SimpleNamespace
 
-from app.core.config import settings
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
@@ -14,52 +13,35 @@ from app.services.user_mcp_service import user_mcp_service
 class TestUserScopedMcpInjection:
     """Tests for DingTalk Docs MCP injection."""
 
-    def test_tool_output_guard_defaults_to_disabled(self, monkeypatch):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", False)
+    def test_tool_output_guard_defaults_to_enabled(self):
         user = SimpleNamespace(preferences="{}")
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
-        assert enabled is False
+        assert enabled is True
 
-    def test_tool_output_guard_reads_user_preference(self, monkeypatch):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", False)
+    def test_tool_output_guard_ignores_true_user_preference(self):
         user = SimpleNamespace(preferences='{"tool_output_guard_enabled": true}')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
         assert enabled is True
 
-    def test_tool_output_guard_uses_env_default_when_user_not_configured(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
-        user = SimpleNamespace(preferences="{}")
+    def test_tool_output_guard_ignores_false_user_preference(self):
+        user = SimpleNamespace(preferences='{"tool_output_guard_enabled": false}')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
         assert enabled is True
 
-    def test_tool_output_guard_user_false_overrides_env_true(self, monkeypatch):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
-        user = SimpleNamespace(preferences='{"tool_output_guard_enabled": false}')
-
-        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
-
-        assert enabled is False
-
-    def test_tool_output_guard_invalid_preferences_fall_back_to_env(self, monkeypatch):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+    def test_tool_output_guard_invalid_preferences_fall_back_to_default(self):
         user = SimpleNamespace(preferences="{invalid json")
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
         assert enabled is True
 
-    def test_tool_output_guard_non_object_preferences_fall_back_to_env(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+    def test_tool_output_guard_non_object_preferences_fall_back_to_default(self):
         user = SimpleNamespace(preferences='["not-an-object"]')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
@@ -130,6 +112,46 @@ class TestUserScopedMcpInjection:
                 }
             }
         }
+
+    def test_get_model_config_uses_runtime_model_config_directly(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        runtime_model_config = {
+            "model": "openai",
+            "model_id": "codex-gpt-5.5",
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+
+        result = builder._get_model_config(
+            bot=SimpleNamespace(),
+            user_id=1,
+            user_name="admin",
+            override_model_name="ignored-model",
+            force_override=True,
+            task_id=33,
+            team_id=38,
+            runtime_model_config=runtime_model_config,
+        )
+
+        assert result == runtime_model_config
+        assert result is not runtime_model_config
+
+    def test_build_runtime_agent_config_wraps_model_config_as_env(self):
+        runtime_model_config = {
+            "model": "openai",
+            "model_id": "codex-gpt-5.5",
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+
+        result = TaskRequestBuilder._build_runtime_agent_config(runtime_model_config)
+
+        assert result == {
+            "env": runtime_model_config,
+            "protocol": "openai-responses",
+            "apiFormat": "responses",
+        }
+        assert result["env"] is not runtime_model_config
 
     def test_injects_service_skill_when_message_mentions_provider_and_service_missing(
         self, test_db

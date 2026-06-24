@@ -1,10 +1,5 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -14,8 +9,22 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
-import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
+import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
+import type {
+  DeleteDeviceWorkspaceRequest,
+  DeviceInfo,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
+  RuntimeWorkListResponse,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -40,8 +49,9 @@ import { useResizableRightSplitChat } from './workspace-panels/useResizableWorks
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { DesktopTopBar } from './DesktopTopBar'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { TaskForkDialog } from './TaskForkDialog'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -58,14 +68,14 @@ const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
 function workbenchSessionKey({
-  currentTask,
+  currentRuntimeTask,
   currentProject,
 }: {
-  currentTask: Task | null
+  currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
 }): string {
-  if (currentTask) {
-    return `task:${currentTask.id}`
+  if (currentRuntimeTask) {
+    return `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
   }
   if (currentProject) {
     return `project:${currentProject.id}`
@@ -117,13 +127,17 @@ interface DesktopReviewState {
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
-  currentTask: Task | null
+  currentRuntimeTask: RuntimeTaskAddress | null
+  runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError?: string | null
   devices: DeviceInfo[]
   upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
+  isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
@@ -131,6 +145,7 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  error?: string | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -143,6 +158,7 @@ interface DesktopWorkbenchMainProps {
   onInputChange: (value: string) => void
   onSend: () => void
   onRetryFailedMessage?: (messageId: string) => void
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
   isResponseStreaming: boolean
   onPauseResponse: () => void
   onCancelQueuedMessage: (id: string) => void
@@ -154,18 +170,32 @@ interface DesktopWorkbenchMainProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
+  onContinueInIm?: () => void
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
+  onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
+  onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
+  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
 }
 
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
   isBootstrapping,
-  currentTask,
+  currentRuntimeTask,
+  runtimeWork,
   currentProject,
   workspaceTarget,
   workspaceTargetError,
   devices,
   upgradingDevices,
   messages,
+  isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   queuedMessages,
   guidanceMessages,
   codeCommentContexts = [],
@@ -173,6 +203,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  error,
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -185,6 +216,7 @@ export function DesktopWorkbenchMain({
   onInputChange,
   onSend,
   onRetryFailedMessage,
+  onLoadOlderRuntimeTranscript,
   isResponseStreaming,
   onPauseResponse,
   onCancelQueuedMessage,
@@ -196,6 +228,14 @@ export function DesktopWorkbenchMain({
   onAddCodeComment = () => {},
   onClearCodeComments,
   topBarLeftActions,
+  onContinueInIm,
+  onForkCurrentRuntimeTask,
+  onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
+  onListDeviceDirectories,
+  onCreateDeviceDirectory,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -203,6 +243,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
@@ -214,14 +255,16 @@ export function DesktopWorkbenchMain({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const reviewRequestSequence = useRef(0)
-  const rightPanelSessionKey = workbenchSessionKey({ currentTask, currentProject })
+  const rightPanelSessionKey = workbenchSessionKey({
+    currentRuntimeTask,
+    currentProject,
+  })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
-  const hasConversation = messages.length > 0 || currentTask
+  const hasConversation = messages.length > 0 || currentRuntimeTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentTask,
     currentProject,
     standaloneDeviceId: projectWork.currentStandaloneDeviceId,
   })
@@ -241,6 +284,20 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const composerDisabledReason = isSending
+    ? t('workbench.sending_message')
+    : activeDeviceUnavailable
+      ? t('workbench.device_status_active_unavailable', {
+          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        })
+      : activeDeviceVersionUnsupported
+        ? t('workbench.device_status_active_upgrade_required', {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : noStandaloneCompatibleDevice
+          ? t('workbench.device_status_no_online_device')
+          : undefined
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...projectChat,
     modelSelectorOpenSignal,
@@ -392,6 +449,40 @@ export function DesktopWorkbenchMain({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && onForkCurrentRuntimeTask)
+  const forkTaskButton = canForkCurrentRuntimeTask ? (
+    <button
+      type="button"
+      data-testid="fork-runtime-task-button"
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.task_fork_button')}
+      title={t('workbench.task_fork_button')}
+      onClick={() => setForkDialogOpen(true)}
+    >
+      <ArrowLeftRight />
+    </button>
+  ) : undefined
+  const canContinueInIm = Boolean(currentRuntimeTask)
+  const continueInImButton =
+    canContinueInIm && onContinueInIm ? (
+      <button
+        type="button"
+        data-testid="continue-in-im-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.continue_im_title')}
+        title={t('workbench.continue_im_title')}
+        onClick={onContinueInIm}
+      >
+        <MessageCircle />
+      </button>
+    ) : undefined
+  const topRightActions = (
+    <>
+      {forkTaskButton}
+      {continueInImButton}
+      {workspacePanelActions}
+    </>
+  )
 
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
@@ -419,13 +510,13 @@ export function DesktopWorkbenchMain({
         sidebarCollapsed && 'ml-1.5'
       )}
     >
-      {isTauri && <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>}
+      {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
       {!isTauri && (
         <div
           data-testid="workspace-panel-floating-actions"
           className="pointer-events-auto absolute right-7 top-3 z-popover flex shrink-0 items-center gap-2"
         >
-          {workspacePanelActions}
+          {topRightActions}
         </div>
       )}
       {showPageTopBar && (
@@ -434,8 +525,6 @@ export function DesktopWorkbenchMain({
           className="absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7 transition-[width] duration-300 ease-out"
           style={{ width: chatColumnWidth }}
           left={topBarLeftActions}
-          right={undefined}
-          rightClassName="gap-2"
         />
       )}
       <div
@@ -453,7 +542,10 @@ export function DesktopWorkbenchMain({
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <ScrollableMessageArea
               messages={messages}
-              conversationKey={currentTask?.id ?? null}
+              loading={isRuntimeTranscriptLoading}
+              hasMoreBefore={runtimeTranscriptHasMoreBefore}
+              loadingMoreBefore={isRuntimeTranscriptLoadingMore}
+              conversationKey={currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}
@@ -464,6 +556,7 @@ export function DesktopWorkbenchMain({
               }
               devices={devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onLoadMoreBefore={onLoadOlderRuntimeTranscript}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
@@ -508,6 +601,8 @@ export function DesktopWorkbenchMain({
                   onChange={onInputChange}
                   onSubmit={onSend}
                   disabled={composerDisabled}
+                  error={error}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
@@ -553,6 +648,8 @@ export function DesktopWorkbenchMain({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={composerDisabled}
+                error={error}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}
@@ -607,6 +704,27 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        source={currentRuntimeTask}
+        runtimeWork={runtimeWork}
+        currentProject={currentProject}
+        devices={devices}
+        requiresStop={isResponseStreaming}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onFork={async target => {
+          if (!onForkCurrentRuntimeTask) return
+          await onForkCurrentRuntimeTask(target)
+        }}
+      />
     </main>
   )
 }

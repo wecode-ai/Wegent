@@ -18,6 +18,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from chat_shell.compression.context_metrics import ProviderUsageBaseline
+from chat_shell.compression.summary_compactor import (
+    SummaryCompactNotApplicable,
+    SummaryCompactResult,
+)
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.context_guard import (
     ContextGuardFailFastError,
@@ -25,6 +30,25 @@ from chat_shell.guard.context_guard import (
 )
 from chat_shell.guard.tool_output import COMPACTED_FLAG, ToolOutputGuardAdapter
 from chat_shell.guard.types import TruncationPolicy
+
+
+class _FakeSummaryCompactor:
+    def __init__(self, result=None, error: Exception | None = None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    async def compact(self, messages, *, preserve_initial_context):
+        self.calls.append(
+            {
+                "messages": messages,
+                "preserve_initial_context": preserve_initial_context,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return self.result
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -283,6 +307,181 @@ class TestCompressionPass:
         result = await guard_no_compression({"messages": [big]})
         # No source applies; no compression; should be {}.
         assert result == {}
+
+    async def test_summary_compact_rewrites_history_before_legacy_fallback(
+        self, guard, monkeypatch
+    ):
+        state = {
+            "messages": [
+                SystemMessage(content="system", id="s-1"),
+                HumanMessage(content="older user", id="h-1"),
+                AIMessage(content="assistant", id="a-1"),
+                HumanMessage(content="latest user", id="h-2"),
+            ]
+        }
+
+        fake_result = SummaryCompactResult(
+            summary_text="Current objective:\ncontinue",
+            replacement_history=[
+                SystemMessage(content="system"),
+                HumanMessage(content="latest user"),
+                HumanMessage(
+                    content="[COMPACT SUMMARY]\n\nCurrent objective:\ncontinue",
+                    additional_kwargs={
+                        "compacted": True,
+                        "summary_compacted": True,
+                    },
+                ),
+            ],
+            removed_history_items=2,
+        )
+        fake_compactor = _FakeSummaryCompactor(result=fake_result)
+        guard._summary_compactor = fake_compactor
+
+        calls = {"n": 0}
+
+        def fake_count(messages):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return guard.trigger_limit + 100
+            return 0
+
+        monkeypatch.setattr(guard._counter, "count_messages", fake_count)
+        compressor_calls = []
+        monkeypatch.setattr(
+            guard._compressor,
+            "compress_if_needed",
+            lambda msgs: compressor_calls.append(msgs),
+        )
+
+        updates = (await guard(state))["messages"]
+
+        assert fake_compactor.calls
+        assert fake_compactor.calls[0]["preserve_initial_context"] is True
+        assert compressor_calls == []
+        remove_ids = {u.id for u in updates if isinstance(u, RemoveMessage)}
+        assert remove_ids == {"s-1", "h-1", "a-1", "h-2"}
+        non_remove = [u for u in updates if not isinstance(u, RemoveMessage)]
+        assert len(non_remove) == 3
+        assert non_remove[-1].additional_kwargs["summary_compacted"] is True
+        assert guard.context_compactions[0]["strategy"] == "summary_compact"
+
+    async def test_summary_compact_failure_falls_back_to_legacy_compressor(
+        self, guard, monkeypatch
+    ):
+        guard._summary_compactor = _FakeSummaryCompactor(
+            error=RuntimeError("context length exceeded")
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="hi", id="h-1"),
+                AIMessage(content="ok", id="a-1"),
+            ]
+        }
+
+        calls = {"n": 0}
+
+        def fake_count(messages):
+            calls["n"] += 1
+            return guard.trigger_limit + 100 if calls["n"] == 1 else 0
+
+        monkeypatch.setattr(guard._counter, "count_messages", fake_count)
+
+        fake_result = MagicMock()
+        fake_result.was_compressed = True
+        fake_result.original_tokens = guard.trigger_limit + 100
+        fake_result.compressed_tokens = guard.trigger_limit - 1
+        fake_result.strategies_applied = ["history"]
+        fake_result.messages = [
+            {"role": "user", "content": "[legacy summary]", "additional_kwargs": {}}
+        ]
+        monkeypatch.setattr(
+            guard._compressor, "compress_if_needed", lambda msgs: fake_result
+        )
+
+        updates = (await guard(state))["messages"]
+
+        assert len(updates) == 3
+        assert {u.id for u in updates if isinstance(u, RemoveMessage)} == {
+            "h-1",
+            "a-1",
+        }
+        synthesized = [u for u in updates if not isinstance(u, RemoveMessage)]
+        assert synthesized[0].content == "[legacy summary]"
+
+    async def test_summary_compact_failure_without_legacy_compressor_keeps_flag_false(
+        self, guard_no_compression, monkeypatch
+    ):
+        guard_no_compression._summary_compactor = _FakeSummaryCompactor(
+            error=RuntimeError("context length exceeded")
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 50_000, id="h-1"),
+            ]
+        }
+        monkeypatch.setattr(
+            guard_no_compression._counter,
+            "count_messages",
+            lambda messages: guard_no_compression.trigger_limit + 100,
+        )
+
+        result = await guard_no_compression(state)
+
+        assert result == {}
+        assert guard_no_compression.context_compactions[0]["status"] == "fallback"
+        assert (
+            guard_no_compression.context_compactions[0]["used_legacy_fallback"] is False
+        )
+
+    async def test_summary_compact_not_applicable_sets_specific_failure_reason(
+        self, guard_no_compression, monkeypatch
+    ):
+        guard_no_compression._summary_compactor = _FakeSummaryCompactor(
+            error=SummaryCompactNotApplicable("floor too large")
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 50_000, id="h-1"),
+            ]
+        }
+        monkeypatch.setattr(
+            guard_no_compression._counter,
+            "count_messages",
+            lambda messages: guard_no_compression.trigger_limit + 100,
+        )
+
+        await guard_no_compression(state)
+
+        assert (
+            guard_no_compression.context_compactions[0]["failure_reason"]
+            == "summary_compact_not_applicable"
+        )
+
+    async def test_over_trigger_uses_provider_usage_baseline(self, guard):
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 10_000, id="h-1"),
+            ]
+        }
+        guard._summary_compactor = _FakeSummaryCompactor(
+            result=SummaryCompactResult(
+                summary_text="Current objective:\ncontinue",
+                replacement_history=[HumanMessage(content="[COMPACT SUMMARY]")],
+                removed_history_items=1,
+            )
+        )
+        tracker = MagicMock()
+        tracker.usage_baseline = ProviderUsageBaseline(
+            input_tokens=100,
+            messages=[{"role": "user", "content": "x " * 10_000}],
+        )
+        guard.set_tracker(tracker)
+
+        result = await guard(state)
+
+        assert result == {}
+        assert guard._summary_compactor.calls == []
 
     async def test_compression_emits_remove_and_synthesized(self, guard, monkeypatch):
         """When compressor drops messages and synthesizes a summary, the guard
@@ -797,6 +996,90 @@ class TestTrackerEmits:
         # (last_emitted_snapshot is None), the throttle returns True so the
         # first such call IS emitted.
         assert emitted_phases == [PHASE_AFTER_TOOL_END]
+
+    async def test_summary_compaction_emits_started_and_completed_runtime_events(
+        self, guard
+    ):
+        from unittest.mock import AsyncMock
+
+        from chat_shell.compression.context_metrics import ContextMetricsTracker
+
+        emitter = AsyncMock()
+        tracker = ContextMetricsTracker(
+            task_id=1,
+            subtask_id=2,
+            metrics_fn=guard.metrics,
+            emitter=emitter,
+        )
+        guard.set_tracker(tracker)
+        guard._summary_compactor = _FakeSummaryCompactor(
+            result=SummaryCompactResult(
+                summary_text="Current objective:\ncontinue",
+                replacement_history=[
+                    HumanMessage(
+                        content="[COMPACT SUMMARY]\n\nCurrent objective:\ncontinue"
+                    )
+                ],
+                removed_history_items=1,
+            )
+        )
+
+        state = {
+            "messages": [
+                HumanMessage(content="x" * 40000, id="h-1"),
+                AIMessage(content="y" * 40000, id="a-1"),
+            ]
+        }
+
+        await guard(state)
+
+        compaction_events = [
+            call.kwargs["context_compaction"]
+            for call in emitter.status_updated.await_args_list
+            if call.kwargs.get("context_compaction", {}).get("type")
+            == "summary_compact"
+        ]
+        assert [event["status"] for event in compaction_events] == [
+            "started",
+            "completed",
+        ]
+
+    async def test_summary_compaction_failure_emits_fallback_runtime_event(self, guard):
+        from unittest.mock import AsyncMock
+
+        from chat_shell.compression.context_metrics import ContextMetricsTracker
+
+        emitter = AsyncMock()
+        tracker = ContextMetricsTracker(
+            task_id=1,
+            subtask_id=2,
+            metrics_fn=guard.metrics,
+            emitter=emitter,
+        )
+        guard.set_tracker(tracker)
+        guard._summary_compactor = _FakeSummaryCompactor(
+            error=RuntimeError("context length exceeded")
+        )
+
+        state = {
+            "messages": [
+                HumanMessage(content="x" * 40000, id="h-1"),
+                AIMessage(content="y" * 40000, id="a-1"),
+            ]
+        }
+
+        await guard(state)
+
+        compaction_events = [
+            call.kwargs["context_compaction"]
+            for call in emitter.status_updated.await_args_list
+            if call.kwargs.get("context_compaction", {}).get("type")
+            == "summary_compact"
+        ]
+        assert [event["status"] for event in compaction_events] == [
+            "started",
+            "fallback",
+        ]
 
     async def test_no_tracker_no_emit(self, guard):
         """When no tracker is wired, the guard simply skips emitting — no

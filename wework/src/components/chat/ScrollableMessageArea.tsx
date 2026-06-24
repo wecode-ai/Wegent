@@ -11,6 +11,9 @@ const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
 
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
+  loading?: boolean
+  hasMoreBefore?: boolean
+  loadingMoreBefore?: boolean
   className?: string
   scrollerClassName?: string
   scrollButtonClassName?: string
@@ -26,10 +29,14 @@ interface ScrollableMessageAreaProps {
     loadDiff: () => Promise<string>
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onLoadMoreBefore?: () => Promise<void> | void
 }
 
 export function ScrollableMessageArea({
   messages,
+  loading = false,
+  hasMoreBefore = false,
+  loadingMoreBefore = false,
   className,
   scrollerClassName,
   scrollButtonClassName,
@@ -42,6 +49,7 @@ export function ScrollableMessageArea({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onLoadMoreBefore,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -207,31 +215,57 @@ export function ScrollableMessageArea({
       >
         <div ref={contentRef} className="min-w-0 overflow-x-hidden">
           {messages.length === 0 ? (
-            <div
-              data-testid="chat-empty-state"
-              className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
-            >
-              <h2 className="text-sm font-medium text-text-primary">
-                {t('workbench.empty_conversation_title', '开始新的对话')}
-              </h2>
-              <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
-                {t(
-                  'workbench.empty_conversation_description',
-                  '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
-                )}
-              </p>
-            </div>
+            loading ? (
+              <div
+                data-testid="chat-loading-state"
+                className="flex min-h-full items-center justify-center px-6 py-16 text-center text-sm text-text-muted"
+              >
+                {t('workbench.loading_conversation', '正在加载会话...')}
+              </div>
+            ) : (
+              <div
+                data-testid="chat-empty-state"
+                className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
+              >
+                <h2 className="text-sm font-medium text-text-primary">
+                  {t('workbench.empty_conversation_title', '开始新的对话')}
+                </h2>
+                <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
+                  {t(
+                    'workbench.empty_conversation_description',
+                    '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
+                  )}
+                </p>
+              </div>
+            )
           ) : (
-            <MessageList
-              messages={messages}
-              devices={devices}
-              onRetryFailedMessage={onRetryFailedMessage}
-              onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-              onLoadFileChangesDiff={onLoadFileChangesDiff}
-              onRevertFileChanges={onRevertFileChanges}
-              onOpenFileChangesReview={onOpenFileChangesReview}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
+            <>
+              {hasMoreBefore && (
+                <div className="flex justify-center px-4 pb-2 pt-4">
+                  <button
+                    type="button"
+                    data-testid="load-older-runtime-transcript-button"
+                    onClick={() => void onLoadMoreBefore?.()}
+                    disabled={loadingMoreBefore}
+                    className="flex h-11 min-w-[44px] items-center justify-center rounded-md border border-border bg-surface px-4 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {loadingMoreBefore
+                      ? t('workbench.loading_older_messages')
+                      : t('workbench.load_older_messages')}
+                  </button>
+                </div>
+              )}
+              <MessageList
+                messages={messages}
+                devices={devices}
+                onRetryFailedMessage={onRetryFailedMessage}
+                onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+                onLoadFileChangesDiff={onLoadFileChangesDiff}
+                onRevertFileChanges={onRevertFileChanges}
+                onOpenFileChangesReview={onOpenFileChangesReview}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            </>
           )}
         </div>
       </div>

@@ -27,13 +27,13 @@ Local Device Support allows your personal computer to act as a task executor for
 
 ### Core Benefits
 
-| Benefit | Description |
-|---------|-------------|
-| **Lower Latency** | Direct local execution without network transmission delays |
-| **Data Privacy** | Your code and data never leave your local machine |
-| **Environment Control** | Use your locally installed tools, dependencies, and configurations |
-| **Cost Savings** | Reduce cloud execution resource consumption |
-| **Custom Setup** | Access to local credentials, custom tools, and specialized software |
+| Benefit                 | Description                                                         |
+| ----------------------- | ------------------------------------------------------------------- |
+| **Lower Latency**       | Direct local execution without network transmission delays          |
+| **Data Privacy**        | Your code and data never leave your local machine                   |
+| **Environment Control** | Use your locally installed tools, dependencies, and configurations  |
+| **Cost Savings**        | Reduce cloud execution resource consumption                         |
+| **Custom Setup**        | Access to local credentials, custom tools, and specialized software |
 
 ---
 
@@ -53,16 +53,19 @@ Before registering a local device, ensure you have:
 #### One-Line Installation (Recommended)
 
 **macOS / Linux:**
+
 ```bash
 curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
 ```
 
 The installation script will:
+
 - Check and install Node.js 18+ (required for Claude Code)
 - Install or upgrade Claude Code SDK
 - Download the appropriate binary for your platform
@@ -102,9 +105,9 @@ The operation is repeatable. Skills with the same directory name are not overwri
 
 ### Building a Device Image
 
-The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
 
-The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for interactive terminal, code-server, or ttyd access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
+The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for code-server and terminal shell access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
 
 Before building, prepare a Linux executor binary that matches the target platform, and confirm the base image supports the same platform. For example, when building a Linux AMD64 image, `executor/dist/wegent-executor` must be a Linux x86-64 ELF file, not a macOS Mach-O binary. When building a Linux ARM64 image, the base Ubuntu image rootfs must also be arm64.
 
@@ -129,18 +132,50 @@ docker run -d --platform linux/amd64 \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
   -e EXECUTOR_MODE=local \
-  -e WEGENT_BACKEND_URL=http://localhost:8000 \
+  -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
   wegent-device:linux-amd64
 ```
 
-By default, the device image only starts `wegent-executor` and the interactive session gateway. Note that Wework currently exposes project connection tools only for cloud devices. Local devices can be bound to projects and execute AI tasks, but they do not support the project toolbar Terminal, IDE/code-server, or Desktop VNC/VPN entries.
+`WEGENT_BACKEND_URL` must be reachable from inside the container. If the Backend runs on the same macOS or Windows host, use `http://host.docker.internal:8000`; generated remote Docker commands automatically add `--add-host host.docker.internal:host-gateway` when needed for Linux Docker compatibility. `DEVICE_PUBLIC_BASE_URL` is the browser-reachable URL for the container session gateway; local runs usually use `http://localhost:17888`.
 
-- `POST /api/projects/{project_id}/terminal`: starts a writable ttyd in the project path and returns a short-token URL.
+### Adding a Remote Docker Device
+
+Remote Docker devices are for connecting a self-managed server or container host to Wegent. They receive work through the same device WebSocket protocol as cloud devices and support terminal and code-server sessions. The difference is lifecycle ownership: users start, stop, restart, and remove the Docker container themselves; Wegent does not provision or destroy it.
+
+Each user can create at most one cloud device. If a cloud device already exists, the add-device dialog disables cloud device creation while still allowing remote Docker command generation.
+
+In Wework, open **Settings** -> **Connections**, click **Add device**, select **Remote Docker device**, and generate the startup command. Wegent pre-registers a `remote` Device record, derives the image and `WEGENT_BACKEND_URL` from the current Backend environment, creates a new remote device API key, and returns a `docker run` command containing the device ID and runtime parameters. Run that command on the target host, and the container registers as a remote device under the **Remote devices** group.
+
+The generated command contains parameters like:
+
+```bash
+docker run -d \
+  --name wegent-remote-device \
+  --restart unless-stopped \
+  -e EXECUTOR_MODE=local \
+  -e DEVICE_TYPE=remote \
+  -e DEVICE_ID=<generated-device-id> \
+  -e DEVICE_NAME=<generated-device-name> \
+  -e WEGENT_BACKEND_URL=https://backend.example.com \
+  -e WEGENT_AUTH_TOKEN=<generated-api-key> \
+  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -p 17888:17888 \
+  -v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor \
+  ghcr.io/wecode-ai/wegent-device:latest
+```
+
+The generation API uses the current Backend environment to generate `WEGENT_BACKEND_URL`, in this order: `REMOTE_DEVICE_BACKEND_URL`, `BACKEND_INTERNAL_URL`, then the current request host. `WEGENT_AUTH_TOKEN` is a newly created remote device API key for each generated command and is not persisted in the Device CRD `remoteConfig`. `DEVICE_PUBLIC_BASE_URL` is derived from the current frontend host so the browser can open the device session gateway.
+
+The default image is controlled by the Backend environment variable `REMOTE_DEVICE_DOCKER_IMAGE`; if unset, Wegent uses `ghcr.io/wecode-ai/wegent-device:latest`. If a deployment must use an internal registry, the deployer should set `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>` in the Backend runtime environment. Users do not need to enter an image address manually.
+
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server and Desktop VNC/VPN entries remain cloud-device-only.
+
+- `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
 
-These project session APIs are for cloud-device project connections. If the project is bound to a local device, Backend rejects terminal and code-server session startup. Cloud-device URLs include a short-lived session token and are exposed through the device-side session gateway. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
+Terminal sessions work for local and cloud devices. Backend records the `session_id`, user, device, and executor socket binding; the frontend connects to the `/terminal` namespace with the existing login JWT; Backend then relays input, resize, and close events to the device through the `/local-executor` namespace, while Executor manages the PTY directly. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. Local devices do not support code-server project sessions.
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server. If the request includes a task ID and that task records an execution workspace path, such as a Git worktree, terminal or code-server starts directly in the task workspace path and does not fall back to the project directory.
 
@@ -155,11 +190,13 @@ Project chats do not use the Chats workspace path. They use the project's config
 #### Installing a Specific Version
 
 **macOS / Linux:**
+
 ```bash
 curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 $env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
 ```
@@ -217,12 +254,12 @@ In the chat interface, you'll see a device selector dropdown:
 
 ### Device Status Indicators
 
-| Status | Icon | Description |
-|--------|------|-------------|
-| **Online** | 🟢 | Device connected, slots available |
-| **Offline** | 🔴 | Device not connected |
-| **Busy** | 🟡 | All 5 concurrent slots in use |
-| **Default** | ⭐ | Your default device for new tasks |
+| Status      | Icon | Description                       |
+| ----------- | ---- | --------------------------------- |
+| **Online**  | 🟢   | Device connected, slots available |
+| **Offline** | 🔴   | Device not connected              |
+| **Busy**    | 🟡   | All 5 concurrent slots in use     |
+| **Default** | ⭐   | Your default device for new tasks |
 
 ### Concurrent Task Slots
 
@@ -236,10 +273,10 @@ Each device supports up to **5 concurrent tasks**:
 
 You can dynamically choose execution location:
 
-| Selection | Behavior |
-|-----------|----------|
+| Selection           | Behavior                                     |
+| ------------------- | -------------------------------------------- |
 | **Cloud** (default) | Task executes on Wegent cloud infrastructure |
-| **Local Device** | Task executes on your selected local machine |
+| **Local Device**    | Task executes on your selected local machine |
 
 Simply change the device selection before sending each message.
 
@@ -249,12 +286,12 @@ When creating a project, you can select an online or busy ClaudeCode local devic
 
 Local devices do not support cloud connection capabilities in the project toolbar:
 
-| Feature | Local Device Support |
-|---------|----------------------|
-| **Terminal** | Not supported |
-| **IDE/code-server** | Not supported |
-| **Desktop VNC/VPN** | Not supported |
-| **CPU/MEM/Disk monitoring** | Not supported |
+| Feature                     | Local Device Support |
+| --------------------------- | -------------------- |
+| **Terminal**                | Not supported        |
+| **IDE/code-server**         | Not supported        |
+| **Desktop VNC/VPN**         | Not supported        |
+| **CPU/MEM/Disk monitoring** | Not supported        |
 
 When a project is bound to a local device, the workspace toolbar hides Terminal, IDE, and Desktop entries and shows a local-device capability notice. Choose a cloud device when you need those connection and monitoring capabilities.
 
@@ -288,39 +325,39 @@ Online cloud devices can open interactive sessions directly:
 
 | Action | Backend API | Description |
 |--------|-------------|-------------|
-| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts ttyd in the default working directory `/home/ubuntu/.wegent-executor/workspace` |
+| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
 | **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
 
-The returned URL includes a short-lived session token and is exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
 
 The more menu contains lower-frequency management actions:
 
-| Action | Description |
-|--------|-------------|
-| **Rename** | Click the device name or edit icon; the list refreshes after saving |
+| Action             | Description                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| **Rename**         | Click the device name or edit icon; the list refreshes after saving                              |
 | **Restart Device** | Requires confirmation; the device briefly goes offline and active connections may be interrupted |
-| **Delete Device** | Requires confirmation; the cloud resources are released |
+| **Delete Device**  | Requires confirmation; the cloud resources are released                                          |
 
 ### Device Information
 
 Each device shows:
 
-| Field | Description |
-|-------|-------------|
-| **Name** | Device hostname (e.g., "Darwin - MacBook-Pro.local") |
-| **Status** | Online/Offline indicator |
-| **Version** | Executor version, when available |
-| **Resource Usage** | CPU, memory, and disk usage for cloud devices only |
-| **Slots** | Concurrent task capacity (X/5) |
-| **Default** | Star indicator if set as default |
+| Field              | Description                                          |
+| ------------------ | ---------------------------------------------------- |
+| **Name**           | Device hostname (e.g., "Darwin - MacBook-Pro.local") |
+| **Status**         | Online/Offline indicator                             |
+| **Version**        | Executor version, when available                     |
+| **Resource Usage** | CPU, memory, and disk usage for cloud devices only   |
+| **Slots**          | Concurrent task capacity (X/5)                       |
+| **Default**        | Star indicator if set as default                     |
 
 ### Managing Devices
 
-| Action | How To |
-|--------|--------|
-| **Set Default** | Click star icon |
+| Action             | How To                              |
+| ------------------ | ----------------------------------- |
+| **Set Default**    | Click star icon                     |
 | **Remove Default** | Click star again on current default |
-| **Delete Device** | Click delete icon |
+| **Delete Device**  | Click delete icon                   |
 
 > **Note**: Deleting a local device only removes the registration. If the device reconnects, it will automatically re-register. Deleting a cloud device from the Connections settings page releases the corresponding cloud resources.
 
@@ -343,11 +380,13 @@ When a device goes offline:
 #### Device won't connect
 
 **Possible causes:**
+
 1. Invalid or expired JWT token
 2. Network connectivity issues
 3. Backend URL misconfigured
 
 **Solutions:**
+
 1. Generate a new JWT token from Wegent UI
 2. Check network connectivity to Wegent backend
 3. Verify `~/.wegent-executor/device-config.json` or the `WEGENT_BACKEND_URL` environment variable
@@ -355,11 +394,13 @@ When a device goes offline:
 #### Device shows offline immediately after connecting
 
 **Possible causes:**
+
 1. Token validation failure
 2. Firewall blocking WebSocket
 3. Backend service issues
 
 **Solutions:**
+
 1. Check token validity and permissions
 2. Ensure WebSocket connections are allowed
 3. Check Wegent backend logs for errors
@@ -369,11 +410,13 @@ When a device goes offline:
 #### Tasks fail immediately
 
 **Possible causes:**
+
 1. Claude Code SDK not installed
 2. Missing dependencies on local machine
 3. Insufficient permissions
 
 **Solutions:**
+
 1. Install and configure Claude Code SDK
 2. Install required dependencies
 3. Check file system permissions
@@ -381,11 +424,13 @@ When a device goes offline:
 #### Tasks hang without progress
 
 **Possible causes:**
+
 1. Claude Code SDK stuck
 2. Network interruption during execution
 3. Resource exhaustion on local machine
 
 **Solutions:**
+
 1. Restart the executor
 2. Check network connectivity
 3. Monitor local resource usage (CPU, memory)
@@ -406,14 +451,14 @@ If a device keeps re-appearing after deletion, the executor is still running and
 
 ### When to Use Local Devices
 
-| Use Case | Recommendation |
-|----------|----------------|
-| **Sensitive codebases** | ✅ Local device |
-| **Quick iterations** | ✅ Local device |
-| **Custom tool requirements** | ✅ Local device |
-| **Batch processing** | Cloud (more capacity) |
-| **Team collaboration** | Cloud (shared access) |
-| **Mobile/remote access** | Cloud (no local setup) |
+| Use Case                     | Recommendation         |
+| ---------------------------- | ---------------------- |
+| **Sensitive codebases**      | ✅ Local device        |
+| **Quick iterations**         | ✅ Local device        |
+| **Custom tool requirements** | ✅ Local device        |
+| **Batch processing**         | Cloud (more capacity)  |
+| **Team collaboration**       | Cloud (shared access)  |
+| **Mobile/remote access**     | Cloud (no local setup) |
 
 ### Multi-Device Setup
 
@@ -436,10 +481,12 @@ If you have multiple machines:
 ## 🔗 Related Resources
 
 ### Documentation
+
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent's architecture
 - [Managing Tasks](../chat/managing-tasks.md) - Learn about task execution
 
 ### Technical References
+
 - [Local Device Architecture](../../developer-guide/local-device-architecture.md) - Technical architecture details
 
 ---

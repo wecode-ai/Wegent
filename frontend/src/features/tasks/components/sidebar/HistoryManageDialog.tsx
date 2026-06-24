@@ -249,7 +249,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
     onOpenChange(false)
     let targetPath = paths.chat.getHref() // default to chat
     if (task.task_type === 'code') {
-      targetPath = paths.code.getHref()
+      targetPath = paths.chat.getHref()
     } else if (task.task_type === 'video' || task.task_type === 'image') {
       targetPath = paths.generate.getHref()
     }

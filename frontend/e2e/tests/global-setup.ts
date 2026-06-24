@@ -4,6 +4,7 @@ import { promises as fsPromises } from 'fs'
 import { ADMIN_USER, BOOTSTRAP_ADMIN_USER, REGULAR_USER } from '../config/test-users'
 import type { TestUser } from '../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
+import { ensureBootstrapAdminPasswordInitialized } from '../utils/bootstrap-admin'
 
 const authFile = path.join(__dirname, '../.auth/user.json')
 const apiBaseUrl = process.env.E2E_API_URL || 'http://localhost:8000'
@@ -166,6 +167,8 @@ setup('authenticate', async ({ request }) => {
   } catch {
     await fsPromises.mkdir(authDir, { recursive: true })
   }
+
+  await ensureBootstrapAdminPasswordInitialized(request, apiBaseUrl, BOOTSTRAP_ADMIN_USER.password)
 
   const bootstrapToken = await loginViaApi(request, BOOTSTRAP_ADMIN_USER)
   await ensureUser(request, bootstrapToken, ADMIN_USER)

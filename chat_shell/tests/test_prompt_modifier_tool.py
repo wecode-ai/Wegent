@@ -14,7 +14,7 @@ This module tests:
 from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import ChatMessage, HumanMessage, SystemMessage
 
 from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 from chat_shell.tools.base import PromptModifierTool, ToolRegistry
@@ -225,10 +225,13 @@ class TestPromptModifierFunction:
         assert len(result) == 2
         assert result[0].content == "Original system prompt"
 
-    def test_prompt_modifier_appends_to_system_message(self):
-        """Test that prompt_modifier appends modifications to system message."""
+    def test_prompt_modifier_injects_skill_context_as_developer_message_for_openai(
+        self,
+    ):
+        """Test that OpenAI skill context uses a developer message."""
         # Arrange
         mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -247,14 +250,18 @@ class TestPromptModifierFunction:
         result = prompt_modifier(state)
 
         # Assert
-        assert len(result) == 2
-        assert "Original system prompt" in result[0].content
-        assert "Test instructions" in result[0].content
+        assert len(result) == 3
+        assert result[0].content == "Original system prompt"
+        assert isinstance(result[1], ChatMessage)
+        assert result[1].role == "developer"
+        assert "Test instructions" in result[1].content
+        assert result[2].content == "Hello"
 
-    def test_prompt_modifier_creates_system_message_if_missing(self):
-        """Test that prompt_modifier creates system message if none exists."""
+    def test_prompt_modifier_creates_developer_context_message_if_system_missing(self):
+        """Test that OpenAI dynamic context does not create a system message."""
         # Arrange
         mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -271,13 +278,45 @@ class TestPromptModifierFunction:
 
         # Assert
         assert len(result) == 2
-        assert isinstance(result[0], SystemMessage)
+        assert isinstance(result[0], ChatMessage)
+        assert result[0].role == "developer"
         assert "Test instructions" in result[0].content
+        assert result[1].content == "Hello"
+
+    def test_prompt_modifier_uses_human_context_message_for_anthropic(self):
+        """Test that non-OpenAI providers avoid unsupported developer messages."""
+        # Arrange
+        mock_llm = MagicMock()
+        mock_llm._wegent_provider = "anthropic"
+        registry = ToolRegistry()
+        load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
+        load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
+        registry.register(load_skill)
+
+        builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)
+        prompt_modifier = builder._create_prompt_modifier()
+
+        messages = [
+            SystemMessage(content="Original system prompt"),
+            HumanMessage(content="Hello"),
+        ]
+        state = {"messages": messages}
+
+        # Act
+        result = prompt_modifier(state)
+
+        # Assert
+        assert len(result) == 3
+        assert result[0].content == "Original system prompt"
+        assert isinstance(result[1], HumanMessage)
+        assert "Test instructions" in result[1].content
+        assert result[2].content == "Hello"
 
     def test_prompt_modifier_handles_empty_messages(self):
         """Test that prompt_modifier handles empty messages list."""
         # Arrange
         mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Test instructions"})
@@ -298,6 +337,7 @@ class TestPromptModifierFunction:
         """Test that prompt_modifier combines modifications from multiple tools."""
         # Arrange
         mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
         registry = ToolRegistry()
 
         tool1 = LoadSkillTool(user_id=1, skill_names=["skill1"], skill_metadata={})
@@ -324,8 +364,12 @@ class TestPromptModifierFunction:
         result = prompt_modifier(state)
 
         # Assert
-        assert "Instructions 1" in result[0].content
-        assert "Instructions 2" in result[0].content
+        assert result[0].content == "Original"
+        assert isinstance(result[1], ChatMessage)
+        assert result[1].role == "developer"
+        assert "Instructions 1" in result[1].content
+        assert "Instructions 2" in result[1].content
+        assert result[2].content == "Hello"
 
     def test_prompt_modifier_preserves_list_content_with_cache_control(self):
         """Test that prompt_modifier preserves list content blocks (e.g., Anthropic cache breakpoints).
@@ -337,6 +381,7 @@ class TestPromptModifierFunction:
         """
         # Arrange
         mock_llm = MagicMock()
+        mock_llm._wegent_provider = "openai"
         registry = ToolRegistry()
         load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
         load_skill.preload_skill_prompt("test", {"prompt": "Skill instructions"})
@@ -362,13 +407,15 @@ class TestPromptModifierFunction:
         # Act
         result = prompt_modifier(state)
 
-        # Assert - content must remain a list, NOT a stringified representation
+        # Assert - system content must remain unchanged and cacheable.
         assert isinstance(result[0].content, list)
         # Original block with cache_control is preserved
         assert result[0].content[0]["type"] == "text"
         assert result[0].content[0]["text"] == "Original system prompt"
         assert "cache_control" in result[0].content[0]
-        # Modification is appended as a new content block
-        assert len(result[0].content) == 2
-        assert result[0].content[1]["type"] == "text"
-        assert "Skill instructions" in result[0].content[1]["text"]
+        assert len(result[0].content) == 1
+        # Modification is injected as a separate dynamic developer message.
+        assert isinstance(result[1], ChatMessage)
+        assert result[1].role == "developer"
+        assert "Skill instructions" in result[1].content
+        assert result[2].content == "Hello"

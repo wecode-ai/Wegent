@@ -83,6 +83,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         executor_version: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a local device.
 
@@ -97,6 +98,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             executor_version: Executor version string
             capabilities: Device capability tags
             client_ip: Device's client IP address
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             Dict with device 'id' and 'is_default'
@@ -127,6 +129,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 device_json["spec"]["capabilities"] = capabilities
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            if runtime_transfer_host is not None:
+                device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
             device_kind.json = device_json
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
@@ -171,6 +175,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "isDefault": is_first_device,
                     "capabilities": capabilities,
                     "clientIp": client_ip,
+                    "runtimeTransferHost": runtime_transfer_host,
                 },
                 "status": {
                     "state": "Available",
@@ -203,6 +208,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 name=name,
                 status="online",
                 executor_version=executor_version,
+                client_ip=client_ip,
+                runtime_transfer_host=runtime_transfer_host,
             )
 
         return {
@@ -218,6 +225,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Set device online status in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -227,6 +236,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "status": status,
             "last_heartbeat": datetime.now().isoformat(),
             "executor_version": executor_version,
+            "client_ip": client_ip,
+            "runtime_transfer_host": runtime_transfer_host,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[LocalDeviceProvider] set_online: key={key}, result={result}")
@@ -304,6 +315,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
@@ -366,7 +378,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.CLOUD.value:
+            if device_type == DeviceType.LOCAL.value:
                 local_devices.append(device_kind)
 
         if not local_devices:
@@ -421,7 +433,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+                    "device_type": DeviceType.LOCAL.value,
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),
@@ -436,6 +448,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
@@ -448,6 +461,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         device_id: str,
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -458,6 +472,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 data["running_task_ids"] = running_task_ids
             if executor_version is not None:
                 data["executor_version"] = executor_version
+            if runtime_transfer_host is not None:
+                data["runtime_transfer_host"] = runtime_transfer_host
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "

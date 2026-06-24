@@ -51,9 +51,22 @@ Then open http://localhost:3000 in your browser.
 | **Standard** | Multi-container + MySQL + Redis, best for teams and production |
 | **Development** | Source startup + hot reload, best for development and extensions |
 
+Standalone can choose where coding/execution agents run:
+
+| Standalone Executor Mode | Behavior | Best For |
+|--------------------------|----------|----------|
+| `host` | Run the executor on the host machine while Backend, Frontend, and Wework stay in Docker | macOS or any setup that needs host commands such as `open`, `osascript`, Terminal, or local CLI tools |
+| `container` | Run the executor inside the standalone container | Linux quick start and single-container deployments |
+| `hybrid` | Run both host and container executors | Keeping the container device while also using host-native capabilities |
+
+Interactive macOS installs default to `host`; Linux and non-interactive installs default to `container`.
+
 ```bash
-# Standalone mode (default)
+# Standalone mode (default executor mode)
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Standalone mode with an explicit executor mode: host, container, or hybrid
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
 
 # Standard mode
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard

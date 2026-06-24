@@ -28,12 +28,18 @@ from executor.config import config
 from executor.config.device_config import DeviceConfig
 from executor.modes.local.capabilities import CapabilitySyncHandler
 from executor.modes.local.command_handler import CommandHandler
-from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
+from executor.modes.local.events import (
+    ChatEvents,
+    DeviceEvents,
+    RuntimeEvents,
+    TaskEvents,
+)
 from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.session_handler import LocalSessionHandler
 from executor.modes.local.websocket_client import WebSocketClient
+from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 from executor.services.updater.process_manager import ProcessManager
 from executor.version import get_version
 from shared.logger import setup_logger
@@ -52,6 +58,32 @@ class RunningTaskInfo:
     agent: Optional[Any] = None
     asyncio_task: Optional[asyncio.Task] = None
     cancel_requested: bool = False
+
+
+class TerminalEventTrackingEmitter:
+    """Proxy an emitter and track whether a terminal event was emitted."""
+
+    def __init__(self, wrapped: Any):
+        self._wrapped = wrapped
+        self.terminal_event_emitted = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    async def done(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.done(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
+
+    async def incomplete(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.incomplete(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
+
+    async def error(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.error(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
 
 
 class LocalRunner:
@@ -87,9 +119,14 @@ class LocalRunner:
             auth_token=self.websocket_client.auth_token,
             reporter=self.websocket_client.capability_reporter,
         )
-        self.session_handler = LocalSessionHandler()
+        self.session_handler = LocalSessionHandler(
+            terminal_event_emitter=self.websocket_client.emit
+        )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
+        self.runtime_work_handler = RuntimeWorkRpcHandler(
+            responses_event_emitter=self.websocket_client.emit,
+        )
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -201,6 +238,7 @@ class LocalRunner:
 
             # Start heartbeat service
             await self.heartbeat_service.start()
+            await self.runtime_work_handler.start_codex_watcher()
 
             # Run task processing loop
             await self._task_loop()
@@ -226,6 +264,7 @@ class LocalRunner:
 
         # Stop heartbeat service
         await self.heartbeat_service.stop()
+        await self.runtime_work_handler.stop_codex_watcher()
 
         # Stop interactive sessions and gateway
         await self.session_handler.stop()
@@ -271,6 +310,22 @@ class LocalRunner:
         self.websocket_client.on(
             DeviceEvents.START_CODE_SERVER_SESSION,
             self.session_handler.handle_start_session,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_INPUT,
+            self.session_handler.handle_terminal_input,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_RESIZE,
+            self.session_handler.handle_terminal_resize,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_CLOSE,
+            self.session_handler.handle_terminal_close,
+        )
+        self.websocket_client.on(
+            RuntimeEvents.RPC,
+            self.runtime_work_handler.handle_runtime_rpc,
         )
 
         # Upgrade handler
@@ -568,7 +623,9 @@ class LocalRunner:
         from executor.agents.factory import AgentFactory
 
         # Create WebSocket emitter for local mode
-        ws_emitter = self._create_emitter(task_id, subtask_id)
+        ws_emitter = TerminalEventTrackingEmitter(
+            self._create_emitter(task_id, subtask_id)
+        )
 
         info = self._running_tasks.get(task_id)
         if info and info.cancel_requested:
@@ -641,13 +698,19 @@ class LocalRunner:
         # event with correct content via emitter -> WebSocket transport.
         # Sending another response.completed here would overwrite the DB with
         # empty content (since get_current_state() doesn't include "value").
-        if result == TaskStatus.CANCELLED:
+        if result == TaskStatus.CANCELLED and not ws_emitter.terminal_event_emitted:
             await ws_emitter.incomplete(reason="cancelled")
-        elif result != TaskStatus.COMPLETED:
-            error_msg = execution_result.get(
-                "error", f"Task failed with status: {result.value}"
-            )
-            await ws_emitter.error(error_msg, "execution_error")
+        elif result != TaskStatus.COMPLETED and not ws_emitter.terminal_event_emitted:
+            error_msg = execution_result.get("error")
+            if error_msg:
+                await ws_emitter.error(error_msg, "execution_error")
+            else:
+                logger.warning(
+                    "Task ended without a terminal event or explicit error: "
+                    "task_id=%s, status=%s",
+                    task_id,
+                    result.value,
+                )
 
         # Send heartbeat immediately to reflect freed slot after task completion
         try:

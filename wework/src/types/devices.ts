@@ -1,10 +1,12 @@
+import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
+
 export interface DeviceInfo {
   id: number
   device_id: string
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type: 'local' | 'cloud'
+  device_type: 'local' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
   slot_used?: number
@@ -14,6 +16,8 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  client_ip?: string | null
+  runtime_transfer_host?: string | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string
@@ -21,6 +25,13 @@ export interface DeviceInfo {
     deviceName?: string
     ubuntuInitialPassword?: string
     ubuntuPassword?: string
+    createdAt?: string
+  }
+  remote_config?: {
+    provider?: 'docker' | string
+    image?: string
+    deviceId?: string
+    deviceName?: string
     createdAt?: string
   }
 }
@@ -55,9 +66,11 @@ export interface UpgradeDeviceResponse {
 export interface DeviceSessionResponse {
   session_id: string
   device_id: string
-  type: string
+  type: DeviceSessionType
   path: string
   url: string
+  transport?: DeviceSessionTransport
+  expires_at?: string | null
 }
 
 export interface CloudDeviceResponse {
@@ -67,6 +80,18 @@ export interface CloudDeviceResponse {
   status: string
   device_type: string
   message: string
+}
+
+export interface DockerRemoteDeviceCommandResponse {
+  device_id: string
+  name: string
+  image: string
+  env: Record<string, string>
+  command: string
+}
+
+export interface CreateDockerRemoteDeviceCommandRequest {
+  client_origin?: string
 }
 
 export interface CloudDeviceMetricsResponse {

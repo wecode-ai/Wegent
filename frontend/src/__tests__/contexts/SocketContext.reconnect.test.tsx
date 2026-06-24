@@ -23,7 +23,6 @@ jest.mock('@/lib/runtime-config', () => ({
 
 function createMockSocket() {
   const socketHandlers = new Map<string, (...args: unknown[]) => void>()
-  const managerHandlers = new Map<string, (...args: unknown[]) => void>()
   const socketState = {
     connected: false,
   }
@@ -42,19 +41,27 @@ function createMockSocket() {
     on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
       socketHandlers.set(event, handler)
     }),
+    off: jest.fn((event: string, handler?: (...args: unknown[]) => void) => {
+      if (!handler) {
+        socketHandlers.delete(event)
+        return
+      }
+      const currentHandler = socketHandlers.get(event)
+      if (currentHandler === handler) {
+        socketHandlers.delete(event)
+      }
+    }),
     connect,
     disconnect: jest.fn(),
     io: {
-      on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
-        managerHandlers.set(event, handler)
-      }),
+      on: jest.fn(),
     },
     triggerSocket: (event: string, ...args: unknown[]) => {
       if (event === 'connect') socketState.connected = true
       if (event === 'disconnect') socketState.connected = false
+      if (event === 'connect_error') socketState.connected = false
       socketHandlers.get(event)?.(...args)
     },
-    triggerManager: (event: string, ...args: unknown[]) => managerHandlers.get(event)?.(...args),
   }
 }
 
@@ -70,16 +77,19 @@ function SocketProbe({ onReady }: { onReady: (api: ReturnType<typeof useSocket>)
 
 describe('SocketProvider reconnect notification', () => {
   let consoleInfoSpy: jest.SpyInstance
+  let consoleErrorSpy: jest.SpyInstance
 
   beforeEach(() => {
     jest.clearAllMocks()
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     mockGetToken.mockReturnValue('token')
     mockFetchRuntimeConfig.mockResolvedValue({ socketDirectUrl: 'http://socket' })
   })
 
   afterEach(() => {
     consoleInfoSpy.mockRestore()
+    consoleErrorSpy.mockRestore()
   })
 
   it('notifies reconnect subscribers instead of issuing a raw task join', async () => {
@@ -97,7 +107,16 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBe(socket))
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
+    expect(socket.connect).toHaveBeenCalledTimes(1)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        transports: ['websocket'],
+      })
+    )
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -116,7 +135,8 @@ describe('SocketProvider reconnect notification', () => {
     socket.emit.mockClear()
 
     await act(async () => {
-      socket.triggerManager('reconnect', 1)
+      socket.triggerSocket('disconnect', 'transport close')
+      socket.triggerSocket('connect')
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
@@ -142,7 +162,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBe(socket))
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -173,7 +194,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBe(socket))
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -200,7 +222,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBe(firstSocket))
+    await waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -212,15 +235,163 @@ describe('SocketProvider reconnect notification', () => {
       socketApi!.ensureConnected()
     })
 
-    await waitFor(() => expect(socketApi?.socket).toBe(secondSocket))
+    await waitFor(() => expect(mockIo).toHaveBeenCalledTimes(2))
     expect(firstSocket.disconnect).toHaveBeenCalledTimes(1)
-    expect(mockIo).toHaveBeenCalledTimes(2)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(secondSocket.connect).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       secondSocket.triggerSocket('connect')
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('replays cached chat status to handlers registered after task join', async () => {
+    const socket = createMockSocket()
+    socket.emit.mockImplementation(
+      (event: string, _payload: unknown, ack?: (response: unknown) => void) => {
+        if (event === 'task:join' && ack) {
+          ack({
+            subtasks: [],
+            status_updated: {
+              task_id: 2384260,
+              subtask_id: 77,
+              phase: 'summary_compact',
+              context_metrics: {
+                context_window: 262144,
+                reserved_output_tokens: 26214,
+                available_input_tokens: 235930,
+                used_input_tokens: 108473,
+                remaining_input_tokens: 127457,
+                remaining_percent: 54,
+                display_remaining_tokens: 153671,
+                display_remaining_percent: 59,
+                trigger_limit: 100000,
+                target_limit: 99999,
+                is_over_trigger: true,
+              },
+              context_compaction: {
+                type: 'summary_compact',
+                status: 'started',
+                before_tokens: 108473,
+                trigger_limit: 100000,
+                target_limit: 99999,
+                used_legacy_fallback: false,
+                created_at: '2026-06-23T14:55:34Z',
+              },
+            },
+          })
+        }
+      }
+    )
+    mockIo.mockReturnValue(socket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    const statusHandler = jest.fn()
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
+
+    await act(async () => {
+      socket.triggerSocket('connect')
+      await socketApi!.joinTask(2384260)
+    })
+
+    const cleanup = socketApi!.registerChatHandlers({
+      onChatStatusUpdated: statusHandler,
+    })
+
+    expect(statusHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: 2384260,
+        phase: 'summary_compact',
+        context_compaction: expect.objectContaining({
+          status: 'started',
+        }),
+      })
+    )
+
+    cleanup()
+  })
+
+  it('recreates a fresh authenticated namespace socket after connect_error', async () => {
+    const firstSocket = createMockSocket()
+    const secondSocket = createMockSocket()
+    mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
+
+    await act(async () => {
+      firstSocket.triggerSocket('connect')
+      firstSocket.triggerSocket('connect_error', new Error('timeout'))
+    })
+
+    expect(firstSocket.connect).toHaveBeenCalledTimes(1)
+    expect(mockIo).toHaveBeenCalledTimes(1)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
+    await waitFor(() => expect(socketApi?.connectionError?.message).toBe('timeout'))
+    expect(socketApi?.socket?.connected).toBe(false)
+    await waitFor(() => expect(socketApi?.reconnectAttempts).toBe(1))
+
+    await waitFor(() => expect(mockIo).toHaveBeenCalledTimes(2), { timeout: 2000 })
+    expect(mockIo.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        auth: { token: 'token' },
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
+    expect(secondSocket.connect).toHaveBeenCalledTimes(1)
   })
 
   it('emits chat cancel without owning ack timeout recovery', async () => {
@@ -238,7 +409,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBe(socket))
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
 
     await act(async () => {
       socket.triggerSocket('connect')

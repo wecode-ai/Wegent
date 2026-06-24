@@ -91,6 +91,8 @@ class TaskCreationParams:
     project_id: Optional[int] = None
     # Task-specific execution workspace metadata.
     execution_workspace: Optional[Dict[str, str]] = None
+    # Optional stable Task resource name for workflows requiring DB-level uniqueness.
+    task_name: Optional[str] = None
     # Client surface that owns the task
     client_origin: str = CLIENT_ORIGIN_FRONTEND
     # Task source label (e.g. chat_shell, responses_api)
@@ -104,6 +106,8 @@ class TaskCreationParams:
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
+    # Message source metadata for user subtask persistence.
+    message_source: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""
@@ -295,6 +299,7 @@ def create_new_task(
         knowledge_base_id=params.knowledge_base_id,
     )
     task_execution = _build_task_execution(params.execution_workspace)
+    task_name = params.task_name or f"task-{new_task_id}"
 
     task_json = {
         "kind": "Task",
@@ -327,7 +332,7 @@ def create_new_task(
             "completedAt": None,
         },
         "metadata": {
-            "name": f"task-{new_task_id}",
+            "name": task_name,
             "namespace": "default",
             "labels": {
                 "type": "online",
@@ -363,7 +368,7 @@ def create_new_task(
     task_stores.task_store.update_fields(
         db,
         task=task,
-        name=f"task-{new_task_id}",
+        name=task_name,
         is_active=TaskResource.STATE_ACTIVE,
         is_group_chat=params.is_group_chat,
         client_origin=params.client_origin,
@@ -460,6 +465,20 @@ def _update_task_execution_workspace(
     task.json = task_json
 
 
+def build_user_subtask_result(
+    *,
+    video_config: Optional[Dict[str, Any]] = None,
+    message_source: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build persisted metadata for a user subtask result."""
+    result: Dict[str, Any] = {}
+    if video_config:
+        result["video_config"] = deepcopy(video_config)
+    if message_source is not None:
+        result["source"] = deepcopy(message_source)
+    return result or None
+
+
 def create_user_subtask(
     db: Session,
     subtask_user_id: int,
@@ -471,6 +490,7 @@ def create_user_subtask(
     next_message_id: int,
     parent_id: int,
     video_config: Optional[Dict[str, Any]] = None,
+    message_source: Optional[Dict[str, Any]] = None,
 ) -> Subtask:
     """
     Create a USER subtask for the chat message.
@@ -486,14 +506,15 @@ def create_user_subtask(
         next_message_id: Message ID for this subtask
         parent_id: Parent message ID
         video_config: Optional video generation config (model, resolution, ratio, duration)
+        message_source: Optional message source metadata
 
     Returns:
         Created Subtask
     """
-    # Build result with video_config if provided
-    result = None
-    if video_config:
-        result = {"video_config": video_config}
+    result = build_user_subtask_result(
+        video_config=video_config,
+        message_source=message_source,
+    )
 
     user_subtask = task_stores.subtask_store.create_user_subtask(
         db,

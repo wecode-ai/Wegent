@@ -46,8 +46,12 @@ export interface HttpClientOptions {
   getToken?: () => string | null
 }
 
+export interface HttpRequestOptions {
+  redirectOnUnauthorized?: boolean
+}
+
 export interface HttpClient {
-  get<T>(endpoint: string): Promise<T>
+  get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
   delete<T>(endpoint: string): Promise<T>
@@ -90,7 +94,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
   const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
-  async function request<T>(endpoint: string, init: RequestInit): Promise<T> {
+  async function request<T>(
+    endpoint: string,
+    init: RequestInit,
+    requestOptions: HttpRequestOptions = {}
+  ): Promise<T> {
     const token = getToken()
     const isFormData = init.body instanceof FormData
     const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
@@ -104,7 +112,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
     if (!response.ok) {
       const error = await parseError(response)
-      if (response.status === 401) {
+      if (response.status === 401 && requestOptions.redirectOnUnauthorized !== false) {
         removeToken()
         redirectToLogin()
       }
@@ -118,15 +126,16 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return response.json() as Promise<T>
   }
 
-  function get<T>(endpoint: string): Promise<T> {
+  function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
     const token = getToken()
-    const cacheKey = `${token ?? ''}:${endpoint}`
+    const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
+    const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
     const currentRequest = inFlightGetRequests.get(cacheKey)
     if (currentRequest) {
       return currentRequest as Promise<T>
     }
 
-    const nextRequest = request<T>(endpoint, { method: 'GET' }).finally(() => {
+    const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
       inFlightGetRequests.delete(cacheKey)
     })
     inFlightGetRequests.set(cacheKey, nextRequest)

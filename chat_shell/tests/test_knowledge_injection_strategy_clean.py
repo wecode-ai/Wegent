@@ -258,6 +258,16 @@ class TestKnowledgeBaseToolClean:
         assert reason == "token_limit_exceeded"
         assert warning_level is None
 
+    def test_reserved_output_tokens_align_with_context_governance_budget(self):
+        """KB runtime reserve should follow the shared governance budget."""
+        tool = KnowledgeBaseTool()
+        tool.model_id = "o1"
+        tool.context_window = 200000
+        tool.max_output_tokens = 96000
+
+        assert tool._get_reserved_output_tokens() == 20000
+        assert tool._get_effective_input_budget() == 180000
+
     @pytest.mark.asyncio
     async def test_arun_with_no_knowledge_bases(self):
         """Test _arun with no knowledge bases configured."""

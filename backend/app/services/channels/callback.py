@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
+
+
+def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+    """Build the IM callback key for a device-local runtime task."""
+    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
 
 
 class ChannelType(str, Enum):
@@ -42,8 +48,10 @@ class ChannelType(str, Enum):
     DINGTALK = "dingtalk"
     FEISHU = "feishu"
     TELEGRAM = "telegram"
+    DISCORD = "discord"
     SLACK = "slack"
     WECHAT = "wechat"
+    WEIBO = "weibo"
 
 
 @dataclass
@@ -205,10 +213,12 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
+            emitter = self._active_emitters[task_id]
             logger.debug(
-                f"[{self._channel_type.value}Callback] Reusing existing emitter for task {task_id}"
+                f"[{self._channel_type.value}Callback] Reusing existing emitter "
+                f"for task {task_id}: emitter={emitter.__class__.__name__}"
             )
-            return self._active_emitters[task_id]
+            return emitter
 
         # Get lock for this task to prevent concurrent creation
         task_lock = await self._get_lock_for_task(task_id)
@@ -216,10 +226,13 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         async with task_lock:
             # Double-check after acquiring lock
             if task_id in self._active_emitters:
+                emitter = self._active_emitters[task_id]
                 logger.debug(
-                    f"[{self._channel_type.value}Callback] Reusing existing emitter for task {task_id} (after lock)"
+                    f"[{self._channel_type.value}Callback] Reusing existing emitter "
+                    f"for task {task_id} (after lock): "
+                    f"emitter={emitter.__class__.__name__}"
                 )
-                return self._active_emitters[task_id]
+                return emitter
 
             logger.info(
                 f"[{self._channel_type.value}Callback] Creating new emitter for task {task_id}"
@@ -246,7 +259,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 self._active_emitters[task_id] = emitter
                 self._emitter_created_at[task_id] = time.time()
                 logger.info(
-                    f"[{self._channel_type.value}Callback] Created streaming emitter for task {task_id}"
+                    f"[{self._channel_type.value}Callback] Created streaming "
+                    f"emitter for task {task_id}: "
+                    f"emitter={emitter.__class__.__name__}"
                 )
 
                 return emitter
@@ -323,7 +338,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._active_emitters[task_id] = emitter
         self._emitter_created_at[task_id] = time.time()
         logger.info(
-            f"[{self._channel_type.value}Callback] Registered external emitter for task {task_id}"
+            f"[{self._channel_type.value}Callback] Registered external emitter "
+            f"for task {task_id}: emitter={emitter.__class__.__name__}"
         )
 
     async def emit_event(
@@ -364,6 +380,12 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             if not emitter:
                 return False
 
+            logger.debug(
+                f"[{self._channel_type.value}Callback] Emitting event to "
+                f"channel emitter: task={task_id}, subtask={subtask_id}, "
+                f"event_type={event.type}, emitter={emitter.__class__.__name__}, "
+                f"content_len={len(event.content) if event.content else 0}"
+            )
             await emitter.emit(event)
             return True
 
@@ -564,6 +586,11 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             emitter = self._active_emitters.get(task_id)
 
             if emitter:
+                logger.info(
+                    f"[{self._channel_type.value}Callback] Finishing active "
+                    f"streaming emitter for task {task_id}: "
+                    f"emitter={emitter.__class__.__name__}, status={status}"
+                )
                 # Streaming was active, just finish it
                 if status == "FAILED":
                     await emitter.emit_error(
@@ -809,3 +836,37 @@ async def handle_channel_task_completed(event: Any) -> None:
         result=event.result,
         error=event.error,
     )
+
+
+async def forward_event_to_channel_callbacks(
+    *,
+    task_id: int,
+    subtask_id: int,
+    event: Any,
+    source: str = "ChannelCallback",
+) -> None:
+    """Forward a non-terminal execution event to active IM channel callbacks."""
+    registry = get_callback_registry()
+    for channel_type, service in registry.iter_services():
+        try:
+            forwarded = await service.emit_event(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                event=event,
+            )
+            if forwarded:
+                logger.debug(
+                    "[%s] Forwarded event %s to %s for task %s",
+                    source,
+                    event.type,
+                    channel_type.value,
+                    task_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "[%s] Failed to forward event to %s for task %s: %s",
+                source,
+                channel_type.value,
+                task_id,
+                e,
+            )

@@ -51,9 +51,22 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | **Standard** | 多容器 + MySQL + Redis，适合团队和生产环境 |
 | **Development** | 源码启动 + 热重载，适合开发和二次扩展 |
 
+Standalone 可以选择编码/执行 Agent 的运行位置：
+
+| Standalone Executor 模式 | 行为 | 适合场景 |
+|--------------------------|------|----------|
+| `host` | Backend、Frontend 和 Wework 仍在 Docker 中运行，executor 在宿主机运行 | macOS，或需要调用 `open`、`osascript`、系统 Terminal、本机 CLI 工具等宿主机能力 |
+| `container` | executor 在 standalone 容器内运行 | Linux 快速体验和单容器部署 |
+| `hybrid` | 宿主机 executor 和容器 executor 同时运行 | 保留容器设备，同时使用宿主机能力 |
+
+交互式 macOS 安装默认选择 `host`；Linux 和非交互安装默认选择 `container`。
+
 ```bash
-# Standalone 模式（默认）
+# Standalone 模式（默认 executor 模式）
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Standalone 模式显式指定 executor 模式：host、container 或 hybrid
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
 
 # Standard 模式
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard

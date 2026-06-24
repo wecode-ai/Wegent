@@ -36,8 +36,16 @@ export function isClaudeCodeDevice(device: DeviceLike): boolean {
   return (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode'
 }
 
+export function filterClaudeCodeDevices<T extends DeviceLike>(devices: T[]): T[] {
+  return devices.filter(isClaudeCodeDevice)
+}
+
 export function isCloudDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
   return device.device_type === 'cloud'
+}
+
+export function isRemoteDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
+  return device.device_type === 'remote'
 }
 
 export function isUsableDevice(device: Pick<DeviceInfo, 'status'>): boolean {
@@ -89,8 +97,16 @@ export function supportsCloudSessions(device: DeviceLike): boolean {
   return isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
+export function supportsRemoteSessions(device: DeviceLike): boolean {
+  return isRemoteDevice(device) && isClaudeCodeDevice(device)
+}
+
+export function supportsRemoteTerminalSessions(device: DeviceLike): boolean {
+  return isClaudeCodeDevice(device)
+}
+
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
-  return !isCloudDevice(device) && isClaudeCodeDevice(device)
+  return !isCloudDevice(device) && !isRemoteDevice(device) && isClaudeCodeDevice(device)
 }
 
 export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {

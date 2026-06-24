@@ -1,6 +1,4 @@
 import type {
-  CreateProjectConversationRequest,
-  CreateProjectConversationResponse,
   CreateGitWorkspaceProjectRequest,
   CreateGitWorkspaceProjectResponse,
   CreateProjectRequest,
@@ -10,7 +8,6 @@ import type {
   ProjectDeviceSessionResponse,
   ProjectWorktreeListResponse,
   ProjectWithTasks,
-  TaskArchiveBatchResponse,
   UpdateProjectRequest,
 } from '@/types/api'
 import type { HttpClient } from './http'
@@ -23,21 +20,9 @@ function withClientOrigin(path: string): string {
 }
 
 export function createProjectApi(client: HttpClient) {
-  function projectSessionPayload(options?: { taskId?: number }) {
-    return options?.taskId ? { task_id: options.taskId } : undefined
-  }
-
-  function startProjectSession(
-    path: string,
-    options?: { taskId?: number }
-  ): Promise<ProjectDeviceSessionResponse> {
-    const payload = projectSessionPayload(options)
-    return payload ? client.post(path, payload) : client.post(path)
-  }
-
   return {
     listProjects(): Promise<ProjectListResponse> {
-      return client.get(withClientOrigin('/projects?include_tasks=true'))
+      return client.get(withClientOrigin('/projects'))
     },
     getProject(projectId: number): Promise<ProjectWithTasks> {
       return client.get(withClientOrigin(`/projects/${projectId}`))
@@ -72,29 +57,11 @@ export function createProjectApi(client: HttpClient) {
     deleteProject(projectId: number): Promise<void> {
       return client.delete(withClientOrigin(`/projects/${projectId}`))
     },
-    archiveProjectChats(projectId: number): Promise<TaskArchiveBatchResponse> {
-      return client.post(withClientOrigin(`/projects/${projectId}/archive-chats`))
+    startTerminalSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(withClientOrigin(`/projects/${projectId}/terminal`))
     },
-    startTerminalSession(
-      projectId: number,
-      options?: { taskId?: number }
-    ): Promise<ProjectDeviceSessionResponse> {
-      return startProjectSession(withClientOrigin(`/projects/${projectId}/terminal`), options)
-    },
-    startCodeServerSession(
-      projectId: number,
-      options?: { taskId?: number }
-    ): Promise<ProjectDeviceSessionResponse> {
-      return startProjectSession(withClientOrigin(`/projects/${projectId}/code-server`), options)
-    },
-    archiveAllProjectChats(): Promise<TaskArchiveBatchResponse> {
-      return client.post(withClientOrigin('/projects/archive-chats'))
-    },
-    createConversation(
-      projectId: number,
-      data: CreateProjectConversationRequest
-    ): Promise<CreateProjectConversationResponse> {
-      return client.post(withClientOrigin(`/projects/${projectId}/conversations`), data)
+    startCodeServerSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(withClientOrigin(`/projects/${projectId}/code-server`))
     },
   }
 }

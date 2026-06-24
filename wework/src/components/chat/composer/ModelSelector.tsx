@@ -19,11 +19,7 @@ import {
   groupModelsByFamily,
   inferModelFamily,
 } from '@/lib/model-ui'
-import type {
-  ModelCompatibilityDisabledReason,
-  ModelOptions,
-  UnifiedModel,
-} from '@/types/api'
+import type { ModelCompatibilityDisabledReason, ModelOptions, UnifiedModel } from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
 const MAIN_MENU_WIDTH = 256
@@ -50,6 +46,7 @@ interface ModelSelectorProps {
   disabled: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   openSignal?: number
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string
@@ -63,6 +60,7 @@ export function ModelSelector({
   disabled,
   onSelectModel,
   onSelectModelOption,
+  onBlockedModelSelect,
   openSignal,
   menuPlacement = 'above',
   buttonClassName = '',
@@ -85,13 +83,15 @@ export function ModelSelector({
   const [submenuOffset, setSubmenuOffset] = useState(0)
   const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
   const [submenuWidth, setSubmenuWidth] = useState<number | undefined>()
-  const [activeDesktopSubmenu, setActiveDesktopSubmenu] =
-    useState<DesktopSubmenuTarget | null>(null)
+  const [activeDesktopSubmenu, setActiveDesktopSubmenu] = useState<DesktopSubmenuTarget | null>(
+    null
+  )
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
-  const selectedFamily = selectedModel ? inferModelFamily(selectedModel) : familyGroups[0]?.config.id
+  const selectedFamily = selectedModel
+    ? inferModelFamily(selectedModel)
+    : familyGroups[0]?.config.id
   const [activeFamilyId, setActiveFamilyId] = useState(selectedFamily ?? '')
-  const displayedFamilyId =
-    activeFamilyId || selectedFamily || familyGroups[0]?.config.id || ''
+  const displayedFamilyId = activeFamilyId || selectedFamily || familyGroups[0]?.config.id || ''
   const activeGroup =
     familyGroups.find(group => group.config.id === displayedFamilyId) ?? familyGroups[0]
 
@@ -115,7 +115,7 @@ export function ModelSelector({
         closeMenu()
       }
     },
-    [closeMenu, isMobile, onSelectModelOption],
+    [closeMenu, isMobile, onSelectModelOption]
   )
   const handleSelectModel = useCallback(
     (model: UnifiedModel | null) => {
@@ -124,7 +124,7 @@ export function ModelSelector({
         closeMenu()
       }
     },
-    [closeMenu, isMobile, onSelectModel],
+    [closeMenu, isMobile, onSelectModel]
   )
   const updateDesktopMenuLayout = useCallback(() => {
     const container = containerRef.current
@@ -137,22 +137,15 @@ export function ModelSelector({
     const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop)
     const measuredHeight = menuPanel.getBoundingClientRect().height
     const contentHeight = menuPanel.scrollHeight
-    const naturalHeight =
-      Math.max(measuredHeight, contentHeight) || MAIN_MENU_MAX_HEIGHT
-    const menuHeight = Math.min(
-      MAIN_MENU_MAX_HEIGHT,
-      maxAvailableHeight,
-      naturalHeight,
-    )
+    const naturalHeight = Math.max(measuredHeight, contentHeight) || MAIN_MENU_MAX_HEIGHT
+    const menuHeight = Math.min(MAIN_MENU_MAX_HEIGHT, maxAvailableHeight, naturalHeight)
     const buttonRect = button.getBoundingClientRect()
     const preferredTop =
       menuPlacement === 'below'
         ? buttonRect.bottom + MAIN_MENU_TRIGGER_GAP
         : buttonRect.top - MAIN_MENU_TRIGGER_GAP - menuHeight
     const maxTop = viewportBottom - menuHeight
-    const clampedTop = Math.round(
-      Math.max(viewportTop, Math.min(preferredTop, maxTop)),
-    )
+    const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const containerTop = container.getBoundingClientRect().top
 
     setDesktopMenuTop(clampedTop - containerTop)
@@ -174,12 +167,12 @@ export function ModelSelector({
     const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
     const maxSubmenuHeight = Math.min(
       SUBMENU_MAX_HEIGHT,
-      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP),
+      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP)
     )
     const measuredSubmenuHeight = submenuRect?.height ?? 0
     const submenuHeight = Math.min(
       Math.max(measuredSubmenuHeight, submenuScrollHeight),
-      maxSubmenuHeight,
+      maxSubmenuHeight
     )
 
     if (submenuHeight > 0) {
@@ -187,9 +180,7 @@ export function ModelSelector({
       const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
       const maxOffset = viewportBottom - submenuHeight - menuTop
       const minOffset = viewportTop - menuTop
-      setSubmenuOffset(
-        Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))),
-      )
+      setSubmenuOffset(Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))))
     } else {
       setSubmenuOffset(preferredOffset)
     }
@@ -198,17 +189,10 @@ export function ModelSelector({
     const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
     const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
     const viewportWidth = window.innerWidth
-    const availableRight =
-      viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
+    const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
     const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
-    const rightSideWidth = Math.max(
-      0,
-      Math.min(measuredSubmenuWidth, availableRight),
-    )
-    const leftSideWidth = Math.max(
-      0,
-      Math.min(measuredSubmenuWidth, availableLeft),
-    )
+    const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
+    const leftSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableLeft))
 
     const rightSideEdge = menuRect.left + rightSideLeft + measuredSubmenuWidth
     if (rightSideEdge <= viewportWidth - VIEWPORT_MARGIN) {
@@ -240,8 +224,8 @@ export function ModelSelector({
       VIEWPORT_MARGIN - menuRect.left,
       Math.min(
         rightSideLeft,
-        viewportWidth - VIEWPORT_MARGIN - measuredSubmenuWidth - menuRect.left,
-      ),
+        viewportWidth - VIEWPORT_MARGIN - measuredSubmenuWidth - menuRect.left
+      )
     )
     setSubmenuWidth(undefined)
     setSubmenuLeft(Math.round(viewportFittedLeft))
@@ -252,7 +236,7 @@ export function ModelSelector({
       setActiveDesktopSubmenu({ type: 'family', id: familyId })
       updateSubmenuLayout(target ?? familyButtonRefs.current.get(familyId) ?? null)
     },
-    [updateSubmenuLayout],
+    [updateSubmenuLayout]
   )
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
@@ -279,26 +263,22 @@ export function ModelSelector({
   }, [isMobile, open])
 
   const buttonLabel =
-    getSelectedModelDisplayLabel(
-      selectedModel,
-      selectedModelOptions,
-      (key, fallback) => t(key, fallback),
-    ) ||
-    t('workbench.default_model')
+    getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
+      t(key, fallback)
+    ) || t('workbench.default_model')
   const controlsAboveFamilies = useMemo(() => {
     const controls = selectedModel
       ? getControlsForModel(selectedModel)
-      : activeGroup?.config.controls ?? []
+      : (activeGroup?.config.controls ?? [])
     return controls.filter(control => (control.scope ?? 'family') === 'family')
   }, [activeGroup, selectedModel])
-  const supportsReasoningControl = controlsAboveFamilies.some(
-    control => control.id === 'reasoning',
-  )
+  const supportsReasoningControl = controlsAboveFamilies.some(control => control.id === 'reasoning')
   const selectedModelControls = selectedModel
     ? getControlsForModel(selectedModel).filter(control => control.scope === 'model')
     : []
-  const controlsBelowModels =
-    selectedModelControls.filter(control => control.placement === 'belowModels')
+  const controlsBelowModels = selectedModelControls.filter(
+    control => control.placement === 'belowModels'
+  )
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -317,10 +297,7 @@ export function ModelSelector({
   ])
 
   const normalizedMobileQuery = mobileQuery.trim().toLowerCase()
-  const resolveControlLabel = useCallback(
-    (key: string, fallback: string) => t(key, fallback),
-    [t],
-  )
+  const resolveControlLabel = useCallback((key: string, fallback: string) => t(key, fallback), [t])
   const mobileModels = useMemo(() => {
     const modelsToFilter = activeGroup?.models ?? []
     if (!normalizedMobileQuery) return modelsToFilter
@@ -341,11 +318,7 @@ export function ModelSelector({
 
   function renderControlSection(control: ModelControlConfig) {
     return (
-      <div
-        key={control.id}
-        onMouseEnter={clearDesktopSubmenu}
-        onPointerEnter={clearDesktopSubmenu}
-      >
+      <div key={control.id} onMouseEnter={clearDesktopSubmenu} onPointerEnter={clearDesktopSubmenu}>
         <div className="px-3 pb-1 pt-0.5 text-sm font-semibold text-text-muted">
           {control.labelKey ? t(control.labelKey) : control.label}
         </div>
@@ -355,8 +328,7 @@ export function ModelSelector({
             .sort((a, b) => a.order - b.order)
             .map(option => {
               const selected =
-                (selectedModelOptions[control.id] ?? control.defaultValue) ===
-                option.value
+                (selectedModelOptions[control.id] ?? control.defaultValue) === option.value
               return (
                 <button
                   key={option.value}
@@ -378,9 +350,7 @@ export function ModelSelector({
                       </span>
                     )}
                   </span>
-                  {selected && (
-                    <Check className="h-4 w-4 shrink-0 text-text-secondary" />
-                  )}
+                  {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
                 </button>
               )
             })}
@@ -422,8 +392,7 @@ export function ModelSelector({
             .sort((a, b) => a.order - b.order)
             .map(option => {
               const selected =
-                (selectedModelOptions[control.id] ?? control.defaultValue) ===
-                option.value
+                (selectedModelOptions[control.id] ?? control.defaultValue) === option.value
               return (
                 <button
                   key={option.value}
@@ -474,7 +443,7 @@ export function ModelSelector({
     if (event.key !== 'Tab' || !mobileMenuRef.current) return
 
     const focusableElements = Array.from(
-      mobileMenuRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      mobileMenuRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
     ).filter(element => element.offsetParent !== null)
     if (focusableElements.length === 0) return
 
@@ -491,10 +460,7 @@ export function ModelSelector({
 
   function renderMobileSheet() {
     return createPortal(
-      <div
-        className="fixed inset-0 z-modal bg-black/25"
-        onClick={closeMenu}
-      >
+      <div className="fixed inset-0 z-modal bg-black/25" onClick={closeMenu}>
         <div
           ref={mobileMenuRef}
           role="dialog"
@@ -560,9 +526,7 @@ export function ModelSelector({
                       onClick={() => activateMobileFamily(group.config.id)}
                       className={[
                         'h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium',
-                        active
-                          ? 'bg-[#1f2933] text-white'
-                          : 'bg-surface text-text-secondary',
+                        active ? 'bg-[#1f2933] text-white' : 'bg-surface text-text-secondary',
                       ].join(' ')}
                     >
                       {group.config.label}
@@ -572,7 +536,10 @@ export function ModelSelector({
               </div>
             </div>
 
-            <section className="flex min-h-0 flex-1 flex-col space-y-2" data-testid="model-selector-submenu">
+            <section
+              className="flex min-h-0 flex-1 flex-col space-y-2"
+              data-testid="model-selector-submenu"
+            >
               <h3 className="shrink-0 px-1 text-xs font-semibold text-text-muted">
                 {activeGroup?.config.label ?? t('workbench.model_version')}
               </h3>
@@ -593,18 +560,21 @@ export function ModelSelector({
                         key={`${model.type}:${model.name}`}
                         type="button"
                         data-testid={`model-option-${model.name}`}
-                        disabled={modelDisabled}
                         aria-disabled={modelDisabled}
                         title={disabledMessage}
                         onClick={() => {
-                          if (modelDisabled) return
+                          if (modelDisabled) {
+                            onBlockedModelSelect?.(model, disabledMessage)
+                            return
+                          }
                           handleSelectModel(model)
                         }}
                         className={[
-                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-70',
+                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
+                          modelDisabled && 'cursor-not-allowed opacity-70',
                           selected
                             ? 'border-[#b9d1ca] bg-[#e8f2ef]'
-                            : 'border-transparent bg-surface disabled:bg-surface',
+                            : 'border-transparent bg-surface',
                         ].join(' ')}
                       >
                         <span className="min-w-0 flex-1">
@@ -614,22 +584,13 @@ export function ModelSelector({
                               modelDisabled ? 'text-text-muted' : 'text-text-primary',
                             ].join(' ')}
                           >
-                            {getModelDisplayLabel(
-                              model,
-                              selectedModelOptions,
-                              resolveControlLabel,
-                            )}
+                            {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
-                            {disabledMessage ||
-                              model.displayName ||
-                              model.modelId ||
-                              model.name}
+                            {disabledMessage || model.displayName || model.modelId || model.name}
                           </span>
                         </span>
-                        {selected && (
-                          <Check className="h-5 w-5 shrink-0 text-text-primary" />
-                        )}
+                        {selected && <Check className="h-5 w-5 shrink-0 text-text-primary" />}
                       </button>
                     )
                   })}
@@ -668,28 +629,26 @@ export function ModelSelector({
           </div>
         </div>
       </div>,
-      document.body,
+      document.body
     )
   }
 
-  function getCompatibilityDisabledMessage(
-    reason?: ModelCompatibilityDisabledReason,
-  ): string {
+  function getCompatibilityDisabledMessage(reason?: ModelCompatibilityDisabledReason): string {
     if (reason === 'missing_current_runtime_family') {
       return t(
         'workbench.model_disabled_missing_current_runtime_family',
-        'Current model is missing runtime.family',
+        'Current model is missing runtime.family'
       )
     }
     if (reason === 'missing_target_runtime_family') {
       return t(
         'workbench.model_disabled_missing_target_runtime_family',
-        'This model is missing runtime.family',
+        'This model is missing runtime.family'
       )
     }
     return t(
       'workbench.model_disabled_runtime_family_mismatch',
-      'Incompatible with the current model protocol',
+      'Incompatible with the current model protocol'
     )
   }
 
@@ -787,14 +746,21 @@ export function ModelSelector({
                       key={`${model.type}:${model.name}`}
                       type="button"
                       data-testid={`model-option-${model.name}`}
-                      disabled={modelDisabled}
                       aria-disabled={modelDisabled}
                       title={disabledMessage}
                       onClick={() => {
-                        if (modelDisabled) return
+                        if (modelDisabled) {
+                          onBlockedModelSelect?.(model, disabledMessage)
+                          return
+                        }
                         handleSelectModel(model)
                       }}
-                      className="flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+                      className={[
+                        'flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
+                        modelDisabled
+                          ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
+                          : 'text-text-primary hover:bg-muted',
+                      ].join(' ')}
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">
                         {disabledMessage ? (
@@ -803,7 +769,7 @@ export function ModelSelector({
                               {getModelDisplayLabel(
                                 model,
                                 selectedModelOptions,
-                                resolveControlLabel,
+                                resolveControlLabel
                               )}
                             </span>
                             <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
@@ -811,11 +777,7 @@ export function ModelSelector({
                             </span>
                           </>
                         ) : (
-                          getModelDisplayLabel(
-                            model,
-                            selectedModelOptions,
-                            resolveControlLabel,
-                          )
+                          getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)
                         )}
                       </span>
                       {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -848,7 +810,7 @@ export function ModelSelector({
               const initialFamilyId = selectedFamily ?? familyGroups[0]?.config.id ?? ''
               setActiveFamilyId(initialFamilyId)
               setActiveDesktopSubmenu(
-                initialFamilyId ? { type: 'family', id: initialFamilyId } : null,
+                initialFamilyId ? { type: 'family', id: initialFamilyId } : null
               )
             }
             return nextOpen

@@ -2,7 +2,6 @@ import { describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from './projects'
 import { createDeviceApi } from './devices'
 import { createSystemSkillApi } from './systemSkills'
-import { createTaskApi } from './tasks'
 import { createTeamApi } from './teams'
 import { createModelApi } from './models'
 import { createSkillApi } from './skills'
@@ -19,13 +18,13 @@ function mockClient(): HttpClient {
 }
 
 describe('REST adapters', () => {
-  test('loads projects with tasks included', async () => {
+  test('loads projects without DB tasks included', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({ items: [] })
 
     await createProjectApi(client).listProjects()
 
-    expect(client.get).toHaveBeenCalledWith('/projects?include_tasks=true&client_origin=wework')
+    expect(client.get).toHaveBeenCalledWith('/projects?client_origin=wework')
   })
 
   test('creates Git workspace projects from the wework client origin', async () => {
@@ -90,38 +89,7 @@ describe('REST adapters', () => {
     )
   })
 
-  test('loads recent online and offline workbench tasks', async () => {
-    const client = mockClient()
-    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })
-
-    await createTaskApi(client).listRecentTasks({ limit: 20 })
-
-    expect(client.get).toHaveBeenCalledWith(
-      '/tasks/lite/personal?limit=20&page=1&types=online%2Coffline&client_origin=wework'
-    )
-  })
-
-  test('loads task detail from the wework client origin', async () => {
-    const client = mockClient()
-    vi.mocked(client.get).mockResolvedValueOnce({ id: 8 })
-
-    await createTaskApi(client).getTaskDetail(8)
-
-    expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
-  })
-
-  test('searches conversation tasks in the wework client origin', async () => {
-    const client = mockClient()
-    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })
-
-    await createTaskApi(client).searchTasks('胡云鹏', { limit: 30 })
-
-    expect(client.get).toHaveBeenCalledWith(
-      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30'
-    )
-  })
-
-  test('picks default team for wework first, then code and chat', async () => {
+  test('picks the configured wework default team', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
       total: 3,
@@ -135,6 +103,21 @@ describe('REST adapters', () => {
     const team = await createTeamApi(client).getDefaultWorkbenchTeam()
 
     expect(team.id).toBe(3)
+  })
+
+  test('does not fallback to code or chat when the wework default team is missing', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({
+      total: 2,
+      items: [
+        { id: 1, name: 'general', default_for_modes: ['chat'], is_active: true },
+        { id: 2, name: 'coder', default_for_modes: ['code'], is_active: true },
+      ],
+    })
+
+    await expect(createTeamApi(client).getDefaultWorkbenchTeam()).rejects.toThrow(
+      'Wework default team is not configured'
+    )
   })
 
   test('loads system skills with search params', async () => {
@@ -209,7 +192,7 @@ describe('REST adapters', () => {
     await createModelApi(client).listModels()
 
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
   })
 
@@ -237,32 +220,6 @@ describe('REST adapters', () => {
     expect(formData.get('enabled')).toBe('false')
   })
 
-  test('adapts project and task archive endpoints', async () => {
-    const client = mockClient()
-    vi.mocked(client.post).mockResolvedValue({ message: 'ok', count: 1 })
-    vi.mocked(client.get).mockResolvedValue({ total: 0, items: [] })
-    vi.mocked(client.delete).mockResolvedValue({ message: 'ok', count: 0 })
-
-    await createProjectApi(client).archiveProjectChats(7)
-    await createProjectApi(client).archiveAllProjectChats()
-    await createTaskApi(client).archiveAllChats()
-    await createTaskApi(client).archiveTask(8)
-    await createTaskApi(client).listArchivedTasks()
-    await createTaskApi(client).unarchiveTask(8)
-    await createTaskApi(client).deleteArchivedTasks()
-
-    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/archive-chats?client_origin=wework')
-    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/archive-chats?client_origin=wework')
-    expect(client.post).toHaveBeenNthCalledWith(
-      3,
-      '/tasks/archive?scope=standalone&client_origin=wework'
-    )
-    expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/archive?client_origin=wework')
-    expect(client.get).toHaveBeenCalledWith('/tasks/archived?limit=200&page=1&client_origin=wework')
-    expect(client.post).toHaveBeenNthCalledWith(5, '/tasks/8/unarchive?client_origin=wework')
-    expect(client.delete).toHaveBeenCalledWith('/tasks/archived?client_origin=wework')
-  })
-
   test('starts project-scoped terminal and IDE sessions', async () => {
     const client = mockClient()
     vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })
@@ -274,23 +231,6 @@ describe('REST adapters', () => {
 
     expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal?client_origin=wework')
     expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server?client_origin=wework')
-  })
-
-  test('starts task-scoped project terminal and IDE sessions', async () => {
-    const client = mockClient()
-    vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })
-
-    const api = createProjectApi(client)
-
-    await api.startTerminalSession(7, { taskId: 99 })
-    await api.startCodeServerSession(7, { taskId: 99 })
-
-    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal?client_origin=wework', {
-      task_id: 99,
-    })
-    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server?client_origin=wework', {
-      task_id: 99,
-    })
   })
 
   test('resolves device home and project workspace root', async () => {

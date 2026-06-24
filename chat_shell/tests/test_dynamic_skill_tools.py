@@ -8,9 +8,12 @@ This module tests the ability to dynamically load skill tools when
 a skill is loaded via the load_skill tool.
 """
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.tools import tool
 
 from chat_shell.tools.builtin.load_skill import LoadSkillTool
 
@@ -90,6 +93,33 @@ class TestLoadSkillToolDynamicTools:
         available = tool.get_available_tools()
         assert mock_tool_a in available
         assert mock_tool_b not in available
+
+    def test_load_skill_logs_deferred_mcp_without_registered_tools(self, caplog):
+        """Test that deferred MCP tools are visible in load_skill observability."""
+        tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_mcp"],
+            skill_metadata={
+                "skill_mcp": {
+                    "description": "Skill with MCP",
+                    "prompt": "Skill MCP prompt",
+                    "mcpServers": {
+                        "server_a": {
+                            "type": "stdio",
+                            "command": "python",
+                            "args": ["-m", "server"],
+                        }
+                    },
+                },
+            },
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = tool._run("skill_mcp")
+
+        assert "Skill 'skill_mcp' has been loaded" in result
+        assert "[LoadSkillTool_MCP_DEFERRED]" in caplog.text
+        assert "mcp_server_count=1" in caplog.text
 
     def test_get_available_tools_updates_after_loading_more_skills(self):
         """Test that get_available_tools updates when more skills are loaded."""
@@ -320,6 +350,173 @@ class TestDynamicToolSelectionIntegration:
         assert "load_skill" in tool_names
         assert "tool_a" in tool_names
         assert "tool_b" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_dynamic_tool_node_executes_tool_registered_after_build(self):
+        """Test ToolNode wrapper resolves tools registered after graph build."""
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+        from chat_shell.tools.base import ToolRegistry
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_a"],
+            skill_metadata={
+                "skill_a": {"description": "Skill A", "prompt": "Skill A prompt"},
+            },
+        )
+
+        @tool
+        def dynamic_tool(value: str) -> str:
+            """Return a value from a dynamically registered tool."""
+            return f"dynamic:{value}"
+
+        mock_llm = MagicMock()
+        tool_registry = ToolRegistry()
+        tool_registry.register(load_skill_tool)
+
+        builder = LangGraphAgentBuilder(
+            llm=mock_llm,
+            tool_registry=tool_registry,
+        )
+        tool_node = builder._create_dynamic_tool_node(
+            all_tools=[load_skill_tool],
+            load_skill_tool=load_skill_tool,
+        )
+
+        load_skill_tool.register_skill_tools("skill_a", [dynamic_tool])
+        load_skill_tool._run("skill_a")
+
+        from langgraph._internal._constants import CONF, CONFIG_KEY_RUNTIME
+        from langgraph.runtime import Runtime
+
+        result = await tool_node.ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "dynamic_tool",
+                                "args": {"value": "ok"},
+                                "id": "call_1",
+                            }
+                        ],
+                    )
+                ]
+            },
+            config={CONF: {CONFIG_KEY_RUNTIME: Runtime()}},
+        )
+
+        assert isinstance(result["messages"][0], ToolMessage)
+        assert result["messages"][0].name == "dynamic_tool"
+        assert result["messages"][0].content == "dynamic:ok"
+
+    @pytest.mark.asyncio
+    async def test_model_configurator_binds_deferred_loaded_tools(self):
+        """Test model binding includes tools materialized by load_skill."""
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+        from chat_shell.tools.base import ToolRegistry
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_a"],
+            skill_metadata={
+                "skill_a": {"description": "Skill A", "prompt": "Skill A prompt"},
+            },
+        )
+
+        deferred_tool = MagicMock()
+        deferred_tool.name = "deferred_tool"
+
+        async def load_deferred_tools():
+            return [deferred_tool]
+
+        load_skill_tool.register_skill_tool_loader("skill_a", load_deferred_tools)
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+
+        tool_registry = ToolRegistry()
+        tool_registry.register(load_skill_tool)
+
+        builder = LangGraphAgentBuilder(
+            llm=mock_llm,
+            tool_registry=tool_registry,
+        )
+
+        configurator, all_tools = builder._create_model_configurator()
+
+        assert configurator is not None
+        assert [tool.name for tool in all_tools] == ["load_skill"]
+
+        configurator({}, None)
+        call_args = mock_llm.bind_tools.call_args[0][0]
+        assert [tool.name for tool in call_args] == ["load_skill"]
+
+        await load_skill_tool._arun("skill_a")
+
+        configurator({}, None)
+        call_args = mock_llm.bind_tools.call_args[0][0]
+        assert [tool.name for tool in call_args] == ["load_skill", "deferred_tool"]
+
+    @pytest.mark.asyncio
+    async def test_restored_skill_materializes_deferred_tools_before_model_binding(
+        self,
+    ):
+        """Test restored skills expose deferred tools without another load_skill call."""
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+        from chat_shell.tools.base import ToolRegistry
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["interactive"],
+            skill_metadata={
+                "interactive": {
+                    "description": "Interactive skill",
+                    "prompt": "Interactive skill prompt",
+                },
+            },
+        )
+
+        deferred_tool = MagicMock()
+        deferred_tool.name = "interactive_form_question"
+
+        async def load_deferred_tools():
+            return [deferred_tool]
+
+        load_skill_tool.register_skill_tool_loader("interactive", load_deferred_tools)
+        load_skill_tool.restore_from_history(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "loaded_skills": ["interactive"],
+                }
+            ]
+        )
+
+        restored_tools = await load_skill_tool.ensure_loaded_skill_tools_loaded()
+
+        assert restored_tools == {"interactive": [deferred_tool]}
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+
+        tool_registry = ToolRegistry()
+        tool_registry.register(load_skill_tool)
+
+        builder = LangGraphAgentBuilder(
+            llm=mock_llm,
+            tool_registry=tool_registry,
+        )
+        configurator, _ = builder._create_model_configurator()
+
+        configurator({}, None)
+        call_args = mock_llm.bind_tools.call_args[0][0]
+        assert [tool.name for tool in call_args] == [
+            "load_skill",
+            "interactive_form_question",
+        ]
 
     def test_no_model_configurator_when_no_load_skill_tool(self):
         """Test that no model configurator is created when there's no LoadSkillTool."""
@@ -716,3 +913,69 @@ class TestSkillRetentionAcrossTurns:
         assert tool.is_skill_loaded("skill_a")
         # Loaded 0 turns ago, 5 - 0 = 5 remaining
         assert tool.get_skill_remaining_turns("skill_a") == 5
+
+
+class TestLazySkillProviderToolArgumentForwarding:
+    """Regression tests for LazySkillProviderTool argument forwarding.
+
+    LazySkillProviderInput uses ``extra="allow"`` with no declared fields.
+    LangChain's BaseTool._to_args_and_kwargs discards every argument when the
+    schema declares no fields, which previously stripped the real tool's
+    arguments (command/file_path) before delegation, surfacing as a paradoxical
+    "Field required" ValidationError even though the model provided the field.
+    """
+
+    @pytest.mark.asyncio
+    async def test_proxy_forwards_arguments_to_concrete_tool(self):
+        """Args provided by the model must reach the concrete tool intact."""
+        from langchain_core.tools import BaseTool
+        from pydantic import BaseModel, Field
+
+        from chat_shell.tools.builtin.load_skill import LazySkillProviderTool
+
+        received: dict = {}
+
+        class ExecInput(BaseModel):
+            command: str = Field(description="cmd")
+
+        class ConcreteExec(BaseTool):
+            name: str = "exec"
+            description: str = "run"
+            args_schema: type[BaseModel] = ExecInput
+
+            def _run(self, command: str, **_):
+                received["command"] = command
+                return f"ran:{command}"
+
+            async def _arun(self, command: str, **_):
+                return self._run(command)
+
+        concrete = ConcreteExec()
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["sandbox"],
+            skill_metadata={"sandbox": {"description": "Sandbox", "prompt": "p"}},
+        )
+        load_skill_tool.register_skill_tools("sandbox", [concrete])
+
+        proxy = LazySkillProviderTool(
+            skill_name="sandbox",
+            tool_name="exec",
+            description="exec proxy",
+            load_skill_tool=load_skill_tool,
+        )
+
+        # Invoke through the proxy exactly as LangGraph ToolNode would.
+        result = await proxy.ainvoke(
+            {
+                "name": "exec",
+                "args": {"command": "echo hello"},
+                "id": "call_1",
+                "type": "tool_call",
+            }
+        )
+
+        content = getattr(result, "content", result)
+        assert "ran:echo hello" in content
+        assert received["command"] == "echo hello"

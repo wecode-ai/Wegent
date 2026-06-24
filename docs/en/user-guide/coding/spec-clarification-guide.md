@@ -20,7 +20,7 @@ On first startup, the system automatically creates the following entities:
 
 ### 2. Select Team in Frontend
 
-1. Navigate to the Code page
+1. Open the coding entry (`/chat?agent=code`)
 2. Select **spec-clarification-team** in the Team selector
 3. Enter a vague requirement, e.g., "I want to add a user login feature"
 

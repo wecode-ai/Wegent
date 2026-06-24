@@ -120,6 +120,8 @@ interface MixedContentViewProps {
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
+  /** Optional override for the running processing indicator text */
+  processingMessage?: string
 }
 
 /**
@@ -142,6 +144,7 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
+  processingMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -667,7 +670,7 @@ const MixedContentView = memo(function MixedContentView({
         <div className="px-2 py-1">
           <StreamingWaitIndicator
             isWaiting={true}
-            message={t('thinking.processing') || 'Processing...'}
+            message={processingMessage || t('thinking.processing') || 'Processing...'}
           />
         </div>
       )}

@@ -29,6 +29,7 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
 
 class BindShell(str, Enum):
@@ -81,7 +82,7 @@ class DeviceInfo(BaseModel):
     )
     # Device type and connection mode
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local or cloud)"
+        DeviceType.LOCAL, description="Device type (local, cloud, or remote)"
     )
     connection_mode: DeviceConnectionMode = Field(
         DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
@@ -104,9 +105,16 @@ class DeviceInfo(BaseModel):
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
+    runtime_transfer_host: Optional[str] = Field(
+        None, description="Host peers should use for runtime direct transfers"
+    )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
         None, description="Cloud device configuration (only for cloud devices)"
+    )
+    # Remote device specific config
+    remote_config: Optional[Dict[str, Any]] = Field(
+        None, description="Remote device configuration (only for remote devices)"
     )
     # Shell binding type
     bind_shell: BindShell = Field(
@@ -274,6 +282,11 @@ class DeviceRegisterPayload(BaseModel):
         max_length=50,
         description="Device's client IP address",
     )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
+    )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
@@ -299,6 +312,11 @@ class DeviceHeartbeatPayload(BaseModel):
     runtime_auth_files: Optional[Dict[str, Any]] = Field(
         None,
         description="Sanitized runtime auth file existence state reported by executor",
+    )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
     )
 
 

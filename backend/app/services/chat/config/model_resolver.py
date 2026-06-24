@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 
@@ -542,6 +543,7 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
     1. User's private models (kinds table)
     2. Group models (kinds table in user's groups)
     3. Public models (kinds table with user_id=0)
+    4. Runtime-only models derived from user execution config
 
     Args:
         db: Database session
@@ -565,6 +567,7 @@ def _find_model_with_namespace(
     1. User's private models (kinds table)
     2. Group models (kinds table in user's groups)
     3. Public models (kinds table with user_id=0)
+    4. Runtime-only models derived from user execution config
 
     Args:
         db: Database session
@@ -632,6 +635,11 @@ def _find_model_with_namespace(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )
         return public_model, public_model.json.get("spec", {})
+
+    runtime_model_spec = get_enabled_codex_runtime_model_spec(db, user_id, model_name)
+    if runtime_model_spec:
+        logger.info("Found model '%s' as runtime-only Codex model", model_name)
+        return None, runtime_model_spec
 
     logger.warning(f"Model '{model_name}' not found in any source")
     return None, None

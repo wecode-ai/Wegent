@@ -14,6 +14,7 @@ import {
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getCodingNavItem, openNavigationHref } from '@/config/coding-route'
 
 interface MobileNavTabsProps {
   activePage: 'chat' | 'code' | 'wiki' | 'dashboard'
@@ -24,7 +25,9 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   const { t } = useTranslation()
 
   // Check if Wiki module is enabled via runtime config
-  const isWikiEnabled = getRuntimeConfigSync().enableWiki
+  const runtimeConfig = getRuntimeConfigSync()
+  const isWikiEnabled = runtimeConfig.enableWiki
+  const codingNavItem = getCodingNavItem(runtimeConfig)
 
   const tabs = [
     {
@@ -34,10 +37,10 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       path: paths.chat.getHref(),
     },
     {
-      key: 'code' as const,
-      label: t('common:navigation.code'),
+      key: codingNavItem.key,
+      label: t(codingNavItem.labelKey),
       icon: CodeBracketIcon,
-      path: paths.code.getHref(),
+      path: codingNavItem.href,
     },
     ...(isWikiEnabled
       ? [
@@ -70,7 +73,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
           <button
             key={tab.key}
             type="button"
-            onClick={() => router.push(tab.path)}
+            onClick={() => openNavigationHref(router, tab.path)}
             className={`
               flex items-center justify-center gap-1.5
               px-3 py-1.5 rounded-full text-base font-bold

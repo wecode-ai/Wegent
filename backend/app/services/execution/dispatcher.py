@@ -171,12 +171,15 @@ def extract_completed_result(response_data: dict) -> dict:
         ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
+        "termination_reason": response_data.get("termination_reason"),
         "messages_chain": response_data.get("messages_chain"),
         "context_metrics": response_data.get("context_metrics"),
+        "context_compactions": response_data.get("context_compactions"),
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
         "file_changes": response_data.get("file_changes"),
+        "executor_session": response_data.get("executor_session"),
         "reasoning_content": reasoning_content,
     }
 
@@ -248,6 +251,7 @@ class ResponsesAPIEventParser:
                 data={
                     "phase": data.get("phase"),
                     "context_metrics": data.get("context_metrics") or {},
+                    "context_compaction": data.get("context_compaction"),
                 },
                 message_id=message_id,
             )
@@ -733,7 +737,7 @@ class ExecutionDispatcher:
         """
         wrapped_emitter = None
         try:
-            await self._recover_executor_if_needed(request)
+            await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
             target = self.router.route(request, device_id)
@@ -829,10 +833,16 @@ class ExecutionDispatcher:
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
 
-    async def _recover_executor_if_needed(self, request: ExecutionRequest) -> None:
+    async def _recover_executor_if_needed(
+        self,
+        request: ExecutionRequest,
+        device_id: Optional[str] = None,
+    ) -> None:
         """Recover executor state for deleted runtime instances before dispatching."""
         shell_type = self._get_shell_type(request)
-        if shell_type not in {"ClaudeCode", "Agno"}:
+        if shell_type not in {"ClaudeCode", "Agno", "CodeX", "Codex"}:
+            return
+        if device_id and self._has_fork_workspace_archive(request):
             return
 
         db = SessionLocal()
@@ -844,7 +854,8 @@ class ExecutionDispatcher:
             # Save reference to current subtask for later update
             current_subtask = subtask
 
-            if not subtask.executor_deleted_at:
+            restore_fork_workspace = self._has_fork_workspace_archive(request)
+            if not subtask.executor_deleted_at and not restore_fork_workspace:
                 return
 
             task = task_store.get_by_id(db, task_id=request.task_id)
@@ -854,11 +865,16 @@ class ExecutionDispatcher:
                 )
 
             logger.info(
-                "[ExecutionDispatcher] Recovering deleted executor: "
-                "task_id=%s, subtask_id=%s, executor=%s",
+                "[ExecutionDispatcher] Recovering executor workspace: "
+                "task_id=%s, subtask_id=%s, executor=%s, reason=%s",
                 request.task_id,
                 request.subtask_id,
                 subtask.executor_name,
+                (
+                    "deleted_executor"
+                    if subtask.executor_deleted_at
+                    else "fork_workspace_archive"
+                ),
             )
 
             recovered_info = await recovery_service.recover(
@@ -902,6 +918,17 @@ class ExecutionDispatcher:
             )
         finally:
             db.close()
+
+    @staticmethod
+    def _has_fork_workspace_archive(request: ExecutionRequest) -> bool:
+        fork_runtime = getattr(request, "fork_runtime", None)
+        if not isinstance(fork_runtime, dict):
+            return False
+        workspace_archive = fork_runtime.get("workspaceArchive")
+        if not isinstance(workspace_archive, dict):
+            return False
+        storage_key = workspace_archive.get("storageKey")
+        return isinstance(storage_key, str) and bool(storage_key.strip())
 
     async def _update_subtask_to_running(self, subtask_id: int) -> None:
         """Update subtask status to RUNNING in database.

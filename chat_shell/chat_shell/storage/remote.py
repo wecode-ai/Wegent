@@ -7,6 +7,8 @@ Used when chat_shell runs as HTTP service and needs to access Backend's data.
 
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -17,6 +19,7 @@ from chat_shell.storage.interfaces import (
     StorageProvider,
     ToolResultStoreInterface,
 )
+from shared.telemetry.context import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +95,12 @@ class RemoteHistoryStore(HistoryStoreInterface):
         is_group_chat: bool = False,
     ) -> list[Message]:
         """Get chat history for a session."""
+        total_start = time.perf_counter()
+        wall_start = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        client_was_initialized = self._client is not None
+        client_start = time.perf_counter()
         client = await self._get_client()
+        client_ms = (time.perf_counter() - client_start) * 1000
         params = {}
         if limit:
             params["limit"] = limit
@@ -103,25 +111,96 @@ class RemoteHistoryStore(HistoryStoreInterface):
 
         url = f"/chat/history/{session_id}"
         full_url = f"{self.base_url}{url}"
-        logger.debug(
-            "[RemoteHistoryStore] >>> GET %s params=%s",
+        request_id = get_request_id()
+        request_headers = {"X-Request-ID": request_id} if request_id else None
+        logger.info(
+            "[RemoteHistoryStore_TRACE] get_history_start session_id=%s "
+            "before_message_id=%s limit=%s is_group_chat=%s request_id=%s "
+            "client_reused=%s wall_start_utc=%s url=%s params=%s",
+            session_id,
+            before_message_id,
+            limit,
+            is_group_chat,
+            request_id or "",
+            client_was_initialized,
+            wall_start,
             full_url,
             params,
         )
 
+        response: httpx.Response | None = None
         try:
-            response = await client.get(url, params=params)
+            build_start = time.perf_counter()
+            request = client.build_request(
+                "GET",
+                url,
+                params=params,
+                headers=request_headers,
+            )
+            build_ms = (time.perf_counter() - build_start) * 1000
 
-            logger.debug(
-                "[RemoteHistoryStore] <<< Response status=%d, content_length=%s",
+            request_start = time.perf_counter()
+            response = await client.send(request, stream=True)
+            headers_ms = (time.perf_counter() - request_start) * 1000
+            headers_wall = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+            logger.info(
+                "[RemoteHistoryStore_TRACE] get_history_headers session_id=%s "
+                "request_id=%s status=%d headers_ms=%.2f wall_headers_utc=%s "
+                "content_length=%s http_version=%s",
+                session_id,
+                request_id or "",
                 response.status_code,
+                headers_ms,
+                headers_wall,
                 response.headers.get("content-length", "unknown"),
+                response.http_version,
             )
 
+            body_start = time.perf_counter()
+            body = await response.aread()
+            body_read_ms = (time.perf_counter() - body_start) * 1000
+            request_ms = (time.perf_counter() - request_start) * 1000
             response.raise_for_status()
-            data = response.json()
 
+            parse_start = time.perf_counter()
+            data = response.json()
             messages = [Message.from_dict(m) for m in data.get("messages", [])]
+            parse_ms = (time.perf_counter() - parse_start) * 1000
+            total_ms = (time.perf_counter() - total_start) * 1000
+            http_elapsed_ms = (
+                response.elapsed.total_seconds() * 1000
+                if response.elapsed is not None
+                else None
+            )
+            logger.info(
+                "[RemoteHistoryStore_PERF] get_history session_id=%s "
+                "before_message_id=%s limit=%s is_group_chat=%s status=%d "
+                "message_count=%d request_id=%s client_reused=%s client_ms=%.2f "
+                "build_ms=%.2f headers_ms=%.2f body_read_ms=%.2f request_ms=%.2f "
+                "http_elapsed_ms=%s parse_ms=%.2f total_ms=%.2f content_length=%s "
+                "body_bytes=%d http_version=%s wall_start_utc=%s",
+                session_id,
+                before_message_id,
+                limit,
+                is_group_chat,
+                response.status_code,
+                len(messages),
+                request_id or "",
+                client_was_initialized,
+                client_ms,
+                build_ms,
+                headers_ms,
+                body_read_ms,
+                request_ms,
+                f"{http_elapsed_ms:.2f}" if http_elapsed_ms is not None else "",
+                parse_ms,
+                total_ms,
+                response.headers.get("content-length", "unknown"),
+                len(body),
+                response.http_version,
+                wall_start,
+            )
             logger.debug(
                 "[RemoteHistoryStore] Loaded %d messages for session_id=%s",
                 len(messages),
@@ -130,12 +209,16 @@ class RemoteHistoryStore(HistoryStoreInterface):
             return messages
         except Exception as e:
             logger.error(
-                "[RemoteHistoryStore] Request failed: url=%s, error=%s",
+                "[RemoteHistoryStore] Request failed: url=%s, error=%s, total_ms=%.2f",
                 full_url,
                 e,
+                (time.perf_counter() - total_start) * 1000,
                 exc_info=True,
             )
             raise
+        finally:
+            if response is not None:
+                await response.aclose()
 
     async def append_message(
         self,

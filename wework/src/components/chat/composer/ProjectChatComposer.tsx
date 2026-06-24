@@ -30,6 +30,7 @@ interface ProjectChatComposerProps {
   attachmentErrors: Map<string, string>
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
@@ -72,6 +73,7 @@ export function ProjectChatComposer({
   attachmentErrors,
   onSelectModel,
   onSelectModelOption,
+  onBlockedModelSelect,
   onFileSelect,
   onRemoveAttachment,
   onClearCodeComments,
@@ -190,6 +192,7 @@ export function ProjectChatComposer({
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelOption={onSelectModelOption}
+          onBlockedModelSelect={onBlockedModelSelect}
           onFileSelect={onFileSelect}
           isStreaming={isStreaming}
           onPause={onPause}
@@ -199,12 +202,18 @@ export function ProjectChatComposer({
         <ProjectWorkBar
           projects={projectWork.projects}
           devices={projectWork.devices}
+          runtimeWork={projectWork.runtimeWork}
+          currentProject={projectWork.currentProject}
           currentProjectId={projectWork.currentProjectId}
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
+          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
           executionMode={projectWork.executionMode}
           executionModeLocked={projectWork.executionModeLocked}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
+          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
           onExecutionModeChange={projectWork.onExecutionModeChange}
           onCreateProjectMode={projectWork.onCreateProjectMode}
           branchName={projectWork.branchName}

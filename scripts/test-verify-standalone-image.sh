@@ -48,14 +48,21 @@ cat > "$TMP_DIR/curl" <<'EOF'
 set -euo pipefail
 
 url="${@: -1}"
-echo "$url" >> "$FAKE_CURL_LOG"
+echo "$*" >> "$FAKE_CURL_LOG"
 
 case "$url" in
-    *:18000/health)
+    *:13000/health)
         exit 0
         ;;
     *:13000/)
-        exit 22
+        exit 0
+        ;;
+    *:13000/wework/)
+        exit 0
+        ;;
+    *:13000/api/users/me)
+        echo "${FAKE_API_STATUS:-404}"
+        exit 0
         ;;
     *)
         echo "unexpected curl URL: $url" >&2
@@ -72,15 +79,65 @@ export CONTAINER_NAME="wegent-standalone-test"
 export STANDALONE_VERIFY_TIMEOUT_SECONDS=0
 export STANDALONE_VERIFY_INTERVAL_SECONDS=1
 
-if "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
-    echo "Expected standalone verification to fail when frontend is unreachable."
+export FAKE_API_STATUS=400
+if ! bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output-success.log" 2>&1; then
+    echo "Expected standalone verification to pass when the API proxy reaches backend setup-required response."
+    cat "$TMP_DIR/output-success.log"
+    exit 1
+fi
+
+if ! grep -q "API proxy is reachable (HTTP 400)" "$TMP_DIR/output-success.log"; then
+    echo "Expected API proxy success message for HTTP 400 setup-required response."
+    cat "$TMP_DIR/output-success.log"
+    exit 1
+fi
+
+export FAKE_API_STATUS=404
+if bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
+    echo "Expected standalone verification to fail when the API proxy returns 404."
     cat "$TMP_DIR/output.log"
     exit 1
 fi
 
-if ! grep -q "Frontend failed readiness check" "$TMP_DIR/output.log"; then
-    echo "Expected frontend readiness failure message."
+if ! grep -q "API proxy failed readiness check" "$TMP_DIR/output.log"; then
+    echo "Expected API proxy readiness failure message."
     cat "$TMP_DIR/output.log"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/wework/" "$FAKE_CURL_LOG"; then
+    echo "Expected Wework to be checked through the frontend standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/api/users/me" "$FAKE_CURL_LOG"; then
+    echo "Expected API proxy to be checked through the standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "Referer: http://localhost:13000/" "$FAKE_CURL_LOG"; then
+    echo "Expected API proxy check to include a same-origin Referer header."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/health" "$FAKE_CURL_LOG"; then
+    echo "Expected backend health to be checked through the standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if grep -q ":8000" "$FAKE_DOCKER_LOG"; then
+    echo "Expected standalone verification to avoid the old direct backend port."
+    cat "$FAKE_DOCKER_LOG"
+    exit 1
+fi
+
+if grep -q ":3001" "$FAKE_DOCKER_LOG"; then
+    echo "Expected standalone verification to avoid the old container Wework port."
+    cat "$FAKE_DOCKER_LOG"
     exit 1
 fi
 

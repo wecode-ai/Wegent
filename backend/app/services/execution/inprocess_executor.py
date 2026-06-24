@@ -152,6 +152,7 @@ class EmitterBridgeTransport(EventTransport):
                 data={
                     "phase": data.get("phase"),
                     "context_metrics": data.get("context_metrics") or {},
+                    "context_compaction": data.get("context_compaction"),
                 },
                 message_id=message_id,
             )

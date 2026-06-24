@@ -161,6 +161,12 @@ export const userApis = {
     return await apiClient.get('/users/me')
   },
 
+  async setupAdminPassword(password: string): Promise<User> {
+    const res: LoginResponse = await apiClient.post('/auth/admin-password/setup', { password })
+    setToken(res.access_token)
+    return await apiClient.get('/users/me')
+  },
+
   logout() {
     removeToken()
     if (typeof window !== 'undefined') {
@@ -170,6 +176,10 @@ export const userApis = {
 
   async getCurrentUser(): Promise<User> {
     return apiClient.get('/users/me')
+  },
+
+  async getCurrentUserWithoutAuthRedirect(): Promise<User> {
+    return apiClient.get('/users/me', { redirectOnUnauthorized: false })
   },
 
   async updateUser(data: UpdateUserRequest): Promise<User> {

@@ -5,10 +5,13 @@ import type { User } from '@/types/api'
 export interface AuthContextValue {
   user: User | null
   isLoading: boolean
+  adminPasswordSetupRequired: boolean
+  adminUsername: string
   login: (data: LoginRequest) => Promise<User>
   logout: () => void
   refresh: () => Promise<void>
   loginWithOidcToken: (accessToken: string) => Promise<void>
+  setupAdminPassword: (password: string) => Promise<User>
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

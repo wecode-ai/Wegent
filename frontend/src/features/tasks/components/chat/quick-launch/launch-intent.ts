@@ -1,4 +1,4 @@
-import type { TeamTargetPage } from '../../selector/team-selector-utils'
+import { buildTeamTargetHref, type TeamTargetPage } from '../../selector/team-selector-utils'
 import type { QuickLauncher } from './types'
 
 export const QUICK_LAUNCH_QUERY = {
@@ -35,7 +35,7 @@ export function buildQuickLaunchHref(
     params.set(QUICK_LAUNCH_QUERY.showPresets, '1')
   }
 
-  return `/${launcher.targetPage}?${params.toString()}`
+  return buildTeamTargetHref(launcher.targetPage, params)
 }
 
 export function getCurrentTargetPageByMode(currentMode: string): TeamTargetPage {

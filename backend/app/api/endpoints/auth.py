@@ -9,7 +9,16 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import authenticate_user, create_access_token
-from app.schemas.user import LoginRequest, LoginResponse, Token
+from app.schemas.user import (
+    AdminPasswordSetupRequest,
+    LoginRequest,
+    LoginResponse,
+    Token,
+)
+from app.services.admin_password_bootstrap import (
+    setup_initial_admin_password,
+)
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 router = APIRouter()
 
@@ -52,4 +61,18 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
 
     access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
 
+    return LoginResponse(access_token=access_token, token_type="bearer")
+
+
+@router.post("/admin-password/setup", response_model=LoginResponse)
+@trace_sync("auth.admin_password_setup", "backend.auth")
+def setup_admin_password(
+    setup_data: AdminPasswordSetupRequest,
+    db: Session = Depends(get_db),
+) -> LoginResponse:
+    """Set the initial admin password and return a login token."""
+    add_span_event("admin_password_setup_requested")
+    user = setup_initial_admin_password(db, password=setup_data.password)
+    set_span_attribute("auth.bootstrap.user_id", user.id)
+    access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
     return LoginResponse(access_token=access_token, token_type="bearer")

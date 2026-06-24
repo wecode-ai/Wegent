@@ -14,12 +14,13 @@ This tool implements session-level skill expansion caching with persistence:
 In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatRequest.
 """
 
+import asyncio
 import logging
-from typing import Any, Optional, Set
+from typing import Any, Awaitable, Callable, Optional, Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,86 @@ class LoadSkillInput(BaseModel):
     skill_name: str = Field(description="The name of the skill to load")
 
 
+class LazySkillProviderInput(BaseModel):
+    """Flexible input schema for lazy provider tool proxies."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class LazySkillProviderTool(BaseTool):
+    """Execution proxy for provider tools loaded after load_skill."""
+
+    name: str
+    description: str
+    args_schema: type[BaseModel] = LazySkillProviderInput
+    skill_name: str
+
+    _load_skill_tool: Any = PrivateAttr()
+
+    def __init__(
+        self,
+        *,
+        skill_name: str,
+        tool_name: str,
+        description: str,
+        load_skill_tool: "LoadSkillTool",
+    ):
+        super().__init__(
+            name=tool_name,
+            description=description
+            or f"Tool '{tool_name}' from skill '{skill_name}'. Load the skill before use.",
+            skill_name=skill_name,
+        )
+        self._load_skill_tool = load_skill_tool
+
+    def _to_args_and_kwargs(
+        self, tool_input: Any, *args: Any, **kwargs: Any
+    ) -> tuple[tuple, dict]:
+        """Forward all model-provided arguments to the proxy implementation.
+
+        ``LazySkillProviderInput`` declares no fields and accepts arbitrary input
+        via ``extra="allow"``. LangChain's default ``_to_args_and_kwargs`` discards
+        every argument when the schema has no declared fields, which would strip the
+        real tool's arguments (e.g. ``command``/``file_path``) before delegation.
+        Returning the raw input preserves them so the concrete tool can validate.
+        """
+        if isinstance(tool_input, dict):
+            return (), dict(tool_input)
+        return super()._to_args_and_kwargs(tool_input, *args, **kwargs)
+
+    def _run(
+        self,
+        run_manager: CallbackManagerForToolRun | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Synchronous execution is not used in chat streaming."""
+        return (
+            f"Tool '{self.name}' belongs to skill '{self.skill_name}' and must be "
+            "loaded asynchronously before execution."
+        )
+
+    async def _arun(
+        self,
+        run_manager: CallbackManagerForToolRun | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Load the real provider tool on demand and delegate execution."""
+        actual_tool = await self._load_skill_tool.get_loaded_tool(
+            self.skill_name, self.name
+        )
+        if actual_tool is None or actual_tool is self:
+            return (
+                f"Tool '{self.name}' for skill '{self.skill_name}' is not available "
+                "after loading the skill."
+            )
+        return await actual_tool.ainvoke(kwargs)
+
+
 class LoadSkillTool(BaseTool):
     """Tool to load a skill and get its full prompt content.
 
     This tool enables on-demand skill expansion - instead of including
-    all skill prompts in the system prompt, skills are loaded only
+    all skill prompts in the base system prompt, skills are loaded only
     when needed, keeping the context window efficient.
 
     Session-level caching with persistence:
@@ -76,7 +152,7 @@ class LoadSkillTool(BaseTool):
     # This tracks which skills have been expanded in the current conversation turn
     _expanded_skills: Set[str] = PrivateAttr(default_factory=set)
 
-    # Store the actual skill prompts that have been loaded (for system prompt injection)
+    # Store the actual skill prompts that have been loaded for dynamic injection
     _loaded_skill_prompts: dict[str, str] = PrivateAttr(default_factory=dict)
 
     # Cache for skill display names (skill_name -> displayName)
@@ -85,6 +161,14 @@ class LoadSkillTool(BaseTool):
     # Store skill tools for dynamic tool selection
     # skill_name -> list of tools
     _skill_tools: dict[str, list] = PrivateAttr(default_factory=dict)
+
+    # Deferred provider-backed tool loaders
+    # skill_name -> async loader returning concrete tool instances
+    _skill_tool_loaders: dict[str, list[Callable[[], Awaitable[list]]]] = PrivateAttr(
+        default_factory=dict
+    )
+    _loaded_skill_tool_loaders: Set[str] = PrivateAttr(default_factory=set)
+    _deferred_mcp_clients: list[Any] = PrivateAttr(default_factory=list)
 
     # Track remaining turns for each loaded skill
     # skill_name -> remaining_turns (decremented each turn, skill unloaded when 0)
@@ -104,6 +188,9 @@ class LoadSkillTool(BaseTool):
         self._loaded_skill_prompts = {}
         self._skill_display_names = {}
         self._skill_tools = {}
+        self._skill_tool_loaders = {}
+        self._loaded_skill_tool_loaders = set()
+        self._deferred_mcp_clients = []
         self._skill_remaining_turns = {}
         self._state_restored = False
         self._user_selected_skills = set()
@@ -184,23 +271,47 @@ class LoadSkillTool(BaseTool):
             self._skill_remaining_turns[skill_name] = self.skill_retention_turns
             return (
                 f"Skill '{skill_name}' is already active in this conversation turn. "
-                f"The skill instructions have been added to the system prompt."
+                "The skill instructions have been added to the conversation context."
             )
 
         # Use shared internal method to load the skill
         if not self._load_skill_internal(skill_name, source="load_skill"):
             return f"Error: Skill '{skill_name}' has no prompt content."
 
-        # Return a confirmation message (the actual prompt will be injected into system prompt)
-        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
+        skill_info = self.skill_metadata.get(skill_name, {})
+        mcp_servers = skill_info.get("mcpServers")
+        mcp_server_count = len(mcp_servers) if isinstance(mcp_servers, dict) else 0
+        registered_tool_count = len(self._skill_tools.get(skill_name, []))
+        if mcp_server_count and registered_tool_count == 0:
+            logger.warning(
+                "[LoadSkillTool_MCP_DEFERRED] skill=%s mcp_server_count=%d "
+                "registered_tool_count=0",
+                skill_name,
+                mcp_server_count,
+            )
+        if (
+            skill_name in self._skill_tool_loaders
+            and skill_name not in self._loaded_skill_tool_loaders
+        ):
+            logger.info(
+                "[LoadSkillTool_PROVIDER_DEFERRED] skill=%s registered_proxy_count=%d",
+                skill_name,
+                registered_tool_count,
+            )
+
+        # Return a confirmation message. The actual prompt is injected dynamically.
+        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the conversation context. Please follow them strictly."
 
     async def _arun(
         self,
         skill_name: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Load skill asynchronously (same as sync since no I/O needed)."""
-        return self._run(skill_name, run_manager)
+        """Load skill asynchronously and materialize deferred provider tools."""
+        result = self._run(skill_name, run_manager)
+        if not result.startswith("Error:"):
+            await self.ensure_skill_tools_loaded(skill_name)
+        return result
 
     def clear_expanded_skills(self) -> None:
         """Clear the expanded skills cache and loaded prompts.
@@ -220,7 +331,7 @@ class LoadSkillTool(BaseTool):
         return self._expanded_skills.copy()
 
     def get_loaded_skill_prompts(self) -> dict[str, str]:
-        """Get all loaded skill prompts for system prompt injection.
+        """Get all loaded skill prompts for dynamic injection.
 
         Returns:
             Dictionary mapping skill names to their prompts
@@ -265,18 +376,18 @@ class LoadSkillTool(BaseTool):
         skill_config: dict,
         is_user_selected: bool = False,
     ) -> None:
-        """Preload a skill's prompt for system prompt injection.
+        """Preload a skill's prompt for dynamic injection.
 
         This method is called by prepare_skill_tools to preload skill prompts
         when skill tools are directly available. This ensures the skill instructions
-        are injected into the system message via prompt_modifier.
+        are injected into model input via prompt_modifier.
 
         Args:
             skill_name: The name of the skill
             skill_config: The skill configuration containing prompt and displayName
             is_user_selected: Whether this skill was explicitly selected by the user
                 for this message. User-selected skills will be highlighted in the
-                system prompt to encourage the model to prioritize them.
+                dynamic skill context to encourage the model to prioritize them.
         """
         # Temporarily add to skill_metadata if not present (for _load_skill_internal)
         if skill_name not in self.skill_metadata:
@@ -294,7 +405,7 @@ class LoadSkillTool(BaseTool):
             )
 
     def get_prompt_modification(self) -> str:
-        """Get prompt modification content for system prompt injection.
+        """Get prompt modification content for dynamic injection.
 
         This method implements the PromptModifierTool protocol, allowing
         LangGraphAgentBuilder to automatically detect and use this tool
@@ -458,7 +569,7 @@ The following skills provide specialized guidance for specific tasks. When your 
     def _build_user_selected_notice(self) -> str:
         """Build a notice about user-selected skills.
 
-        This notice is added to the system prompt to inform the model that
+        This notice is added to the dynamic skill context to inform the model that
         certain skills were explicitly selected by the user and should be
         prioritized.
 
@@ -518,6 +629,93 @@ The following skills provide specialized guidance for specific tasks. When your 
             skill_name,
             [t.name for t in tools],
         )
+
+    def register_skill_tool_loader(
+        self,
+        skill_name: str,
+        loader: Callable[[], Awaitable[list]],
+    ) -> None:
+        """Register an async loader for deferred skill-backed tools."""
+        self._skill_tool_loaders.setdefault(skill_name, []).append(loader)
+        self._loaded_skill_tool_loaders.discard(skill_name)
+        logger.debug("[LoadSkillTool] Registered lazy tool loader for '%s'", skill_name)
+
+    async def ensure_skill_tools_loaded(self, skill_name: str) -> list:
+        """Materialize deferred tools for a skill."""
+        loaders = self._skill_tool_loaders.get(skill_name, [])
+        if not loaders:
+            return self._skill_tools.get(skill_name, [])
+
+        if skill_name in self._loaded_skill_tool_loaders:
+            return self._skill_tools.get(skill_name, [])
+
+        loaded_tools: list[Any] = []
+        try:
+            for loader in loaders:
+                tools = await loader()
+                if tools:
+                    loaded_tools.extend(tools)
+        except Exception:
+            logger.exception(
+                "[LoadSkillTool] Failed to load deferred tools for skill '%s'",
+                skill_name,
+            )
+            return self._skill_tools.get(skill_name, [])
+
+        if loaded_tools:
+            self.register_skill_tools(skill_name, loaded_tools)
+        self._loaded_skill_tool_loaders.add(skill_name)
+        return self._skill_tools.get(skill_name, [])
+
+    async def ensure_loaded_skill_tools_loaded(self) -> dict[str, list]:
+        """Materialize deferred tools for all currently loaded skills."""
+        skill_names = sorted(self._expanded_skills)
+        if not skill_names:
+            return {}
+
+        results = await asyncio.gather(
+            *[self.ensure_skill_tools_loaded(skill_name) for skill_name in skill_names]
+        )
+        return {
+            skill_name: tools
+            for skill_name, tools in zip(skill_names, results, strict=False)
+            if tools
+        }
+
+    def has_deferred_tool_loaders(self) -> bool:
+        """Return whether any skill can materialize tools after load_skill."""
+        return any(self._skill_tool_loaders.values())
+
+    def add_deferred_mcp_clients(self, clients: list[Any]) -> None:
+        """Track MCP clients opened by deferred skill loading for cleanup."""
+        self._deferred_mcp_clients.extend(client for client in clients if client)
+
+    def drain_deferred_mcp_clients(self) -> list[Any]:
+        """Return and clear deferred MCP clients for request cleanup."""
+        clients = list(self._deferred_mcp_clients)
+        self._deferred_mcp_clients.clear()
+        return clients
+
+    def find_registered_tool(self, tool_name: str) -> Any:
+        """Find a concrete registered skill tool by name."""
+        for tools in self._skill_tools.values():
+            for tool in tools:
+                if getattr(tool, "name", None) != tool_name:
+                    continue
+                if isinstance(tool, LazySkillProviderTool):
+                    continue
+                return tool
+        return None
+
+    async def get_loaded_tool(self, skill_name: str, tool_name: str) -> Any:
+        """Return a concrete tool after loading a skill's deferred tools."""
+        tools = await self.ensure_skill_tools_loaded(skill_name)
+        for tool in tools:
+            if getattr(tool, "name", None) == tool_name and tool is not self:
+                if isinstance(tool, LazySkillProviderTool):
+                    continue
+                return tool
+        return None
 
     def get_skill_tools(self, skill_name: str) -> list:
         """Get tools for a specific skill.

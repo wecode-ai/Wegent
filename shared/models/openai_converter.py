@@ -223,6 +223,8 @@ class OpenAIRequestConverter:
             "request_id": request.request_id,
             "executor_name": request.executor_name,
             "skip_git_clone": request.skip_git_clone,
+            "fork_runtime": request.fork_runtime,
+            "inherited_sessions": request.inherited_sessions,
             # Fields needed by executor-manager for container management
             "executor_image": request.executor_image,
             "executor_type": request.executor_type,
@@ -355,7 +357,7 @@ class OpenAIRequestConverter:
             enable_web_search=metadata.get("enable_web_search", False),
             enable_clarification=metadata.get("enable_clarification", False),
             enable_deep_thinking=metadata.get("enable_deep_thinking", True),
-            enable_tool_output_guard=metadata.get("enable_tool_output_guard", False),
+            enable_tool_output_guard=metadata.get("enable_tool_output_guard", True),
             search_engine=metadata.get("search_engine"),
             skill_names=metadata.get("skill_names", []),
             skill_configs=metadata.get("skill_configs", []),
@@ -385,6 +387,8 @@ class OpenAIRequestConverter:
             request_id=metadata.get("request_id", ""),
             executor_name=metadata.get("executor_name"),
             skip_git_clone=metadata.get("skip_git_clone", False),
+            fork_runtime=metadata.get("fork_runtime"),
+            inherited_sessions=metadata.get("inherited_sessions", []),
             # Fields for executor-manager container management
             executor_image=metadata.get("executor_image"),
             executor_type=metadata.get("executor_type"),
