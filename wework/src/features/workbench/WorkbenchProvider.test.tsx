@@ -255,6 +255,9 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-transcript-loading">
         {workbench.isRuntimeTranscriptLoading ? 'loading' : 'idle'}
       </span>
+      <span data-testid="runtime-transcript-has-more">
+        {workbench.runtimeTranscriptHasMoreBefore ? 'more' : 'done'}
+      </span>
       <span data-testid="runtime-open-blocks">
         {workbench.messages
           .flatMap(message => message.blocks ?? [])
@@ -288,6 +291,9 @@ function RuntimeOpenProbe() {
         }
       >
         open runtime b
+      </button>
+      <button type="button" onClick={() => void workbench.loadOlderRuntimeTranscript()}>
+        load older
       </button>
     </div>
   )
@@ -555,7 +561,59 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',
+      limit: 50,
     })
+  })
+
+  test('loads older runtime transcript messages before the current page', async () => {
+    const getRuntimeTranscript = vi.fn(request => {
+      if (request.beforeCursor === 'offset:120') {
+        return Promise.resolve({
+          localTaskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+          messages: [{ id: 'runtime-a:user:o20', role: 'user', content: 'older message' }],
+          hasMoreBefore: false,
+          beforeCursor: null,
+        } satisfies RuntimeTranscriptResponse)
+      }
+      return Promise.resolve({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:o120', role: 'user', content: 'recent message' }],
+        hasMoreBefore: true,
+        beforeCursor: 'offset:120',
+      } satisfies RuntimeTranscriptResponse)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('recent message')
+    )
+    expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('more')
+
+    await userEvent.click(screen.getByText('load older'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent(
+        'older message|recent message'
+      )
+    )
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      localTaskId: 'runtime-a',
+      limit: 50,
+      beforeCursor: 'offset:120',
+    })
+    expect(screen.getByTestId('runtime-transcript-has-more')).toHaveTextContent('done')
   })
 
   test('switches the selected runtime task before transcript loading finishes', async () => {

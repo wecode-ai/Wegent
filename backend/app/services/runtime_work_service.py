@@ -8,6 +8,7 @@ import json
 import logging
 import posixpath
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
@@ -52,6 +53,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
@@ -297,27 +299,62 @@ async def get_runtime_transcript(
     *,
     db: Session,
     user_id: int,
-    address: RuntimeTaskAddress,
+    address: RuntimeTranscriptRequest,
 ) -> RuntimeTranscriptResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
     normalized_address = _normalized_address(address)
     _ensure_owned_device(db, user_id, normalized_address.device_id)
     _touch_workspace_mapping(db, user_id, normalized_address)
+    payload = _runtime_transcript_payload(address, normalized_address)
+    started_at = time.perf_counter()
+    logger.info(
+        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s",
+        user_id,
+        normalized_address.device_id,
+        normalized_address.local_task_id,
+        normalized_address.workspace_path,
+        payload.get("limit"),
+        payload.get("beforeCursor"),
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.transcript",
-            payload=_runtime_task_address_payload(normalized_address),
+            payload=payload,
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.warning(
+            "[RuntimeWork] Runtime transcript RPC failed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s detail=%s",
+            user_id,
+            normalized_address.device_id,
+            normalized_address.local_task_id,
+            elapsed_ms,
+            str(exc),
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
     _raise_runtime_rpc_failure(result)
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "[RuntimeWork] Runtime transcript RPC completed: user_id=%s device_id=%s local_task_id=%s elapsed_ms=%s message_count=%s has_more_before=%s before_cursor=%s",
+        user_id,
+        normalized_address.device_id,
+        normalized_address.local_task_id,
+        elapsed_ms,
+        (
+            len(result.get("messages", []))
+            if isinstance(result.get("messages"), list)
+            else None
+        ),
+        result.get("hasMoreBefore"),
+        result.get("beforeCursor"),
+    )
     return RuntimeTranscriptResponse.model_validate(result)
 
 
@@ -1909,6 +1946,20 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
 
 def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]:
     return address.model_dump(by_alias=True, exclude_none=True)
+
+
+def _runtime_transcript_payload(
+    request: RuntimeTranscriptRequest,
+    normalized_address: RuntimeTaskAddress,
+) -> dict[str, Any]:
+    payload = _runtime_task_address_payload(normalized_address)
+    limit = getattr(request, "limit", None)
+    before_cursor = getattr(request, "before_cursor", None)
+    if limit is not None:
+        payload["limit"] = limit
+    if before_cursor:
+        payload["beforeCursor"] = before_cursor
+    return payload
 
 
 def _project_runtime_target(

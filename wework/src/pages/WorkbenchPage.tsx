@@ -15,6 +15,8 @@ export function WorkbenchPage() {
     guidanceMessages,
     codeCommentContexts,
     isRuntimeTranscriptLoading,
+    runtimeTranscriptHasMoreBefore,
+    isRuntimeTranscriptLoadingMore,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -28,6 +30,7 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    loadOlderRuntimeTranscript,
     archiveRuntimeLocalTask,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
@@ -102,6 +105,8 @@ export function WorkbenchPage() {
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
+      runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
+      isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -111,6 +116,7 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}

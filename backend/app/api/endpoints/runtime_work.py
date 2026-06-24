@@ -29,6 +29,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
@@ -138,7 +139,7 @@ def delete_device_workspace_endpoint(
     response_model_by_alias=True,
 )
 async def get_runtime_transcript_endpoint(
-    address: RuntimeTaskAddress,
+    address: RuntimeTranscriptRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
