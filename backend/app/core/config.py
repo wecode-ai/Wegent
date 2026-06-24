@@ -120,6 +120,11 @@ class Settings(BaseSettings):
     # Enable in-process executor (no Docker required) when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
 
+    # Internal extension toggles.
+    # Keep disabled by default so local/open-source development uses the public
+    # single-table behavior unless explicitly opted in.
+    WECODE_INTERNAL_EXTENSIONS_ENABLED: bool = False
+
     # Database configuration
     # Supports both MySQL and SQLite:
     # - MySQL: "mysql+pymysql://user:pass@localhost/db"

@@ -30,8 +30,8 @@ import orjson
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
-from app.models.task import TaskResource
 from app.models.user import User
 from app.services.notification.dingtalk import DingtalkClient
 
@@ -179,7 +179,7 @@ class UnreadNotificationService:
         if not task_ids:
             return {}
 
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
+        tasks = task_stores.task_store.list_by_ids(db, task_ids=task_ids)
 
         result = {}
         for task in tasks:

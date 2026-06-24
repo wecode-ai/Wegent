@@ -33,6 +33,27 @@ from shared.telemetry.context import get_request_id, set_request_context
 
 logger = logging.getLogger(__name__)
 
+_subscription_event_handlers_registered = False
+
+
+def _ensure_subscription_task_event_handlers_registered() -> None:
+    """Register in-process event handlers required by subscription executions."""
+    global _subscription_event_handlers_registered
+    if _subscription_event_handlers_registered:
+        return
+
+    from app.core.events import TaskCompletedEvent, get_event_bus
+    from app.services.subscription.task_completion_handler import handle_task_completed
+
+    event_bus = get_event_bus()
+    handlers = getattr(event_bus, "_handlers", {}).get(TaskCompletedEvent, [])
+    if handle_task_completed not in handlers:
+        event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
+
+    _subscription_event_handlers_registered = True
+    logger.info("[subscription_tasks] Subscription TaskCompletedEvent handler ready")
+
+
 # Prometheus metrics
 SUBSCRIPTION_EXECUTIONS_TOTAL = Counter(
     "subscription_executions_total",
@@ -1440,6 +1461,8 @@ def execute_subscription_task(
     """
     from app.db.session import get_db_session
 
+    _ensure_subscription_task_event_handlers_registered()
+
     start_time = time.time()
     trigger_type = "unknown"
 
@@ -1831,6 +1854,8 @@ def execute_subscription_task_sync(
         timeout_seconds: Optional timeout override
     """
     from app.db.session import get_db_session
+
+    _ensure_subscription_task_event_handlers_registered()
 
     start_time = time.time()
     trigger_type = "unknown"
