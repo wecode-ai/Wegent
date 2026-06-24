@@ -732,34 +732,20 @@ class ContextService:
         if not context.extracted_text:
             return None
 
-        # Check if text was truncated by comparing text_length with max limit
-        max_text_length = DocumentParser.get_max_text_length()
-        is_truncated = context.text_length >= max_text_length
-
-        # Build attachment metadata header (shared with chat_shell loader)
+        # Build attachment metadata header (shared with chat_shell loader).
+        # Parse-time truncation is self-described by the omission marker baked
+        # into extracted_text; no separate "(Note: truncated ...)" line is added
+        # (it duplicated that marker and the chat_shell preview's Truncated flag).
         filename = context.original_filename
         sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
-        prefix = (
-            build_attachment_header(
-                attachment_id=context.id,
-                filename=filename,
-                mime_type=context.mime_type or "unknown",
-                file_size=context.file_size or 0,
-                sandbox_path=sandbox_path,
-            )
-            + "\n"
+        header = build_attachment_header(
+            attachment_id=context.id,
+            filename=filename,
+            mime_type=context.mime_type or "unknown",
+            file_size=context.file_size or 0,
+            sandbox_path=sandbox_path,
         )
-
-        if is_truncated:
-            prefix += (
-                f"(Note: The file content is too long and has been truncated to "
-                f"{max_text_length} characters. The following is only partial content.)\n"
-            )
-
-        prefix += f"{context.extracted_text}\n\n"
-
-        # Wrap in <attachment> XML tags
-        return prefix
+        return f"{header}\n{context.extracted_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================
 

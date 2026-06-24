@@ -1346,7 +1346,12 @@ class TestContextServiceFormatting:
         assert "File Path(already in sandbox)" in prefix
 
     def test_build_document_text_prefix_with_truncation(self):
-        """Test building document text prefix with truncation notice"""
+        """At-cap attachments no longer get a separate truncation notice.
+
+        Parse-time truncation is self-described by the omission marker baked into
+        extracted_text, so build_document_text_prefix does not add a duplicate
+        "(Note: truncated ...)" line anymore.
+        """
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -1383,7 +1388,8 @@ class TestContextServiceFormatting:
         assert "Type: application/pdf" in prefix
         assert "Size: 5.0 MB" in prefix
         assert "URL: /api/attachments/100/download" in prefix
-        assert "truncated" in prefix.lower()
+        # No separate "(Note: ... truncated to N characters ...)" line.
+        assert "has been truncated to" not in prefix
 
 
 class TestContextServiceOverwrite:

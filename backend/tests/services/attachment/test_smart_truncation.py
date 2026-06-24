@@ -117,7 +117,23 @@ class TestExcelTruncationStrategy:
         # First data rows should be present (head section)
         assert "Item0" in text
 
-    def test_multiple_sheets(self):
+    def test_truncation_keeps_header_and_contiguous_head_tail(self):
+        """Header is always kept; data rows are contiguous head + tail, no
+        scattered middle sampling (single '[N rows skipped]' marker)."""
+        rows = [["ID", "Name", "Value", "Description"]]  # Header
+        for i in range(300):
+            rows.append([i, f"Item{i}", i * 10, "desc " + "v" * 40])
+        sheets_data = [{"name": "Data", "rows": rows}]
+
+        text, info = self.strategy.truncate(sheets_data, 3000)
+
+        assert info.is_truncated is True
+        # Header preserved.
+        assert "ID" in text and "Name" in text
+        # Contiguous head data rows (consecutive, not sampled).
+        assert "Item0" in text and "Item1" in text and "Item2" in text
+        # Exactly one omission marker between head and tail (no scattered samples).
+        assert text.count("rows skipped") <= 1
         """Test truncation with multiple sheets."""
         sheets_data = [
             {
@@ -348,6 +364,23 @@ class TestTextTruncationStrategy:
         )
         # First lines should be present
         assert "Line 0" in result
+
+    def test_truncation_keeps_contiguous_head_tail_no_middle_sampling(self):
+        """Middle is dropped behind one omission marker (no scattered sampling)."""
+        lines = [f"Line {i}: content " + "v" * 50 for i in range(200)]
+        text = "\n".join(lines)
+
+        result, info = self.strategy.truncate(text, 2000)
+
+        assert info.is_truncated is True
+        # Contiguous head (consecutive early lines, not scattered samples).
+        assert "Line 0:" in result and "Line 1:" in result and "Line 2:" in result
+        # Contiguous tail (the very last line is kept).
+        assert "Line 199:" in result
+        # Single omission marker; no scattered "[N lines skipped]" middle samples.
+        assert "omitted" in result.lower()
+        assert "Middle" not in result
+        assert "lines skipped" not in result
 
     def test_length_limit_fallback(self):
         """Test that length limit is enforced as fallback."""

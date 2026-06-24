@@ -30,9 +30,9 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
     """
 
     # Distribution ratios for head/middle/tail (should sum to 1.0)
-    HEAD_RATIO = 0.25  # 25% for head data rows
-    MIDDLE_RATIO = 0.50  # 50% for uniformly sampled middle rows
-    TAIL_RATIO = 0.25  # 25% for tail data rows
+    HEAD_RATIO = 0.5  # 50% head data rows (contiguous)
+    MIDDLE_RATIO = 0.0  # middle dropped (single "[N rows skipped]" marker)
+    TAIL_RATIO = 0.5  # 50% tail data rows (contiguous)
 
     def truncate(
         self, sheets_data: List[Dict[str, Any]], max_length: int
@@ -172,10 +172,17 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
             # No truncation needed for this sheet
             return full_text[:max_length], total_rows, 0
 
-        # Distribute data rows: head (25%), middle (50%), tail (25%)
+        # Distribute data rows. With MIDDLE_RATIO == 0 keep a contiguous head +
+        # tail (fold the rounding remainder into head, no sampled middle);
+        # otherwise uniformly sample the middle.
         head_count = max(1, int(data_rows_to_keep * self.HEAD_RATIO))
         tail_count = max(1, int(data_rows_to_keep * self.TAIL_RATIO))
-        middle_count = max(1, data_rows_to_keep - head_count - tail_count)
+        remainder = max(0, data_rows_to_keep - head_count - tail_count)
+        if self.MIDDLE_RATIO <= 0:
+            head_count += remainder
+            middle_count = 0
+        else:
+            middle_count = max(1, remainder)
 
         # Adjust if we don't have enough middle rows to sample from
         middle_start = header_count + head_count

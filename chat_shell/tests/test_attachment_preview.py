@@ -34,11 +34,31 @@ def _attachment_block(body: str) -> str:
     return f"<attachment>{body}</attachment>"
 
 
-def test_small_attachment_passes_through_unchanged():
-    text = _attachment_block("[Attachment: a.txt | ID: 1 | ...]\nshort body\n\n")
+def test_small_attachment_body_preserved_and_marked_not_truncated():
+    text = _attachment_block(
+        "[Attachment: a.txt | ID: 1 | Type: text/plain]\nshort body\n\n"
+    )
     messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]
     out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=15000)
-    assert out[0]["content"][0]["text"] == text
+    new = out[0]["content"][0]["text"]
+    # Body kept verbatim; header annotated with size + not-truncated; no hint.
+    assert "short body" in new
+    assert "tokens truncated" not in new
+    assert "Truncated: no" in new
+    assert "Chars:" in new and "Tokens:" in new
+    assert "Preview truncated" not in new
+
+
+def test_truncated_attachment_header_marks_truncated_yes():
+    big_body = "[Attachment: a.pdf | ID: 2 | Type: application/pdf]\n" + (
+        "word " * 5000
+    )
+    text = _attachment_block(big_body)
+    messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]
+    out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
+    new = out[0]["content"][0]["text"]
+    assert "Truncated: yes" in new
+    assert "Chars:" in new and "Tokens:" in new
 
 
 def test_large_attachment_body_is_truncated_with_marker():
