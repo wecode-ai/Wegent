@@ -17,10 +17,11 @@ from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.notification.email_client import EmailClient
@@ -254,24 +255,7 @@ class GroupChatSummaryService:
         Returns:
             List of TaskResource objects
         """
-        # Query tasks updated recently
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.updated_at >= since,
-                TaskResource.is_active == True,
-            )
-            .all()
-        )
-
-        # Filter tasks with is_group_chat=true in JSON
-        group_chat_tasks = []
-        for task in tasks:
-            if task.json and task.json.get("spec", {}).get("is_group_chat") is True:
-                group_chat_tasks.append(task)
-
-        return group_chat_tasks
+        return task_stores.task_store.list_recent_group_chat_tasks(db, since=since)
 
     def _get_specific_group_chat_task(
         self, db: Session, task_id: int
@@ -286,22 +270,16 @@ class GroupChatSummaryService:
         Returns:
             List containing the task if found and is a group chat, empty list otherwise
         """
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-            )
-            .first()
+        task = task_stores.task_store.get_active_task(
+            db,
+            task_id=task_id,
         )
 
         if not task:
             logger.warning(f"[GroupChatSummary] Task {task_id} not found")
             return []
 
-        # Check if it's a group chat
-        if not (task.json and task.json.get("spec", {}).get("is_group_chat") is True):
+        if not self._is_group_chat_task(task):
             logger.warning(f"[GroupChatSummary] Task {task_id} is not a group chat")
             return []
 
@@ -376,15 +354,10 @@ class GroupChatSummaryService:
             [{"role": "user", "username": "xxx", "content": "xxx"},
              {"role": "assistant", "content": "xxx"}]
         """
-        # Query subtasks ordered by creation time
-        subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.created_at >= since,
-            )
-            .order_by(Subtask.created_at.asc())
-            .all()
+        subtasks = task_stores.subtask_store.list_new_messages_since(
+            db,
+            task_id=task_id,
+            since=since,
         )
 
         # Cache user names
@@ -396,7 +369,10 @@ class GroupChatSummaryService:
                 # User message
                 sender_id = subtask.sender_user_id
                 if sender_id > 0:
-                    if sender_id not in user_cache:
+                    sender_user_name = getattr(subtask, "sender_user_name", None)
+                    if sender_user_name:
+                        user_cache[sender_id] = sender_user_name
+                    elif sender_id not in user_cache:
                         user = db.query(User).filter(User.id == sender_id).first()
                         user_cache[sender_id] = (
                             user.user_name if user else f"用户{sender_id}"
@@ -434,6 +410,12 @@ class GroupChatSummaryService:
                     )
 
         return conversation
+
+    def _is_group_chat_task(self, task: TaskResource) -> bool:
+        if task.is_group_chat is True:
+            return True
+        payload = task.json if isinstance(task.json, dict) else {}
+        return payload.get("spec", {}).get("is_group_chat") is True
 
     async def _summarize_conversation(
         self, conversation: List[Dict], group_title: str, hours_back: int = 12

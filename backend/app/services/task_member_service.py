@@ -58,37 +58,14 @@ class TaskMemberService:
 
     def is_member(self, db: Session, task_id: int, user_id: int) -> bool:
         """Check if a user is an active member of a task"""
-        if self.is_task_owner(db, task_id, user_id):
-            return True
-
-        member = (
-            db.query(ResourceMember.id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.resource_id == task_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
-                ResourceMember.copied_resource_id == 0,
-            )
-            .first()
+        return task_stores.task_access_store.is_member(
+            db, task_id=task_id, user_id=user_id
         )
-        return member is not None
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
         logger.info(f"[is_group_chat] Checking task_id={task_id}")
-        task = self.get_task(db, task_id)
-        if not task:
-            is_group_chat = False
-        else:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            task_flag = getattr(task, "is_group_chat", False)
-            is_group_chat = bool(
-                task_flag is True
-                or task_flag == 1
-                or (task_json.get("spec") or {}).get("is_group_chat", False)
-            )
+        is_group_chat = task_stores.task_access_store.is_group_chat(db, task_id=task_id)
         logger.info(f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}")
         return is_group_chat
 

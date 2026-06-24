@@ -86,6 +86,44 @@ class TestCancelExecutionWithTask:
         task_crd = task.json
         assert task_crd["status"]["status"] == "CANCELLED"
 
+    def test_cancel_execution_updates_subscription_task_status(
+        self, test_db, test_user
+    ):
+        """Test that cancel_execution can find subscription-state tasks."""
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="test-subscription-task",
+            namespace="default",
+            json=create_task_json(status="RUNNING", progress=50),
+            is_active=TaskResource.STATE_SUBSCRIPTION,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        execution = BackgroundExecution(
+            user_id=test_user.id,
+            subscription_id=1,
+            task_id=task.id,
+            trigger_type="manual",
+            trigger_reason="Test",
+            prompt="Test prompt",
+            status=BackgroundExecutionStatus.RUNNING.value,
+            retry_attempt=0,
+        )
+        test_db.add(execution)
+        test_db.commit()
+        test_db.refresh(execution)
+
+        result = background_execution_manager.cancel_execution(
+            test_db, execution_id=execution.id, user_id=test_user.id
+        )
+
+        assert result.status == BackgroundExecutionStatus.CANCELLED
+        test_db.refresh(task)
+        assert task.json["status"]["status"] == "CANCELLED"
+
     def test_cancel_execution_updates_subtasks(self, test_db, test_user):
         """Test that cancel_execution updates running subtasks to CANCELLED."""
         # Create a task with valid JSON
