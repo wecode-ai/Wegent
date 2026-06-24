@@ -496,6 +496,37 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders Codex local image file mentions as user image previews after refresh', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-local-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
+    )
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+    expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
   test('renders assistant markdown attachment images through authenticated blob previews', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:assistant-markdown-image')
     URL.revokeObjectURL = vi.fn()

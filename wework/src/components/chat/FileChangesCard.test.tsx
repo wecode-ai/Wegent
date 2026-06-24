@@ -75,37 +75,56 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
-  test('renders inline diff preview when summary contains a diff', () => {
+  test('renders file rows instead of inline diff preview when summary contains a diff', () => {
     renderCard({
       summary: {
         ...summary,
-        file_count: 1,
-        additions: 1,
-        deletions: 1,
+        file_count: 2,
+        additions: 6,
+        deletions: 4,
         files: [
           {
-            path: 'src/main.ts',
+            path: 'wework/src/components/layout/DesktopWorkbenchMain.tsx',
             change_type: 'modified',
-            additions: 1,
-            deletions: 1,
+            additions: 3,
+            deletions: 2,
+            binary: false,
+          },
+          {
+            path: 'wework/src/components/layout/MobileWorkbenchLayout.tsx',
+            change_type: 'modified',
+            additions: 3,
+            deletions: 2,
             binary: false,
           },
         ],
         diff: [
-          'diff --git a/src/main.ts b/src/main.ts',
-          '--- a/src/main.ts',
-          '+++ b/src/main.ts',
+          'diff --git a/wework/src/components/layout/DesktopWorkbenchMain.tsx b/wework/src/components/layout/DesktopWorkbenchMain.tsx',
+          '--- a/wework/src/components/layout/DesktopWorkbenchMain.tsx',
+          '+++ b/wework/src/components/layout/DesktopWorkbenchMain.tsx',
           '@@ -1 +1 @@',
           '-const name = "old"',
           '+const name = "new"',
+          'diff --git a/wework/src/components/layout/MobileWorkbenchLayout.tsx b/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '--- a/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '+++ b/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '@@ -1 +1 @@',
+          '-const mobile = "old"',
+          '+const mobile = "new"',
         ].join('\n'),
       },
     })
 
-    expect(screen.getByTestId('file-changes-inline-diff')).toBeInTheDocument()
-    expect(screen.getByText('src/main.ts')).toBeInTheDocument()
-    expect(screen.getByText('-const name = "old"')).toBeInTheDocument()
-    expect(screen.getByText('+const name = "new"')).toBeInTheDocument()
+    expect(screen.queryByTestId('file-changes-inline-diff')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('file-change-row')).toHaveLength(2)
+    expect(
+      screen.getByText('wework/src/components/layout/DesktopWorkbenchMain.tsx')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('wework/src/components/layout/MobileWorkbenchLayout.tsx')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('-const name = "old"')).not.toBeInTheDocument()
+    expect(screen.queryByText('+const mobile = "new"')).not.toBeInTheDocument()
   })
 
   test('requests the right review panel without loading diff immediately', async () => {

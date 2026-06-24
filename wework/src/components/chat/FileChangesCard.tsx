@@ -6,11 +6,8 @@ import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
-import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
 
 const DEFAULT_VISIBLE_FILE_COUNT = 3
-const INLINE_DIFF_MAX_FILES = 3
-const INLINE_DIFF_MAX_LINES = 80
 
 interface FileChangesCardProps {
   subtaskId: number
@@ -84,7 +81,6 @@ export function FileChangesCard({
   const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
   const reviewDisabled = actionsDisabled || !onOpenReview
   const canRevert = summary.status === 'active' && summary.revertible !== false
-  const inlineDiff = summary.diff?.trim()
 
   const openReview = () => {
     onOpenReview?.({
@@ -180,21 +176,17 @@ export function FileChangesCard({
             {actionError}
           </p>
         ) : null}
-        {inlineDiff ? (
-          <InlineDiffPreview diff={inlineDiff} files={summary.files} />
-        ) : (
-          <div className="divide-y divide-border/70">
-            {visibleFiles.map(file => (
-              <FileChangeRow
-                key={`${file.old_path ?? ''}:${file.path}`}
-                file={file}
-                disabled={reviewDisabled}
-                onPreview={() => openReview()}
-              />
-            ))}
-          </div>
-        )}
-        {!inlineDiff && hiddenCount > 0 ? (
+        <div className="divide-y divide-border/70">
+          {visibleFiles.map(file => (
+            <FileChangeRow
+              key={`${file.old_path ?? ''}:${file.path}`}
+              file={file}
+              disabled={reviewDisabled}
+              onPreview={() => openReview()}
+            />
+          ))}
+        </div>
+        {hiddenCount > 0 ? (
           <button
             type="button"
             data-testid="toggle-file-changes-button"
@@ -220,128 +212,6 @@ export function FileChangesCard({
         onConfirm={() => void revert()}
       />
     </>
-  )
-}
-
-function InlineDiffPreview({
-  diff,
-  files,
-}: {
-  diff: string
-  files: TurnFileChangeItem[]
-}) {
-  const sections = parseUnifiedDiff(diff).slice(0, INLINE_DIFF_MAX_FILES)
-  const sectionsToRender =
-    sections.length > 0 ? sections : [{ path: files[0]?.path ?? 'diff', lines: diff.split('\n') }]
-
-  return (
-    <div data-testid="file-changes-inline-diff" className="border-t border-border bg-base">
-      <div className="border-b border-border px-3 py-1.5 text-xs font-medium text-text-secondary">
-        已编辑的文件
-      </div>
-      <div className="space-y-2 bg-surface/60 px-3 py-2">
-        {sectionsToRender.map((section, index) => (
-          <InlineDiffFile
-            key={`${section.oldPath ?? ''}:${section.path}:${index}`}
-            section={section}
-            file={files.find(item => item.path === section.path)}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function InlineDiffFile({
-  section,
-  file,
-}: {
-  section: DiffFileSection
-  file?: TurnFileChangeItem
-}) {
-  const rows = buildInlineDiffRows(section.lines).slice(0, INLINE_DIFF_MAX_LINES)
-  const additions = file?.additions ?? rows.filter(row => row.kind === 'added').length
-  const deletions = file?.deletions ?? rows.filter(row => row.kind === 'removed').length
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-base">
-      <div className="flex min-h-8 items-center gap-2 border-b border-border bg-surface px-3 text-xs">
-        <span className="min-w-0 flex-1 truncate font-mono text-text-secondary">{section.path}</span>
-        <span className="shrink-0 font-medium text-green-600">+{additions}</span>
-        <span className="shrink-0 font-medium text-red-500">-{deletions}</span>
-      </div>
-      <pre className="max-h-72 overflow-auto bg-base text-xs leading-5">
-        {rows.map((row, index) => (
-          <code
-            key={`${index}:${row.content}`}
-            className={[
-              'grid min-w-max grid-cols-[3.5rem_1fr] font-mono',
-              row.kind === 'added' ? 'bg-green-50 text-green-800' : '',
-              row.kind === 'removed' ? 'bg-red-50 text-red-800' : '',
-              row.kind === 'hunk' ? 'bg-blue-50 text-blue-700' : '',
-              row.kind === 'context' ? 'text-text-primary' : '',
-            ].join(' ')}
-          >
-            <span className="select-none border-r border-border/70 px-2 text-right text-text-muted">
-              {row.lineNumber ?? ''}
-            </span>
-            <span className="px-3">{row.content}</span>
-          </code>
-        ))}
-      </pre>
-    </div>
-  )
-}
-
-interface InlineDiffRow {
-  content: string
-  lineNumber: number | null
-  kind: 'added' | 'removed' | 'context' | 'hunk'
-}
-
-function buildInlineDiffRows(lines: string[]): InlineDiffRow[] {
-  const rows: InlineDiffRow[] = []
-  let oldLine: number | null = null
-  let newLine: number | null = null
-
-  for (const line of lines) {
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
-    if (hunkMatch) {
-      oldLine = Number(hunkMatch[1])
-      newLine = Number(hunkMatch[2])
-      rows.push({ content: line, lineNumber: null, kind: 'hunk' })
-      continue
-    }
-    if (shouldSkipDiffMetadata(line)) continue
-    const row = createInlineDiffRow(line, oldLine, newLine)
-    rows.push(row)
-    if (oldLine !== null && row.kind !== 'added') oldLine += 1
-    if (newLine !== null && row.kind !== 'removed') newLine += 1
-  }
-
-  return rows
-}
-
-function createInlineDiffRow(
-  line: string,
-  oldLine: number | null,
-  newLine: number | null
-): InlineDiffRow {
-  if (line.startsWith('+')) {
-    return { content: line, lineNumber: newLine, kind: 'added' }
-  }
-  if (line.startsWith('-')) {
-    return { content: line, lineNumber: oldLine, kind: 'removed' }
-  }
-  return { content: line, lineNumber: newLine ?? oldLine, kind: 'context' }
-}
-
-function shouldSkipDiffMetadata(line: string): boolean {
-  return (
-    line.startsWith('diff --git ') ||
-    line.startsWith('index ') ||
-    line.startsWith('--- ') ||
-    line.startsWith('+++ ')
   )
 }
 

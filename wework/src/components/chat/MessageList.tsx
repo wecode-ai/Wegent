@@ -43,6 +43,10 @@ interface MessageListProps {
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
+const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
+const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
+const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
+const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
   'text-[13px] font-medium leading-5 text-blue-600 no-underline',
@@ -197,26 +201,34 @@ async function copyText(text: string) {
 
 function UserMessage({ message }: { message: WorkbenchMessage }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const codexLocalFileMentions = parseCodexLocalFileMentions(message.content)
+  const displayContent = codexLocalFileMentions?.requestText ?? message.content
   const imageAttachments = (message.attachments ?? []).filter(isImageAttachment)
   const documentAttachments = (message.attachments ?? []).filter(
     attachment => !isImageAttachment(attachment)
   )
+  const localImageMentions = codexLocalFileMentions?.images ?? []
   const shouldCollapse =
-    message.content.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-    message.content.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+    displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
 
   return (
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
-      {(imageAttachments.length > 0 || documentAttachments.length > 0) && (
+      {(imageAttachments.length > 0 ||
+        localImageMentions.length > 0 ||
+        documentAttachments.length > 0) && (
         <div className="flex max-w-full flex-col items-end gap-2">
-          {imageAttachments.length > 0 && (
+          {(imageAttachments.length > 0 || localImageMentions.length > 0) && (
             <div
               data-testid="message-image-attachments"
               className="flex max-w-full flex-row flex-wrap justify-end gap-2"
             >
               {imageAttachments.map(attachment => (
                 <MessageImageAttachmentPreview key={attachment.id} attachment={attachment} />
+              ))}
+              {localImageMentions.map(image => (
+                <MessageLocalImagePreview key={image.path} image={image} />
               ))}
             </div>
           )}
@@ -225,7 +237,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
           ))}
         </div>
       )}
-      {message.content && (
+      {displayContent && (
         <div className="max-w-full overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary">
           <div
             data-testid="user-message-content"
@@ -234,7 +246,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
               shouldCollapse && !isExpanded ? 'max-h-44' : '',
             ].join(' ')}
           >
-            {renderUserContent(message.content)}
+            {renderUserContent(displayContent)}
             {shouldCollapse && !isExpanded && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
             )}
@@ -268,6 +280,51 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
       <MessageHoverActions message={message} align="right" />
     </div>
   )
+}
+
+function MessageLocalImagePreview({
+  image,
+}: {
+  image: { filename: string; path: string }
+}) {
+  return (
+    <img
+      data-testid="message-local-image-preview"
+      src={resolveDirectMarkdownImageSrc(image.path)}
+      alt={image.filename}
+      className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
+      loading="lazy"
+    />
+  )
+}
+
+function parseCodexLocalFileMentions(
+  content: string
+): { requestText: string; images: Array<{ filename: string; path: string }> } | null {
+  if (!CODEX_FILE_MENTIONS_HEADER_PATTERN.test(content)) return null
+
+  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
+  const requestText =
+    requestMarker?.index === undefined
+      ? ''
+      : content.slice(requestMarker.index + requestMarker[0].length).trim()
+  if (!requestText) return null
+
+  const filesText =
+    requestMarker?.index === undefined ? content : content.slice(0, requestMarker.index)
+  const images: Array<{ filename: string; path: string }> = []
+  for (const match of filesText.matchAll(CODEX_FILE_MENTION_LINE_PATTERN)) {
+    const filename = match[1]?.trim()
+    const path = match[2]?.trim()
+    if (!filename || !path || !isLocalImageMention(filename, path)) continue
+    images.push({ filename, path })
+  }
+
+  return { requestText, images }
+}
+
+function isLocalImageMention(filename: string, path: string): boolean {
+  return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
 }
 
 function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
