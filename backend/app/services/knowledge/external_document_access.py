@@ -13,6 +13,7 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.jwt_compat import decode_pyjwt
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -288,9 +289,8 @@ def create_document_download_token(
 def verify_document_download_token(token: str) -> Optional[DocumentDownloadToken]:
     """Verify a document download token and return its payload."""
     try:
-        payload: dict[str, Any] = jwt.decode(
+        payload: dict[str, Any] = decode_pyjwt(
             token,
-            settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
         )
     except jwt.ExpiredSignatureError:

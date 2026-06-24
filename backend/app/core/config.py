@@ -155,6 +155,7 @@ class Settings(BaseSettings):
 
     # JWT configuration
     SECRET_KEY: str = "secret-key"
+    JWT_LEGACY_SECRET_KEYS: str = "your-secret-key-here"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
