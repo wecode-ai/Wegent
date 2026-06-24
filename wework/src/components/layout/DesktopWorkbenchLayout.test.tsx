@@ -2126,8 +2126,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(fileTab).toHaveClass('group')
     const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
-      'h-5',
-      'w-5',
+      'h-[18px]',
+      'w-[18px]',
       'rounded-full',
       'border',
       'bg-muted',
@@ -2273,8 +2273,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
     const closeButton = within(reviewTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
-      'h-5',
-      'w-5',
+      'h-[18px]',
+      'w-[18px]',
       'rounded-full',
       'border',
       'bg-muted',
@@ -2336,7 +2336,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(2))
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
-    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('new')
     expect(screen.getByTestId('file-changes-review-panel')).not.toHaveTextContent(
       '设备暂时不可用，请稍后重试'
     )
@@ -3155,7 +3155,8 @@ describe('DesktopWorkbenchLayout', () => {
           deviceId: 'device-1',
           path: '/workspace/github_wegent',
           source: 'project',
-        }
+        },
+        'branch'
       )
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
@@ -3165,7 +3166,7 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
-    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('new')
   })
 
   test('submits environment commits from the popover', async () => {

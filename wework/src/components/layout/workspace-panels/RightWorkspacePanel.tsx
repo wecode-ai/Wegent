@@ -1,6 +1,9 @@
 import { File, FileDiff, Plus, X } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent } from 'react'
-import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewPanel'
+import {
+  FileChangesReviewPanel,
+  type FileChangesReviewViewOption,
+} from '@/components/chat/FileChangesReviewPanel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
@@ -17,6 +20,10 @@ interface RightWorkspaceReviewState {
   loading: boolean
   diff: string
   error?: string
+  reviewTitle?: string
+  defaultFileTreeVisible?: boolean
+  branchName?: string
+  targetBranchName?: string
 }
 
 interface RightWorkspacePanelProps {
@@ -27,6 +34,7 @@ interface RightWorkspacePanelProps {
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   canOpenReview: boolean
+  reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
   onResizeStart: (event: PointerEvent<HTMLDivElement>) => void
   onSelectReview: () => void
@@ -44,6 +52,7 @@ export function RightWorkspacePanel({
   workspaceTargetError,
   review,
   canOpenReview,
+  reviewViewOptions,
   onAddCodeComment,
   onResizeStart,
   onSelectReview,
@@ -70,7 +79,7 @@ export function RightWorkspacePanel({
         <header
           data-testid="right-workspace-tabbar"
           role="tablist"
-          className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border bg-background px-4"
+          className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border bg-background px-3"
         >
           {openTabs.map(tab => (
             <RightWorkspaceTitleTab
@@ -91,14 +100,14 @@ export function RightWorkspacePanel({
             type="button"
             data-testid="right-workspace-new-tab-button"
             onClick={onSelectLauncher}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
             aria-label={t('workbench.workspace_tab_new', '打开新标签页')}
           >
             <Plus className="h-4 w-4" />
           </button>
         </header>
       ) : (
-        <header className="flex h-[52px] shrink-0 items-center border-b border-border bg-background px-4" />
+        <header className="flex h-10 shrink-0 items-center border-b border-border bg-background px-3" />
       )}
       <div className="flex min-h-0 flex-1">
         {activeView === 'launcher' ? (
@@ -112,6 +121,11 @@ export function RightWorkspacePanel({
             loading={review.loading}
             diff={review.diff}
             error={review.error}
+            reviewTitle={review.reviewTitle}
+            defaultFileTreeVisible={review.defaultFileTreeVisible}
+            branchName={review.branchName}
+            targetBranchName={review.targetBranchName}
+            viewOptions={reviewViewOptions}
             onRefresh={onRefreshReview}
           />
         ) : workspaceTargetError ? (
@@ -123,11 +137,7 @@ export function RightWorkspacePanel({
           </section>
         ) : (
           <FileWorkspacePanel
-            key={
-              workspaceTarget
-                ? `${workspaceTarget.deviceId}:${workspaceTarget.path}`
-                : 'empty'
-            }
+            key={workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'}
             target={workspaceTarget}
             openFileRequest={openFileRequest}
             onAddCodeComment={onAddCodeComment}
@@ -171,16 +181,16 @@ function RightWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex h-10 min-w-0 max-w-[240px] cursor-pointer items-center gap-2 rounded-xl py-1 pl-2 pr-4 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 rounded-md py-1 pl-2 pr-3 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active
           ? 'bg-muted text-text-primary'
           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
       )}
     >
-      <span className="relative h-5 w-5 shrink-0">
+      <span className="relative h-[18px] w-[18px] shrink-0">
         <Icon
           data-testid={`${tab === 'review' ? 'right-workspace-review' : 'right-workspace-file'}-tab-icon`}
-          className="absolute inset-0 m-auto h-4 w-4 text-text-secondary opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+          className="absolute inset-0 m-auto h-3.5 w-3.5 text-text-secondary opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
         />
         <button
           type="button"
@@ -189,7 +199,7 @@ function RightWorkspaceTitleTab({
             event.stopPropagation()
             onClose()
           }}
-          className="pointer-events-none absolute inset-0 m-auto flex h-5 w-5 items-center justify-center rounded-full border border-border bg-muted text-text-secondary opacity-0 transition-colors hover:border-text-muted hover:bg-hover hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
+          className="pointer-events-none absolute inset-0 m-auto flex h-[18px] w-[18px] items-center justify-center rounded-full border border-border bg-muted text-text-secondary opacity-0 transition-colors hover:border-text-muted hover:bg-hover hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
           aria-label={t('workbench.close_right_workspace_panel')}
         >
           <X className="h-3 w-3" />

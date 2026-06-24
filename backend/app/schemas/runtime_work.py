@@ -31,6 +31,23 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
 
 
+class RuntimeFileChangesRevertRequest(BaseModel):
+    """Revert a device-local runtime file-change artifact."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    file_changes: dict[str, Any] = Field(..., alias="fileChanges")
+
+
+class RuntimeFileChangesRevertResponse(BaseModel):
+    """Updated runtime artifact summary after revert."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    file_changes: dict[str, Any] = Field(..., alias="fileChanges")
+
+
 class RuntimeMessageSource(BaseModel):
     """Optional source overlay for runtime transcript messages."""
 
@@ -57,6 +74,7 @@ class NormalizedRuntimeMessage(BaseModel):
     source: Optional[RuntimeMessageSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
+    file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
 
 
 class RuntimeTaskAddressRef(RuntimeTaskAddress):

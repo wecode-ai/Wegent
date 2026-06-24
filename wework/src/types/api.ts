@@ -253,6 +253,8 @@ export interface NormalizedRuntimeMessage {
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
+  fileChanges?: TurnFileChangesSummary | null
+  file_changes?: TurnFileChangesSummary | null
 }
 
 export interface LocalTaskSummary {
@@ -696,6 +698,8 @@ export interface TurnFileChangesSummary {
   deletions: number
   files: TurnFileChangeItem[]
   reverted_at?: string | null
+  diff?: string
+  revertible?: boolean
 }
 
 export interface TurnFileChangesDiffResponse {
@@ -706,6 +710,16 @@ export interface TurnFileChangesDiffResponse {
 export interface TurnFileChangesRevertResponse {
   subtask_id: number
   file_changes: TurnFileChangesSummary
+}
+
+export interface RuntimeFileChangesRevertRequest {
+  address: RuntimeTaskAddress
+  fileChanges: TurnFileChangesSummary
+}
+
+export interface RuntimeFileChangesRevertResponse {
+  fileChanges: TurnFileChangesSummary
+  file_changes?: TurnFileChangesSummary
 }
 
 export interface TaskDetail extends Task {

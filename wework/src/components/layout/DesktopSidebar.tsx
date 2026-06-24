@@ -339,13 +339,13 @@ function SidebarSectionHeader({
     hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section mb-2 flex h-7 items-center justify-between px-2.5">
+    <div className="group/section relative mb-2 flex h-7 items-center px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pr-8 text-left"
       >
         <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
           {title}
@@ -359,7 +359,10 @@ function SidebarSectionHeader({
           )}
         />
       </button>
-      <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
+      <div
+        data-testid={`${toggleTestId}-actions`}
+        className="pointer-events-none invisible absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:visible group-hover/section:opacity-100 focus-within:pointer-events-auto focus-within:visible focus-within:opacity-100"
+      >
         {children}
       </div>
     </div>

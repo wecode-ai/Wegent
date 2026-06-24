@@ -13,6 +13,8 @@ interface ToolBlocksDisplayProps {
   // fresh client timestamps, so anchoring to the first block would restart the
   // timer from the refresh moment.
   startedAt?: number
+  forceExpanded?: boolean
+  showSummary?: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }
 
@@ -20,6 +22,8 @@ export function ToolBlocksDisplay({
   blocks,
   isStreaming,
   startedAt,
+  forceExpanded = false,
+  showSummary = true,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
@@ -56,7 +60,7 @@ export function ToolBlocksDisplay({
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
-  const expanded = isRunning || userExpanded
+  const expanded = forceExpanded || isRunning || userExpanded
   const hasLiveNarrativeBlock = rows.some(
     row =>
       row.type === 'block' &&
@@ -68,13 +72,13 @@ export function ToolBlocksDisplay({
 
   return (
     <div className="mb-3 min-w-0">
-      {isRunning ? (
+      {showSummary && isRunning ? (
         // While the turn is still running the summary is informational only:
         // render it as plain, non-interactive text so it does not look clickable.
         <div className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-xs text-text-muted">
           <span>{duration}</span>
         </div>
-      ) : (
+      ) : showSummary ? (
         <button
           type="button"
           className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-left text-xs text-text-muted hover:text-text-secondary"
@@ -91,7 +95,7 @@ export function ToolBlocksDisplay({
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </button>
-      )}
+      ) : null}
       {expanded && (
         <div className="flex min-w-0 flex-col gap-3">
           {rows.map(row =>

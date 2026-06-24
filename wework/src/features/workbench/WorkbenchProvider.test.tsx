@@ -281,6 +281,11 @@ function RuntimeOpenProbe() {
           })
           .join('|')}
       </span>
+      <span data-testid="runtime-open-file-changes">
+        {workbench.messages
+          .map(message => message.fileChanges?.files.map(file => file.path).join(',') ?? '')
+          .join('|')}
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -575,6 +580,26 @@ describe('WorkbenchProvider runtime tasks', () => {
           role: 'assistant',
           content: '恢复的回答',
           subtaskId: 901,
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'turn-901',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project-alpha',
+            file_count: 1,
+            additions: 4,
+            deletions: 2,
+            files: [
+              {
+                path: 'src/runtime.ts',
+                change_type: 'modified',
+                additions: 4,
+                deletions: 2,
+                binary: false,
+              },
+            ],
+            reverted_at: null,
+          },
           blocks: [
             {
               id: 'thinking-901',
@@ -621,9 +646,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('text:处理完成:done')
+    expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('src/runtime.ts')
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',
+      limit: 50,
+    })
+  })
+
+  test('restores a runtime local task from the URL even when it is missing from the work list', async () => {
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&localTaskId=codex-hidden')
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      localTaskId: 'codex-hidden',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-hidden', role: 'user', content: 'hidden user message' },
+        { id: 'assistant-hidden', role: 'assistant', content: 'hidden assistant message' },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [],
+          unmappedDeviceWorkspaces: [],
+          totalLocalTasks: 0,
+        })
+      ),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:codex-hidden'
+      )
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent(
+      'hidden user message|hidden assistant message'
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      localTaskId: 'codex-hidden',
       limit: 50,
     })
   })

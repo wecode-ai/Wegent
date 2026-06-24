@@ -27,6 +27,15 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
 const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
 const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 
+export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
+
+const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
+  branch: 'git_diff',
+  unstaged: 'git_diff_unstaged',
+  staged: 'git_diff_staged',
+  commit: 'git_diff_last_commit',
+}
+
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
   promise: Promise<EnvironmentInfo>
@@ -397,10 +406,11 @@ export async function loadProjectEnvironment(
 export async function loadProjectEnvironmentDiff(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  mode: EnvironmentDiffMode = 'branch'
 ): Promise<string> {
   const { deviceId, path } = await commandContext(api, project, target)
-  return runGitCommand(api, deviceId, 'git_diff', path, {
+  return runGitCommand(api, deviceId, ENVIRONMENT_DIFF_COMMANDS[mode], path, {
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,
   })

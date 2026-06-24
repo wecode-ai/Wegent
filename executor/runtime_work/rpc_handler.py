@@ -558,16 +558,22 @@ class RuntimeWorkRpcHandler:
             "workspacePath": task.workspace_path,
             "runtime": task.runtime,
             "title": task.title,
-            "messages": self._normalize_messages(task, page["messages"]),
+            "messages": self._normalize_messages(
+                task,
+                page["messages"],
+                device_id=payload.get("deviceId"),
+            ),
             "hasMoreBefore": page["hasMoreBefore"],
             "beforeCursor": page["beforeCursor"],
         }
         completed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
-            "[RuntimeWorkRpc] Transcript response ready: local_task_id=%s elapsed_ms=%s normalized_message_count=%s",
+            "[RuntimeWorkRpc] Transcript response ready: local_task_id=%s elapsed_ms=%s normalized_message_count=%s messages_with_subtask=%s messages_with_file_changes=%s",
             task.local_task_id,
             completed_ms,
             len(response["messages"]),
+            sum(1 for message in response["messages"] if message.get("subtaskId")),
+            sum(1 for message in response["messages"] if message.get("fileChanges")),
         )
         return response
 
@@ -1621,6 +1627,8 @@ class RuntimeWorkRpcHandler:
         self,
         task: LocalTaskRecord,
         messages: Any,
+        *,
+        device_id: Any = None,
     ) -> list[dict[str, Any]]:
         if not isinstance(messages, list):
             return []
@@ -1666,6 +1674,12 @@ class RuntimeWorkRpcHandler:
                 ]
                 if normalized_blocks:
                     normalized_message["blocks"] = normalized_blocks
+
+            file_changes = message.get("fileChanges") or message.get("file_changes")
+            if isinstance(file_changes, dict):
+                if isinstance(device_id, str) and device_id.strip():
+                    file_changes = {**file_changes, "device_id": device_id.strip()}
+                normalized_message["fileChanges"] = file_changes
 
             source = message.get("source") or source_by_message_id.get(message_id)
             if isinstance(source, dict):

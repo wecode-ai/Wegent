@@ -84,6 +84,8 @@ describe('FileChangesCard', () => {
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
     expect(request.subtaskId).toBe(21)
+    expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
+    expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.loadDiff).toEqual(expect.any(Function))
     expect(onLoadDiff).not.toHaveBeenCalled()
 
@@ -118,6 +120,8 @@ describe('FileChangesCard', () => {
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
     expect(request.subtaskId).toBe(21)
+    expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
+    expect(request.defaultFileTreeVisible).toBe(false)
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()
