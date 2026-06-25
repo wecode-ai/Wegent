@@ -4,8 +4,12 @@
 
 """Discover Codex sessions as device-local runtime work items."""
 
+import base64
 import contextlib
+import gzip
+import hashlib
 import json
+import mimetypes
 import os
 import re
 import sqlite3
@@ -15,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import unquote, urlparse
 
 from executor.agents.codex.config_builder import _resolve_codex_binary
 from executor.config import config
@@ -22,6 +27,10 @@ from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     normalize_workspace_path,
     utc_now_iso,
+)
+from executor.services.turn_file_changes import (
+    NativeTurnFileChangeTracker,
+    TurnFileChangeArtifactStore,
 )
 from shared.logger import setup_logger
 
@@ -31,6 +40,7 @@ CODEX_TRANSCRIPT_DEFAULT_LIMIT = 50
 CODEX_TRANSCRIPT_MAX_LIMIT = 200
 CODEX_TRANSCRIPT_INITIAL_WINDOW_BYTES = 1024 * 1024
 CODEX_TRANSCRIPT_MAX_WINDOW_BYTES = 64 * 1024 * 1024
+CODEX_LOCAL_IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
 CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
 CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODEX_TRANSCRIPT_CURSOR_PATTERN = re.compile(r"^offset:(\d+)$")
@@ -54,6 +64,13 @@ class _TranscriptCacheEntry:
     complete: bool
 
 
+@dataclass(frozen=True)
+class _ThreadResumeConfig:
+    codex_bin: str
+    config_overrides: tuple[str, ...]
+    env: Optional[dict[str, str]]
+
+
 class CodexSessionDiscovery:
     """Read Codex SDK thread metadata and expose user sessions as LocalTasks."""
 
@@ -69,6 +86,7 @@ class CodexSessionDiscovery:
         self.limit = max(1, limit)
         self.codex_client_factory = codex_client_factory
         self._transcript_cache: dict[str, _TranscriptCacheEntry] = {}
+        self._thread_resume_configs: dict[str, _ThreadResumeConfig] = {}
 
     def discover(self) -> list[LocalTaskRecord]:
         try:
@@ -148,6 +166,38 @@ class CodexSessionDiscovery:
         from openai_codex import AsyncCodex
 
         return AsyncCodex(config=codex_config)
+
+    def _create_async_codex_client_for_thread(
+        self,
+        thread_id: str,
+        *,
+        cwd: Optional[str],
+    ) -> Any:
+        resume_config = self._thread_resume_configs.get(thread_id)
+        if resume_config is None:
+            return self._create_async_codex_client()
+
+        client_config = self._codex_config_type()(
+            codex_bin=resume_config.codex_bin,
+            config_overrides=resume_config.config_overrides,
+            cwd=cwd,
+            env=_codex_env(self.codex_home, resume_config.env),
+        )
+        return self._create_async_codex_client_with_config(client_config)
+
+    def _remember_thread_resume_config(
+        self,
+        thread_id: str,
+        codex_config: Any,
+    ) -> None:
+        clean_thread_id = thread_id.strip()
+        if not clean_thread_id:
+            return
+        self._thread_resume_configs[clean_thread_id] = _ThreadResumeConfig(
+            codex_bin=str(getattr(codex_config, "codex_bin", "") or ""),
+            config_overrides=tuple(getattr(codex_config, "config_overrides", ()) or ()),
+            env=dict(getattr(codex_config, "env", None) or {}),
+        )
 
     def _codex_config_type(self) -> Any:
         from openai_codex import CodexConfig
@@ -374,10 +424,19 @@ class CodexSessionDiscovery:
         from executor.agents.codex.codex_agent import _full_access_sandbox
         from executor.agents.codex.event_mapper import CodeXEventMapper
 
-        client = self._create_async_codex_client()
+        client = self._create_async_codex_client_for_thread(thread_id, cwd=cwd)
         async with client as codex:
             thread = await codex.thread_resume(thread_id, cwd=cwd)
-            mapper = CodeXEventMapper(emitter)
+            turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                emitter=emitter,
+                workspace_path=cwd,
+                task_id=getattr(emitter, "task_id", 0),
+                subtask_id=getattr(emitter, "subtask_id", 0),
+            )
+            mapper = CodeXEventMapper(
+                emitter,
+                turn_file_change_tracker=turn_file_change_tracker,
+            )
             await emitter.start(shell_type="Codex")
             turn = await thread.turn(
                 message,
@@ -470,10 +529,19 @@ class CodexSessionDiscovery:
                         raise RuntimeError(
                             "Codex thread_start did not return a threadId"
                         )
+                    self._remember_thread_resume_config(thread_id, codex_config)
 
                     emitter = emitter_factory(thread_id)
+                    turn_file_change_tracker = _attach_native_turn_file_change_tracker(
+                        emitter=emitter,
+                        workspace_path=cwd,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        device_id=getattr(request, "device_id", None),
+                    )
                     mapper = CodeXEventMapper(
                         emitter,
+                        turn_file_change_tracker=turn_file_change_tracker,
                         executor_session_provider=lambda: {
                             "agent": "CodeX",
                             "threadId": thread_id,
@@ -1244,6 +1312,113 @@ def _first_text(record: dict[str, Any], *keys: str) -> Optional[str]:
     return None
 
 
+def _codex_user_message_content(payload: dict[str, Any]) -> Optional[str]:
+    message = _first_text(payload, "message") or ""
+    local_image_paths = _local_image_paths_from_payload(payload)
+    if not local_image_paths:
+        return message or None
+    return _build_files_mentioned_text(message, local_image_paths).lstrip()
+
+
+def _local_image_paths_from_payload(payload: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for key in ("local_images", "localImages", "images"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            path = _local_image_path_from_item(item)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _local_image_path_from_item(item: Any) -> Optional[str]:
+    if isinstance(item, str):
+        return _normalize_local_image_path(item)
+    if not isinstance(item, dict):
+        return None
+
+    for key in ("path", "local_path", "localPath", "file_path", "filePath"):
+        path = _normalize_local_image_path(item.get(key))
+        if path is not None:
+            return path
+    return None
+
+
+def _normalize_local_image_path(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    path = value.strip()
+    if not path:
+        return None
+    parsed = urlparse(path)
+    if parsed.scheme and parsed.scheme != "file":
+        return None
+    return path
+
+
+def _set_local_image_attachments(
+    message: dict[str, Any],
+    payload: dict[str, Any],
+    created_at: str,
+) -> None:
+    attachments = [
+        attachment
+        for path in _local_image_paths_from_payload(payload)
+        if (attachment := _local_image_attachment(path, created_at)) is not None
+    ]
+    if attachments:
+        message["attachments"] = attachments
+
+
+def _local_image_attachment(path: str, created_at: str) -> Optional[dict[str, Any]]:
+    filesystem_path = _local_image_filesystem_path(path)
+    file_path = Path(filesystem_path)
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return None
+    if not file_path.is_file() or stat.st_size > CODEX_LOCAL_IMAGE_PREVIEW_MAX_BYTES:
+        return None
+
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    if not mime_type.startswith("image/"):
+        return None
+
+    try:
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+
+    return {
+        "id": _local_image_attachment_id(path),
+        "filename": file_path.name,
+        "file_size": stat.st_size,
+        "mime_type": mime_type,
+        "status": "ready",
+        "file_extension": file_path.suffix,
+        "created_at": created_at,
+        "local_preview_url": f"data:{mime_type};base64,{encoded}",
+    }
+
+
+def _local_image_filesystem_path(path: str) -> str:
+    if not path.startswith("file://"):
+        return path
+    parsed = urlparse(path)
+    pathname = unquote(parsed.path)
+    return pathname[1:] if re.match(r"^/[a-zA-Z]:/", pathname) else pathname
+
+
+def _local_image_attachment_id(path: str) -> int:
+    digest = hashlib.sha256(path.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
 def _parse_datetime(value: Any) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
         return None
@@ -1306,7 +1481,7 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                 if not isinstance(payload, dict):
                     continue
 
-                event_type = payload.get("type")
+                event_type = payload.get("type") or record.get("type")
                 timestamp = _record_timestamp(record, payload)
                 if record.get("type") == "response_item":
                     if turn_counter > 0:
@@ -1321,23 +1496,27 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                     continue
 
                 if event_type == "user_message":
+                    if pending_agent_message:
+                        pending_agent_message["status"] = "done"
+                        _set_message_blocks(pending_agent_message, processing_blocks)
+                        messages.append(pending_agent_message)
                     turn_counter += 1
                     pending_agent_message = None
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
                     turn_started_at = timestamp
-                    message = _first_text(payload, "message")
+                    message = _codex_user_message_content(payload)
                     if message:
-                        messages.append(
-                            _transcript_message(
-                                thread_id=thread_id,
-                                turn_counter=turn_counter,
-                                role="user",
-                                content=message,
-                                created_at=timestamp,
-                                status="done",
-                            )
+                        user_message = _transcript_message(
+                            thread_id=thread_id,
+                            turn_counter=turn_counter,
+                            role="user",
+                            content=message,
+                            created_at=timestamp,
+                            status="done",
                         )
+                        _set_local_image_attachments(user_message, payload, timestamp)
+                        messages.append(user_message)
                 elif event_type == "agent_message":
                     message = _first_text(payload, "message")
                     if message:
@@ -1365,6 +1544,10 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                                 blocks=processing_blocks,
                             )
                         )
+                    elif pending_agent_message:
+                        pending_agent_message["status"] = "done"
+                        _set_message_blocks(pending_agent_message, processing_blocks)
+                        messages.append(pending_agent_message)
                     pending_agent_message = None
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
@@ -1434,7 +1617,7 @@ def _read_session_transcript_page(
             complete=complete,
         )
         logger.info(
-            "[CodexTranscript] Window parsed: thread_id=%s path=%s file_size=%s window_start=%s segment_end=%s window_bytes=%s window_elapsed_ms=%s total_elapsed_ms=%s parsed_messages=%s page_messages=%s complete=%s has_more_before=%s",
+            "[CodexTranscript] Window parsed: thread_id=%s path=%s file_size=%s window_start=%s segment_end=%s window_bytes=%s window_elapsed_ms=%s total_elapsed_ms=%s parsed_messages=%s page_messages=%s file_change_messages=%s complete=%s has_more_before=%s",
             thread_id,
             path,
             file_size,
@@ -1445,6 +1628,7 @@ def _read_session_transcript_page(
             int((time.perf_counter() - started_at) * 1000),
             len(messages),
             len(page.messages),
+            sum(1 for message in page.messages if message.get("fileChanges")),
             complete,
             page.has_more_before,
         )
@@ -1469,6 +1653,8 @@ def _read_session_transcript_window(
     processing_blocks: list[dict[str, Any]] = []
     tool_blocks_by_call_id: dict[str, dict[str, Any]] = {}
     turn_started_at: Optional[str] = None
+    turn_workspace_path: Optional[str] = None
+    turn_patch_diffs: list[dict[str, Any]] = []
     turn_counter = 0
 
     try:
@@ -1488,8 +1674,16 @@ def _read_session_transcript_window(
                 if not isinstance(payload, dict):
                     continue
 
-                event_type = payload.get("type")
+                event_type = payload.get("type") or record.get("type")
                 timestamp = _record_timestamp(record, payload)
+                if event_type == "turn_context":
+                    cwd = payload.get("cwd")
+                    if isinstance(cwd, str) and cwd.strip():
+                        turn_workspace_path = cwd.strip()
+                    continue
+                if event_type == "patch_apply_end":
+                    turn_patch_diffs.extend(_patch_diffs_from_payload(payload))
+                    continue
                 if record.get("type") == "response_item":
                     if turn_counter > 0:
                         _append_response_item_block(
@@ -1503,6 +1697,21 @@ def _read_session_transcript_window(
                     continue
 
                 if event_type == "user_message":
+                    if pending_agent_message:
+                        pending_agent_message["status"] = "done"
+                        _set_message_blocks(pending_agent_message, processing_blocks)
+                        file_changes = _codex_turn_file_changes(
+                            thread_id=thread_id,
+                            turn_index=turn_counter,
+                            workspace_path=turn_workspace_path,
+                            patch_diffs=turn_patch_diffs,
+                        )
+                        if file_changes:
+                            pending_agent_message["subtaskId"] = _codex_turn_subtask_id(
+                                thread_id, turn_counter
+                            )
+                            pending_agent_message["fileChanges"] = file_changes
+                        messages.append(pending_agent_message)
                     global_turn = _payload_turn_index(payload)
                     if global_turn is None:
                         turn_counter += 1
@@ -1513,18 +1722,22 @@ def _read_session_transcript_window(
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
                     turn_started_at = timestamp
-                    message = _first_text(payload, "message")
+                    turn_patch_diffs = []
+                    cwd = payload.get("cwd")
+                    if isinstance(cwd, str) and cwd.strip():
+                        turn_workspace_path = cwd.strip()
+                    message = _codex_user_message_content(payload)
                     if message:
-                        messages.append(
-                            _transcript_message_from_offset(
-                                thread_id=thread_id,
-                                offset=line_start,
-                                role="user",
-                                content=message,
-                                created_at=timestamp,
-                                status="done",
-                            )
+                        user_message = _transcript_message_from_offset(
+                            thread_id=thread_id,
+                            offset=line_start,
+                            role="user",
+                            content=message,
+                            created_at=timestamp,
+                            status="done",
                         )
+                        _set_local_image_attachments(user_message, payload, timestamp)
+                        messages.append(user_message)
                 elif event_type == "agent_message":
                     message = _first_text(payload, "message")
                     if message:
@@ -1541,6 +1754,12 @@ def _read_session_transcript_window(
                     message = _first_text(payload, "last_agent_message")
                     _finish_processing_blocks(processing_blocks, timestamp)
                     if message:
+                        file_changes = _codex_turn_file_changes(
+                            thread_id=thread_id,
+                            turn_index=turn_counter,
+                            workspace_path=turn_workspace_path,
+                            patch_diffs=turn_patch_diffs,
+                        )
                         messages.append(
                             _transcript_message_from_offset(
                                 thread_id=thread_id,
@@ -1550,15 +1769,43 @@ def _read_session_transcript_window(
                                 created_at=turn_started_at or timestamp,
                                 status="done",
                                 blocks=processing_blocks,
+                                subtask_id=(
+                                    _codex_turn_subtask_id(thread_id, turn_counter)
+                                    if file_changes
+                                    else None
+                                ),
+                                file_changes=file_changes,
                             )
                         )
+                    elif pending_agent_message:
+                        pending_agent_message["status"] = "done"
+                        _set_message_blocks(pending_agent_message, processing_blocks)
+                        file_changes = _codex_turn_file_changes(
+                            thread_id=thread_id,
+                            turn_index=turn_counter,
+                            workspace_path=turn_workspace_path,
+                            patch_diffs=turn_patch_diffs,
+                        )
+                        if file_changes:
+                            pending_agent_message["subtaskId"] = _codex_turn_subtask_id(
+                                thread_id, turn_counter
+                            )
+                            pending_agent_message["fileChanges"] = file_changes
+                        messages.append(pending_agent_message)
                     pending_agent_message = None
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
                     turn_started_at = None
+                    turn_patch_diffs = []
                 elif event_type == "turn_aborted":
                     reason = _first_text(payload, "reason") or "Codex turn aborted"
                     _finish_processing_blocks(processing_blocks, timestamp)
+                    file_changes = _codex_turn_file_changes(
+                        thread_id=thread_id,
+                        turn_index=turn_counter,
+                        workspace_path=turn_workspace_path,
+                        patch_diffs=turn_patch_diffs,
+                    )
                     messages.append(
                         _transcript_message_from_offset(
                             thread_id=thread_id,
@@ -1568,17 +1815,35 @@ def _read_session_transcript_window(
                             created_at=turn_started_at or timestamp,
                             status="cancelled",
                             blocks=processing_blocks,
+                            subtask_id=(
+                                _codex_turn_subtask_id(thread_id, turn_counter)
+                                if file_changes
+                                else None
+                            ),
+                            file_changes=file_changes,
                         )
                     )
                     pending_agent_message = None
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
                     turn_started_at = None
+                    turn_patch_diffs = []
     except OSError:
         return []
 
     if pending_agent_message:
         _set_message_blocks(pending_agent_message, processing_blocks)
+        file_changes = _codex_turn_file_changes(
+            thread_id=thread_id,
+            turn_index=turn_counter,
+            workspace_path=turn_workspace_path,
+            patch_diffs=turn_patch_diffs,
+        )
+        if file_changes:
+            pending_agent_message["subtaskId"] = _codex_turn_subtask_id(
+                thread_id, turn_counter
+            )
+            pending_agent_message["fileChanges"] = file_changes
         messages.append(pending_agent_message)
     return messages
 
@@ -1811,6 +2076,8 @@ def _transcript_message_from_offset(
     created_at: str,
     status: str,
     blocks: Optional[list[dict[str, Any]]] = None,
+    subtask_id: Optional[int] = None,
+    file_changes: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     message = {
         "id": f"{thread_id}:{role}:o{max(offset, 0)}",
@@ -1820,8 +2087,267 @@ def _transcript_message_from_offset(
         "status": status,
         "_cursorOffset": max(offset, 0),
     }
+    if subtask_id is not None:
+        message["subtaskId"] = subtask_id
+    if file_changes:
+        message["fileChanges"] = file_changes
     _set_message_blocks(message, blocks or [])
     return message
+
+
+def _patch_diffs_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if payload.get("success") is not True:
+        return []
+    changes = payload.get("changes")
+    if not isinstance(changes, dict):
+        return []
+    diffs: list[dict[str, Any]] = []
+    for path, change in changes.items():
+        if not isinstance(change, dict):
+            continue
+        change_type = _codex_patch_change_type(change.get("type"))
+        diff = change.get("unified_diff")
+        if not isinstance(diff, str) or not diff.strip():
+            diff = _codex_patch_diff_from_content(change)
+        if isinstance(diff, str) and diff.strip():
+            diffs.append(
+                {
+                    "path": str(path),
+                    "change_type": change_type,
+                    "diff": diff,
+                }
+            )
+    return diffs
+
+
+def _codex_turn_subtask_id(thread_id: str, turn_index: int) -> int:
+    digest = hashlib.sha256(f"{thread_id}:{turn_index}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % 8_000_000_000_000 + 1
+
+
+def _codex_turn_file_changes(
+    *,
+    thread_id: str,
+    turn_index: int,
+    workspace_path: Optional[str],
+    patch_diffs: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if not workspace_path or not patch_diffs:
+        return None
+    files: list[dict[str, Any]] = []
+    files_by_path: dict[str, dict[str, Any]] = {}
+    rendered_diffs: list[str] = []
+    for item in patch_diffs:
+        path = item.get("path")
+        diff = item.get("diff")
+        change_type = item.get("change_type")
+        if not isinstance(path, str) or not path or not isinstance(diff, str):
+            continue
+        display_path = _codex_display_path(path, workspace_path)
+        additions, deletions = _codex_patch_line_stats(diff)
+        existing = files_by_path.get(display_path)
+        if existing is None:
+            existing = {
+                "old_path": None,
+                "path": display_path,
+                "change_type": (
+                    change_type if isinstance(change_type, str) else "modified"
+                ),
+                "additions": 0,
+                "deletions": 0,
+                "binary": False,
+            }
+            files_by_path[display_path] = existing
+        existing["additions"] += additions
+        existing["deletions"] += deletions
+        existing["change_type"] = _merge_codex_change_type(
+            str(existing["change_type"]),
+            change_type if isinstance(change_type, str) else "modified",
+        )
+        rendered_diffs.append(_render_codex_patch_diff(display_path, diff, change_type))
+    if not files_by_path:
+        return None
+    artifact_id = _persist_codex_patch_sequence(
+        workspace_path=workspace_path,
+        task_id=_codex_turn_subtask_id(thread_id, 0),
+        subtask_id=_codex_turn_subtask_id(thread_id, turn_index),
+        patch_sequence=rendered_diffs,
+    )
+    files = list(files_by_path.values())
+    files = sorted(files, key=lambda item: item["path"])
+    rendered_diff = "\n".join(rendered_diffs)
+    return {
+        "version": 1,
+        "status": "active",
+        "artifact_id": artifact_id,
+        "device_id": "runtime-device",
+        "workspace_path": str(Path(workspace_path).expanduser()),
+        "file_count": len(files),
+        "additions": sum(item["additions"] for item in files),
+        "deletions": sum(item["deletions"] for item in files),
+        "files": files,
+        "reverted_at": None,
+        "diff": rendered_diff,
+        "revertible": True,
+    }
+
+
+def _codex_patch_change_type(value: Any) -> str:
+    if value == "add":
+        return "created"
+    if value == "delete":
+        return "deleted"
+    return "modified"
+
+
+def _codex_patch_diff_from_content(change: dict[str, Any]) -> Optional[str]:
+    content = change.get("content")
+    if not isinstance(content, str):
+        return None
+
+    change_type = _codex_patch_change_type(change.get("type"))
+    if change_type == "created":
+        prefix = "+"
+        old_start = "0,0"
+        new_start = f"1,{_codex_patch_content_line_count(content)}"
+    elif change_type == "deleted":
+        prefix = "-"
+        old_start = f"1,{_codex_patch_content_line_count(content)}"
+        new_start = "0,0"
+    else:
+        return None
+
+    lines = [f"@@ -{old_start} +{new_start} @@"]
+    lines.extend(f"{prefix}{line}" for line in content.splitlines())
+    if content.endswith("\n"):
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _codex_patch_content_line_count(content: str) -> int:
+    if not content:
+        return 0
+    return len(content.splitlines())
+
+
+def _persist_codex_patch_sequence(
+    *,
+    workspace_path: str,
+    task_id: int,
+    subtask_id: int,
+    patch_sequence: list[str],
+) -> str:
+    artifact_id = f"turn-file-changes/{task_id}/{subtask_id}"
+    artifact_dir = (
+        Path(config.WEGENT_EXECUTOR_HOME).expanduser() / "artifacts" / artifact_id
+    )
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    patch_path = artifact_dir / "changes.patch.gz"
+    metadata_path = artifact_dir / "metadata.json"
+    payload = json.dumps(patch_sequence, ensure_ascii=True).encode("utf-8")
+    metadata = {
+        "version": 1,
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "workspace_path": str(Path(workspace_path).expanduser()),
+        "checksum": hashlib.sha256(payload).hexdigest(),
+        "patch_sequence": True,
+    }
+    TurnFileChangeArtifactStore.atomic_write(patch_path, gzip.compress(payload))
+    TurnFileChangeArtifactStore.atomic_write(
+        metadata_path,
+        json.dumps(metadata, ensure_ascii=True, sort_keys=True).encode("utf-8"),
+    )
+    return artifact_id
+
+
+def _merge_codex_change_type(current: str, incoming: str) -> str:
+    if current == incoming:
+        return current
+    if "deleted" in {current, incoming}:
+        return "deleted" if incoming == "deleted" else "modified"
+    if "created" in {current, incoming}:
+        return "created" if current == "created" else "modified"
+    return "modified"
+
+
+def _codex_patch_line_stats(diff: str) -> tuple[int, int]:
+    additions = 0
+    deletions = 0
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return additions, deletions
+
+
+def _render_codex_patch_diff(path: str, diff: str, change_type: Optional[str]) -> str:
+    normalized = path.replace("\\", "/")
+    if change_type == "created":
+        header = [
+            f"diff --git a/{normalized} b/{normalized}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{normalized}",
+        ]
+    elif change_type == "deleted":
+        header = [
+            f"diff --git a/{normalized} b/{normalized}",
+            "deleted file mode 100644",
+            f"--- a/{normalized}",
+            "+++ /dev/null",
+        ]
+    else:
+        header = [
+            f"diff --git a/{normalized} b/{normalized}",
+            f"--- a/{normalized}",
+            f"+++ b/{normalized}",
+        ]
+    return "\n".join([*header, diff.rstrip()]) + "\n"
+
+
+def _codex_display_path(path: str, workspace_path: str) -> str:
+    workspace = Path(workspace_path).expanduser()
+    candidate = Path(path).expanduser()
+    with contextlib.suppress(ValueError):
+        return candidate.relative_to(workspace).as_posix()
+    return path
+
+
+def _attach_native_turn_file_change_tracker(
+    *,
+    emitter: Any,
+    workspace_path: Optional[str],
+    task_id: Any,
+    subtask_id: Any,
+    device_id: Any = None,
+) -> Optional[NativeTurnFileChangeTracker]:
+    if not workspace_path:
+        return None
+    tracker = NativeTurnFileChangeTracker(
+        workspace=Path(workspace_path),
+        task_id=_safe_positive_int(task_id),
+        subtask_id=_safe_positive_int(subtask_id),
+        executor_home=Path(config.WEGENT_EXECUTOR_HOME),
+        device_id=device_id if isinstance(device_id, str) and device_id else None,
+    )
+    set_completion_fields_provider = getattr(
+        emitter,
+        "set_completion_fields_provider",
+        None,
+    )
+    if callable(set_completion_fields_provider):
+        set_completion_fields_provider(tracker.finalize)
+    return tracker
+
+
+def _safe_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int) and value > 0:
+        return value
+    return 0
 
 
 def _record_timestamp(record: dict[str, Any], payload: dict[str, Any]) -> str:

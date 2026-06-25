@@ -8,6 +8,9 @@
   "process_text": {
     "running": "Working"
   },
+  "assistant_status": {
+    "stopped_after": "You stopped after {{duration}}"
+  },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
     "show_more": "Show {{count}} more files",
@@ -24,6 +27,14 @@
     "reverting": "Reverting",
     "loading_diff": "Loading changes from the device...",
     "empty_diff": "No text changes to display",
+    "changes_label": "Changes",
+    "unstaged_label": "Unstaged",
+    "staged_label": "Staged",
+    "commit_label": "Commit",
+    "previous_turn_label": "Previous turn",
+    "branch_label": "Branch",
+    "branch_unknown": "Current workspace",
+    "large_diff_single_file_notice": "This diff is large, so only one file is shown at a time",
     "file_list_label": "Changed files",
     "file_search_placeholder": "Filter files...",
     "file_search_empty": "No matching files",
@@ -33,6 +44,8 @@
       "toggle_wrap": "Toggle word wrap",
       "collapse_all_hunks": "Collapse all hunks",
       "expand_all_hunks": "Expand all hunks",
+      "collapse_file_diff": "Collapse file diff",
+      "expand_file_diff": "Expand file diff",
       "copy_git_apply": "Copy git apply command",
       "hide_files": "Hide files",
       "show_files": "Show files"

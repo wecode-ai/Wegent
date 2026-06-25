@@ -281,6 +281,7 @@ describe('MobileWorkbenchLayout', () => {
         'conversation-device-offline-banner'
       )
     ).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-scroll-area')).not.toHaveClass('pt-28')
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
@@ -1174,7 +1175,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(onUpdateProjectName).toHaveBeenCalledWith(1, 'renamed-project')
   })
 
-  test('opens a mobile-specific settings page with plugins inside settings', async () => {
+  test('opens a mobile-specific settings page without unreleased plugins navigation', async () => {
     const onOpenPlugins = vi.fn()
 
     render(
@@ -1193,8 +1194,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
-    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
+    expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 })

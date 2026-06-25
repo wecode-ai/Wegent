@@ -253,6 +253,8 @@ export interface NormalizedRuntimeMessage {
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
+  fileChanges?: TurnFileChangesSummary | null
+  file_changes?: TurnFileChangesSummary | null
 }
 
 export interface LocalTaskSummary {
@@ -357,6 +359,38 @@ export interface RuntimeWorkListResponse {
   totalLocalTasks: number
 }
 
+export interface RuntimeWorkSearchRequest {
+  query: string
+  limit?: number
+  includeArchived?: boolean
+  projectId?: number
+}
+
+export interface RuntimeWorkSearchProjectRef {
+  id: number
+  name: string
+}
+
+export interface RuntimeWorkSearchItem {
+  address: RuntimeTaskAddress
+  runtime: RuntimeName
+  title: string
+  snippet: string
+  matchStart: number
+  matchEnd: number
+  messageId?: string
+  messageRole?: string
+  messageCreatedAt?: string | null
+  updatedAt?: string | null
+  deviceName: string
+  workspacePath: string
+  project?: RuntimeWorkSearchProjectRef | null
+}
+
+export interface RuntimeWorkSearchResponse {
+  items: RuntimeWorkSearchItem[]
+}
+
 export interface RuntimeTranscriptResponse {
   localTaskId: string
   workspacePath: string
@@ -376,6 +410,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  attachmentIds?: number[]
   source?: RuntimeMessageSource | null
 }
 
@@ -539,11 +574,19 @@ export interface RuntimeTaskRenameRequest {
   title: string
 }
 
+export interface RuntimeTaskCancelResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath?: string | null
+  error?: string | null
+}
+
 export interface RuntimeTaskCreateRequest {
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  localTaskId?: string
   teamId: number
   runtime: RuntimeName
   message: string
@@ -776,6 +819,8 @@ export interface TurnFileChangesSummary {
   deletions: number
   files: TurnFileChangeItem[]
   reverted_at?: string | null
+  diff?: string
+  revertible?: boolean
 }
 
 export interface TurnFileChangesDiffResponse {
@@ -786,6 +831,16 @@ export interface TurnFileChangesDiffResponse {
 export interface TurnFileChangesRevertResponse {
   subtask_id: number
   file_changes: TurnFileChangesSummary
+}
+
+export interface RuntimeFileChangesRevertRequest {
+  address: RuntimeTaskAddress
+  fileChanges: TurnFileChangesSummary
+}
+
+export interface RuntimeFileChangesRevertResponse {
+  fileChanges: TurnFileChangesSummary
+  file_changes?: TurnFileChangesSummary
 }
 
 export interface TaskDetail extends Task {
@@ -1316,7 +1371,9 @@ export interface ChatBlock {
   tool_input?: Record<string, unknown>
   tool_output?: unknown
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
-  timestamp?: number
+  timestamp?: number | string | null
+  created_at?: number | string | null
+  createdAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -1433,6 +1490,7 @@ export interface Attachment {
   subtask_id?: number | null
   file_extension: string
   created_at: string
+  local_preview_url?: string
 }
 
 export interface AttachmentUploadProgress {

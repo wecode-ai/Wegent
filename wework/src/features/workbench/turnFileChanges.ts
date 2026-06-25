@@ -1,8 +1,4 @@
-import type {
-  TurnFileChangeItem,
-  TurnFileChangesStatus,
-  TurnFileChangesSummary,
-} from '@/types/api'
+import type { TurnFileChangeItem, TurnFileChangesStatus, TurnFileChangesSummary } from '@/types/api'
 
 const STATUSES = new Set<TurnFileChangesStatus>([
   'active',
@@ -56,9 +52,7 @@ function normalizeFile(value: unknown): TurnFileChangeItem | null {
   }
 }
 
-export function normalizeTurnFileChanges(
-  value: unknown,
-): TurnFileChangesSummary | undefined {
+export function normalizeTurnFileChanges(value: unknown): TurnFileChangesSummary | undefined {
   if (!isRecord(value) || !Array.isArray(value.files)) return undefined
   if (
     value.version !== 1 ||
@@ -78,10 +72,7 @@ export function normalizeTurnFileChanges(
   }
 
   const files = value.files.map(normalizeFile)
-  if (
-    files.some(file => file === null) ||
-    files.length !== value.file_count
-  ) {
+  if (files.some(file => file === null) || files.length !== value.file_count) {
     return undefined
   }
   if (
@@ -103,5 +94,7 @@ export function normalizeTurnFileChanges(
     deletions: value.deletions,
     files: files as TurnFileChangeItem[],
     reverted_at: value.reverted_at as string | null | undefined,
+    diff: typeof value.diff === 'string' ? value.diff : undefined,
+    revertible: typeof value.revertible === 'boolean' ? value.revertible : undefined,
   }
 }

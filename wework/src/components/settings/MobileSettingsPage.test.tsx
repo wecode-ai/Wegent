@@ -6,7 +6,7 @@ import { MobileSettingsPage } from './MobileSettingsPage'
 import { AppearanceProvider } from '@/features/appearance'
 
 describe('MobileSettingsPage', () => {
-  test('renders mobile settings actions and opens plugins', async () => {
+  test('renders mobile settings actions without unreleased plugins navigation', async () => {
     const onBack = vi.fn()
     const onOpenPlugins = vi.fn()
 
@@ -18,7 +18,7 @@ describe('MobileSettingsPage', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent('外观')
-    expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent('插件')
+    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
     expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent('工作树')
     expect(screen.getByTestId('mobile-settings-archived-conversations-button')).toHaveTextContent(
@@ -33,11 +33,9 @@ describe('MobileSettingsPage', () => {
     await userEvent.click(screen.getByTestId('mobile-personal-back-button'))
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
-    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
-
     await userEvent.click(screen.getByTestId('mobile-settings-back-button'))
     expect(onBack).toHaveBeenCalledTimes(1)
+    expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 
   test('opens appearance settings on mobile', async () => {

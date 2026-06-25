@@ -64,7 +64,7 @@ POST /api/devices/{device_id}/commands
 
 ## 安全与限制
 
-该能力按“Backend 可信、API 受限”模型设计。HTTP API 不接受原始命令，只接受配置 key；实际命令必须由 Backend 通过命令 registry 或 `LOCAL_DEVICE_COMMANDS` 预配置。默认内置 `pwd`、`ls_a`、`ls_dirs`、`git_clone`、`git_branch`、`git_diff_shortstat`、`git_remote_url`、`git_add_all`、`git_commit` 和 `open_terminal` 命令 key，其中 `ls_a` 会使用 `file_list` 后处理器过滤 `.`、`..` 并在 `stdout` 中返回文件名数组，`ls_dirs` 会使用 `directory_list` 后处理器只返回当前目录下的子目录名称数组。`open_terminal` 用于在支持图形界面的本地设备上打开系统终端窗口；它是一次性启动命令，不提供终端流式交互。新增内置命令只需要在 `backend/app/services/device/command_registry.py` 的 `DEFAULT_LOCAL_DEVICE_COMMANDS` 中增加一项。
+该能力按“Backend 可信、API 受限”模型设计。HTTP API 不接受原始命令，只接受配置 key；实际命令必须由 Backend 通过命令 registry 或 `LOCAL_DEVICE_COMMANDS` 预配置。默认内置 `pwd`、`home_dir`、`project_workspace_root`、`ls_a`、`ls_dirs`、`workspace_tree`、`workspace_read_text_file`、`project_folder_status`、`mkdir_p`、`path_exists`、`git_*`、`ls_skills`、`codex_threads_list`、`setup_shared_skills`、`open_terminal`、`sync_runtime_auth_file`、`read_runtime_auth_file`、`turn_file_changes_review` 和 `turn_file_changes_revert` 命令 key。其中 `ls_a` 会使用 `file_list` 后处理器过滤 `.`、`..` 并在 `stdout` 中返回文件名数组，`ls_dirs` 会使用 `directory_list` 后处理器只返回当前目录下的子目录名称数组；workspace、runtime auth、Codex thread 和 turn file changes 相关命令使用 `json` 后处理器返回结构化数据。`open_terminal` 用于在支持图形界面的本地设备上打开系统终端窗口；它是一次性启动命令，不提供终端流式交互。新增内置命令只需要在 `backend/app/services/device/command_registry.py` 的 `DEFAULT_LOCAL_DEVICE_COMMANDS` 中增加一项。
 
 运行时可通过一个环境变量增加或覆盖配置。简单命令可以直接写字符串；需要后处理时写对象：
 
@@ -92,6 +92,16 @@ LOCAL_DEVICE_COMMANDS='{"repo_status":"git status","repo_files":{"command":"ls -
 - Backend 和 executor 均记录命令、设备、耗时和退出码日志。
 
 由于命令在用户本机执行，调用方必须把该 API 当作高权限操作处理，不应暴露给非可信入口。
+
+### 单轮文件变更命令
+
+`turn_file_changes_review` 和 `turn_file_changes_revert` 只接受 `turn-file-changes/<taskId>/<subtaskId>` 形式的 artifact id。运行时本地任务没有中心库 task row 时，`taskId` 可以是 `0`；两个路径段仍必须是纯数字，并且命令脚本会用 fullmatch 拒绝路径穿越。命令读取 `$WEGENT_EXECUTOR_HOME/artifacts/<artifactId>/metadata.json` 与 `changes.patch.gz`，校验 metadata 中的 workspace 和 patch checksum 后，才会返回 diff 或尝试安全撤销。
+
+调用方应把这两个命令绑定到当前 LocalTask 的 `deviceId + workspacePath` 上，而不是绑定中心库 Task API。这样即使本地运行时任务没有 `TaskResource`/`Subtask`，审核和撤销也会发生在生成 artifact 的同一台设备和同一个工作区。
+
+### 工作区文件命令根目录
+
+`workspace_tree` 和 `workspace_read_text_file` 会拒绝任何不在允许工作区根目录内的路径。Backend 在每次请求时按用户和设备推导允许的根目录（绝不信任客户端传入的 `WEGENT_WORKSPACE_ROOTS`），来源有两类：workspace `source` 为 `local_path` 的 WeWork 项目，以及运行时 `DeviceWorkspace` 映射。后者让运行时本地任务即使没有指向该目录的 `local_path` 项目，也能浏览和预览自己工作区内的文件。
 
 ## Executor 行为
 

@@ -28,9 +28,12 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
@@ -51,6 +54,7 @@ import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -61,6 +65,8 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -74,6 +80,7 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onSearchRuntimeWork?: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   onLoadOlderRuntimeTranscript?: () => Promise<void>
   onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
@@ -129,7 +136,8 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<void>
   onLoadEnvironmentDiff?: (
     project: ProjectWithTasks | null,
-    workspaceTarget: WorkspaceTarget
+    workspaceTarget: WorkspaceTarget,
+    mode?: EnvironmentDiffMode
   ) => Promise<string>
   onListEnvironmentBranches: (
     project: ProjectWithTasks | null,
@@ -170,6 +178,8 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  currentRuntimeTaskRunning = false,
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -179,8 +189,10 @@ export function DesktopWorkbenchLayout({
   onOpenPlugins,
   projectChat,
   projectWork,
+  onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onSearchRuntimeWork = async () => ({ items: [] }),
   onLoadOlderRuntimeTranscript,
   onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
@@ -253,6 +265,7 @@ export function DesktopWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
     useState<ImNotificationDialogMode | null>(null)
   const [imNotificationSettings, setImNotificationSettings] =
@@ -391,6 +404,18 @@ export function DesktopWorkbenchLayout({
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k') return
+      if (!event.metaKey && !event.ctrlKey) return
+      event.preventDefault()
+      setSearchOpen(true)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   useEffect(() => {
@@ -702,6 +727,8 @@ export function DesktopWorkbenchLayout({
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
+          onOpenSearch={() => setSearchOpen(true)}
+          onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
           onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
@@ -758,6 +785,8 @@ export function DesktopWorkbenchLayout({
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
+          currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+          isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}
@@ -768,7 +797,8 @@ export function DesktopWorkbenchLayout({
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
           onLoadEnvironmentDiff={
             onLoadEnvironmentDiff
-              ? workspaceTarget => onLoadEnvironmentDiff(environmentProject, workspaceTarget)
+              ? (workspaceTarget, mode) =>
+                  onLoadEnvironmentDiff(environmentProject, workspaceTarget, mode)
               : undefined
           }
           onListEnvironmentBranches={() => {
@@ -913,6 +943,15 @@ export function DesktopWorkbenchLayout({
         message={notice?.message ?? null}
         tone={notice?.tone}
         onClear={() => setNotice(null)}
+      />
+      <WorkbenchSearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearchRuntimeWork={onSearchRuntimeWork}
+        onOpenRuntimeLocalTask={async address => {
+          if (!onOpenRuntimeLocalTask) return
+          await onOpenRuntimeLocalTask(address)
+        }}
       />
     </div>
   )

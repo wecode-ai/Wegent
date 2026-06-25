@@ -32,6 +32,23 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
 
 
+class RuntimeFileChangesRevertRequest(BaseModel):
+    """Revert a device-local runtime file-change artifact."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    file_changes: dict[str, Any] = Field(..., alias="fileChanges")
+
+
+class RuntimeFileChangesRevertResponse(BaseModel):
+    """Updated runtime artifact summary after revert."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    file_changes: dict[str, Any] = Field(..., alias="fileChanges")
+
+
 class RuntimeMessageSource(BaseModel):
     """Optional source overlay for runtime transcript messages."""
 
@@ -58,6 +75,7 @@ class NormalizedRuntimeMessage(BaseModel):
     source: Optional[RuntimeMessageSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
+    file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
 
 
 class RuntimeTaskAddressRef(RuntimeTaskAddress):
@@ -338,6 +356,52 @@ class RuntimeTranscriptResponse(BaseModel):
     parse_error: Optional[str] = Field(default=None, alias="parseError")
 
 
+class RuntimeWorkSearchRequest(BaseModel):
+    """Full-text search request for online runtime transcripts."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=20, ge=1, le=50)
+    include_archived: bool = Field(default=False, alias="includeArchived")
+    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+
+
+class RuntimeWorkSearchProjectRef(BaseModel):
+    """Project metadata attached to a runtime search hit."""
+
+    id: int
+    name: str
+
+
+class RuntimeWorkSearchItem(BaseModel):
+    """One message-level full-text search hit."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    runtime: RuntimeName
+    title: str
+    snippet: str
+    match_start: int = Field(..., alias="matchStart")
+    match_end: int = Field(..., alias="matchEnd")
+    message_id: str = Field("", alias="messageId")
+    message_role: str = Field("", alias="messageRole")
+    message_created_at: Optional[str] = Field(default=None, alias="messageCreatedAt")
+    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    device_name: str = Field(..., alias="deviceName")
+    workspace_path: str = Field(..., alias="workspacePath")
+    project: Optional[RuntimeWorkSearchProjectRef] = None
+
+
+class RuntimeWorkSearchResponse(BaseModel):
+    """Search hits merged across online runtime devices."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[RuntimeWorkSearchItem] = Field(default_factory=list)
+
+
 class RuntimeSendRequest(BaseModel):
     """Request to continue a native runtime task."""
 
@@ -345,6 +409,7 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     source: Optional[RuntimeMessageSource] = None
 
 
@@ -515,6 +580,17 @@ class RuntimeTaskRenameRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
 
 
+class RuntimeTaskCancelResponse(BaseModel):
+    """Acknowledgement from the runtime cancel RPC."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    local_task_id: str = Field(..., alias="localTaskId")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    error: Optional[str] = None
+
+
 class RuntimeTaskCreateRequest(BaseModel):
     """Request to create a device-local runtime task without DB Task rows."""
 
@@ -528,6 +604,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
     team_id: int = Field(..., alias="teamId", ge=1)
     runtime: RuntimeName
     message: str = Field(..., min_length=1)

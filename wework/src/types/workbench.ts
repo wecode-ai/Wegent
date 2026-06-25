@@ -37,7 +37,11 @@ export type ProcessingBlock = WorkbenchProcessingBlock
 
 export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
 
-export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>
+export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
+
+export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary> & {
+  runtimeStatus?: RuntimeWorkbenchMessageStatus | null
+}
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
 export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
@@ -48,6 +52,7 @@ export interface QueuedWorkbenchMessage {
   status: QueuedMessageStatus
   createdAt: string
   error?: string
+  notice?: string
 }
 
 export interface GuidanceWorkbenchMessage {

@@ -37,6 +37,7 @@ export function AttachmentImagePreview({
   const [hasError, setHasError] = useState(false)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const localPreviewUrl = attachment.local_preview_url
 
   useEffect(() => {
     let isMounted = true
@@ -47,6 +48,11 @@ export function AttachmentImagePreview({
       setHasError(false)
       setIsLightboxOpen(false)
       setZoom(1)
+
+      if (localPreviewUrl) {
+        setPreviewUrl(localPreviewUrl)
+        return
+      }
 
       try {
         const token = localStorage.getItem('auth_token')
@@ -84,7 +90,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment.id])
+  }, [attachment.id, localPreviewUrl])
 
   useEffect(() => {
     if (!isLightboxOpen) return
@@ -169,6 +175,11 @@ export function AttachmentImagePreview({
                 className="max-h-[calc(100dvh-6rem)] max-w-[calc(100dvw-2rem)] object-contain transition-transform duration-150 ease-out"
                 style={{ transform: `scale(${zoom})` }}
                 onClick={event => event.stopPropagation()}
+                onError={() => {
+                  setPreviewUrl(null)
+                  setIsLightboxOpen(false)
+                  setHasError(true)
+                }}
               />
             </div>,
             document.body
@@ -189,6 +200,10 @@ export function AttachmentImagePreview({
             src={previewUrl}
             alt={attachment.filename}
             className={imageClassName}
+            onError={() => {
+              setPreviewUrl(null)
+              setHasError(true)
+            }}
           />
         </button>
         {lightbox}

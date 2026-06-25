@@ -217,7 +217,9 @@ class LocalTaskStore:
                 workspace_path=normalize_workspace_path(updated.workspace_path),
                 title=updated.title,
                 runtime=updated.runtime,
-                workspace_kind=updated.workspace_kind or current.workspace_kind or "workspace",
+                workspace_kind=updated.workspace_kind
+                or current.workspace_kind
+                or "workspace",
                 worktree_id=updated.worktree_id,
                 runtime_handle=updated.runtime_handle,
                 parent=updated.parent,
