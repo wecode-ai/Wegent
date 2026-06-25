@@ -23,6 +23,10 @@ import { createLocalChatStream } from './localChatStream'
 import { LOCAL_USER } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
+const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
+const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
+const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
+const RESPONSES_API_FORMAT = 'responses'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -34,11 +38,21 @@ export const LOCAL_WORKBENCH_TEAM = {
 } satisfies Team
 
 const LOCAL_CODEX_MODEL = {
-  name: 'local-codex',
+  name: CODEX_RUNTIME_MODEL_NAME,
   type: 'runtime',
-  displayName: 'Local Codex',
+  displayName: 'GPT-5.5 (Codex)',
   provider: 'local',
-  modelId: 'local-codex',
+  modelId: CODEX_RUNTIME_MODEL_ID,
+  config: {
+    protocol: OPENAI_RESPONSES_PROTOCOL,
+    apiFormat: RESPONSES_API_FORMAT,
+    ui: {
+      family: 'gpt',
+      modelLabel: 'GPT-5.5',
+      controls: ['speed'],
+      sortOrder: 10,
+    },
+  },
   runtime: {
     family: 'openai.openai-responses',
     provider: 'local',
@@ -129,6 +143,143 @@ function workspaceLabel(workspacePath: string, label: unknown): string {
   const explicitLabel = stringValue(label)
   if (explicitLabel) return explicitLabel
   return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
+}
+
+function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [number, number] {
+  const seed = data.localTaskId || `${data.runtime}:${data.workspacePath ?? ''}:${data.message}`
+  const taskId = 10_000_000_000_000 + stableLocalId(seed)
+  return [taskId, taskId + 1]
+}
+
+function runtimeTaskTitle(data: RuntimeTaskCreateRequest): string {
+  const title = data.title?.trim()
+  if (title) return title
+  const firstLine = data.message.trim().split(/\r?\n/)[0] ?? ''
+  return firstLine.slice(0, 80) || 'Untitled runtime task'
+}
+
+function runtimeWorkspacePath(data: RuntimeTaskCreateRequest): string | null {
+  const explicitPath = stringValue(data.workspacePath)
+  if (explicitPath) return explicitPath
+  const execution = recordValue(data.execution)
+  const workspace = recordValue(execution.workspace)
+  return stringValue(workspace.path)
+}
+
+function requiredRuntimeWorkspacePath(data: RuntimeTaskCreateRequest): string {
+  const workspacePath = runtimeWorkspacePath(data)
+  if (!workspacePath) {
+    throw new Error('workspacePath is required')
+  }
+  return workspacePath
+}
+
+function codexModelId(modelId?: string): string {
+  if (!modelId || modelId === CODEX_RUNTIME_MODEL_NAME) {
+    return CODEX_RUNTIME_MODEL_ID
+  }
+  return modelId
+}
+
+function runtimeReasoning(modelOptions?: Record<string, string>): Record<string, string> | null {
+  const reasoning = modelOptions?.reasoning
+  const summary = modelOptions?.summary
+  const result: Record<string, string> = {}
+  if (reasoning) result.effort = reasoning
+  if (summary) result.summary = summary
+  return Object.keys(result).length > 0 ? result : null
+}
+
+function runtimeServiceTier(modelOptions?: Record<string, string>): string | null {
+  return modelOptions?.speed || modelOptions?.service_tier || null
+}
+
+function skillName(skill: unknown): string | null {
+  if (typeof skill === 'string') return skill
+  const skillRecord = recordValue(skill)
+  return stringValue(skillRecord.name)
+}
+
+function isNonEmptyString(value: string | null): value is string {
+  return Boolean(value)
+}
+
+function createLocalExecutionRequest(data: RuntimeTaskCreateRequest): Record<string, unknown> {
+  const workspacePath = requiredRuntimeWorkspacePath(data)
+  const [taskId, subtaskId] = createRuntimeExecutionIds(data)
+  const title = runtimeTaskTitle(data)
+  const modelConfig: Record<string, unknown> = {
+    model: 'openai',
+    model_id: codexModelId(data.modelId),
+    api_format: RESPONSES_API_FORMAT,
+    protocol: OPENAI_RESPONSES_PROTOCOL,
+    runtime_config: {
+      codex: {
+        use_user_config: true,
+        configured: true,
+      },
+    },
+  }
+  const reasoning = runtimeReasoning(data.modelOptions)
+  if (reasoning) modelConfig.reasoning = reasoning
+  const serviceTier = runtimeServiceTier(data.modelOptions)
+  if (serviceTier) modelConfig.service_tier = serviceTier
+
+  const skillNames = (data.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+
+  return {
+    task_id: taskId,
+    subtask_id: subtaskId,
+    team_id: data.teamId,
+    team_name: LOCAL_WORKBENCH_TEAM.name,
+    team_namespace: 'default',
+    task_title: title,
+    subtask_title: `${title} - Assistant`,
+    user: {
+      id: LOCAL_USER.id,
+      name: LOCAL_USER.user_name,
+      user_name: LOCAL_USER.user_name,
+      email: LOCAL_USER.email,
+    },
+    user_id: LOCAL_USER.id,
+    user_name: LOCAL_USER.user_name,
+    bot: [],
+    model_config: modelConfig,
+    prompt: data.message,
+    enable_tools: true,
+    enable_deep_thinking: true,
+    skill_names: skillNames,
+    preload_skills: data.additionalSkills ?? [],
+    user_selected_skills: data.additionalSkills ?? [],
+    workspace: {
+      project: {
+        source: 'local_path',
+        path: workspacePath,
+      },
+    },
+    workspace_source: 'local_path',
+    project_workspace_path: workspacePath,
+    execution_target_type: 'local',
+    device_id: data.deviceId ?? LOCAL_DEVICE_ID,
+    new_session: true,
+    is_group_chat: false,
+    collaboration_model: 'single',
+    mode: 'code',
+    task_mode: 'code',
+    attachments: [],
+    reasoning_config: reasoning,
+  }
+}
+
+function createLocalRuntimeTaskPayload(data: RuntimeTaskCreateRequest): Record<string, unknown> {
+  const workspacePath = requiredRuntimeWorkspacePath(data)
+  return {
+    ...data,
+    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
+    workspacePath,
+    title: runtimeTaskTitle(data),
+    executionRequest: createLocalExecutionRequest(data),
+  } as unknown as Record<string, unknown>
 }
 
 function adaptRuntimeWorkListResponse(response: unknown): RuntimeWorkListResponse {
@@ -309,9 +460,10 @@ function createRuntimeWorkApi(
       return request('runtime.tasks.cancel', data as unknown as Record<string, unknown>)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+      const payload = createLocalRuntimeTaskPayload(data)
       const response = await request<Record<string, unknown>>(
         'runtime.tasks.create',
-        data as unknown as Record<string, unknown>
+        payload
       )
       return {
         ...response,

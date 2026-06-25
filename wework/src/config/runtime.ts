@@ -1,3 +1,5 @@
+import { isTauri } from '@tauri-apps/api/core'
+
 export type RuntimeMode = 'local-first' | 'backend'
 
 export interface RuntimeConfig {
@@ -56,6 +58,10 @@ function resolveRuntimeMode(overrides: RuntimeConfigOverrides): RuntimeMode {
   const envValue = import.meta.env.VITE_WEWORK_RUNTIME_MODE
   if (envValue && isValidRuntimeMode(envValue)) {
     return envValue
+  }
+
+  if (isTauri()) {
+    return 'local-first'
   }
 
   return 'backend'

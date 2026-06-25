@@ -25,8 +25,9 @@ describe('createLocalAppServices', () => {
     await expect(services.modelApi.listModels()).resolves.toEqual({
       data: [
         expect.objectContaining({
-          name: 'local-codex',
+          name: 'codex-gpt-5.5',
           type: 'runtime',
+          modelId: 'gpt-5.5',
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
       ],
@@ -76,8 +77,22 @@ describe('createLocalAppServices', () => {
     await services.runtimeWorkApi?.createRuntimeTask({
       teamId: 0,
       deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5',
+      modelOptions: {
+        reasoning: 'medium',
+      },
+      additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      execution: {
+        workspace: {
+          source: 'local_path',
+          path: '/Users/me/project',
+        },
+      },
     })
     await services.deviceApi.executeCommand('local-device', {
       command_key: 'home_dir',
@@ -87,14 +102,85 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', {
       teamId: 0,
       deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5',
+      modelOptions: {
+        reasoning: 'medium',
+      },
+      additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      execution: {
+        workspace: {
+          source: 'local_path',
+          path: '/Users/me/project',
+        },
+      },
+      executionRequest: expect.objectContaining({
+        task_id: expect.any(Number),
+        subtask_id: expect.any(Number),
+        team_id: 0,
+        team_name: 'local-wework',
+        task_title: 'Hello',
+        subtask_title: 'Hello - Assistant',
+        prompt: 'hello',
+        model_config: expect.objectContaining({
+          model: 'openai',
+          model_id: 'gpt-5',
+          api_format: 'responses',
+          protocol: 'openai-responses',
+          runtime_config: {
+            codex: {
+              use_user_config: true,
+              configured: true,
+            },
+          },
+          reasoning: {
+            effort: 'medium',
+          },
+        }),
+        workspace: {
+          project: {
+            source: 'local_path',
+            path: '/Users/me/project',
+          },
+        },
+        device_id: 'local-device',
+        execution_target_type: 'local',
+        workspace_source: 'local_path',
+        project_workspace_path: '/Users/me/project',
+        new_session: true,
+        skill_names: ['planner'],
+        preload_skills: [{ name: 'planner', namespace: 'default' }],
+        user_selected_skills: [{ name: 'planner', namespace: 'default' }],
+      }),
     })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'local-device',
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('rejects local runtime task creation without a workspace path', async () => {
+    const request = vi.fn()
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        teamId: 0,
+        deviceId: 'local-device',
+        runtime: 'codex',
+        message: 'hello',
+      })
+    ).rejects.toThrow('workspacePath is required')
+    expect(request).not.toHaveBeenCalled()
   })
 
   test('adapts executor runtime workspace list to workbench shape', async () => {

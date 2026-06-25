@@ -4,6 +4,7 @@ import { getRuntimeConfig } from './runtime'
 describe('getRuntimeConfig', () => {
   afterEach(() => {
     delete window.__WEWORK_RUNTIME_CONFIG__
+    delete (globalThis as typeof globalThis & { isTauri?: boolean }).isTauri
     vi.unstubAllEnvs()
   })
 
@@ -48,6 +49,13 @@ describe('getRuntimeConfig', () => {
 
   test('defaults to backend mode in browser development', () => {
     expect(getRuntimeConfig().runtimeMode).toBe('backend')
+  })
+
+  test('defaults to local-first mode inside tauri runtime', () => {
+    const globalWithTauri = globalThis as typeof globalThis & { isTauri?: boolean }
+    globalWithTauri.isTauri = true
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
   })
 
   test('uses local-first mode from runtime config override', () => {
