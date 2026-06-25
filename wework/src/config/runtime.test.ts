@@ -45,4 +45,31 @@ describe('getRuntimeConfig', () => {
 
     expect(getRuntimeConfig().loginMode).toBe('all')
   })
+
+  test('defaults to backend mode in browser development', () => {
+    expect(getRuntimeConfig().runtimeMode).toBe('backend')
+  })
+
+  test('uses local-first mode from runtime config override', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
+  })
+
+  test('uses local-first mode from build-time environment', () => {
+    vi.stubEnv('VITE_WEWORK_RUNTIME_MODE', 'local-first')
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
+  })
+
+  test('ignores invalid runtime modes', () => {
+    vi.stubEnv('VITE_WEWORK_RUNTIME_MODE', 'invalid-mode')
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'invalid-runtime-mode' as never,
+    }
+
+    expect(getRuntimeConfig().runtimeMode).toBe('backend')
+  })
 })
