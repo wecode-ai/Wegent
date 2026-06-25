@@ -132,10 +132,11 @@ function RetrievalSummaryFooter({
 }) {
   const { t } = useTranslation('chat')
   const statuses = summary?.source_statuses ?? []
+  const hasDetailedStatuses = statuses.length > 0
   const ignoredCount =
-    statuses.filter(status => status.status === 'ignored' || status.status === 'failed').length ||
-    summary?.ignored_source_ids?.length ||
-    0
+    hasDetailedStatuses
+      ? statuses.filter(status => status.status === 'ignored' || status.status === 'failed').length
+      : (summary?.ignored_source_ids?.length ?? 0)
   const noHitCount = statuses.filter(status => status.status === 'no_hit').length
 
   if (sources.length > 0) {
@@ -153,9 +154,9 @@ function RetrievalSummaryFooter({
   }
 
   const searchedCount =
-    statuses.filter(status => status.status === 'hit' || status.status === 'no_hit').length ||
-    summary?.searched_source_ids?.length ||
-    0
+    hasDetailedStatuses
+      ? statuses.filter(status => status.status === 'hit' || status.status === 'no_hit').length
+      : (summary?.searched_source_ids?.length ?? 0)
 
   if (searchedCount === 0 && ignoredCount === 0) {
     return null

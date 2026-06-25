@@ -628,6 +628,15 @@ class KnowledgeListDocumentsTool(BaseTool):
         external_documents = external_result.get("documents") or []
         documents = [*internal_documents, *external_documents]
         warnings = external_result.get("warnings") or []
+        if external_result.get("error"):
+            warnings = [
+                *warnings,
+                {
+                    "type": "external_listing_failed",
+                    "message": external_result["error"],
+                    "status_code": external_result.get("status_code"),
+                },
+            ]
         selected_sources = self._build_selected_sources(documents)
         return json.dumps(
             {
@@ -636,6 +645,7 @@ class KnowledgeListDocumentsTool(BaseTool):
                 "total_returned": len(documents),
                 "internal_returned": len(internal_documents),
                 "external_returned": len(external_documents),
+                "pagination_scope": "per_source",
                 "must_include_all_selected_sources": True,
                 "warnings": warnings,
                 "answer_hint": (

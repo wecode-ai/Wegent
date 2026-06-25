@@ -1708,6 +1708,7 @@ class KnowledgeBaseTool(BaseTool):
             }
 
         external_results = external_payload.get("results", [])
+        merged_summary = external_payload.get("retrieval_summary", retrieval_summary)
         return json.dumps(
             {
                 "query": query,
@@ -1724,7 +1725,7 @@ class KnowledgeBaseTool(BaseTool):
                 "results": external_results,
                 "count": len(external_results),
                 "sources": external_payload.get("sources", []),
-                "retrieval_summary": retrieval_summary,
+                "retrieval_summary": merged_summary,
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
             },
             ensure_ascii=False,

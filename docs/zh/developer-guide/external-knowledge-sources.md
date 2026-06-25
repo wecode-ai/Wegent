@@ -81,6 +81,7 @@ Core 不包含下游 provider 的 opener 代码、路由、图标文案或业务
 
 - provider 自行负责权限过滤和分页。
 - core 只消费 provider-neutral 的列表结果。
+- Backend external listing endpoint 的分页语义是 `pagination_scope: "per_provider"`；Chat Shell 聚合内置知识库和外部来源后返回 `pagination_scope: "per_source"`。调用方不应把这些字段解释成全局合并后的分页窗口。
 - capability 不存在时，前端应隐藏或禁用对应的浏览入口，而不是让任务执行失败。
 
 ## 安全和纯净度规则

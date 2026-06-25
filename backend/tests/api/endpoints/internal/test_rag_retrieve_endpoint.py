@@ -13,7 +13,12 @@ from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     QueryRuntimeSpec,
 )
-from app.services.rag.sources import RetrievalSourceSummary
+from app.services.rag.sources import (
+    ExternalKnowledgeDocument,
+    ExternalKnowledgeDocumentListResult,
+    RetrievalSourceSummary,
+    retrieval_source_registry,
+)
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RuntimeEmbeddingModelConfig,
@@ -615,6 +620,46 @@ def test_internal_list_documents_requires_user_id_for_external_refs(test_client)
         response.json()["detail"]
         == "user_id is required for external knowledge document listing"
     )
+
+
+def test_internal_list_documents_reports_per_provider_pagination_scope(
+    test_client, monkeypatch
+):
+    provider = AsyncMock()
+    provider.name = "fake"
+    provider.list_documents = AsyncMock(
+        return_value=ExternalKnowledgeDocumentListResult(
+            documents=[
+                ExternalKnowledgeDocument(
+                    provider="fake",
+                    source_id="external-kb-1",
+                    source_name="Fake KB",
+                    document_id="doc-1",
+                    title="Doc 1",
+                )
+            ]
+        )
+    )
+    monkeypatch.setitem(retrieval_source_registry._providers, "fake", provider)
+
+    response = test_client.post(
+        "/api/internal/knowledge/list-documents",
+        json={
+            "user_id": 7,
+            "external_knowledge_refs": [
+                {"provider": "fake", "mode": "explicit", "id": "external-kb-1"}
+            ],
+            "limit": 20,
+            "offset": 0,
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_returned"] == 1
+    assert body["pagination_scope"] == "per_provider"
+    provider.list_documents.assert_awaited_once()
 
 
 def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(

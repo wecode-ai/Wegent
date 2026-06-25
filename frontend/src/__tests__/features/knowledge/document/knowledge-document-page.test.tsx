@@ -47,4 +47,14 @@ describe('KnowledgeDocumentPage responsive routing', () => {
     expect(screen.queryByTestId('external-source-view')).not.toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-document-page-desktop')).not.toBeInTheDocument()
   })
+
+  it('renders the desktop knowledge page for source URL params on desktop', () => {
+    mockIsMobile = false
+
+    render(<KnowledgeDocumentPage />)
+
+    expect(screen.getByTestId('knowledge-document-page-desktop')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-document-page-mobile')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('external-source-view')).not.toBeInTheDocument()
+  })
 })

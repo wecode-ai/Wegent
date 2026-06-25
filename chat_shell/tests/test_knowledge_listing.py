@@ -252,6 +252,7 @@ class TestKnowledgeListDocumentsTool:
         }
         assert result["internal_returned"] == 1
         assert result["external_returned"] == 1
+        assert result["pagination_scope"] == "per_source"
         assert result["must_include_all_selected_sources"] is True
         assert "selected sources with zero documents" in result["answer_hint"]
         assert result["selected_sources"] == [
@@ -313,6 +314,46 @@ class TestKnowledgeListDocumentsTool:
                 "node_id": "document:demo-doc-1",
                 "file_extension": "csv",
             },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_surfaces_external_listing_error_when_internal_documents_exist(self) -> None:
+        """Partial listing success should still report failed external sources."""
+        tool = KnowledgeListDocumentsTool(
+            knowledge_base_ids=[107],
+            external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
+            user_id=2,
+            auth_token="user-token",
+        )
+        internal_response = MagicMock()
+        internal_response.status_code = 200
+        internal_response.json.return_value = {
+            "documents": [{"id": 501, "name": "api-reference.md"}],
+        }
+        external_response = MagicMock()
+        external_response.status_code = 503
+        external_response.text = "provider unavailable"
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(side_effect=[internal_response, external_response])
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            result = json.loads(await tool._arun())
+
+        assert result["internal_returned"] == 1
+        assert result["external_returned"] == 0
+        assert result["warnings"] == [
+            {
+                "type": "external_listing_failed",
+                "message": "Failed to list knowledge documents",
+                "status_code": 503,
+            }
         ]
 
     def test_description_prefers_unified_listing_over_kb_ls(self) -> None:

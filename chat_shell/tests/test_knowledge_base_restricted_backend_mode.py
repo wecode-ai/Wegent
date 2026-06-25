@@ -108,6 +108,14 @@ async def test_mixed_restricted_tool_formats_external_records_separately():
                         "answer_contract": "Do not quote internal KB.",
                         "message": "Protected KB material was analyzed internally.",
                         "total": 2,
+                        "records": [
+                            {
+                                "content": "secret raw content",
+                                "title": "Internal Secret",
+                                "score": 0.9,
+                                "knowledge_base_id": 1,
+                            }
+                        ],
                         "external_records": [
                             {
                                 "content": "External authorized content",
@@ -124,6 +132,17 @@ async def test_mixed_restricted_tool_formats_external_records_separately():
                                 "provider": "demo",
                                 "searched_source_ids": ["kb-1"],
                                 "ignored_source_ids": [],
+                                "source_statuses": [
+                                    {
+                                        "provider": "demo",
+                                        "source_id": "kb-1",
+                                        "source_name": "External Quarterly",
+                                        "status": "no_hit",
+                                        "record_count": 1,
+                                        "citation_count": 0,
+                                        "mode": "rag_retrieval",
+                                    }
+                                ],
                             }
                         ],
                     },
@@ -162,3 +181,10 @@ async def test_mixed_restricted_tool_formats_external_records_separately():
     assert result["sources"][0]["title"] == "External Plan.pdf"
     assert result["sources"][0]["source_uri"] == "demo://kb-1/doc-1"
     assert result["retrieval_summary"]["searched_source_ids"] == ["kb-1"]
+    external_status = next(
+        status
+        for status in result["retrieval_summary"]["source_statuses"]
+        if status["provider"] == "demo" and status["source_id"] == "kb-1"
+    )
+    assert external_status["status"] == "hit"
+    assert external_status["citation_count"] == 1

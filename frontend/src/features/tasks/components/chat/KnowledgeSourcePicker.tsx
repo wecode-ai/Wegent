@@ -1591,14 +1591,14 @@ function ExternalDocumentSearchResults({
           <button
             key={node.node_id}
             type="button"
+            disabled={disabled}
+            aria-disabled={disabled}
             className={cn(
               'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
               selected ? 'bg-primary/10 text-primary' : '',
-              disabled ? 'opacity-50' : ''
+              disabled ? 'cursor-not-allowed opacity-50' : ''
             )}
-            onClick={() => {
-              if (!disabled) onToggleDocument(node)
-            }}
+            onClick={() => onToggleDocument(node)}
             data-testid={`knowledge-picker-external-node-${node.node_id}`}
           >
             <span className="flex min-w-0 items-start gap-2">
@@ -1724,20 +1724,23 @@ function ExternalDocumentNode({
   const selected = selectedNodeIds.has(node.node_id)
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
   const documentCount = isFolder ? countExternalDocuments(node) : 1
+  const documentDisabled = disabled && !isFolder
 
   return (
     <div>
       <button
         type="button"
+        disabled={documentDisabled}
+        aria-disabled={documentDisabled}
         className={cn(
           'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-          disabled && !isFolder ? 'opacity-50' : ''
+          documentDisabled ? 'cursor-not-allowed opacity-50' : ''
         )}
         style={{ paddingLeft: 8 + depth * 16 }}
         onClick={() => {
           if (isFolder) {
             setOpen(!open)
-          } else if (!disabled) {
+          } else if (!documentDisabled) {
             onToggleDocument(node)
           }
         }}

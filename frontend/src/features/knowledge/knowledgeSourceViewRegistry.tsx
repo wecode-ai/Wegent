@@ -46,7 +46,7 @@ export function getKnowledgeSourceView(id: string): KnowledgeSourceView | undefi
 }
 
 export function listKnowledgeSourceViews(): KnowledgeSourceView[] {
-  return snapshot
+  return [...snapshot]
 }
 
 export function useKnowledgeSourceViews(): KnowledgeSourceView[] {

@@ -269,6 +269,10 @@ def convert_to_task_dict_optimized(
         and task_crd.metadata.labels.get("preserveExecutor") == "true"
     )
     model_selection = _get_model_selection_labels(task_crd)
+    external_knowledge_refs = [
+        ref.model_dump(exclude_none=True)
+        for ref in (task_crd.spec.externalKnowledgeRefs or [])
+    ]
 
     return {
         "id": task.id,
@@ -304,6 +308,7 @@ def convert_to_task_dict_optimized(
         "execution_workspace_source": execution_workspace_source,
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
+        "external_knowledge_refs": external_knowledge_refs,
     }
 
 

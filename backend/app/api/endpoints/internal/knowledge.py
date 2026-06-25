@@ -5,7 +5,7 @@
 """Internal knowledge capability endpoints for service-to-service calls."""
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -58,6 +58,7 @@ class KnowledgeListDocumentsResponse(BaseModel):
 
     documents: list[KnowledgeDocumentItem]
     total_returned: int
+    pagination_scope: Literal["per_provider"] = "per_provider"
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -129,5 +130,6 @@ async def list_documents(
     return KnowledgeListDocumentsResponse(
         documents=documents,
         total_returned=len(documents),
+        pagination_scope="per_provider",
         warnings=warnings,
     )

@@ -288,6 +288,7 @@ export default function ContextSelector({
         collisionPadding={8}
         avoidCollisions={true}
         sticky="partial"
+        data-testid="context-selector-popover"
       >
         <Tabs
           value={activeTab}

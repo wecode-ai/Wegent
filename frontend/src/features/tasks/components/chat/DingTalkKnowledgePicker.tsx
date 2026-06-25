@@ -464,13 +464,13 @@ function DingTalkDocumentNode({
   return (
     <div>
       <div
-        className="group flex w-full items-center justify-between gap-2 rounded-md py-1.5 pr-2 text-left text-sm hover:bg-surface"
+        className="group flex min-h-11 w-full items-center justify-between gap-2 rounded-md pr-2 text-left text-sm hover:bg-surface"
         style={{ paddingLeft: 8 + depth * 16 }}
       >
         {isFolder && hasChildren ? (
           <button
             type="button"
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-surface"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded hover:bg-surface"
             onClick={() => setOpen(!open)}
             data-testid={`knowledge-picker-dingtalk-node-expander-${node.source}-${node.dingtalk_node_id}`}
           >
@@ -479,11 +479,11 @@ function DingTalkDocumentNode({
             />
           </button>
         ) : (
-          <span className="h-5 w-5 shrink-0" />
+          <span className="h-11 w-11 shrink-0" />
         )}
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 text-left"
           onClick={() => onToggle(node)}
           data-testid={`knowledge-picker-dingtalk-node-${node.source}-${node.dingtalk_node_id}`}
         >

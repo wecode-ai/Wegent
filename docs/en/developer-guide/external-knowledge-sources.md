@@ -81,6 +81,7 @@ Implementation requirements:
 
 - Providers own permission filtering and pagination.
 - Core only consumes provider-neutral listing results.
+- The Backend external listing endpoint reports `pagination_scope: "per_provider"`; after Chat Shell aggregates built-in knowledge bases and external sources, it reports `pagination_scope: "per_source"`. Callers should not interpret these fields as one globally merged pagination window.
 - When the capability is absent, the frontend should hide or disable the browsing entry instead of failing task execution.
 
 ## Security and Purity Rules
