@@ -66,15 +66,6 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
         executor_name=None,
         executor_namespace=None,
     )
-    owner_a_team = Kind(
-        id=1,
-        user_id=10,
-        kind="Team",
-        name="same-team",
-        namespace="default",
-        json={"kind": "Team", "metadata": {"name": "same-team"}},
-        is_active=True,
-    )
     owner_b_team = Kind(
         id=2,
         user_id=20,
@@ -84,19 +75,6 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
         json={"kind": "Team", "metadata": {"name": "same-team"}},
         is_active=True,
     )
-
-    def query_side_effect(model):
-        query = MagicMock()
-        if model is Kind:
-            query.filter.return_value.first.return_value = owner_b_team
-        else:
-            query.filter.return_value.first.return_value = SimpleNamespace(
-                id=10,
-                user_name="owner-a",
-            )
-        return query
-
-    db.query.side_effect = query_side_effect
     built_request = ExecutionRequest(task_id=100, subtask_id=200)
     builder = MagicMock()
     builder.build.return_value = built_request
@@ -120,6 +98,10 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
             return_value=builder,
         ),
         patch(
+            "app.services.task_team_resolver.resolve_task_team_ref",
+            return_value=owner_b_team,
+        ) as resolve_task_team_ref,
+        patch(
             "app.services.task_team_resolver.can_user_use_team",
             return_value=True,
         ),
@@ -130,6 +112,10 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
     ):
         await _dispatch_task_async(100)
 
+    resolve_task_team_ref.assert_called_once()
+    assert resolve_task_team_ref.call_args.args == (db,)
+    assert resolve_task_team_ref.call_args.kwargs["fallback_user_id"] == 10
+    resolved_team_ref = resolve_task_team_ref.call_args.kwargs["team_ref"]
+    assert resolved_team_ref.user_id == 20
     assert builder.build.call_args.kwargs["team"] is owner_b_team
-    assert builder.build.call_args.kwargs["team"] is not owner_a_team
     dispatch.assert_awaited_once_with(built_request, device_id=None)

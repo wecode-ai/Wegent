@@ -51,6 +51,13 @@ def can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
     if team.user_id == user_id or team.user_id == 0:
         return True
 
+    team_namespace = team.namespace or "default"
+    if team_namespace != "default":
+        from app.services.readers.groups import groupReader
+
+        if groupReader.is_public(db, team_namespace):
+            return True
+
     from app.models.resource_member import MemberStatus
     from app.models.share_link import ResourceType
     from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
