@@ -34,6 +34,31 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### Wework 打包 App 本地优先通道
+
+打包后的 Wework Tauri App 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Tauri WebView 内，Tauri Rust 侧只作为 app 内部命令层存在。
+
+本地优先模式只需要两个本机进程：
+
+```mermaid
+flowchart LR
+    subgraph "用户电脑"
+        APP["Wework Tauri App"]
+        UI["React UI"]
+        TAURI["Tauri Commands"]
+        EX["Executor Sidecar"]
+        FS["本地文件"]
+    end
+
+    UI --> TAURI
+    TAURI <-->|"stdin/stdout JSON"| EX
+    EX --> FS
+```
+
+Tauri 通过 sidecar 启动 executor，默认参数为 `--app-ipc --no-backend`。stdout 只承载换行分隔 JSON 协议，日志统一写到 stderr，避免污染 app IPC。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+
+Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；如果同时启用 app IPC，同一个 executor 进程会复用同一个 command handler 和 runtime work handler，一边通过 stdin/stdout 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
+
 ### 通信架构
 
 下图展示了本地设备如何与 Wegent 系统通信：

@@ -23,6 +23,7 @@ CLI options:
 """
 
 import argparse
+import asyncio
 import contextlib
 import logging
 import multiprocessing
@@ -154,6 +155,24 @@ def _load_device_config_for_mode(config_path: str | None, *, quiet_stdout: bool)
     return load_device_config(config_path)
 
 
+async def _run_local_runner_with_app_ipc(runner, app_ipc_server) -> None:
+    """Run Backend LocalRunner and app IPC in one executor process."""
+    runtime_work_handler = getattr(runner, "runtime_work_handler", None)
+    if runtime_work_handler is not None:
+        await runtime_work_handler.start_codex_watcher()
+
+    runner_task = asyncio.create_task(runner.start())
+    await asyncio.sleep(0)
+    try:
+        await app_ipc_server.serve()
+    finally:
+        app_ipc_server.stop()
+        runner_task.cancel()
+        await asyncio.gather(runner_task, return_exceptions=True)
+        if runtime_work_handler is not None:
+            await runtime_work_handler.stop_codex_watcher()
+
+
 def main() -> None:
     """
     Main function for running the executor.
@@ -194,8 +213,6 @@ def main() -> None:
     # Determine if we should run in local mode
     if args.app_ipc or should_use_local_mode(config_path):
         # Local mode: Run WebSocket-based executor
-        import asyncio
-
         # Load full configuration for local mode
         try:
             device_config = _load_device_config_for_mode(
@@ -230,9 +247,20 @@ def main() -> None:
                 f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}"
             )
 
-            # Pass config to runner
             runner = LocalRunner(device_config=device_config)
-            asyncio.run(runner.start())
+            if args.app_ipc:
+                from executor.modes.local.app_ipc import AppIpcServer
+
+                app_ipc_server = AppIpcServer(
+                    device_id=device_config.device_id or "local-device",
+                    runtime_work_handler=runner.runtime_work_handler,
+                    command_handler=runner.command_handler,
+                )
+                runner.set_app_event_emitter(app_ipc_server.emit_event)
+                logger.info("Starting executor with Backend and APP IPC channels")
+                asyncio.run(_run_local_runner_with_app_ipc(runner, app_ipc_server))
+            else:
+                asyncio.run(runner.start())
         except FileNotFoundError as e:
             logger.error(f"Configuration error: {e}")
             sys.exit(1)

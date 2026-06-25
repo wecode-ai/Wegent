@@ -4,6 +4,7 @@
 
 """Tests for the local app IPC stdio bridge."""
 
+import asyncio
 import io
 import json
 import sys
@@ -12,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from executor.modes.local.app_ipc import AppIpcServer
+from executor.modes.local.runner import LocalRunner
 
 
 def _json_lines(output: io.StringIO) -> list[dict]:
@@ -160,3 +162,56 @@ def test_executor_cli_parses_app_ipc_flags():
 
     assert args.app_ipc is True
     assert args.no_backend is True
+
+
+@pytest.mark.asyncio
+async def test_local_runner_runtime_events_broadcast_to_backend_and_app():
+    backend_events = []
+    app_events = []
+
+    class WebSocketClient:
+        connected = True
+
+        async def emit(self, event, payload):
+            backend_events.append((event, payload))
+
+    async def emit_app(event, payload):
+        app_events.append((event, payload))
+
+    runner = LocalRunner.__new__(LocalRunner)
+    runner.websocket_client = WebSocketClient()
+    runner.app_event_emitter = emit_app
+
+    await LocalRunner._emit_runtime_work_event(
+        runner, "response.created", {"task_id": 1}
+    )
+
+    assert backend_events == [("response.created", {"task_id": 1})]
+    assert app_events == [("response.created", {"task_id": 1})]
+
+
+@pytest.mark.asyncio
+async def test_app_ipc_runner_cancels_local_runner_when_app_channel_closes():
+    from executor.main import _run_local_runner_with_app_ipc
+
+    events = []
+
+    class Runner:
+        async def start(self):
+            events.append("runner:start")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("runner:cancelled")
+                raise
+
+    class Server:
+        def stop(self):
+            events.append("server:stop")
+
+        async def serve(self):
+            events.append("server:serve")
+
+    await _run_local_runner_with_app_ipc(Runner(), Server())
+
+    assert events == ["runner:start", "server:serve", "server:stop", "runner:cancelled"]

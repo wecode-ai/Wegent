@@ -34,6 +34,31 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### Wework Packaged App Local-First Channel
+
+The packaged Wework Tauri App defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Tauri WebView, while the Tauri Rust side is only the app's internal command layer.
+
+Local-first mode needs only two local processes:
+
+```mermaid
+flowchart LR
+    subgraph "User's Computer"
+        APP["Wework Tauri App"]
+        UI["React UI"]
+        TAURI["Tauri Commands"]
+        EX["Executor Sidecar"]
+        FS["Local Files"]
+    end
+
+    UI --> TAURI
+    TAURI <-->|"stdin/stdout JSON"| EX
+    EX --> FS
+```
+
+Tauri starts the executor as a sidecar with `--app-ipc --no-backend` by default. stdout is reserved for the newline-delimited JSON protocol, and logs are written to stderr so app IPC is not polluted. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
+
+Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. If app IPC is enabled at the same time, the same executor process reuses one command handler and one runtime work handler while serving Wework App over stdin/stdout and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
+
 ### Communication Architecture
 
 The following diagram shows how local devices communicate with the Wegent system:
