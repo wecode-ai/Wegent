@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
@@ -17,6 +18,18 @@ import type {
   RuntimeWorkListResponse,
   UnifiedModel,
 } from '@/types/api'
+
+const localExecutorMocks = vi.hoisted(() => ({
+  ensureLocalExecutorStarted: vi.fn(),
+  requestLocalExecutor: vi.fn(),
+  subscribeLocalExecutorEvents: vi.fn(),
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
+  requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
+  subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
+}))
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -267,6 +280,10 @@ function renderWorkbench(children: React.ReactNode, services = createWorkbenchSe
       {children}
     </WorkbenchProvider>
   )
+}
+
+function renderWorkbenchWithDefaultServices(children: React.ReactNode) {
+  return render(<WorkbenchProvider user={LOCAL_USER}>{children}</WorkbenchProvider>)
 }
 
 function BootstrapProbe() {
@@ -583,10 +600,37 @@ function RuntimeTaskSkillsProbe() {
 
 describe('WorkbenchProvider runtime tasks', () => {
   beforeEach(() => {
+    delete window.__WEWORK_RUNTIME_CONFIG__
     window.history.pushState({}, '', '/')
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
+    localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return { projects: [], chats: [], totalLocalTasks: 0 }
+      }
+      return {}
+    })
+    localExecutorMocks.subscribeLocalExecutorEvents.mockResolvedValue(vi.fn())
+  })
+
+  test('bootstraps with local app services in local-first runtime mode', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+
+    renderWorkbenchWithDefaultServices(<BootstrapProbe />)
+
+    await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('local'))
+    expect(screen.getByTestId('project-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
+    expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
   test('bootstraps projects and runtime work without DB task APIs', async () => {

@@ -114,16 +114,9 @@ export function PluginManagementPage() {
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
-          onCreateProject={createProject}
-          onCreateGitWorkspaceProject={createGitWorkspaceProject}
-          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
-          onListGitRepositories={listGitRepositories}
-          onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}

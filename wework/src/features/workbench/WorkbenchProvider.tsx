@@ -13,6 +13,7 @@ import {
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
+import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -407,7 +408,7 @@ interface WorkbenchProviderProps {
   services?: WorkbenchServices
 }
 
-function createDefaultServices(): WorkbenchServices {
+function createBackendServices(): WorkbenchServices {
   const { apiBaseUrl, socketBaseUrl, socketPath } = getRuntimeConfig()
   const client = createHttpClient({ baseUrl: apiBaseUrl })
   const socketClient = createSocketClient({
@@ -432,6 +433,15 @@ function createDefaultServices(): WorkbenchServices {
     socketClient,
     chatStream: createChatStream(socketClient.socket),
   }
+}
+
+function createDefaultServices(): WorkbenchServices {
+  const { runtimeMode } = getRuntimeConfig()
+  if (runtimeMode === 'local-first') {
+    return createLocalAppServices()
+  }
+
+  return createBackendServices()
 }
 
 function getCurrentAppPath(): string {
@@ -1913,7 +1923,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const archiveProjectsConversations = useCallback(
     async (runtimeProjectKeys: string[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
       }
@@ -1924,7 +1935,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const archivedAddresses = projectTaskAddresses(state.runtimeWork, uniqueProjectKeys)
       const responses = await Promise.all(
         uniqueProjectKeys.map(runtimeProjectKey =>
-          resolvedServices.runtimeWorkApi.archiveProjectConversations({ runtimeProjectKey })
+          runtimeWorkApi.archiveProjectConversations({ runtimeProjectKey })
         )
       )
       const failedResponse = responses.find(response => !response.accepted)
@@ -1949,16 +1960,15 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const archiveChatConversations = useCallback(
     async (addresses: RuntimeTaskAddress[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
       }
 
       if (addresses.length === 0) return
 
-      const responses = await Promise.all(
-        addresses.map(address => resolvedServices.runtimeWorkApi.archiveConversation(address))
-      )
+      const responses = await Promise.all(addresses.map(address => runtimeWorkApi.archiveConversation(address)))
       const failedResponse = responses.find(response => !response.accepted)
       if (failedResponse) {
         dispatch({

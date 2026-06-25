@@ -1,0 +1,99 @@
+import { describe, expect, test, vi } from 'vitest'
+import { LOCAL_USER } from './localSession'
+import { createLocalAppServices } from './localServices'
+
+describe('createLocalAppServices', () => {
+  test('returns local bootstrap data without backend', async () => {
+    const request = vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
+    const ensure = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+    })
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.teamApi.getDefaultWorkbenchTeam()).resolves.toMatchObject({
+      id: 0,
+      name: 'local-wework',
+      is_active: true,
+    })
+    await expect(services.modelApi.listModels()).resolves.toEqual({
+      data: [
+        expect.objectContaining({
+          name: 'local-codex',
+          type: 'runtime',
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+      ],
+    })
+    await expect(services.deviceApi.listDevices()).resolves.toEqual([
+      expect.objectContaining({
+        device_id: 'local-device',
+        name: 'Local Executor',
+        status: 'online',
+        device_type: 'local',
+        executor_version: '1.9.0',
+      }),
+    ])
+    await expect(services.userApi?.updateCurrentUser({ preferences: {} })).resolves.toEqual(
+      LOCAL_USER
+    )
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual({
+      projects: [],
+      chats: [],
+      totalLocalTasks: 0,
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('routes runtime task creation and device commands through app ipc', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          localTaskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      if (method === 'device.execute_command') {
+        return { success: true, stdout: '/Users/me', stderr: '', exit_code: 0 }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      runtime: 'codex',
+      message: 'hello',
+    })
+    await services.deviceApi.executeCommand('local-device', {
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.tasks.create', {
+      teamId: 0,
+      deviceId: 'local-device',
+      runtime: 'codex',
+      message: 'hello',
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'local-device',
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+    })
+  })
+})
