@@ -217,7 +217,9 @@ function WorkspacePierreFileTree({
       if (!entry) return
 
       if (entry.isDirectory) {
-        model.getItem(nextPath)?.expand()
+        // getItem returns a file|folder handle union; only folders expose expand.
+        const item = model.getItem(nextPath)
+        if (item && 'expand' in item) item.expand()
         onOpenDirectory(entry)
       } else {
         onOpenFile(entry)
@@ -239,7 +241,11 @@ function WorkspacePierreFileTree({
   }, [model, treeModel.selectedTreePath])
 
   useEffect(() => {
-    treeModel.expandedTreePaths.forEach(path => model.getItem(path)?.expand())
+    // getItem returns a file|folder handle union; only folders expose expand.
+    treeModel.expandedTreePaths.forEach(path => {
+      const item = model.getItem(path)
+      if (item && 'expand' in item) item.expand()
+    })
   }, [model, treeModel.expandedTreePaths])
 
   return (
