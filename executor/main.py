@@ -23,6 +23,8 @@ CLI options:
 """
 
 import argparse
+import contextlib
+import logging
 import multiprocessing
 import os
 import sys
@@ -99,12 +101,57 @@ def _parse_args() -> argparse.Namespace:
         help="Path to config file (default: ~/.wegent-executor/device-config.json)",
     )
     parser.add_argument(
+        "--app-ipc",
+        action="store_true",
+        help="Serve newline-delimited app IPC on stdin/stdout",
+    )
+    parser.add_argument(
+        "--no-backend",
+        action="store_true",
+        help="Disable the Backend WebSocket channel when app IPC is enabled",
+    )
+    parser.add_argument(
         "-h", "--help", action="store_true", help="Show this help message and exit"
     )
 
     # Parse only known args to avoid breaking on unexpected args
     args, _ = parser.parse_known_args()
     return args
+
+
+def _configure_app_ipc_stdio() -> None:
+    """Keep stdout reserved for app IPC JSON messages."""
+    os.environ["WEGENT_LOG_TO_STDERR"] = "1"
+
+    loggers = [logging.getLogger()]
+    for candidate in logging.Logger.manager.loggerDict.values():
+        if isinstance(candidate, logging.Logger):
+            loggers.append(candidate)
+
+    for current_logger in loggers:
+        for handler in current_logger.handlers:
+            _redirect_stream_handler(handler)
+        listener = getattr(current_logger, "_queue_listener", None)
+        for handler in getattr(listener, "handlers", []) or []:
+            _redirect_stream_handler(handler)
+
+
+def _redirect_stream_handler(handler: logging.Handler) -> None:
+    if not isinstance(handler, logging.StreamHandler):
+        return
+    try:
+        handler.setStream(sys.stderr)
+    except Exception:
+        handler.stream = sys.stderr
+
+
+def _load_device_config_for_mode(config_path: str | None, *, quiet_stdout: bool):
+    from executor.config.device_config import load_device_config
+
+    if quiet_stdout:
+        with contextlib.redirect_stdout(sys.stderr):
+            return load_device_config(config_path)
+    return load_device_config(config_path)
 
 
 def main() -> None:
@@ -122,6 +169,9 @@ def main() -> None:
     # Parse arguments first
     args = _parse_args()
 
+    if args.app_ipc:
+        _configure_app_ipc_stdio()
+
     # Handle version flag first (before any heavy initialization)
     if args.version:
         from executor.version import get_version
@@ -135,7 +185,6 @@ def main() -> None:
 
     from executor.config.device_config import (
         get_config_path_from_args,
-        load_device_config,
         should_use_local_mode,
     )
 
@@ -143,15 +192,16 @@ def main() -> None:
     config_path = get_config_path_from_args()
 
     # Determine if we should run in local mode
-    if should_use_local_mode(config_path):
+    if args.app_ipc or should_use_local_mode(config_path):
         # Local mode: Run WebSocket-based executor
         import asyncio
 
-        from executor.modes.local.runner import LocalRunner
-
         # Load full configuration for local mode
         try:
-            device_config = load_device_config(config_path)
+            device_config = _load_device_config_for_mode(
+                config_path,
+                quiet_stdout=args.app_ipc,
+            )
 
             # Sync device config values to global config for modules that read
             # from config directly. device_config already has env overrides applied.
@@ -160,6 +210,17 @@ def main() -> None:
             sync_device_config(device_config)
 
             import executor.config.config as config
+
+            if args.app_ipc and args.no_backend:
+                from executor.modes.local.app_ipc import run_app_ipc
+
+                logger.info("Starting executor in APP IPC mode without Backend")
+                asyncio.run(
+                    run_app_ipc(device_id=device_config.device_id or "local-device")
+                )
+                return
+
+            from executor.modes.local.runner import LocalRunner
 
             logger.info("Starting executor in LOCAL mode")
             logger.info(f"Device ID: {device_config.device_id}")

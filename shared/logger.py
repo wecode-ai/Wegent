@@ -86,6 +86,14 @@ def _stop_queue_listener_safely(listener: QueueListener) -> None:
         raise
 
 
+def _log_stream():
+    """Return the configured logging stream."""
+    value = os.environ.get("WEGENT_LOG_TO_STDERR", "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return sys.stderr
+    return sys.stdout
+
+
 def setup_logger(
     name,
     level=logging.INFO,
@@ -151,7 +159,7 @@ def setup_logger(
             if include_request_id:
                 queue_handler.addFilter(RequestIdFilter())
 
-            listener_handler = NonBlockingStreamHandler(sys.stdout)
+            listener_handler = NonBlockingStreamHandler(_log_stream())
             listener_handler.setLevel(level)
             listener_handler.setFormatter(formatter)
 
@@ -168,7 +176,7 @@ def setup_logger(
             handler_configured = False
 
     if not handler_configured:
-        console_handler = NonBlockingStreamHandler(sys.stdout)
+        console_handler = NonBlockingStreamHandler(_log_stream())
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
 
