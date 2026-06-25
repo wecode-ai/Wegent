@@ -1402,6 +1402,60 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_send_accepts_runtime_task_address_payload(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class FakeCodexStreamDiscovery:
+        def __init__(self):
+            self.streamed_messages = []
+            self.finished = asyncio.Event()
+
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        async def stream_message(self, thread_id, message, *, cwd=None, emitter):
+            self.streamed_messages.append((thread_id, message, cwd))
+            await emitter.start(shell_type="Codex")
+            await emitter.text_delta("done")
+            await emitter.done("done")
+            self.finished.set()
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = FakeCodexStreamDiscovery()
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "local-device",
+                    "workspacePath": "/repo/Wegent",
+                    "localTaskId": thread_id,
+                },
+                "message": "continue from WeWork",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["accepted"] is True
+    await asyncio.wait_for(discovery.finished.wait(), timeout=1)
+    await asyncio.gather(*handler._running_sdk_tasks)
+    assert discovery.streamed_messages == [
+        (thread_id, "continue from WeWork", "/repo/Wegent")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_keeps_codex_followup_attachments_in_transcript(
     tmp_path,
 ):

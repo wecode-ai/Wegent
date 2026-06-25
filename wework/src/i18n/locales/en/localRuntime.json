@@ -1,0 +1,9 @@
+{
+  "starting_title": "Starting local executor",
+  "starting_description": "Connecting to the local daemon. First startup may take a few seconds.",
+  "failed_title": "Local executor failed to start",
+  "failed_description": "Check whether the executor can start correctly, or inspect the log and retry.",
+  "log_label": "Log file",
+  "retry": "Retry",
+  "fallback_error": "Local executor is unavailable"
+}

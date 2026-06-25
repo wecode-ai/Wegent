@@ -260,7 +260,6 @@ ensure_standalone_executor_token
 start_executor() {
     echo "[4/8] Starting Standalone Executor..."
 
-    export EXECUTOR_MODE=local
     export DEVICE_TYPE=cloud
     export DEVICE_ID=standalone-admin-device
     export DEVICE_NAME="${STANDALONE_DEVICE_NAME:-Standalone Device}"

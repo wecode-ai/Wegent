@@ -22,7 +22,7 @@ import signal
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from executor.config import config
 from executor.config.device_config import DeviceConfig
@@ -97,7 +97,11 @@ class LocalRunner:
     - Graceful shutdown handling via SIGINT/SIGTERM
     """
 
-    def __init__(self, device_config: Optional[DeviceConfig] = None):
+    def __init__(
+        self,
+        device_config: Optional[DeviceConfig] = None,
+        app_event_emitter: Optional[Callable[[str, dict[str, Any]], Any]] = None,
+    ):
         """Initialize the local runner.
 
         Args:
@@ -105,6 +109,7 @@ class LocalRunner:
                           will use environment variables for backward compatibility.
         """
         self.device_config = device_config
+        self.app_event_emitter = app_event_emitter
 
         # WebSocket client
         self.websocket_client = WebSocketClient(device_config=device_config)
@@ -125,7 +130,7 @@ class LocalRunner:
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
         self.runtime_work_handler = RuntimeWorkRpcHandler(
-            responses_event_emitter=self.websocket_client.emit,
+            responses_event_emitter=self._emit_runtime_work_event,
         )
 
         # Task queue for execution
@@ -145,6 +150,45 @@ class LocalRunner:
 
         # Process manager for PID file and auto-restart support
         self._process_manager = ProcessManager()
+
+    def set_app_event_emitter(
+        self, emitter: Optional[Callable[[str, dict[str, Any]], Any]]
+    ) -> None:
+        """Attach or detach the optional app IPC runtime event emitter."""
+        self.app_event_emitter = emitter
+
+    async def _emit_runtime_work_event(
+        self, event: str, payload: dict[str, Any]
+    ) -> None:
+        """Broadcast runtime work events to Backend and optional app IPC."""
+        if self.websocket_client.connected:
+            await self._emit_runtime_work_target(
+                "Backend",
+                self.websocket_client.emit,
+                event,
+                payload,
+            )
+        if self.app_event_emitter is not None:
+            await self._emit_runtime_work_target(
+                "app IPC",
+                self.app_event_emitter,
+                event,
+                payload,
+            )
+
+    async def _emit_runtime_work_target(
+        self,
+        target: str,
+        emitter: Callable[[str, dict[str, Any]], Any],
+        event: str,
+        payload: dict[str, Any],
+    ) -> None:
+        try:
+            result = emitter(event, payload)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.exception("Failed to emit runtime work event to %s", target)
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
@@ -739,6 +783,10 @@ class LocalRunner:
             max_bytes = config.WEGENT_EXECUTOR_LOG_MAX_SIZE * 1024 * 1024
             backup_count = config.WEGENT_EXECUTOR_LOG_BACKUP_COUNT
 
+            if os.environ.get("WEGENT_LOG_FILE_PATH") == log_file:
+                logger.info("File logging already enabled: %s", log_file)
+                return
+
             file_handler = RotatingFileHandler(
                 log_file,
                 maxBytes=max_bytes,
@@ -767,6 +815,10 @@ class LocalRunner:
                 "websocket_client",
                 "local_heartbeat",
                 "local_handlers",
+                "local_app_ipc",
+                "local_command_handler",
+                "runtime_work_rpc_handler",
+                "codex_session_discovery",
                 "task_executor",
                 "executor.config.config_loader",
                 # Agent and download loggers

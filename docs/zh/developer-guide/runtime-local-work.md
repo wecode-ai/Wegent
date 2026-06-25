@@ -137,6 +137,8 @@ POST /api/runtime-work/create
 
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
+在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
+
 Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
 运行时创建的持久化位置由具体 runtime 决定：

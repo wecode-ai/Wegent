@@ -20,5 +20,6 @@ ENV NODE_PATH=/usr/lib/node_modules
 ENV PYTHONPATH=/workspace/src
 ENV PYTHONUNBUFFERED=1
 ENV PORT=10001
+ENV EXECUTOR_MODE=docker
 
 CMD ["/app/executor"]

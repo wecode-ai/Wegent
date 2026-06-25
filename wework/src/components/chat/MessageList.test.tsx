@@ -8,6 +8,7 @@ import '@/i18n'
 
 const tauriCoreMock = vi.hoisted(() => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
+  isTauri: vi.fn(() => false),
 }))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
@@ -163,6 +164,7 @@ describe('MessageList', () => {
     tauriCoreMock.convertFileSrc = vi.fn(
       (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`
     )
+    tauriCoreMock.isTauri = vi.fn(() => false)
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl

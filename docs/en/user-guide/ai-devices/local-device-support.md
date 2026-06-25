@@ -131,7 +131,6 @@ docker run -d --platform linux/amd64 \
   --name wegent-device \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
-  -e EXECUTOR_MODE=local \
   -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
@@ -154,7 +153,6 @@ The generated command contains parameters like:
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
-  -e EXECUTOR_MODE=local \
   -e DEVICE_TYPE=remote \
   -e DEVICE_ID=<generated-device-id> \
   -e DEVICE_NAME=<generated-device-name> \
@@ -225,7 +223,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. On later startups, if `EXECUTOR_MODE`, `WEGENT_BACKEND_URL`, or `WEGENT_AUTH_TOKEN` is not set, the executor reads `mode`, `connection.backend_url`, and `connection.auth_token` from that file.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. With no arguments and no remote address, the executor listens on `~/.wegent-executor/app-ipc.sock` and does not connect to Backend. After `WEGENT_BACKEND_URL` or `connection.backend_url` is set, the executor keeps the local socket available and also connects to the remote Backend as a local device. `~/.wegent-executor/app-ipc.lock` limits each user home to one executor process so the web app does not see duplicate device connections. Logs are written to `~/.wegent-executor/logs/executor.log`.
 
 ### Getting JWT Token
 

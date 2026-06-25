@@ -10,11 +10,11 @@ describe('getRuntimeConfig', () => {
   test('reads cloud device scaling wiki URL from wework frontend config', () => {
     vi.stubEnv(
       'VITE_CLOUD_DEVICE_SCALING_WIKI_URL',
-      'https://wiki.example.com/cloud-device-scaling',
+      'https://wiki.example.com/cloud-device-scaling'
     )
 
     expect(getRuntimeConfig().cloudDeviceScalingWikiUrl).toBe(
-      'https://wiki.example.com/cloud-device-scaling',
+      'https://wiki.example.com/cloud-device-scaling'
     )
   })
 
@@ -26,6 +26,7 @@ describe('getRuntimeConfig', () => {
       apiBaseUrl: 'http://runtime.example.com/api',
       socketBaseUrl: 'http://runtime.example.com',
       socketPath: '/socket.io',
+      runtimeMode: 'backend',
       loginMode: 'oidc',
     }
 
@@ -34,6 +35,7 @@ describe('getRuntimeConfig', () => {
     expect(config.apiBaseUrl).toBe('http://runtime.example.com/api')
     expect(config.socketBaseUrl).toBe('http://runtime.example.com')
     expect(config.socketPath).toBe('/socket.io')
+    expect(config.runtimeMode).toBe('backend')
     expect(config.loginMode).toBe('oidc')
   })
 
@@ -44,5 +46,38 @@ describe('getRuntimeConfig', () => {
     }
 
     expect(getRuntimeConfig().loginMode).toBe('all')
+  })
+
+  test('defaults to local-first mode without explicit runtime config', () => {
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
+  })
+
+  test('uses local-first mode from runtime config override', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
+  })
+
+  test('uses local-first mode from build-time environment', () => {
+    vi.stubEnv('VITE_WEWORK_RUNTIME_MODE', 'local-first')
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
+  })
+
+  test('uses backend mode from build-time environment', () => {
+    vi.stubEnv('VITE_WEWORK_RUNTIME_MODE', 'backend')
+
+    expect(getRuntimeConfig().runtimeMode).toBe('backend')
+  })
+
+  test('ignores invalid runtime modes', () => {
+    vi.stubEnv('VITE_WEWORK_RUNTIME_MODE', 'invalid-mode')
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'invalid-runtime-mode' as never,
+    }
+
+    expect(getRuntimeConfig().runtimeMode).toBe('local-first')
   })
 })

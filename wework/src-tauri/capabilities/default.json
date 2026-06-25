@@ -11,6 +11,16 @@
     "updater:default",
     "process:allow-restart",
     {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/wegent-executor",
+          "sidecar": true,
+          "args": []
+        }
+      ]
+    },
+    {
       "identifier": "http:default",
       "allow": [
         { "url": "https://*.intra.weibo.com/*" },
