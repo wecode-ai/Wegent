@@ -762,9 +762,7 @@ function findSectionIndexForPath(sections: DiffFileSection[], path: string) {
   // Diff section paths and card file paths can differ by a leading directory
   // segment (e.g. workspace-relative vs repo-relative), so fall back to a
   // suffix match before giving up.
-  return sections.findIndex(
-    section => section.path.endsWith(path) || path.endsWith(section.path)
-  )
+  return sections.findIndex(section => section.path.endsWith(path) || path.endsWith(section.path))
 }
 
 function getDiffSectionDomId(index: number) {

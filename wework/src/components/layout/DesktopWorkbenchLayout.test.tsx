@@ -1272,8 +1272,46 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
       'local-device',
-      '/home/ubuntu/Documents/New project'
+      '/home/ubuntu/Documents/New project',
+      'New project'
     )
+  })
+
+  test('keeps the blank project dialog open when runtime workspace registration fails', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
+    const onOpenStandaloneWorkspace = vi.fn().mockRejectedValue(new Error('register failed'))
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: true,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-blank-option'))
+    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
+
+    expect(await screen.findByText('register failed')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
   })
 
   test('renames a blank project directory when the requested name already exists', async () => {
@@ -1320,7 +1358,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
       'local-device',
-      '/home/ubuntu/Documents/New project 3'
+      '/home/ubuntu/Documents/New project 3',
+      'New project'
     )
   })
 
@@ -1996,12 +2035,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
       'flex-1',
       'overflow-y-auto',
-      'scrollbar-none'
+      'scrollbar-none',
+      '[overflow-anchor:none]'
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
-  test('selects a project while toggling an empty project task list', async () => {
+  test('toggles an empty project task list without selecting the project', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
@@ -2010,15 +2050,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(1, 1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('project-local-tasks-empty-1')).toHaveTextContent('暂无会话')
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByTestId('project-local-tasks-empty-1')).not.toBeInTheDocument()
-    expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(2, 1)
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
   test('opens the independent connection settings page from the settings menu', async () => {
@@ -3571,7 +3610,7 @@ describe('DesktopWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 1,
           },
         }}

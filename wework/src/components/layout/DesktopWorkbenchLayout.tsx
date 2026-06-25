@@ -82,10 +82,18 @@ interface DesktopWorkbenchLayoutProps {
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onSearchRuntimeWork?: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   onLoadOlderRuntimeTranscript?: () => Promise<void>
+  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void>
+  onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void>
+  onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
-  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
@@ -186,7 +194,11 @@ export function DesktopWorkbenchLayout({
   onOpenRuntimeLocalTask,
   onSearchRuntimeWork = async () => ({ items: [] }),
   onLoadOlderRuntimeTranscript,
+  onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
+  onArchiveProjectConversations,
+  onArchiveProjectsConversations,
+  onArchiveChatConversations,
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
   onOpenStandaloneWorkspace,
@@ -719,27 +731,22 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+          onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
           onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+          onArchiveProjectConversations={onArchiveProjectConversations}
+          onArchiveProjectsConversations={onArchiveProjectsConversations}
+          onArchiveChatConversations={onArchiveChatConversations}
           onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
           onToggleGlobalImNotification={toggleGlobalImNotification}
           onOpenGlobalImNotificationSettings={() =>
             openImNotificationTargetDialog({ type: 'global' })
           }
-          onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
-          onUpgradeDevice={onUpgradeDevice}
-          onCreateProject={onCreateProject}
-          onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
-          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-          onListGitRepositories={onListGitRepositories}
-          onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={options => {

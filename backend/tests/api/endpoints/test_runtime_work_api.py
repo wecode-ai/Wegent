@@ -17,7 +17,7 @@ def test_list_runtime_work_endpoint_uses_current_user(
     service_mock = AsyncMock(
         return_value={
             "projects": [],
-            "unmappedDeviceWorkspaces": [],
+            "chats": [],
             "totalLocalTasks": 0,
         }
     )
@@ -277,6 +277,45 @@ def test_runtime_archive_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_rename_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "rename_runtime_task", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/rename",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": "codex-1",
+            },
+            "title": "对齐需求核心点",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    request = service_mock.await_args.kwargs["request"]
+    assert request.address.local_task_id == "codex-1"
+    assert request.title == "对齐需求核心点"
+
+
 def test_runtime_cancel_endpoint_dispatches_address(
     test_client,
     test_token,
@@ -311,6 +350,81 @@ def test_runtime_cancel_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_archived_conversations_list_endpoint_dispatches_filters(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "items": [],
+            "projectGroups": [],
+            "total": 0,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "list_archived_conversations",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/archived-conversations/list",
+        headers=_auth_headers(test_token),
+        json={"search": "hello", "source": "local", "sort": "updated"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    request = service_mock.await_args.kwargs["request"]
+    assert request.search == "hello"
+    assert request.source == "local"
+
+
+def test_archived_conversations_delete_bulk_endpoint_dispatches_items(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "requestedCount": 1,
+            "acceptedCount": 1,
+            "deletedCount": 1,
+            "results": [],
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "delete_archived_conversations_bulk",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/archived-conversations/delete-bulk",
+        headers=_auth_headers(test_token),
+        json={
+            "items": [
+                {
+                    "deviceId": "device-1",
+                    "workspacePath": "/repo/Wegent",
+                    "localTaskId": "codex-1",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deletedCount"] == 1
+    request = service_mock.await_args.kwargs["request"]
+    assert request.items[0].local_task_id == "codex-1"
+
+
 def test_runtime_workspace_open_endpoint_dispatches_request(
     test_client,
     test_token,
@@ -324,7 +438,6 @@ def test_runtime_workspace_open_endpoint_dispatches_request(
             "deviceId": "device-1",
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
-            "threadId": "thread-1",
             "error": None,
         }
     )
@@ -341,11 +454,95 @@ def test_runtime_workspace_open_endpoint_dispatches_request(
             "deviceId": "device-1",
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
+            "label": "Hello project",
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["threadId"] == "thread-1"
+    assert response.json()["threadId"] is None
+    request = service_mock.await_args.kwargs["request"]
+    assert request.device_id == "device-1"
+    assert request.workspace_path == "/Users/crystal/Documents/hello-0"
+    assert request.label == "Hello project"
+
+
+def test_runtime_workspace_rename_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+            "threadId": None,
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "rename_runtime_workspace",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/workspaces/rename",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+            "name": "Hello project",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    request = service_mock.await_args.kwargs["request"]
+    assert request.device_id == "device-1"
+    assert request.workspace_path == "/Users/crystal/Documents/hello-0"
+    assert request.name == "Hello project"
+
+
+def test_runtime_workspace_remove_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+            "threadId": None,
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "remove_runtime_workspace",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/workspaces/remove",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
     request = service_mock.await_args.kwargs["request"]
     assert request.device_id == "device-1"
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
