@@ -270,6 +270,7 @@ export function DesktopWorkbenchMain({
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
+  const workbenchMainRef = useRef<HTMLElement | null>(null)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
@@ -281,10 +282,18 @@ export function DesktopWorkbenchMain({
     targetBranchName: undefined,
     reloadDiff: undefined,
   })
-  const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
-    useResizableRightSplitChat()
+  const closeRightPanel = useCallback(() => setRightPanelOpen(false), [])
+  const {
+    width: rightSplitChatWidth,
+    resizing: rightSplitResizing,
+    handleResizeStart: handleRightSplitResizeStart,
+  } = useResizableRightSplitChat({
+    containerRef: workbenchMainRef,
+    onCollapse: closeRightPanel,
+  })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
+  const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
   const reviewRequestSequence = useRef(0)
   const previousTurnReviewRef = useRef<{
     loadDiff: () => Promise<string>
@@ -477,6 +486,9 @@ export function DesktopWorkbenchMain({
 
   const selectFilesView = useCallback(() => {
     openRightPanelTab('files')
+  }, [openRightPanelTab])
+  const selectBrowserView = useCallback(() => {
+    openRightPanelTab('browser')
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
@@ -679,6 +691,7 @@ export function DesktopWorkbenchMain({
 
   return (
     <main
+      ref={workbenchMainRef}
       data-testid="desktop-workbench-main"
       className={cn(
         'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
@@ -698,7 +711,10 @@ export function DesktopWorkbenchMain({
       {showPageTopBar && (
         <DesktopTopBar
           testId="workbench-topbar"
-          className="absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7 transition-[width] duration-300 ease-out"
+          className={cn(
+            'absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7',
+            rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out'
+          )}
           style={{ width: chatColumnWidth }}
           left={topBarLeftActions}
         />
@@ -706,7 +722,8 @@ export function DesktopWorkbenchMain({
       <div
         data-testid="desktop-workbench-content"
         className={cn(
-          'relative flex min-w-0 flex-none flex-col overflow-hidden transition-[width] duration-300 ease-out',
+          'relative flex min-w-0 flex-none flex-col overflow-hidden',
+          rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out',
           showPageTopBar && 'pt-[52px]',
           rightPanelOpen && 'border-r border-border'
         )}
@@ -868,17 +885,34 @@ export function DesktopWorkbenchMain({
           onRequestClose={() => setBottomPanelOpen(false)}
         />
       </div>
+      {rightPanelOpen && (
+        <div
+          data-testid="right-workspace-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('workbench.resize_right_workspace_panel')}
+          aria-controls="right-workspace-panel-shell"
+          className="absolute top-0 z-popover h-full w-5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent hover:after:bg-primary/40"
+          style={{ left: rightSplitChatWidth }}
+          onPointerDown={handleRightSplitResizeStart}
+        />
+      )}
       <div
+        id="right-workspace-panel-shell"
         data-testid="right-workspace-panel-shell"
         className={cn(
-          'min-w-0 shrink-0 overflow-hidden bg-background transition-[width,opacity] duration-300 ease-out',
+          'min-w-0 shrink-0 overflow-hidden bg-background',
+          rightSplitResizing
+            ? 'transition-none'
+            : 'transition-[width,opacity] duration-300 ease-out',
           rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
         style={{ width: rightPanelShellWidth }}
         aria-hidden={!rightPanelOpen}
       >
-        {rightPanelOpen && (
+        {shouldRenderRightPanel && (
           <RightWorkspacePanel
+            visible={rightPanelOpen}
             activeView={rightPanelView}
             openTabs={rightPanelTabs}
             workspaceTarget={workspaceTarget}
@@ -888,10 +922,9 @@ export function DesktopWorkbenchMain({
             reviewViewOptions={reviewViewOptions}
             canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={onAddCodeComment}
-            onResizeStart={handleRightSplitResizeStart}
             onSelectReview={selectReviewView}
+            onSelectBrowser={selectBrowserView}
             onSelectFiles={selectFilesView}
-            onSelectLauncher={() => setRightPanelView('launcher')}
             onCloseTab={closeRightPanelTab}
             onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
           />

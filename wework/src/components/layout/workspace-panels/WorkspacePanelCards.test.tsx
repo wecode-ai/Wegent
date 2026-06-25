@@ -174,7 +174,6 @@ describe('WorkspacePanelCards', () => {
   test('renders terminal, IDE, and desktop project tools', () => {
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
-    expect(screen.queryByTestId('workspace-browser-card')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('终端')
     expect(screen.getByTestId('workspace-ide-card')).toHaveTextContent('IDE')
     expect(screen.getByTestId('workspace-desktop-card')).toHaveTextContent('桌面')

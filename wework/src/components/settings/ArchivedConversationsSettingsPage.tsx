@@ -1,5 +1,6 @@
 import { Loader2, RotateCw, Search, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -8,6 +9,16 @@ import type { ArchivedConversationItem, ArchivedConversationsListRequest } from 
 
 type SourceFilter = NonNullable<ArchivedConversationsListRequest['source']>
 type SortFilter = NonNullable<ArchivedConversationsListRequest['sort']>
+type PendingDelete =
+  | { type: 'single'; item: ArchivedConversationItem }
+  | { type: 'bulk'; items: ArchivedConversationItem[] }
+
+interface DeleteArchivedConversationDialogProps {
+  pendingDelete: PendingDelete
+  submitting: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}
 
 function createSettingsRuntimeWorkApi() {
   const { apiBaseUrl } = getRuntimeConfig()
@@ -16,6 +27,10 @@ function createSettingsRuntimeWorkApi() {
 
 function itemTestId(item: ArchivedConversationItem) {
   return `${item.deviceId}-${item.localTaskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
+}
+
+function itemAddressKey(item: ArchivedConversationItem) {
+  return `${item.deviceId}\0${item.workspacePath}\0${item.localTaskId}`
 }
 
 function projectOptionKey(group: {
@@ -97,6 +112,73 @@ function sortItems(items: ArchivedConversationItem[], sort: SortFilter) {
   )
 }
 
+function DeleteArchivedConversationDialog({
+  pendingDelete,
+  submitting,
+  onCancel,
+  onConfirm,
+}: DeleteArchivedConversationDialogProps) {
+  const { t } = useTranslation('common')
+  const isBulkDelete = pendingDelete.type === 'bulk'
+  const title = isBulkDelete
+    ? t('workbench.archived_bulk_delete_dialog_title', '删除全部已归档聊天?')
+    : t('workbench.archived_delete_dialog_title', '删除已归档聊天?')
+  const description = isBulkDelete
+    ? t('workbench.archived_bulk_delete_dialog_desc', '这将永久删除全部已归档聊天')
+    : t('workbench.archived_delete_dialog_desc', '这将永久删除已归档聊天')
+  const confirmLabel = isBulkDelete
+    ? t('workbench.archived_bulk_delete', '删除全部')
+    : t('workbench.archived_delete', '删除')
+  const testId = isBulkDelete
+    ? 'archived-bulk-delete-confirm-dialog'
+    : 'archived-delete-confirm-dialog'
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"
+      onClick={event => {
+        if (!submitting && event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${testId}-title`}
+        data-testid={testId}
+        className="w-full max-w-[520px] rounded-[24px] border border-border bg-popover px-8 py-6 text-text-primary shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+        onClick={event => event.stopPropagation()}
+      >
+        <h2 id={`${testId}-title`} className="text-xl font-semibold tracking-normal">
+          {title}
+        </h2>
+        <p className="mt-5 text-sm leading-6 text-text-secondary">{description}</p>
+        <div className="mt-6 flex justify-end gap-6">
+          <button
+            type="button"
+            data-testid={`${testId}-cancel-button`}
+            onClick={onCancel}
+            disabled={submitting}
+            className="h-10 min-w-[84px] rounded-xl px-4 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t('common.cancel', '取消')}
+          </button>
+          <button
+            type="button"
+            data-testid={`${testId}-confirm-button`}
+            onClick={onConfirm}
+            disabled={submitting}
+            className="inline-flex h-10 min-w-[104px] items-center justify-center gap-2 rounded-xl bg-red-500/15 px-5 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 export function ArchivedConversationsSettingsPage() {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedConversationItem[]>([])
@@ -107,6 +189,7 @@ export function ArchivedConversationsSettingsPage() {
   const [sort, setSort] = useState<SortFilter>('updated')
   const [projectKey, setProjectKey] = useState('all')
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
 
   const api = useMemo(() => createSettingsRuntimeWorkApi(), [])
 
@@ -187,10 +270,36 @@ export function ArchivedConversationsSettingsPage() {
     }
   }
 
-  const handleDelete = async (item: ArchivedConversationItem) => {
-    if (!window.confirm(t('workbench.archived_delete_confirm', '确定删除该归档对话吗？'))) {
+  const handleDelete = (item: ArchivedConversationItem) => {
+    setPendingDelete({ type: 'single', item })
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    if (pendingDelete.type === 'bulk' && pendingDelete.items.length === 0) return
+
+    if (pendingDelete.type === 'bulk') {
+      const deletedKeys = new Set(pendingDelete.items.map(itemAddressKey))
+      setBusyKey('bulk-delete')
+      try {
+        await api.deleteArchivedConversationsBulk({
+          items: pendingDelete.items.map(item => ({
+            deviceId: item.deviceId,
+            workspacePath: item.workspacePath,
+            localTaskId: item.localTaskId,
+          })),
+        })
+        setItems(currentItems =>
+          currentItems.filter(item => !deletedKeys.has(itemAddressKey(item)))
+        )
+        setPendingDelete(null)
+      } finally {
+        setBusyKey(null)
+      }
       return
     }
+
+    const { item } = pendingDelete
     const key = `delete:${item.id}`
     setBusyKey(key)
     try {
@@ -199,32 +308,16 @@ export function ArchivedConversationsSettingsPage() {
         workspacePath: item.workspacePath,
         localTaskId: item.localTaskId,
       })
-      await loadArchivedConversations()
+      setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+      setPendingDelete(null)
     } finally {
       setBusyKey(null)
     }
   }
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (items.length === 0) return
-    if (
-      !window.confirm(t('workbench.archived_bulk_delete_confirm', '确定删除全部已归档聊天吗？'))
-    ) {
-      return
-    }
-    setBusyKey('bulk-delete')
-    try {
-      await api.deleteArchivedConversationsBulk({
-        items: items.map(item => ({
-          deviceId: item.deviceId,
-          workspacePath: item.workspacePath,
-          localTaskId: item.localTaskId,
-        })),
-      })
-      await loadArchivedConversations()
-    } finally {
-      setBusyKey(null)
-    }
+    setPendingDelete({ type: 'bulk', items })
   }
 
   return (
@@ -427,6 +520,16 @@ export function ArchivedConversationsSettingsPage() {
           </div>
         )}
       </div>
+      {pendingDelete && (
+        <DeleteArchivedConversationDialog
+          pendingDelete={pendingDelete}
+          submitting={busyKey !== null}
+          onCancel={() => {
+            if (busyKey === null) setPendingDelete(null)
+          }}
+          onConfirm={() => void confirmDelete()}
+        />
+      )}
     </div>
   )
 }
