@@ -138,7 +138,7 @@ const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
 const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
 const EMPTY_RUNTIME_WORK: RuntimeWorkListResponse = {
   projects: [],
-  unmappedDeviceWorkspaces: [],
+  chats: [],
   totalLocalTasks: 0,
 }
 
@@ -268,6 +268,7 @@ export interface WorkbenchContextValue {
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts: CodeCommentContext[]
   currentRuntimeTaskRunning: boolean
+  isAwaitingAssistantStart: boolean
   isRuntimeTranscriptLoading: boolean
   runtimeTranscriptHasMoreBefore: boolean
   isRuntimeTranscriptLoadingMore: boolean
@@ -302,14 +303,22 @@ export interface WorkbenchContextValue {
   selectProject: (projectId: number | null) => void
   selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
-  openStandaloneWorkspace: (deviceId: string, workspacePath: string) => void
+  openStandaloneWorkspace: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void>
   startNewChat: () => void
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadOlderRuntimeTranscript: () => Promise<void>
+  renameRuntimeLocalTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
   archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  archiveProjectConversations: (runtimeProjectKey: string) => Promise<void>
+  archiveProjectsConversations: (runtimeProjectKeys: string[]) => Promise<void>
+  archiveChatConversations: (addresses: RuntimeTaskAddress[]) => Promise<void>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
@@ -442,6 +451,34 @@ function isSameRuntimeTaskIdentity(
   )
 }
 
+function isSameRuntimeTaskAddress(
+  left: RuntimeTaskAddress | null | undefined,
+  right: RuntimeTaskAddress
+): boolean {
+  return Boolean(left && left.deviceId === right.deviceId && left.localTaskId === right.localTaskId)
+}
+
+function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
+  return workspaces.flatMap(workspace =>
+    workspace.localTasks.map(task => ({
+      deviceId: workspace.deviceId,
+      localTaskId: task.localTaskId,
+    }))
+  )
+}
+
+function projectTaskAddresses(
+  runtimeWork: RuntimeWorkListResponse | null,
+  runtimeProjectKeys: string[]
+): RuntimeTaskAddress[] {
+  if (!runtimeWork || runtimeProjectKeys.length === 0) return []
+
+  const keySet = new Set(runtimeProjectKeys)
+  return runtimeWork.projects.flatMap(projectWork =>
+    keySet.has(projectWork.project.key) ? workspaceTaskAddresses(projectWork.deviceWorkspaces) : []
+  )
+}
+
 function resolveRuntimeTaskRouteAddress(
   runtimeWork: RuntimeWorkListResponse | null,
   route: RuntimeTaskRoute
@@ -450,7 +487,7 @@ function resolveRuntimeTaskRouteAddress(
 
   const workspaces = [
     ...runtimeWork.projects.flatMap(projectWork => projectWork.deviceWorkspaces),
-    ...runtimeWork.unmappedDeviceWorkspaces,
+    ...runtimeWork.chats,
   ]
 
   for (const workspace of workspaces) {
@@ -734,7 +771,7 @@ function findRuntimeLocalTask(
 ): LocalTaskSummary | null {
   if (!runtimeWork || !address) return null
   const workspaces = [
-    ...runtimeWork.unmappedDeviceWorkspaces,
+    ...runtimeWork.chats,
     ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
   ]
 
@@ -820,7 +857,7 @@ function findRuntimeWorkspaceForDevice(
 ): string | null {
   if (!deviceId) return null
   const workspaces = [
-    ...(runtimeWork?.unmappedDeviceWorkspaces ?? []),
+    ...(runtimeWork?.chats ?? []),
     ...(runtimeWork?.projects ?? []).flatMap(project => project.deviceWorkspaces),
   ]
   const matches = workspaces.filter(
@@ -894,6 +931,15 @@ function buildRuntimeTaskTitle(message: string, fallback?: string): string {
   return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
 }
 
+function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']): string {
+  const prefix = runtime === 'codex' ? 'codex' : 'runtime'
+  const randomId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${randomId}`
+}
+
 export function WorkbenchProvider({ children, user, services }: WorkbenchProviderProps) {
   const resolvedServices = useMemo(() => services ?? createDefaultServices(), [services])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
@@ -913,7 +959,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     beforeCursor: null,
     loadingMore: false,
   })
-  const [, setIsAwaitingAssistantStart] = useState(false)
+  const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [routeSearch, setRouteSearch] = useState(() => window.location.search)
   const [projectExecutionMode, setProjectExecutionMode] =
@@ -1593,10 +1639,25 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const openStandaloneWorkspace = useCallback(
-    (deviceId: string, workspacePath: string) => {
+    async (deviceId: string, workspacePath: string, label?: string) => {
       const normalizedDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!normalizedDeviceId || !normalizedWorkspacePath) return
+      const normalizedLabel = label?.trim()
+      if (!resolvedServices.runtimeWorkApi) {
+        throw new Error('Local runtime work is unavailable')
+      }
+
+      const response = await resolvedServices.runtimeWorkApi.openRuntimeWorkspace({
+        deviceId: normalizedDeviceId,
+        workspacePath: normalizedWorkspacePath,
+        runtime: 'codex',
+        ...(normalizedLabel ? { label: normalizedLabel } : {}),
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || 'Failed to register runtime workspace')
+      }
+      await refreshWorkLists()
 
       rememberExecutionDevice(normalizedDeviceId)
       dispatch({
@@ -1611,14 +1672,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       cancelRuntimeTranscriptLoad()
       handledRuntimeTaskRouteRef.current = null
       navigateTo('/')
-      void resolvedServices.runtimeWorkApi
-        ?.openRuntimeWorkspace({
-          deviceId: normalizedDeviceId,
-          workspacePath: normalizedWorkspacePath,
-          runtime: 'codex',
-        })
-        .then(() => refreshWorkLists())
-        .catch(() => undefined)
     },
     [
       cancelRuntimeTranscriptLoad,
@@ -1642,6 +1695,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setQueuedSends([])
     setGuidanceMessages([])
     setCodeCommentContexts([])
+    setIsAwaitingAssistantStart(false)
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
     navigateTo('/')
@@ -1661,6 +1715,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setQueuedSends([])
     setGuidanceMessages([])
     setCodeCommentContexts([])
+    setIsAwaitingAssistantStart(false)
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
     navigateTo('/')
@@ -1677,6 +1732,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const openRuntimeLocalTask = useCallback(
     async (address: RuntimeTaskAddress) => {
+      if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) {
+        return
+      }
+
       if (!resolvedServices.runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
@@ -1707,6 +1766,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       if (project) {
         writeLastProjectId(user.id, project.id)
       }
+      setIsAwaitingAssistantStart(false)
       dispatch({
         type: 'runtime_task_opened',
         address,
@@ -1751,6 +1811,29 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices.runtimeWorkApi, state.projects, state.runtimeWork, user.id]
   )
 
+  const clearCurrentRuntimeTaskView = useCallback(() => {
+    dispatch({ type: 'current_task_cleared' })
+    currentRuntimeTaskRef.current = null
+    dispatchMessages({ type: 'reset', messages: [] })
+    setQueuedSends([])
+    setGuidanceMessages([])
+    setCodeCommentContexts([])
+    handledRuntimeTaskRouteRef.current = null
+    navigateTo('/')
+  }, [])
+
+  const clearCurrentRuntimeTaskIfArchived = useCallback(
+    (addresses: RuntimeTaskAddress[]) => {
+      if (
+        !addresses.some(address => isSameRuntimeTaskAddress(currentRuntimeTaskRef.current, address))
+      ) {
+        return
+      }
+      clearCurrentRuntimeTaskView()
+    },
+    [clearCurrentRuntimeTaskView]
+  )
+
   const archiveRuntimeLocalTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       if (!resolvedServices.runtimeWorkApi) {
@@ -1758,7 +1841,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
-      const response = await resolvedServices.runtimeWorkApi.archiveRuntimeTask(address)
+      const response = await resolvedServices.runtimeWorkApi.archiveConversation(address)
       if (!response.accepted) {
         dispatch({ type: 'error_set', error: response.error || 'Failed to archive runtime task' })
         return
@@ -1768,19 +1851,127 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         state.currentRuntimeTask?.deviceId === address.deviceId &&
         state.currentRuntimeTask.localTaskId === address.localTaskId
       ) {
-        dispatch({ type: 'current_task_cleared' })
-        currentRuntimeTaskRef.current = null
-        dispatchMessages({ type: 'reset', messages: [] })
-        setQueuedSends([])
-        setGuidanceMessages([])
-        setCodeCommentContexts([])
-        handledRuntimeTaskRouteRef.current = null
-        navigateTo('/')
+        clearCurrentRuntimeTaskView()
       }
 
       await refreshWorkLists()
     },
-    [refreshWorkLists, resolvedServices.runtimeWorkApi, state.currentRuntimeTask]
+    [
+      clearCurrentRuntimeTaskView,
+      refreshWorkLists,
+      resolvedServices.runtimeWorkApi,
+      state.currentRuntimeTask,
+    ]
+  )
+
+  const renameRuntimeLocalTask = useCallback(
+    async (address: RuntimeTaskAddress, title: string) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
+        return
+      }
+
+      const response = await resolvedServices.runtimeWorkApi.renameRuntimeTask({
+        address,
+        title,
+      })
+      if (!response.accepted) {
+        dispatch({ type: 'error_set', error: response.error || 'Failed to rename runtime task' })
+        return
+      }
+
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices.runtimeWorkApi]
+  )
+
+  const archiveProjectConversations = useCallback(
+    async (runtimeProjectKey: string) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
+        return
+      }
+      const response = await resolvedServices.runtimeWorkApi.archiveProjectConversations({
+        runtimeProjectKey,
+      })
+      if (!response.accepted) {
+        dispatch({ type: 'error_set', error: response.error || 'Failed to archive project' })
+        return
+      }
+      clearCurrentRuntimeTaskIfArchived(
+        projectTaskAddresses(state.runtimeWork, [runtimeProjectKey])
+      )
+      await refreshWorkLists()
+    },
+    [
+      clearCurrentRuntimeTaskIfArchived,
+      refreshWorkLists,
+      resolvedServices.runtimeWorkApi,
+      state.runtimeWork,
+    ]
+  )
+
+  const archiveProjectsConversations = useCallback(
+    async (runtimeProjectKeys: string[]) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
+        return
+      }
+
+      const uniqueProjectKeys = [...new Set(runtimeProjectKeys.filter(Boolean))]
+      if (uniqueProjectKeys.length === 0) return
+
+      const archivedAddresses = projectTaskAddresses(state.runtimeWork, uniqueProjectKeys)
+      const responses = await Promise.all(
+        uniqueProjectKeys.map(runtimeProjectKey =>
+          resolvedServices.runtimeWorkApi.archiveProjectConversations({ runtimeProjectKey })
+        )
+      )
+      const failedResponse = responses.find(response => !response.accepted)
+      if (failedResponse) {
+        dispatch({
+          type: 'error_set',
+          error: failedResponse.error || 'Failed to archive project conversations',
+        })
+        return
+      }
+
+      clearCurrentRuntimeTaskIfArchived(archivedAddresses)
+      await refreshWorkLists()
+    },
+    [
+      clearCurrentRuntimeTaskIfArchived,
+      refreshWorkLists,
+      resolvedServices.runtimeWorkApi,
+      state.runtimeWork,
+    ]
+  )
+
+  const archiveChatConversations = useCallback(
+    async (addresses: RuntimeTaskAddress[]) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
+        return
+      }
+
+      if (addresses.length === 0) return
+
+      const responses = await Promise.all(
+        addresses.map(address => resolvedServices.runtimeWorkApi.archiveConversation(address))
+      )
+      const failedResponse = responses.find(response => !response.accepted)
+      if (failedResponse) {
+        dispatch({
+          type: 'error_set',
+          error: failedResponse.error || 'Failed to archive chat conversations',
+        })
+        return
+      }
+
+      clearCurrentRuntimeTaskIfArchived(addresses)
+      await refreshWorkLists()
+    },
+    [clearCurrentRuntimeTaskIfArchived, refreshWorkLists, resolvedServices.runtimeWorkApi]
   )
 
   const searchRuntimeWork = useCallback(
@@ -2048,18 +2239,49 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const updateProjectName = useCallback(
     async (projectId: number, name: string) => {
+      const runtimeWorkspace = findProjectDeviceWorkspace(state.runtimeWork, projectId, null)
+      if (runtimeWorkspace && resolvedServices.runtimeWorkApi) {
+        const response = await resolvedServices.runtimeWorkApi.renameRuntimeWorkspace({
+          deviceId: runtimeWorkspace.deviceId,
+          workspacePath: runtimeWorkspace.workspacePath,
+          runtime: 'codex',
+          name,
+        })
+        if (!response.accepted) {
+          const message = response.error || 'Failed to rename runtime workspace'
+          dispatch({ type: 'error_set', error: message })
+          throw new Error(message)
+        }
+        await refreshWorkLists()
+        return
+      }
       await resolvedServices.projectApi.updateProject(projectId, { name })
       await refreshWorkLists()
     },
-    [refreshWorkLists, resolvedServices]
+    [refreshWorkLists, resolvedServices, state.runtimeWork]
   )
 
   const removeProject = useCallback(
     async (projectId: number) => {
+      const runtimeWorkspace = findProjectDeviceWorkspace(state.runtimeWork, projectId, null)
+      if (runtimeWorkspace && resolvedServices.runtimeWorkApi) {
+        const response = await resolvedServices.runtimeWorkApi.removeRuntimeWorkspace({
+          deviceId: runtimeWorkspace.deviceId,
+          workspacePath: runtimeWorkspace.workspacePath,
+          runtime: 'codex',
+        })
+        if (!response.accepted) {
+          const message = response.error || 'Failed to remove runtime workspace'
+          dispatch({ type: 'error_set', error: message })
+          throw new Error(message)
+        }
+        await refreshWorkLists()
+        return
+      }
       await resolvedServices.projectApi.deleteProject(projectId)
       await refreshWorkLists()
     },
-    [refreshWorkLists, resolvedServices]
+    [refreshWorkLists, resolvedServices, state.runtimeWork]
   )
 
   const getDeviceHomeDirectory = useCallback(
@@ -2144,6 +2366,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [messages]
   )
   const hasActiveTurn = Boolean(activeAssistantMessage)
+  const currentRuntimeTaskBusy =
+    currentRuntimeTaskRunning || hasActiveTurn || isAwaitingAssistantStart
 
   const buildSendPayload = useCallback(
     (
@@ -2255,11 +2479,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         RuntimeTaskCreateRequest,
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
+      let optimisticDeviceId: string
       if (projectId) {
         if (!selectedProjectWorkspace) {
           reportSendBlocked('请选择任务运行位置')
           return false
         }
+        optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
           selectedProjectWorkspace.id != null
             ? {
@@ -2278,6 +2504,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           reportSendBlocked('请选择项目或打开设备工作区后再发送')
           return false
         }
+        optimisticDeviceId = activeDeviceId
         runtimeTaskTarget = {
           deviceId: activeDeviceId,
           workspacePath,
@@ -2286,10 +2513,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
       const selectedModel =
         modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+      const runtime = inferRuntimeName(selectedModel)
+      const localTaskId = createRuntimeLocalTaskId(runtime)
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
+        localTaskId,
         teamId: payload.team_id,
-        runtime: inferRuntimeName(selectedModel),
+        runtime,
         message: payload.message,
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
@@ -2299,6 +2529,24 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         attachmentIds: payload.attachment_ids ?? [],
         execution: payload.execution,
       }
+      const optimisticAddress: RuntimeTaskAddress = {
+        deviceId: optimisticDeviceId,
+        localTaskId,
+      }
+      const runtimeProject = projectId
+        ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
+        : null
+
+      if (optimisticAddress.deviceId) rememberExecutionDevice(optimisticAddress.deviceId)
+      currentRuntimeTaskRef.current = optimisticAddress
+      dispatch({
+        type: 'runtime_task_opened',
+        address: optimisticAddress,
+        project: runtimeProject,
+      })
+      handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(optimisticAddress)
+      navigateTo(buildRuntimeTaskRoute(optimisticAddress))
+      setIsAwaitingAssistantStart(true)
 
       dispatch({ type: 'sending_started' })
       dispatchMessages({
@@ -2320,19 +2568,20 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           throw new Error(response.error || '发送失败')
         }
         const address: RuntimeTaskAddress = {
-          deviceId: response.deviceId,
-          localTaskId: response.localTaskId,
+          deviceId: response.deviceId || optimisticAddress.deviceId,
+          localTaskId: response.localTaskId || optimisticAddress.localTaskId,
         }
-        const runtimeProject = projectId
-          ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
-          : null
-        if (address.deviceId) rememberExecutionDevice(address.deviceId)
-        currentRuntimeTaskRef.current = address
-        dispatch({
-          type: 'runtime_task_opened',
-          address,
-          project: runtimeProject,
-        })
+        if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {
+          if (address.deviceId) rememberExecutionDevice(address.deviceId)
+          currentRuntimeTaskRef.current = address
+          dispatch({
+            type: 'runtime_task_opened',
+            address,
+            project: runtimeProject,
+          })
+          handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(address)
+          navigateTo(buildRuntimeTaskRoute(address))
+        }
         await refreshWorkLists()
         // A freshly created task has no prior history, so reset pagination
         // directly instead of re-fetching the transcript. Re-fetching here would
@@ -2348,6 +2597,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         navigateTo(buildRuntimeTaskRoute(address))
         return true
       } catch (error) {
+        if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, optimisticAddress)) {
+          currentRuntimeTaskRef.current = null
+          setIsAwaitingAssistantStart(false)
+          dispatch({ type: 'current_task_cleared' })
+          handledRuntimeTaskRouteRef.current = null
+          navigateTo('/')
+        }
         dispatch({
           type: 'error_set',
           error: error instanceof Error ? error.message : '发送失败',
@@ -2390,7 +2646,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         reportSendBlocked('当前 LocalTask 暂不支持代码评论')
         return
       }
-      if (currentRuntimeTaskRunning || hasActiveTurn) {
+      if (currentRuntimeTaskBusy) {
         const currentAttachments = attachmentSelection.attachments
         setQueuedSends(items => [
           ...items,
@@ -2427,6 +2683,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         },
       })
       attachmentSelection.resetAttachments()
+      setIsAwaitingAssistantStart(true)
 
       try {
         const runtimeSendRequest: RuntimeSendRequest = {
@@ -2443,6 +2700,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
         await refreshWorkLists()
       } catch (error) {
+        setIsAwaitingAssistantStart(false)
         dispatch({
           type: 'error_set',
           error: error instanceof Error ? error.message : '发送失败',
@@ -2513,8 +2771,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     buildSendPayload,
     clearCodeCommentContexts,
     codeCommentContexts,
-    currentRuntimeTaskRunning,
-    hasActiveTurn,
+    currentRuntimeTaskBusy,
     reportSendBlocked,
     sendPreparedRuntimeMessage,
     state.devices,
@@ -2529,7 +2786,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   useEffect(() => {
     const queuedMessage = queuedSends.find(item => item.status === 'queued')
     if (!queuedMessage) return
-    if (!state.currentRuntimeTask || currentRuntimeTaskRunning || hasActiveTurn) return
+    if (!state.currentRuntimeTask || currentRuntimeTaskBusy) return
     if (queuedSends.some(item => item.status === 'sending')) return
     const runtimeWorkApi = resolvedServices.runtimeWorkApi
     if (!runtimeWorkApi) return
@@ -2543,6 +2800,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         item.id === queuedMessageToSend.id ? { ...item, status: 'sending' } : item
       )
     )
+    setIsAwaitingAssistantStart(true)
 
     async function sendQueuedRuntimeMessage() {
       try {
@@ -2575,6 +2833,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         setQueuedSends(items => items.filter(item => item.id !== queuedMessageToSend.id))
         await refreshWorkLists()
       } catch (error) {
+        setIsAwaitingAssistantStart(false)
         setQueuedSends(items =>
           items.map(item =>
             item.id === queuedMessageToSend.id
@@ -2591,8 +2850,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
     void sendQueuedRuntimeMessage()
   }, [
-    currentRuntimeTaskRunning,
-    hasActiveTurn,
+    currentRuntimeTaskBusy,
     queuedSends,
     refreshWorkLists,
     resolvedServices.runtimeWorkApi,
@@ -2888,6 +3146,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
                 attachment => attachment.id
               )
             }
+            setIsAwaitingAssistantStart(true)
             dispatchMessages({
               type: 'user_added',
               message: {
@@ -2906,6 +3165,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             setQueuedSends(items => items.filter(item => item.id !== id))
             await refreshWorkLists()
           } catch (error) {
+            setIsAwaitingAssistantStart(false)
             setQueuedSends(items =>
               items.map(item =>
                 item.id === id
@@ -3016,6 +3276,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     guidanceMessages,
     codeCommentContexts,
     currentRuntimeTaskRunning,
+    isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore: runtimeTranscriptPage.hasMoreBefore,
     isRuntimeTranscriptLoadingMore: runtimeTranscriptPage.loadingMore,
@@ -3057,7 +3318,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openRuntimeLocalTask,
     searchRuntimeWork,
     loadOlderRuntimeTranscript,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     forkCurrentRuntimeTask,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,

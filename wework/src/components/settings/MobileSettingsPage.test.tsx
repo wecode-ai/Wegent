@@ -21,6 +21,9 @@ describe('MobileSettingsPage', () => {
     expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
     expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent('工作树')
+    expect(screen.getByTestId('mobile-settings-archived-conversations-button')).toHaveTextContent(
+      '已归档对话'
+    )
     expect(screen.getByTestId('mobile-settings-skills-button')).toHaveTextContent('技能')
 
     await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))

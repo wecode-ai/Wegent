@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -152,6 +153,12 @@ def _git_status_command(
 def _expected_runtime_fork_worktree_path(target_path: str, transfer_id: str) -> str:
     parent, project_dir = target_path.rstrip("/").rsplit("/", maxsplit=1)
     return f"{parent}/worktrees/{transfer_id}/{project_dir}"
+
+
+def _mock_runtime_workspace_open(runtime_work_service, monkeypatch) -> AsyncMock:
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    return rpc
 
 
 @pytest.mark.asyncio
@@ -340,6 +347,7 @@ async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
     monkeypatch.setattr(
         runtime_work_service, "execute_configured_device_command", execute
     )
+    rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
         db=test_db,
@@ -360,6 +368,17 @@ async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
         ("project_folder_status", ["/repo/Wegent"]),
         ("mkdir_p", ["/repo/Wegent"]),
     ]
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspaces.open",
+        payload={
+            "runtime": "codex",
+            "workspacePath": "/repo/Wegent",
+            "label": "Wegent",
+        },
+        timeout_seconds=60,
+    )
 
 
 @pytest.mark.asyncio
@@ -390,6 +409,7 @@ async def test_prepare_plain_device_workspace_accepts_already_created_empty_dire
     monkeypatch.setattr(
         runtime_work_service, "execute_configured_device_command", execute
     )
+    rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
         db=test_db,
@@ -407,6 +427,7 @@ async def test_prepare_plain_device_workspace_accepts_already_created_empty_dire
     assert response.mapping.repo_url is None
     assert response.prepared_action == "created"
     assert calls == [("project_folder_status", ["/repo/Wegent"])]
+    rpc.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -437,6 +458,7 @@ async def test_prepare_git_device_workspace_clones_into_empty_directory(
     monkeypatch.setattr(
         runtime_work_service, "execute_configured_device_command", execute
     )
+    rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
         db=test_db,
@@ -461,6 +483,7 @@ async def test_prepare_git_device_workspace_clones_into_empty_directory(
             "/repo/Wegent",
         ],
     ) in calls
+    rpc.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -490,6 +513,7 @@ async def test_prepare_git_device_workspace_rejects_nonmatching_nonempty_directo
     monkeypatch.setattr(
         runtime_work_service, "execute_configured_device_command", execute
     )
+    rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
         await runtime_work_service.prepare_device_workspace(
@@ -506,6 +530,7 @@ async def test_prepare_git_device_workspace_rejects_nonmatching_nonempty_directo
     assert exc.value.status_code == 409
     assert "other repository" in exc.value.detail
     assert test_db.query(Kind).filter(Kind.kind == "DeviceWorkspace").count() == 0
+    rpc.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -604,26 +629,24 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
 
     assert response.total_local_tasks == 3
     assert [project_work.project.name for project_work in response.projects] == [
-        "spike",
         "Wegent",
+        "spike",
     ]
     assert [project_work.project.key for project_work in response.projects] == [
-        "device-1:/tmp/spike",
         "device-1:/repo/Wegent",
+        "device-1:/tmp/spike",
     ]
-    assert response.projects[0].device_workspaces[0].workspace_path == "/tmp/spike"
+    assert response.projects[0].device_workspaces[0].workspace_path == "/repo/Wegent"
     assert response.projects[0].device_workspaces[0].id is None
     assert response.projects[0].device_workspaces[0].project_id is None
     assert response.projects[0].device_workspaces[0].mapped is True
     assert (
-        response.projects[1].device_workspaces[0].local_tasks[0].local_task_id
+        response.projects[0].device_workspaces[0].local_tasks[0].local_task_id
         == "codex-1"
     )
-    assert len(response.unmapped_device_workspaces) == 1
-    assert response.unmapped_device_workspaces[0].workspace_kind == "chat"
-    assert (
-        response.unmapped_device_workspaces[0].local_tasks[0].local_task_id == "chat-1"
-    )
+    assert len(response.chats) == 1
+    assert response.chats[0].workspace_kind == "chat"
+    assert response.chats[0].local_tasks[0].local_task_id == "chat-1"
     rpc.assert_awaited_once()
     assert test_db.query(TaskResource).count() == 0
 
@@ -658,6 +681,9 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
                 "workspaces": [
                     {
                         "workspacePath": "/Users/crystal/Documents/hello-0",
+                        "label": "Hello project",
+                        "workspaceSource": "remote",
+                        "remoteHostId": "remote-ssh-discovered:10.201.3.200",
                         "localTasks": [],
                     }
                 ]
@@ -672,12 +698,92 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
 
     assert response.total_local_tasks == 0
     assert [project_work.project.name for project_work in response.projects] == [
-        "hello-0"
+        "Hello project"
     ]
     workspace = response.projects[0].device_workspaces[0]
     assert workspace.workspace_path == "/Users/crystal/Documents/hello-0"
+    assert workspace.label == "Hello project"
+    assert workspace.workspace_source == "remote"
+    assert workspace.remote_host_id == "remote-ssh-discovered:10.201.3.200"
     assert workspace.local_tasks == []
     assert workspace.mapped is True
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_work_orders_local_devices_first_and_keeps_executor_order(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "cloud-device",
+                    "name": "Cloud",
+                    "status": "online",
+                    "device_type": "cloud",
+                },
+                {
+                    "device_id": "local-device",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                },
+            ]
+        ),
+    )
+
+    async def rpc_side_effect(**kwargs):
+        if kwargs["device_id"] == "cloud-device":
+            return {
+                "workspaces": [
+                    {
+                        "workspacePath": "/cloud/remote-project",
+                        "label": "remote-project",
+                        "localTasks": [],
+                    }
+                ]
+            }
+        return {
+            "workspaces": [
+                {
+                    "workspacePath": "/local/weekly-report-2",
+                    "label": "weekly-report-2",
+                    "localTasks": [],
+                },
+                {
+                    "workspacePath": "/local/Wegent",
+                    "label": "Wegent",
+                    "localTasks": [],
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(side_effect=rpc_side_effect),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert [project_work.project.name for project_work in response.projects] == [
+        "weekly-report-2",
+        "Wegent",
+        "remote-project",
+    ]
+    assert [
+        project_work.device_workspaces[0].device_id
+        for project_work in response.projects
+    ] == ["local-device", "local-device", "cloud-device"]
 
 
 @pytest.mark.asyncio
@@ -739,7 +845,7 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
     assert workspace.worktree_id == "42"
     assert task.workspace_kind == "worktree"
     assert task.worktree_id == "42"
-    assert response.unmapped_device_workspaces == []
+    assert response.chats == []
 
 
 @pytest.mark.asyncio
@@ -910,9 +1016,59 @@ async def test_list_runtime_work_skips_offline_devices(
     )
 
     assert response.projects == []
-    assert response.unmapped_device_workspaces == []
+    assert response.chats == []
     assert response.total_local_tasks == 0
     rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_work_queries_online_devices_concurrently(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "device-1",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                },
+                {
+                    "device_id": "device-2",
+                    "name": "Remote",
+                    "status": "online",
+                    "device_type": "remote",
+                },
+            ]
+        ),
+    )
+
+    async def rpc_side_effect(**_kwargs):
+        await asyncio.sleep(0.2)
+        return {"workspaces": []}
+
+    rpc = AsyncMock(side_effect=rpc_side_effect)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    started_at = time.perf_counter()
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+    )
+    elapsed = time.perf_counter() - started_at
+
+    assert response.projects == []
+    assert response.chats == []
+    assert response.total_local_tasks == 0
+    assert rpc.await_count == 2
+    assert elapsed < 0.35
 
 
 @pytest.mark.asyncio
@@ -1123,6 +1279,228 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
 
 
 @pytest.mark.asyncio
+async def test_rename_runtime_task_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTaskRenameRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.rename_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskRenameRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                workspacePath="/repo/Wegent",
+                localTaskId="codex-1",
+            ),
+            title="  对齐需求核心点  ",
+        ),
+    )
+
+    assert response.accepted is True
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.rename",
+        payload={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+            "title": "对齐需求核心点",
+        },
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_archived_conversations_dispatches_to_online_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        ArchivedConversationsListRequest,
+        DeviceWorkspaceUpsert,
+    )
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "device-1",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                    "client_ip": "192.168.1.24",
+                }
+            ]
+        ),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "items": [
+                {
+                    "id": "codex-1",
+                    "localTaskId": "codex-1",
+                    "title": "Archived thread",
+                    "workspacePath": "/repo/Wegent",
+                    "runtime": "codex",
+                    "source": "local",
+                    "createdAt": "2026-06-21T02:15:37Z",
+                    "updatedAt": "2026-06-21T02:15:58Z",
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.list_archived_conversations(
+        db=test_db,
+        user_id=test_user.id,
+        request=ArchivedConversationsListRequest(),
+    )
+
+    assert response.total == 1
+    assert response.items[0].id == "device-1:codex-1"
+    assert response.items[0].project_id == project.id
+    assert response.items[0].project_name == project.name
+    assert response.items[0].source == "local"
+    assert response.items[0].device_name == "MacBook"
+    assert response.items[0].device_address == "192.168.1.24"
+    assert response.project_groups[0].count == 1
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.archived_conversations.list",
+        payload={},
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_archived_conversations_local_filter_skips_non_local_devices(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import ArchivedConversationsListRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "remote-device",
+                    "name": "Remote executor",
+                    "status": "online",
+                    "device_type": "remote",
+                },
+                {
+                    "device_id": "cloud-device",
+                    "name": "Cloud executor",
+                    "status": "online",
+                    "device_type": "cloud",
+                },
+            ]
+        ),
+    )
+    rpc = AsyncMock(return_value={"success": True, "items": []})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.list_archived_conversations(
+        db=test_db,
+        user_id=test_user.id,
+        request=ArchivedConversationsListRequest(source="local"),
+    )
+
+    assert response.total == 0
+    assert response.items == []
+    rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unarchive_conversation_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.unarchive_conversation(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskAddress(
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            localTaskId="codex-1",
+        ),
+    )
+
+    assert response.accepted is True
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.archived_conversations.unarchive",
+        payload={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,
@@ -1168,6 +1546,70 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
         timeout_seconds=30,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_archived_conversations_bulk_groups_by_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeArchivedConversationBulkRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(return_value={"success": True, "deletedCount": 2})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.delete_archived_conversations_bulk(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeArchivedConversationBulkRequest(
+            items=[
+                RuntimeTaskAddress(
+                    deviceId="device-1",
+                    workspacePath="/repo/Wegent",
+                    localTaskId="codex-1",
+                ),
+                RuntimeTaskAddress(
+                    deviceId="device-1",
+                    workspacePath="/repo/Wegent",
+                    localTaskId="codex-2",
+                ),
+            ]
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.requested_count == 2
+    assert response.deleted_count == 2
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.archived_conversations.delete_bulk",
+        payload={
+            "items": [
+                {
+                    "deviceId": "device-1",
+                    "workspacePath": "/repo/Wegent",
+                    "localTaskId": "codex-1",
+                },
+                {
+                    "deviceId": "device-1",
+                    "workspacePath": "/repo/Wegent",
+                    "localTaskId": "codex-2",
+                },
+            ]
+        },
+        timeout_seconds=30,
+    )
 
 
 @pytest.mark.asyncio
@@ -1356,6 +1798,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
+            localTaskId="runtime-client-1",
             teamId=3,
             runtime="claude_code",
             message="create runtime task",
@@ -1372,6 +1815,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         method="runtime.tasks.create",
         payload={
             "runtime": "claude_code",
+            "localTaskId": "runtime-client-1",
             "workspacePath": "/repo/Wegent",
             "message": "create runtime task",
             "title": "Create runtime task",
@@ -1468,7 +1912,6 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
             "accepted": True,
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
-            "threadId": "thread-1",
         }
     )
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
@@ -1484,7 +1927,7 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
     )
 
     assert response.accepted is True
-    assert response.thread_id == "thread-1"
+    assert response.thread_id is None
     assert response.workspace_path == "/Users/crystal/Documents/hello-0"
     rpc.assert_awaited_once_with(
         user_id=test_user.id,
@@ -1497,6 +1940,104 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
         timeout_seconds=60,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_rename_runtime_workspace_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkspaceRenameRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.rename_runtime_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkspaceRenameRequest(
+            deviceId="device-1",
+            workspacePath="/Users/crystal/Documents/hello-0/",
+            runtime="codex",
+            name="  Hello project  ",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.workspace_path == "/Users/crystal/Documents/hello-0"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspaces.rename",
+        payload={
+            "runtime": "codex",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "label": "Hello project",
+        },
+        timeout_seconds=60,
+    )
+
+
+@pytest.mark.asyncio
+async def test_remove_runtime_workspace_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkspaceRemoveRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.remove_runtime_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkspaceRemoveRequest(
+            deviceId="device-1",
+            workspacePath="/Users/crystal/Documents/hello-0/",
+            runtime="codex",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.workspace_path == "/Users/crystal/Documents/hello-0"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspaces.remove",
+        payload={
+            "runtime": "codex",
+            "workspacePath": "/Users/crystal/Documents/hello-0",
+        },
+        timeout_seconds=60,
+    )
 
 
 @pytest.mark.asyncio
@@ -2113,7 +2654,7 @@ async def test_fork_runtime_task_without_source_workspace_path_resolves_git_work
 
 
 @pytest.mark.asyncio
-async def test_fork_runtime_task_uses_target_git_project_for_unmapped_worktree(
+async def test_fork_runtime_task_uses_target_git_project_for_non_project_worktree(
     test_db,
     test_user,
     monkeypatch,

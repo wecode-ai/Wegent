@@ -46,6 +46,7 @@ def test_build_codex_config_maps_provider_and_reasoning():
 
     assert config.model == "gpt-5.5"
     assert config.model_provider == "wecode-openai"
+    assert config.use_user_config is False
     assert "forced_login_method=api" in config.config_overrides
     assert "model_provider=wecode-openai" in config.config_overrides
     assert (
@@ -197,6 +198,7 @@ def test_build_codex_config_uses_user_runtime_config(monkeypatch):
 
     assert config.model == "gpt-5.5"
     assert config.model_provider is None
+    assert config.use_user_config is True
     assert config.config_overrides == ("model=gpt-5.5",)
     assert config.thread_config == {
         "model_reasoning_effort": "high",
@@ -233,6 +235,7 @@ def test_build_codex_config_adds_project_header_to_user_runtime_provider():
     )
 
     assert config.model_provider == "openai"
+    assert config.use_user_config is True
     assert (
         'model_providers.openai.http_headers.wecode-project="42"'
         in config.config_overrides

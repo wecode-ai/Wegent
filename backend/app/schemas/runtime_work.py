@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
+RuntimeWorkspaceSource = Literal["local", "remote"]
 
 
 class RuntimeTaskAddress(BaseModel):
@@ -173,6 +174,7 @@ class DeviceWorkspacePrepareResponse(BaseModel):
 class RuntimeProjectRef(BaseModel):
     """Runtime workspace identity used by runtime work lists."""
 
+    id: Optional[int] = None
     key: str
     name: str
     description: str = ""
@@ -201,6 +203,11 @@ class RuntimeDeviceWorkspace(BaseModel):
         alias="repoRootFingerprint",
     )
     label: Optional[str] = None
+    workspace_source: Optional[RuntimeWorkspaceSource] = Field(
+        default=None,
+        alias="workspaceSource",
+    )
+    remote_host_id: Optional[str] = Field(default=None, alias="remoteHostId")
     mapped: bool
     available: bool
     error: Optional[str] = None
@@ -228,11 +235,110 @@ class RuntimeWorkListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     projects: list[RuntimeProjectWork] = Field(default_factory=list)
-    unmapped_device_workspaces: list[RuntimeDeviceWorkspace] = Field(
+    chats: list[RuntimeDeviceWorkspace] = Field(
         default_factory=list,
-        alias="unmappedDeviceWorkspaces",
+        alias="chats",
     )
     total_local_tasks: int = Field(..., alias="totalLocalTasks")
+
+
+class ArchivedConversationsListRequest(BaseModel):
+    """Filter archived conversations stored on the user's devices."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: Optional[str] = Field(default=None, alias="deviceId")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+    runtime_project_key: Optional[str] = Field(
+        default=None,
+        alias="runtimeProjectKey",
+    )
+    search: Optional[str] = None
+    source: Literal["all", "local", "cloud"] = "all"
+    sort: Literal["updated", "created", "alphabetical"] = "updated"
+
+
+class ArchivedConversationItem(BaseModel):
+    """Archived conversation metadata normalized by Backend."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    local_task_id: str = Field(..., alias="localTaskId")
+    title: str
+    project_id: Optional[int] = Field(default=None, alias="projectId")
+    project_key: Optional[str] = Field(default=None, alias="projectKey")
+    project_name: Optional[str] = Field(default=None, alias="projectName")
+    workspace_path: str = Field(..., alias="workspacePath")
+    workspace_kind: RuntimeWorkspaceKind = Field(
+        default="workspace",
+        alias="workspaceKind",
+    )
+    device_id: str = Field(..., alias="deviceId")
+    device_name: Optional[str] = Field(default=None, alias="deviceName")
+    device_address: Optional[str] = Field(default=None, alias="deviceAddress")
+    source: Literal["local", "cloud"] = "local"
+    runtime: Optional[RuntimeName] = None
+    created_at: Optional[str] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+
+
+class ArchivedConversationProjectGroup(BaseModel):
+    """Archived conversation counts grouped by project/workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_id: Optional[int] = Field(default=None, alias="projectId")
+    project_key: Optional[str] = Field(default=None, alias="projectKey")
+    project_name: str = Field(..., alias="projectName")
+    count: int
+
+
+class ArchivedConversationsListResponse(BaseModel):
+    """Archived conversations plus project-group counts."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[ArchivedConversationItem] = Field(default_factory=list)
+    project_groups: list[ArchivedConversationProjectGroup] = Field(
+        default_factory=list,
+        alias="projectGroups",
+    )
+    total: int
+
+
+class RuntimeArchiveProjectConversationsRequest(BaseModel):
+    """Archive all active conversations under one runtime project."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+    runtime_project_key: Optional[str] = Field(
+        default=None,
+        alias="runtimeProjectKey",
+    )
+
+
+class RuntimeArchivedConversationBulkRequest(BaseModel):
+    """Bulk operation over device-local runtime task addresses."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[RuntimeTaskAddress] = Field(default_factory=list)
+
+
+class RuntimeArchivedConversationBulkResponse(BaseModel):
+    """Bulk archive/delete acknowledgement."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    requested_count: int = Field(..., alias="requestedCount")
+    accepted_count: int = Field(..., alias="acceptedCount")
+    deleted_count: Optional[int] = Field(default=None, alias="deletedCount")
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 class RuntimeTranscriptResponse(BaseModel):
@@ -317,6 +423,29 @@ class RuntimeSendResponse(BaseModel):
 
 class RuntimeWorkspaceOpenRequest(BaseModel):
     """Request to register/open a device-local runtime workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    runtime: RuntimeName = "codex"
+    label: Optional[str] = None
+    action: Optional[Literal["create", "select"]] = None
+
+
+class RuntimeWorkspaceRenameRequest(BaseModel):
+    """Request to rename a device-local runtime workspace project."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    runtime: RuntimeName = "codex"
+    name: str = Field(..., min_length=1)
+
+
+class RuntimeWorkspaceRemoveRequest(BaseModel):
+    """Request to remove a device-local runtime workspace project."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -442,6 +571,15 @@ class RuntimeTaskArchiveResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeTaskRenameRequest(BaseModel):
+    """Request to rename one device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    title: str = Field(..., min_length=1, max_length=120)
+
+
 class RuntimeTaskCancelResponse(BaseModel):
     """Acknowledgement from the runtime cancel RPC."""
 
@@ -466,6 +604,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
     team_id: int = Field(..., alias="teamId", ge=1)
     runtime: RuntimeName
     message: str = Field(..., min_length=1)

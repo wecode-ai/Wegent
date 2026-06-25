@@ -338,6 +338,8 @@ export interface RuntimeDeviceWorkspace {
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
   worktreeId?: string | null
   label?: string | null
+  workspaceSource?: 'local' | 'remote' | string | null
+  remoteHostId?: string | null
   repoUrl?: string | null
   repoRootFingerprint?: string | null
   mapped?: boolean
@@ -353,7 +355,7 @@ export interface RuntimeProjectWork {
 
 export interface RuntimeWorkListResponse {
   projects: RuntimeProjectWork[]
-  unmappedDeviceWorkspaces: RuntimeDeviceWorkspace[]
+  chats: RuntimeDeviceWorkspace[]
   totalLocalTasks: number
 }
 
@@ -419,6 +421,20 @@ export interface RuntimeSendResponse {
 }
 
 export interface RuntimeWorkspaceOpenRequest {
+  deviceId: string
+  workspacePath: string
+  runtime: RuntimeName
+  label?: string | null
+}
+
+export interface RuntimeWorkspaceRenameRequest {
+  deviceId: string
+  workspacePath: string
+  runtime: RuntimeName
+  name: string
+}
+
+export interface RuntimeWorkspaceRemoveRequest {
   deviceId: string
   workspacePath: string
   runtime: RuntimeName
@@ -494,6 +510,70 @@ export interface RuntimeTaskArchiveResponse {
   error?: string | null
 }
 
+export interface ArchivedConversationsListRequest {
+  deviceId?: string | null
+  workspacePath?: string | null
+  projectId?: number | null
+  runtimeProjectKey?: string | null
+  search?: string | null
+  source?: 'all' | 'local' | 'cloud'
+  sort?: 'updated' | 'created' | 'alphabetical'
+}
+
+export interface ArchivedConversationItem {
+  id: string
+  localTaskId: string
+  title: string
+  projectId?: number | null
+  projectKey?: string | null
+  projectName?: string | null
+  workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  deviceId: string
+  deviceName?: string | null
+  deviceAddress?: string | null
+  source: 'local' | 'cloud'
+  runtime?: RuntimeName | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ArchivedConversationProjectGroup {
+  projectId?: number | null
+  projectKey?: string | null
+  projectName: string
+  count: number
+}
+
+export interface ArchivedConversationsListResponse {
+  items: ArchivedConversationItem[]
+  projectGroups: ArchivedConversationProjectGroup[]
+  total: number
+}
+
+export interface RuntimeArchiveProjectConversationsRequest {
+  projectId?: number | null
+  runtimeProjectKey?: string | null
+}
+
+export interface RuntimeArchivedConversationBulkRequest {
+  items: RuntimeTaskAddress[]
+}
+
+export interface RuntimeArchivedConversationBulkResponse {
+  accepted: boolean
+  requestedCount: number
+  acceptedCount: number
+  deletedCount?: number | null
+  results: Record<string, unknown>[]
+  error?: string | null
+}
+
+export interface RuntimeTaskRenameRequest {
+  address: RuntimeTaskAddress
+  title: string
+}
+
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
   localTaskId: string
@@ -506,6 +586,7 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  localTaskId?: string
   teamId: number
   runtime: RuntimeName
   message: string

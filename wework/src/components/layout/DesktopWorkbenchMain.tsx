@@ -164,6 +164,7 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  isWaitingForAssistant?: boolean
   error?: string | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
@@ -225,6 +226,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  isWaitingForAssistant = isSending,
   error,
   environmentInfo,
   onRefreshEnvironmentInfo,
@@ -717,7 +719,7 @@ export function DesktopWorkbenchMain({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
-              isWaitingForAssistant={isSending}
+              isWaitingForAssistant={isWaitingForAssistant}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={currentRuntimeTask?.localTaskId ?? null}

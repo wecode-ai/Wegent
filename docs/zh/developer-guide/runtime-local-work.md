@@ -88,9 +88,29 @@ Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。executor
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
+## 已归档会话
+
+已归档会话同样是设备侧状态。Backend 只做用户、设备和工作区校验，然后把请求转发给目标 executor；它不会读取或写入 `TaskResource.STATE_ARCHIVED`，也不会调用中心库 `/tasks/archived`。Wework 的归档列表只从运行时 Project 和 Conversation 范围内产生，避免展示不属于当前 Codex Lite 侧栏的数据。
+
+归档相关 HTTP API 包括：
+
+```text
+POST /api/runtime-work/archived-conversations/list
+POST /api/runtime-work/archived-conversations/archive
+POST /api/runtime-work/archived-conversations/archive-project
+POST /api/runtime-work/archived-conversations/archive-all
+POST /api/runtime-work/archived-conversations/unarchive
+POST /api/runtime-work/archived-conversations/delete
+POST /api/runtime-work/archived-conversations/delete-bulk
+```
+
+executor 对原生 Codex 会话通过 Codex SDK 或本机 Codex state 执行 archive/unarchive；删除已归档会话时，需要在设备侧移除对应 Codex 本地 state 行以及 rollout/session 文件。列表响应会标准化 `id`、`localTaskId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。批量删除只作用于前端当前提交的归档项集合。
+
 图片附件上传成功后，Wework 会在当前页面的 `Attachment` 对象上保留一个前端本地的 `local_preview_url`，用于发送后立即展示图片预览，避免刚发送的消息再通过附件下载接口拉取同一张图片。该字段只属于前端渲染状态，不写入 Backend，也不会进入 `attachment_ids` 或 executor 请求；页面刷新后仍以持久化附件 ID 为准重新读取附件。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
+
+executor 从原生 Codex session 发现用户消息时，会把 `local_images`、`localImages` 或 `images` 中的本机图片路径写入用户可见文本，保持刷新后仍能看到“用户提到了哪些文件”。如果这些路径在当前设备上可读、是图片 MIME 类型且不超过 5 MB，executor 会额外生成只用于 transcript 渲染的 ready 附件，并把 `local_preview_url` 写成 data URL。这个预览附件不代表 Backend 持久化附件，也不会上传或同步到中心库。
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
@@ -116,6 +136,8 @@ POST /api/runtime-work/create
 ```
 
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+
+Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
 运行时创建的持久化位置由具体 runtime 决定：
 

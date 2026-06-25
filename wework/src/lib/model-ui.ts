@@ -154,16 +154,11 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
 
 function getConfigUi(model: UnifiedModel): Record<string, unknown> {
   const ui = model.config?.ui
-  return ui && typeof ui === 'object' && !Array.isArray(ui)
-    ? (ui as Record<string, unknown>)
-    : {}
+  return ui && typeof ui === 'object' && !Array.isArray(ui) ? (ui as Record<string, unknown>) : {}
 }
 
 function identityTextForModel(model: UnifiedModel): string {
-  return [model.name, model.displayName, model.modelId]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
+  return [model.name, model.displayName, model.modelId].filter(Boolean).join(' ').toLowerCase()
 }
 
 function normalizeCompatibilitySignal(value: unknown): string {
@@ -171,7 +166,7 @@ function normalizeCompatibilitySignal(value: unknown): string {
 }
 
 export function getModelCompatibilityFamily(
-  model?: ModelCompatibilitySource | null,
+  model?: ModelCompatibilitySource | null
 ): ModelCompatibilityFamily | null {
   if (!model) return null
   return normalizeCompatibilitySignal(model.runtime?.family) || null
@@ -186,7 +181,7 @@ function getCompatibilityRuntimeGroup(family: ModelCompatibilityFamily): string 
 
 export function areModelCompatibilityFamiliesCompatible(
   currentFamily?: ModelCompatibilityFamily | null,
-  nextFamily?: ModelCompatibilityFamily | null,
+  nextFamily?: ModelCompatibilityFamily | null
 ): boolean {
   if (!currentFamily || !nextFamily) return false
   return getCompatibilityRuntimeGroup(currentFamily) === getCompatibilityRuntimeGroup(nextFamily)
@@ -194,7 +189,7 @@ export function areModelCompatibilityFamiliesCompatible(
 
 export function areModelsProtocolCompatible(
   currentModel?: ModelCompatibilitySource | null,
-  nextModel?: ModelCompatibilitySource | null,
+  nextModel?: ModelCompatibilitySource | null
 ): boolean {
   const currentFamily = getModelCompatibilityFamily(currentModel)
   const nextFamily = getModelCompatibilityFamily(nextModel)
@@ -301,13 +296,13 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
 export function getModelDisplayLabel(
   model: UnifiedModel | null,
   options: ModelOptions = {},
-  resolveLabel?: LabelResolver,
+  resolveLabel?: LabelResolver
 ): string {
   if (!model) return ''
 
   const metadata = getModelUiMetadata(model)
   const controls = getControlsForModel(model)
-  const regionLabel = metadata.region ? REGION_LABELS[metadata.region] ?? metadata.region : ''
+  const regionLabel = metadata.region ? (REGION_LABELS[metadata.region] ?? metadata.region) : ''
   const controlLabels = controls
     .filter(control => control.includeInLabel !== 'never')
     .map(control => {
@@ -317,7 +312,7 @@ export function getModelDisplayLabel(
       }
       return resolveOptionSummaryLabel(
         control.options.find(option => option.value === selected),
-        resolveLabel,
+        resolveLabel
       )
     })
     .filter(Boolean)
@@ -330,7 +325,7 @@ export function getModelDisplayLabel(
 
 function resolveOptionLabel(
   option: ModelControlOption | undefined,
-  resolveLabel?: LabelResolver,
+  resolveLabel?: LabelResolver
 ): string {
   if (!option) return ''
   return option.labelKey && resolveLabel
@@ -340,7 +335,7 @@ function resolveOptionLabel(
 
 function resolveOptionSummaryLabel(
   option: ModelControlOption | undefined,
-  resolveLabel?: LabelResolver,
+  resolveLabel?: LabelResolver
 ): string {
   if (!option) return ''
   return option.summaryLabel || resolveOptionLabel(option, resolveLabel)
@@ -349,13 +344,13 @@ function resolveOptionSummaryLabel(
 export function getSelectedModelDisplayLabel(
   model: UnifiedModel | null,
   options: ModelOptions = {},
-  resolveLabel?: LabelResolver,
+  resolveLabel?: LabelResolver
 ): string {
   if (!model) return ''
 
   const metadata = getModelUiMetadata(model)
   const controls = getControlsForModel(model)
-  const regionLabel = metadata.region ? REGION_LABELS[metadata.region] ?? metadata.region : ''
+  const regionLabel = metadata.region ? (REGION_LABELS[metadata.region] ?? metadata.region) : ''
   const controlLabels = controls
     .map(control => {
       const selected = options[control.id] ?? control.defaultValue
@@ -371,7 +366,7 @@ export function getSelectedModelDisplayLabel(
       }
       return resolveOptionSummaryLabel(
         control.options.find(option => option.value === selected),
-        resolveLabel,
+        resolveLabel
       )
     })
     .filter(Boolean)
@@ -385,20 +380,20 @@ export function getSelectedModelDisplayLabel(
 export function getDefaultModelOptions(model: UnifiedModel | null): ModelOptions {
   if (!model) return {}
   return Object.fromEntries(
-    getControlsForModel(model).map(control => [control.id, control.defaultValue]),
+    getControlsForModel(model).map(control => [control.id, control.defaultValue])
   )
 }
 
 export function normalizeModelOptions(
   model: UnifiedModel | null,
-  options: ModelOptions,
+  options: ModelOptions
 ): ModelOptions {
   if (!model) return {}
   return Object.fromEntries(
     getControlsForModel(model).map(control => [
       control.id,
       options[control.id] ?? control.defaultValue,
-    ]),
+    ])
   )
 }
 

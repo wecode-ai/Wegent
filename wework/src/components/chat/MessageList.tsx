@@ -531,10 +531,7 @@ function isLocalImagePath(src: string): boolean {
   return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
 }
 
-type MarkdownLinkTarget =
-  | { kind: 'external' }
-  | { kind: 'none' }
-  | { kind: 'file'; path: string }
+type MarkdownLinkTarget = { kind: 'external' } | { kind: 'none' } | { kind: 'file'; path: string }
 
 // Assistant responses frequently reference repository files with relative or
 // absolute filesystem paths. Rendering those as plain anchors makes the browser

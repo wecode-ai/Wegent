@@ -233,6 +233,29 @@ class LocalTaskStore:
             self._write_index(index)
             return normalized
 
+    def delete_task(
+        self,
+        local_task_id: str,
+        workspace_path: Optional[str] = None,
+    ) -> Optional[LocalTaskRecord]:
+        """Delete one task atomically and return the removed record."""
+
+        with self._lock:
+            index = self._read_index()
+            payload = index["tasks"].get(local_task_id)
+            if payload is None:
+                return None
+
+            current = self._payload_to_record(payload)
+            if workspace_path and current.workspace_path != normalize_workspace_path(
+                workspace_path
+            ):
+                raise KeyError(f"Local task not found in workspace: {local_task_id}")
+
+            index["tasks"].pop(local_task_id, None)
+            self._write_index(index)
+            return current
+
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
         with cls._locks_guard:
