@@ -6,9 +6,9 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Sparkles } from 'lucide-react'
-import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
+import { MobileSwitchIndicator } from './mobile-switch-indicator'
 import {
   Dialog,
   DialogContent,
@@ -145,10 +145,13 @@ export default function MobileCorrectionModeToggle({
     <>
       <button
         type="button"
+        role="switch"
+        aria-checked={enabled}
         onClick={handleClick}
         disabled={disabled}
+        data-testid="mobile-correction-mode-toggle"
         className={cn(
-          'w-full flex items-center justify-between px-3 py-2.5',
+          'w-full min-h-11 flex items-center justify-between px-3 py-2.5',
           'text-left transition-colors',
           'hover:bg-hover active:bg-hover',
           'disabled:opacity-50 disabled:cursor-not-allowed'
@@ -165,19 +168,7 @@ export default function MobileCorrectionModeToggle({
             )}
           </div>
         </div>
-        <Switch
-          checked={enabled}
-          disabled={disabled}
-          onClick={e => e.stopPropagation()}
-          onCheckedChange={checked => {
-            if (!checked) {
-              onToggle(false)
-              correctionApis.clearCorrectionModeState(taskId)
-            } else {
-              setShowModelSelector(true)
-            }
-          }}
-        />
+        <MobileSwitchIndicator checked={enabled} disabled={disabled} />
       </button>
 
       {/* Model Selection Dialog */}
