@@ -37,7 +37,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
-from app.services.task_team_resolver import resolve_task_team_ref
+from app.services.task_team_resolver import can_user_use_team, resolve_task_team_ref
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -308,18 +308,7 @@ class SharedTaskService:
         self, db: Session, *, team: Kind, user_id: int
     ) -> None:
         """Validate that the importing user can continue with the original Team."""
-        if team.user_id == user_id or team.user_id == 0:
-            return
-
-        from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
-
-        accessible_team_ids = _get_accessible_team_ids(
-            db,
-            user_id,
-            [ResourceType.TEAM.value, ResourceType.TEAM.name],
-            [MemberStatus.APPROVED.value, "APPROVED"],
-        )
-        if team.id in accessible_team_ids:
+        if can_user_use_team(db, user_id, team):
             return
 
         raise HTTPException(

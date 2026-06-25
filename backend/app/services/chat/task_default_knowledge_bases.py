@@ -10,14 +10,15 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus
-from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.readers import KindType, kindReader
-from app.services.task_team_resolver import resolve_task_team_ref
+from app.services.task_team_resolver import (
+    can_user_use_team,
+    resolve_task_team_ref,
+)
 from shared.models.knowledge import KnowledgeBaseScope
 
 
@@ -91,18 +92,7 @@ def _can_grant_principal_read_kb(
 
 def _can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
     """Return whether the current task actor can use the task's Team."""
-    if team.user_id == user_id or team.user_id == 0:
-        return True
-
-    from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
-
-    accessible_team_ids = _get_accessible_team_ids(
-        db,
-        user_id,
-        [ResourceType.TEAM.value, ResourceType.TEAM.name],
-        [MemberStatus.APPROVED.value, "APPROVED"],
-    )
-    return team.id in accessible_team_ids
+    return can_user_use_team(db, user_id, team)
 
 
 def get_task_default_knowledge_base_scopes(

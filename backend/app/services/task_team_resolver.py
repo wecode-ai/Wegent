@@ -44,3 +44,21 @@ def resolve_task_team_ref(
         )
         .first()
     )
+
+
+def can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
+    """Return whether a user can execute with a resolved Team."""
+    if team.user_id == user_id or team.user_id == 0:
+        return True
+
+    from app.models.resource_member import MemberStatus
+    from app.models.share_link import ResourceType
+    from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
+
+    accessible_team_ids = _get_accessible_team_ids(
+        db,
+        user_id,
+        [ResourceType.TEAM.value, ResourceType.TEAM.name],
+        [MemberStatus.APPROVED.value, "APPROVED"],
+    )
+    return team.id in accessible_team_ids

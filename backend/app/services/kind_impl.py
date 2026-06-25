@@ -18,7 +18,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
-from app.services.task_team_resolver import resolve_task_team_ref
+from app.services.task_team_resolver import can_user_use_team, resolve_task_team_ref
 from app.stores.tasks import subtask_store, task_store
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
@@ -373,20 +373,7 @@ class TaskKindService(TaskResourceBaseService):
             raise NotFoundException(
                 f"Team '{team_ref.name}' not found in namespace '{team_ref.namespace}'"
             )
-        if team.user_id == user_id or team.user_id == 0:
-            return team
-
-        from app.models.resource_member import MemberStatus
-        from app.models.share_link import ResourceType
-        from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
-
-        accessible_team_ids = _get_accessible_team_ids(
-            db,
-            user_id,
-            [ResourceType.TEAM.value, ResourceType.TEAM.name],
-            [MemberStatus.APPROVED.value, "APPROVED"],
-        )
-        if team.id in accessible_team_ids:
+        if can_user_use_team(db, user_id, team):
             return team
 
         raise NotFoundException(
