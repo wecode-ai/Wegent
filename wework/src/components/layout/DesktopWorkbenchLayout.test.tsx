@@ -33,6 +33,22 @@ function createRect({
   } as DOMRect
 }
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+function getWorkspaceCodeViewText() {
+  return Array.from(
+    document.querySelectorAll('[data-testid="workspace-file-preview-code-view"] diffs-container')
+  )
+    .map(container => container.shadowRoot?.textContent ?? '')
+    .join('\n')
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
@@ -53,6 +69,112 @@ vi.mock('@/api/projects', () => ({
 vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
 }))
+
+vi.mock('@pierre/diffs/react', async () => {
+  const actual = await vi.importActual<typeof import('@pierre/diffs/react')>('@pierre/diffs/react')
+
+  return {
+    ...actual,
+    PatchDiff: ({ patch }: { patch: string }) => <pre data-testid="pierre-patch-diff">{patch}</pre>,
+  }
+})
+
+vi.mock('@pierre/trees/react', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+
+  interface MockTreeModel {
+    paths: string[]
+    search: string | null
+    selectedPaths: string[]
+    onSelectionChange?: (paths: string[]) => void
+    getItem: (path: string) => {
+      expand: () => void
+      select: () => void
+    }
+    scrollToPath: () => void
+    selectPath: (path: string) => void
+    setSearch: (query: string | null) => void
+  }
+
+  function selectModelPath(model: MockTreeModel, path: string) {
+    if (model.selectedPaths[0] === path) return
+
+    model.selectedPaths = [path]
+    model.onSelectionChange?.([path])
+  }
+
+  return {
+    FileTree: ({ model, ...props }: { model: MockTreeModel; [key: string]: unknown }) => {
+      const visiblePaths = model.search
+        ? model.paths.filter(path => path.toLowerCase().includes(model.search!.toLowerCase()))
+        : model.paths
+
+      return (
+        <div {...props}>
+          {visiblePaths.map(path => {
+            const isDirectory = path.endsWith('/')
+            const label = path.replace(/\/+$/, '').split('/').pop() || path
+            const depth = path.replace(/\/+$/, '').split('/').length - 1
+            const selected = model.selectedPaths.includes(path)
+            const testId = isDirectory ? 'workspace-directory-row' : 'workspace-file-row'
+
+            return (
+              <button
+                key={path}
+                type="button"
+                data-testid={testId}
+                data-depth={depth.toString()}
+                aria-expanded={isDirectory ? 'true' : undefined}
+                className={selected ? 'ring-1 ring-primary' : undefined}
+                onClick={() => model.selectPath(path)}
+              >
+                {Array.from({ length: depth }, (_, index) => (
+                  <span key={index} data-testid="workspace-tree-indent-guide" />
+                ))}
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )
+    },
+    useFileTree: ({
+      initialSelectedPaths,
+      onSelectionChange,
+      paths,
+    }: {
+      initialSelectedPaths?: string[]
+      onSelectionChange?: (paths: string[]) => void
+      paths: string[]
+    }) => {
+      const modelRef = React.useRef<MockTreeModel | null>(null)
+
+      if (!modelRef.current) {
+        modelRef.current = {
+          paths,
+          search: null,
+          selectedPaths: initialSelectedPaths ?? [],
+          onSelectionChange,
+          getItem: (path: string) => ({
+            expand: vi.fn(),
+            select: () => selectModelPath(modelRef.current!, path),
+          }),
+          scrollToPath: vi.fn(),
+          selectPath: (path: string) => selectModelPath(modelRef.current!, path),
+          setSearch(query: string | null) {
+            this.search = query
+          },
+        }
+      }
+
+      modelRef.current.paths = paths
+      modelRef.current.onSelectionChange = onSelectionChange
+      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
+
+      return { model: modelRef.current }
+    },
+  }
+})
 
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
@@ -2525,8 +2647,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await user.click(await screen.findByText('README.md'))
 
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('hello world')
-    expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('hello world'))
+    expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
   })
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
@@ -2593,9 +2716,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent(
-      'opened from tool block'
-    )
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
@@ -2799,7 +2921,8 @@ describe('DesktopWorkbenchLayout', () => {
         modifiedAt: null,
       })
     })
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('notes first')
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('notes first'))
 
     await act(async () => {
       readmeFile.resolve({
@@ -2812,8 +2935,8 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    expect(screen.getByTestId('workspace-file-preview')).toHaveTextContent('notes first')
-    expect(screen.getByTestId('workspace-file-preview')).not.toHaveTextContent('readme stale')
+    expect(getWorkspaceCodeViewText()).toContain('notes first')
+    expect(getWorkspaceCodeViewText()).not.toContain('readme stale')
   })
 
   test('right workspace panel ignores stale directory responses', async () => {
@@ -3058,9 +3181,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
   })
 
-  test('workspace file preview comments use the selected duplicate DOM line', async () => {
-    const user = userEvent.setup()
-    const onAddCodeComment = vi.fn()
+  test('workspace file preview renders file contents with Pierre file viewer', async () => {
     render(
       <WorkspaceFilePreview
         file={{
@@ -3073,32 +3194,18 @@ describe('DesktopWorkbenchLayout', () => {
         }}
         loading={false}
         onRetry={vi.fn()}
-        onAddCodeComment={onAddCodeComment}
+        onAddCodeComment={vi.fn()}
       />
     )
-    const secondRepeat = screen.getAllByText('repeat')[1]
-    const range = document.createRange()
-    range.selectNodeContents(secondRepeat)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
 
-    fireEvent.mouseUp(secondRepeat)
-    await user.type(screen.getByTestId('workspace-file-comment-input'), 'check second repeat')
-    await user.click(screen.getByTestId('workspace-file-add-comment-button'))
-
-    expect(onAddCodeComment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filePath: '/workspace/project/repeat.txt',
-        startLine: 3,
-        endLine: 3,
-        selectedText: 'repeat',
-        comment: 'check second repeat',
-      })
-    )
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('workspace-file-preview-code-view').querySelector('div')
+    ).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('repeat'))
   })
 
-  test('workspace file preview clears local comment state when file changes', async () => {
+  test('workspace file preview swaps Pierre viewer when file changes', async () => {
     const firstFile = {
       path: '/workspace/project/first.txt',
       name: 'first.txt',
@@ -3123,15 +3230,8 @@ describe('DesktopWorkbenchLayout', () => {
         onAddCodeComment={vi.fn()}
       />
     )
-    const firstText = screen.getByText('first file')
-    const range = document.createRange()
-    range.selectNodeContents(firstText)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
 
-    fireEvent.mouseUp(firstText)
-    expect(screen.getByTestId('workspace-file-comment-input')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('first file'))
 
     rerender(
       <WorkspaceFilePreview
@@ -3142,6 +3242,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('second file'))
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
