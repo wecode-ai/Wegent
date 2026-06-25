@@ -33,6 +33,22 @@ function createRect({
   } as DOMRect
 }
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+function getWorkspaceCodeViewText() {
+  return Array.from(
+    document.querySelectorAll('[data-testid="workspace-file-preview-code-view"] diffs-container')
+  )
+    .map(container => container.shadowRoot?.textContent ?? '')
+    .join('\n')
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
@@ -2486,8 +2502,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await user.click(await screen.findByText('README.md'))
 
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('hello world')
-    expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('hello world'))
+    expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
   })
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
@@ -2554,9 +2571,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent(
-      'opened from tool block'
-    )
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
@@ -2760,7 +2776,8 @@ describe('DesktopWorkbenchLayout', () => {
         modifiedAt: null,
       })
     })
-    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('notes first')
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('notes first'))
 
     await act(async () => {
       readmeFile.resolve({
@@ -2773,8 +2790,8 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    expect(screen.getByTestId('workspace-file-preview')).toHaveTextContent('notes first')
-    expect(screen.getByTestId('workspace-file-preview')).not.toHaveTextContent('readme stale')
+    expect(getWorkspaceCodeViewText()).toContain('notes first')
+    expect(getWorkspaceCodeViewText()).not.toContain('readme stale')
   })
 
   test('right workspace panel ignores stale directory responses', async () => {
@@ -3019,9 +3036,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
   })
 
-  test('workspace file preview comments use the selected duplicate DOM line', async () => {
-    const user = userEvent.setup()
-    const onAddCodeComment = vi.fn()
+  test('workspace file preview renders file contents with Pierre file viewer', async () => {
     render(
       <WorkspaceFilePreview
         file={{
@@ -3034,32 +3049,18 @@ describe('DesktopWorkbenchLayout', () => {
         }}
         loading={false}
         onRetry={vi.fn()}
-        onAddCodeComment={onAddCodeComment}
+        onAddCodeComment={vi.fn()}
       />
     )
-    const secondRepeat = screen.getAllByText('repeat')[1]
-    const range = document.createRange()
-    range.selectNodeContents(secondRepeat)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
 
-    fireEvent.mouseUp(secondRepeat)
-    await user.type(screen.getByTestId('workspace-file-comment-input'), 'check second repeat')
-    await user.click(screen.getByTestId('workspace-file-add-comment-button'))
-
-    expect(onAddCodeComment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filePath: '/workspace/project/repeat.txt',
-        startLine: 3,
-        endLine: 3,
-        selectedText: 'repeat',
-        comment: 'check second repeat',
-      })
-    )
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('workspace-file-preview-code-view').querySelector('div')
+    ).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('repeat'))
   })
 
-  test('workspace file preview clears local comment state when file changes', async () => {
+  test('workspace file preview swaps Pierre viewer when file changes', async () => {
     const firstFile = {
       path: '/workspace/project/first.txt',
       name: 'first.txt',
@@ -3084,15 +3085,8 @@ describe('DesktopWorkbenchLayout', () => {
         onAddCodeComment={vi.fn()}
       />
     )
-    const firstText = screen.getByText('first file')
-    const range = document.createRange()
-    range.selectNodeContents(firstText)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
 
-    fireEvent.mouseUp(firstText)
-    expect(screen.getByTestId('workspace-file-comment-input')).toBeInTheDocument()
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('first file'))
 
     rerender(
       <WorkspaceFilePreview
@@ -3103,6 +3097,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('second file'))
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 

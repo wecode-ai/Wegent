@@ -58,6 +58,11 @@ const PIERRE_FILE_TREE_CSS = `
     --trees-focus-ring-color-override: rgb(20 184 166 / 0.35);
     --trees-focus-ring-width-override: 1px;
     --trees-focus-ring-offset-override: 0px;
+    --trees-gap-override: 2px;
+    --trees-level-gap-override: 6px;
+    --trees-item-padding-x-override: 4px;
+    --trees-item-margin-x-override: 0px;
+    --trees-padding-inline-override: 4px;
     --trees-indent-guide-bg-override: rgb(224 224 224);
     --trees-scrollbar-thumb-override: rgb(224 224 224);
     --trees-search-bg-override: rgb(255 255 255);
@@ -92,17 +97,38 @@ const PIERRE_FILE_TREE_CSS = `
     background: transparent !important;
   }
   button[data-type='item'] {
+    box-sizing: border-box;
     border-radius: 6px;
     color: rgb(102 102 102);
     background: transparent;
+    background-clip: padding-box;
   }
   button[data-type='item']:hover {
     color: rgb(26 26 26);
     background: rgb(247 247 248);
+    box-shadow:
+      0 0 0 1px rgb(255 255 255),
+      0 1px 2px rgb(0 0 0 / 0.04);
   }
   button[data-type='item'][data-item-selected] {
     color: rgb(26 26 26);
     background: rgb(247 247 248) !important;
+    box-shadow:
+      0 0 0 1px rgb(255 255 255),
+      0 1px 2px rgb(0 0 0 / 0.04);
+  }
+  button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),
+  button[data-type='item'][data-item-selected='true'] + [data-item-selected='true'] {
+    border-radius: 6px !important;
+  }
+  button[data-type='item'][data-item-focused='true']::before,
+  button[data-type='item']:focus-visible::before {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--trees-focus-ring-color);
+  }
+  button[data-type='item'][data-item-focused='true'][data-item-selected='true']::before,
+  button[data-type='item'][data-item-selected='true']:focus-visible::before {
+    box-shadow: inset 0 0 0 1px var(--trees-selected-focused-border-color);
   }
   input {
     background: rgb(255 255 255);
@@ -507,20 +533,20 @@ function ReviewFileTree({
       className="flex h-full min-h-0 w-[34%] min-w-[240px] max-w-[380px] shrink-0 flex-col border-l border-border bg-background"
       aria-label={t('file_changes.file_list_label')}
     >
-      <div className="px-3 py-2.5">
-        <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-background px-3">
-          <Search className="h-4 w-4 text-text-muted" />
+      <div className="px-3 pb-1.5 pt-2">
+        <div className="flex h-7 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
+          <Search className="h-3.5 w-3.5 text-text-muted" />
           <input
             data-testid="file-changes-review-file-search-input"
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('file_changes.file_search_placeholder')}
             aria-label={t('file_changes.file_search_placeholder')}
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent text-xs leading-4 outline-none placeholder:text-text-muted"
           />
         </div>
       </div>
-      <div className="scrollbar-soft min-h-0 flex-1 overflow-hidden px-2 pb-3">
+      <div className="scrollbar-soft min-h-0 flex-1 overflow-hidden pl-1 pr-2 pb-3">
         <PierreReviewFileTree
           key={paths.join('\n')}
           paths={paths}

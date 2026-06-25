@@ -2349,10 +2349,11 @@ def _project_runtime_target(
     if config.workspace:
         workspace_source = config.workspace.source
         if config.workspace.source == "git":
+            checkout_path = config.workspace.checkoutPath
             workspace_path = (
-                f"projects/{config.workspace.checkoutPath}"
-                if config.workspace.checkoutPath
-                else None
+                checkout_path
+                if checkout_path and posixpath.isabs(checkout_path)
+                else f"projects/{checkout_path}" if checkout_path else None
             )
         else:
             workspace_path = config.workspace.localPath
