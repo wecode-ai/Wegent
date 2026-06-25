@@ -1332,6 +1332,11 @@ def _prepare_kb_tools_from_contexts(
                 default_scopes,
                 requested_knowledge_base_ids,
             )
+            default_knowledge_base_ids = _get_search_only_default_knowledge_base_ids(
+                db,
+                user_id,
+                default_knowledge_base_ids,
+            )
             knowledge_base_scopes = _merge_knowledge_base_scopes(
                 default_scopes, knowledge_base_scopes
             )
@@ -1379,14 +1384,8 @@ def _prepare_kb_tools_from_contexts(
             kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
         )
 
-    default_knowledge_base_id_set = set(default_knowledge_base_ids)
-    explicit_knowledge_base_ids = [
-        kb_id
-        for kb_id in knowledge_base_ids
-        if kb_id not in default_knowledge_base_id_set
-    ]
     kb_tool_access_mode, access_reason = _get_user_kb_tool_access_mode(
-        db, user_id, explicit_knowledge_base_ids
+        db, user_id, knowledge_base_ids
     )
     is_restricted_search_only = (
         kb_tool_access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
@@ -1529,6 +1528,31 @@ def _get_effective_default_knowledge_base_ids(
         for scope in default_scopes
         if scope.knowledge_base_id not in requested_knowledge_base_ids
     ]
+
+
+def _get_search_only_default_knowledge_base_ids(
+    db: Session,
+    user_id: int,
+    default_knowledge_base_ids: List[int],
+) -> List[int]:
+    """Return default KB IDs that should not expose document exploration tools."""
+    if not default_knowledge_base_ids:
+        return []
+
+    from app.services.share.knowledge_share_service import KnowledgeShareService
+
+    share_service = KnowledgeShareService()
+    search_only_ids: list[int] = []
+    for kb_id in default_knowledge_base_ids:
+        if share_service._get_resource(db, kb_id, user_id) is None:
+            search_only_ids.append(kb_id)
+            continue
+
+        access_mode, _ = _get_user_kb_tool_access_mode(db, user_id, [kb_id])
+        if access_mode != KnowledgeBaseToolAccessMode.FULL:
+            search_only_ids.append(kb_id)
+
+    return search_only_ids
 
 
 def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:

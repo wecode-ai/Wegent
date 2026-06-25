@@ -271,7 +271,7 @@ class TestKnowledgeFactoryDynamicContext:
 
     @pytest.mark.asyncio
     async def test_default_kb_only_creates_search_only_tool_set(self):
-        """Default KB access should not expose kb_ls or kb_head."""
+        """Search-only default KB access should not expose kb_ls or kb_head."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         with (
@@ -306,7 +306,7 @@ class TestKnowledgeFactoryDynamicContext:
 
     @pytest.mark.asyncio
     async def test_default_kb_only_without_rag_uses_search_only_prompt(self):
-        """Default-only no-RAG KBs should not prompt unavailable exploration tools."""
+        """Search-only default no-RAG KBs should not prompt exploration tools."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         with (
@@ -342,7 +342,7 @@ class TestKnowledgeFactoryDynamicContext:
 
     @pytest.mark.asyncio
     async def test_default_kb_is_filtered_from_exploration_tools(self):
-        """kb_ls/kb_head should only receive non-default knowledge bases."""
+        """kb_ls/kb_head should only exclude default KBs marked search-only."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         default_scope = KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False)
@@ -382,6 +382,46 @@ class TestKnowledgeFactoryDynamicContext:
             assert mock_kb_head_class.call_args.kwargs["knowledge_base_scopes"] == [
                 explicit_scope
             ]
+            assert len(result.extra_tools) == 3
+
+    @pytest.mark.asyncio
+    async def test_full_permission_default_kb_keeps_exploration_tools(self):
+        """Default KBs not marked search-only should follow normal user permissions."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        default_scope = KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False)
+
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch("chat_shell.tools.builtin.KbLsTool") as mock_kb_ls_class,
+            patch("chat_shell.tools.builtin.KbHeadTool") as mock_kb_head_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ),
+        ):
+            mock_kb_tool_class.return_value = MagicMock()
+            mock_kb_ls_class.return_value = MagicMock()
+            mock_kb_head_class.return_value = MagicMock()
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                default_knowledge_base_ids=[],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=False,
+                knowledge_base_scopes=[default_scope],
+            )
+
+            assert mock_kb_tool_class.call_args.kwargs["knowledge_base_ids"] == [1]
+            assert mock_kb_ls_class.call_args.kwargs["knowledge_base_ids"] == [1]
+            assert mock_kb_ls_class.call_args.kwargs["knowledge_base_scopes"] == [
+                default_scope
+            ]
+            assert mock_kb_head_class.call_args.kwargs["knowledge_base_ids"] == [1]
             assert len(result.extra_tools) == 3
 
     @pytest.mark.asyncio

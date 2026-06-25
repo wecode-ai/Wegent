@@ -42,6 +42,35 @@ def test_effective_default_kb_ids_exclude_requested_kbs() -> None:
     assert _get_effective_default_knowledge_base_ids(default_scopes, {2, 3}) == [1]
 
 
+def test_search_only_default_kb_ids_follow_current_user_permission() -> None:
+    """Default KBs with full user permission should remain explorable."""
+    from app.services.chat.preprocessing.contexts import (
+        _get_search_only_default_knowledge_base_ids,
+    )
+
+    def fake_get_resource(_db, resource_id, _user_id):
+        return object() if resource_id in {1, 2} else None
+
+    def fake_access_mode(_db, _user_id, knowledge_base_ids):
+        if knowledge_base_ids == [2]:
+            return ("restricted_search_only", "restricted")
+        return ("full", "")
+
+    with (
+        patch(
+            "app.services.share.knowledge_share_service.KnowledgeShareService._get_resource",
+            side_effect=fake_get_resource,
+        ),
+        patch(
+            "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+            side_effect=fake_access_mode,
+        ),
+    ):
+        assert _get_search_only_default_knowledge_base_ids(
+            Mock(), user_id=10, default_knowledge_base_ids=[1, 2, 3]
+        ) == [2, 3]
+
+
 class TestSubtaskContextBrief:
     """Test context brief serialization."""
 
