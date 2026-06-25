@@ -32,6 +32,7 @@ from executor.runtime_work.codex_global_state import (
 from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     LocalTaskStore,
+    infer_runtime_workspace_kind,
     normalize_workspace_path,
     utc_now_iso,
 )
@@ -323,9 +324,9 @@ class RuntimeWorkRpcHandler:
                 "workspaceSource": project.source,
             }
             if project.host_id:
-                workspace_metadata[project.workspace_path]["remoteHostId"] = (
-                    project.host_id
-                )
+                workspace_metadata[project.workspace_path][
+                    "remoteHostId"
+                ] = project.host_id
         for task in tasks:
             group_workspace = self._task_group_workspace(task, codex_project_index)
             if group_workspace is None:
@@ -1493,7 +1494,9 @@ class RuntimeWorkRpcHandler:
             runtime_handle = current.runtime_handle
             if self._is_codex_runtime(current.runtime):
                 runtime_handle = {**current.runtime_handle, "titleOverride": True}
-            return replace(current, title=normalized_title, runtime_handle=runtime_handle)
+            return replace(
+                current, title=normalized_title, runtime_handle=runtime_handle
+            )
 
         codex_rename: Optional[dict[str, Any]] = None
         if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
@@ -2079,6 +2082,7 @@ class RuntimeWorkRpcHandler:
             workspace_path=workspace_path,
             title=title,
             runtime="codex",
+            workspace_kind=infer_runtime_workspace_kind(workspace_path),
             runtime_handle={
                 "pendingNativeCodexThread": True,
                 "activeSubtaskId": subtask_id,
