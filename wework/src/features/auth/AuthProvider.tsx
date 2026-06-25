@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createAuthApi, isAuthenticated, removeToken, type LoginRequest } from '@/api/auth'
 import { ApiError, createHttpClient } from '@/api/http'
+import { getLocalUser } from '@/api/local/localSession'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
@@ -22,6 +23,10 @@ interface AuthProviderProps {
 function createDefaultAuthApi(): AuthApi {
   const { apiBaseUrl } = getRuntimeConfig()
   return createAuthApi(createHttpClient({ baseUrl: apiBaseUrl }))
+}
+
+function isLocalFirstRuntime(): boolean {
+  return getRuntimeConfig().runtimeMode === 'local-first'
 }
 
 function isAuthRoute(pathname: string) {
@@ -76,6 +81,12 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     setIsLoading(true)
 
     try {
+      if (isLocalFirstRuntime()) {
+        setUser(getLocalUser())
+        clearAdminPasswordSetupState()
+        return
+      }
+
       if (!isAuthenticated()) {
         setUser(null)
         if (isAuthRoute(window.location.pathname)) {
@@ -115,6 +126,9 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     void Promise.resolve().then(() => refresh())
 
     const interval = window.setInterval(() => {
+      if (isLocalFirstRuntime()) {
+        return
+      }
       if (!isAuthenticated() && userRef.current) {
         setUser(null)
         clearAdminPasswordSetupState()
@@ -146,6 +160,13 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
   )
 
   const logout = useCallback(() => {
+    if (isLocalFirstRuntime()) {
+      removeToken()
+      setUser(getLocalUser())
+      clearAdminPasswordSetupState()
+      return
+    }
+
     resolvedAuthApi.logout()
     setUser(null)
     clearAdminPasswordSetupState()

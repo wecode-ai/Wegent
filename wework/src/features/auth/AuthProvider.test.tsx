@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { setToken } from '@/api/auth'
 import { ApiError } from '@/api/http'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { AuthProvider } from './AuthProvider'
 import { useAuth } from './useAuth'
 
@@ -24,6 +25,7 @@ describe('AuthProvider', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    delete window.__WEWORK_RUNTIME_CONFIG__
     window.history.pushState({}, '', '/')
   })
 
@@ -84,5 +86,32 @@ describe('AuthProvider', () => {
 
     await waitFor(() => expect(screen.getByTestId('auth-probe')).toHaveTextContent('none'))
     expect(window.location.pathname).toBe('/login')
+  })
+
+  test('creates local user without redirect or backend calls in local-first mode', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+    const authApi = {
+      getCurrentUser: vi.fn(),
+      getCurrentUserWithoutAuthRedirect: vi.fn(),
+      login: vi.fn(),
+      logout: vi.fn(),
+      loginWithOidcToken: vi.fn(),
+      setupAdminPassword: vi.fn(),
+    }
+
+    render(
+      <AuthProvider authApi={authApi}>
+        <Probe />
+      </AuthProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('auth-probe')).toHaveTextContent(`${LOCAL_USER.user_name}:ready`)
+    )
+    expect(window.location.pathname).toBe('/')
+    expect(authApi.getCurrentUser).not.toHaveBeenCalled()
+    expect(authApi.getCurrentUserWithoutAuthRedirect).not.toHaveBeenCalled()
   })
 })
