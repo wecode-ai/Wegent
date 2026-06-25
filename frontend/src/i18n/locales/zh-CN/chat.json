@@ -45,6 +45,17 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "sourceReferences": {
+    "title": "引用来源",
+    "openSource": "打开来源",
+    "unavailableSource": "无法打开来源",
+    "footerCited": "引用 {{documents}} 个文档，来自 {{sources}} 个知识源",
+    "footerNoHit": "{{count}} 个知识源未命中",
+    "footerSkipped": "跳过 {{count}} 个不可用来源",
+    "footerSearchedNoReferences": "已检索 {{searched}} 个知识源，但未返回可引用内容",
+    "footerSearched": "本次检索 {{searched}} 个知识源",
+    "footerSearchedAndIgnored": "本次检索 {{searched}} 个知识源 · 跳过 {{ignored}} 个不可用来源"
+  },
   "guidance": {
     "send": "发送引导",
     "applied": "引导已生效",
@@ -713,6 +724,9 @@
     "referencedDocsLabel": "引用的钉钉文档：",
     "myDocsTab": "我的文档",
     "wikispaceTab": "知识库",
+    "allDocs": "全部文档",
+    "selectAll": "选择全部",
+    "deselectAll": "取消全选",
     "wikispaceSync": "同步",
     "wikispaceSyncing": "同步中...",
     "wikispaceEmpty": "暂无知识库内容",

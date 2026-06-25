@@ -24,6 +24,32 @@ export type TaskStatus =
  */
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
 
+export interface SourceReference {
+  index: number
+  title: string
+  kb_id?: number | null
+  source_id?: string
+  source_type?: string
+  source_uri?: string
+  source_name?: string
+}
+
+export interface RetrievalSummaryPayload {
+  searched_source_ids?: string[]
+  ignored_source_ids?: string[]
+  source_statuses?: RetrievalSourceStatus[]
+}
+
+export interface RetrievalSourceStatus {
+  provider: string
+  source_id: string
+  source_name?: string | null
+  status: 'hit' | 'no_hit' | 'ignored' | 'failed'
+  record_count: number
+  citation_count: number
+  mode?: 'rag_retrieval' | 'direct_injection' | string | null
+}
+
 /**
  * Unified message structure
  */
@@ -53,11 +79,8 @@ export interface UnifiedMessage {
     thinking?: unknown[]
     workbench?: Record<string, unknown>
     shell_type?: string
-    sources?: Array<{
-      index: number
-      title: string
-      kb_id: number
-    }>
+    sources?: SourceReference[]
+    retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
@@ -70,11 +93,7 @@ export interface UnifiedMessage {
       duration?: number
     }
   }
-  sources?: Array<{
-    index: number
-    title: string
-    kb_id: number
-  }>
+  sources?: SourceReference[]
 }
 
 /**

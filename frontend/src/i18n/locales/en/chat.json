@@ -45,6 +45,17 @@
     "quoted_text": "Quoted text",
     "remove_quote": "Remove quote"
   },
+  "sourceReferences": {
+    "title": "References",
+    "openSource": "Open source",
+    "unavailableSource": "Unable to open source",
+    "footerCited": "Cited {{documents}} documents from {{sources}} knowledge sources",
+    "footerNoHit": "{{count}} knowledge sources had no hits",
+    "footerSkipped": "Skipped {{count}} unavailable sources",
+    "footerSearchedNoReferences": "Searched {{searched}} knowledge sources, but no citable content was returned",
+    "footerSearched": "Searched {{searched}} knowledge sources",
+    "footerSearchedAndIgnored": "Searched {{searched}} knowledge sources · skipped {{ignored}} unavailable sources"
+  },
   "guidance": {
     "send": "Send guidance",
     "applied": "Guidance applied",
@@ -713,6 +724,9 @@
     "referencedDocsLabel": "Referenced DingTalk Documents:",
     "myDocsTab": "My Documents",
     "wikispaceTab": "Knowledge Base",
+    "allDocs": "All Documents",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
     "wikispaceSync": "Sync",
     "wikispaceSyncing": "Syncing...",
     "wikispaceEmpty": "No knowledge base content",
