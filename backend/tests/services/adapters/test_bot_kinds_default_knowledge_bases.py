@@ -84,6 +84,75 @@ def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
     ]
 
 
+def test_create_with_user_uses_team_owner_context_for_default_knowledge_bases():
+    service = BotKindsService(Kind)
+    db = Mock()
+    added_objects = []
+    db.add.side_effect = added_objects.append
+    duplicate_check_query = Mock()
+    duplicate_check_query.filter.return_value = duplicate_check_query
+    duplicate_check_query.first.return_value = None
+    db.query.return_value = duplicate_check_query
+    checked_user_ids = []
+
+    def resolve_resource(_db, resource_id, user_id):
+        assert resource_id == 101
+        checked_user_ids.append(user_id)
+        return SimpleNamespace(id=resource_id, user_id=user_id, namespace="default")
+
+    with patch.object(service, "_encrypt_agent_config", return_value={}):
+        with patch.object(
+            service,
+            "_resolve_default_kb_team_owner_id",
+            return_value=42,
+        ) as resolve_team_owner:
+            with patch(
+                "app.services.adapters.bot_kinds.get_shell_info_by_name",
+                return_value={
+                    "shell_type": "ClaudeCode",
+                    "execution_type": "local_engine",
+                    "base_image": "python:3.11",
+                    "is_custom": False,
+                    "namespace": "default",
+                },
+            ):
+                with patch(
+                    "app.services.adapters.bot_kinds.get_shell_by_name",
+                    return_value=None,
+                ):
+                    with patch.object(service, "_get_model_by_name", return_value=None):
+                        with patch.object(
+                            service,
+                            "_convert_to_bot_dict",
+                            return_value={"id": 1},
+                        ):
+                            with patch(
+                                "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
+                                side_effect=resolve_resource,
+                            ):
+                                service.create_with_user(
+                                    db,
+                                    obj_in=BotCreate(
+                                        name="kb-bot",
+                                        shell_name="ClaudeCode",
+                                        agent_config={},
+                                        default_knowledge_base_refs=[
+                                            {"id": 101, "name": "Product Docs"}
+                                        ],
+                                        default_knowledge_base_team_id=88,
+                                    ),
+                                    user_id=7,
+                                )
+
+    resolve_team_owner.assert_called_once_with(
+        db,
+        88,
+        current_user_id=7,
+        require_edit=True,
+    )
+    assert checked_user_ids == [7, 42]
+
+
 def test_update_with_user_writes_default_knowledge_bases_into_ghost_spec():
     service = BotKindsService(Kind)
     db = Mock()
@@ -284,6 +353,7 @@ def test_annotate_default_knowledge_base_availability_uses_team_owner():
                 bot=bot,
                 bot_dict=bot_dict,
                 team_id=88,
+                current_user_id=7,
             )
 
     assert bot_dict["default_knowledge_base_refs"] == [
@@ -300,6 +370,81 @@ def test_annotate_default_knowledge_base_availability_uses_team_owner():
             "unavailableReason": "team_owner_cannot_read_kb",
         },
     ]
+
+
+def test_default_kb_team_context_rejects_unreadable_team_context():
+    service = BotKindsService(Kind)
+    db = Mock()
+    team = Mock(spec=Kind)
+    team.id = 88
+    team.user_id = 42
+    team.kind = "Team"
+    team.namespace = "default"
+    team.is_active = True
+    team.json = {
+        "kind": "Team",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {"name": "shared-team", "namespace": "default"},
+        "spec": {"members": []},
+        "status": {"state": "Available"},
+    }
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = team
+    db.query.return_value = query
+
+    with patch("app.services.adapters.bot_kinds.can_user_use_team", return_value=False):
+        try:
+            service._resolve_default_kb_team_owner_id(
+                db,
+                88,
+                current_user_id=7,
+                require_edit=False,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 403
+            assert exc.detail == "Access denied"
+        else:
+            raise AssertionError("Expected HTTPException")
+
+
+def test_default_kb_team_context_rejects_non_editor_for_writes():
+    service = BotKindsService(Kind)
+    db = Mock()
+    team = Mock(spec=Kind)
+    team.id = 88
+    team.user_id = 42
+    team.kind = "Team"
+    team.namespace = "default"
+    team.is_active = True
+    team.json = {
+        "kind": "Team",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {"name": "shared-team", "namespace": "default"},
+        "spec": {"members": []},
+        "status": {"state": "Available"},
+    }
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = team
+    db.query.return_value = query
+
+    with patch(
+        "app.services.adapters.bot_kinds.TeamShareService.check_permission",
+        return_value=False,
+    ):
+        try:
+            service._resolve_default_kb_team_owner_id(
+                db,
+                88,
+                current_user_id=7,
+                require_edit=True,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 403
+            assert exc.detail == "Access denied"
+        else:
+            raise AssertionError("Expected HTTPException")
 
 
 def test_create_with_user_rejects_non_group_knowledge_bases_for_group_bots():

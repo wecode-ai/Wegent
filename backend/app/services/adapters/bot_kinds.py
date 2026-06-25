@@ -27,6 +27,7 @@ from app.schemas.kind import (
     SkillRefMeta,
     Team,
 )
+from app.schemas.share import MemberRole
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -37,6 +38,8 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share.knowledge_share_service import KnowledgeShareService
+from app.services.share.team_share_service import TeamShareService
+from app.services.task_team_resolver import can_user_use_team
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -144,9 +147,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         self,
         db: Session,
         team_id: Optional[int],
+        current_user_id: int,
         bot: Optional[Kind] = None,
+        require_edit: bool = False,
     ) -> int:
-        """Resolve Team owner for default KB edits and validate bot membership."""
+        """Resolve Team owner for default KB context after permission checks."""
         if team_id is None:
             raise HTTPException(
                 status_code=400,
@@ -165,10 +170,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not team or not team.json:
             raise HTTPException(status_code=400, detail="Team context not found")
 
+        if require_edit:
+            if (
+                team.user_id != current_user_id
+                and not TeamShareService().check_permission(
+                    db, team.id, current_user_id, MemberRole.Developer
+                )
+            ):
+                raise HTTPException(status_code=403, detail="Access denied")
+        elif not can_user_use_team(db, current_user_id, team):
+            raise HTTPException(status_code=403, detail="Access denied")
+
         if bot is not None:
             team_crd = Team.model_validate(team.json)
             bot_namespace = bot.namespace or "default"
-            if not any(
+            if team.user_id != bot.user_id or not any(
                 member.botRef.name == bot.name
                 and (member.botRef.namespace or "default") == bot_namespace
                 for member in (team_crd.spec.members or [])
@@ -434,12 +450,23 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             self._validate_skills(db, obj_in.skills, user_id, namespace)
         if obj_in.preload_skills:
             self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
+        team_owner_user_id = user_id
+        if (
+            obj_in.default_knowledge_base_refs is not None
+            and obj_in.default_knowledge_base_team_id is not None
+        ):
+            team_owner_user_id = self._resolve_default_kb_team_owner_id(
+                db,
+                obj_in.default_knowledge_base_team_id,
+                current_user_id=user_id,
+                require_edit=True,
+            )
         default_knowledge_base_refs = self._prepare_default_knowledge_base_refs(
             db,
             obj_in.default_knowledge_base_refs,
             user_id,
             namespace,
-            team_owner_user_id=user_id,
+            team_owner_user_id=team_owner_user_id,
         )
 
         # Encrypt sensitive data in agent_config before storing
@@ -828,13 +855,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         bot: Kind,
         bot_dict: Dict[str, Any],
         team_id: Optional[int],
+        current_user_id: int,
     ) -> None:
         """Annotate default KB refs with Team owner readability diagnostics."""
         if not team_id or not bot_dict.get("default_knowledge_base_refs"):
             return
 
         team_owner_user_id = self._resolve_default_kb_team_owner_id(
-            db, team_id, bot=bot
+            db,
+            team_id,
+            current_user_id=current_user_id,
+            bot=bot,
+            require_edit=False,
         )
         share_service = KnowledgeShareService()
         annotated_refs = []
@@ -876,6 +908,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 bot=bot,
                 bot_dict=bot_dict,
                 team_id=default_knowledge_base_team_id,
+                current_user_id=user_id,
             )
 
         # Get related user
@@ -945,7 +978,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             team_owner_user_id = self._resolve_default_kb_team_owner_id(
                 db,
                 obj_in.default_knowledge_base_team_id,
+                current_user_id=user_id,
                 bot=bot,
+                require_edit=True,
             )
             normalized_default_kb_refs = self._prepare_default_knowledge_base_refs(
                 db,
