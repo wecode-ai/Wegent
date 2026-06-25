@@ -460,6 +460,7 @@ function renderUserContent(content: string) {
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [
+  /^\$\{thinking\.[^}]+}/i,
   /^api error:/i,
   /^task failed/i,
   /^error:/i,

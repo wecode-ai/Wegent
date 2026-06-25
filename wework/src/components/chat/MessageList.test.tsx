@@ -1392,6 +1392,33 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
   })
 
+  test('hides executor i18n raw failed content before rendering the error card', () => {
+    const rawError =
+      '${thinking.execution_failed} async execution: Command failed with exit code 1 (exit code: 1) Error output: Check stderr output for details Claude CLI stderr: error: An unknown error occurred (Unexpected)'
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: rawError,
+            status: 'failed',
+            error: 'Agent execution failed: FAILED',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(container.querySelector('.assistant-markdown')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('assistant-error-card')).toHaveLength(1)
+    expect(
+      screen.queryByText(rawError, { selector: '.assistant-markdown p' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+  })
+
   test('expands raw error details from the compact details row', async () => {
     const user = userEvent.setup()
     const rawError = 'Task failed with status: FAILED'
