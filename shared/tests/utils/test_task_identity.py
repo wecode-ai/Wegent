@@ -10,18 +10,28 @@ from shared.utils.task_identity import (
 
 
 def test_build_task_identity_env_returns_expected_mapping():
-    env = build_task_identity_env(skill_identity_token="skill-jwt", user_name="alice")
+    env = build_task_identity_env(
+        skill_identity_token="skill-jwt",
+        user_name="alice",
+        auth_token="task-jwt",
+    )
 
     assert env == {
+        "AUTH_TOKEN": "task-jwt",
         "WEGENT_SKILL_IDENTITY_TOKEN": "skill-jwt",
         "WEGENT_SKILL_USER_NAME": "alice",
     }
 
 
 def test_build_task_identity_context_reads_from_execution_request():
-    request = ExecutionRequest(skill_identity_token="token-1", user_name="bob")
+    request = ExecutionRequest(
+        auth_token="task-jwt",
+        skill_identity_token="token-1",
+        user_name="bob",
+    )
 
     env = build_task_identity_context(request)
 
+    assert env["AUTH_TOKEN"] == "task-jwt"
     assert env["WEGENT_SKILL_IDENTITY_TOKEN"] == "token-1"
     assert env["WEGENT_SKILL_USER_NAME"] == "bob"
