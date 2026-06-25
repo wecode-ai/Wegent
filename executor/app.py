@@ -44,6 +44,19 @@ _skills_initialized = False
 _OPENAI_REQUEST_LOG_PREVIEW_LIMIT = 4096
 
 
+def _extract_auth_context_from_task_info(task_info):
+    """Extract auth token and task id from dict or ExecutionRequest task info."""
+    if isinstance(task_info, dict):
+        metadata = task_info.get("metadata", {}) or {}
+        auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+        task_id = metadata.get("task_id") or task_info.get("task_id")
+        return auth_token, str(task_id) if task_id else ""
+
+    auth_token = getattr(task_info, "auth_token", "")
+    task_id = getattr(task_info, "task_id", "")
+    return auth_token, str(task_id) if task_id else ""
+
+
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -144,13 +157,12 @@ async def lifespan(app: FastAPI):
         if not auth_token:
             task_info = get_task_info()
             if task_info:
-                # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
-                metadata = task_info.get("metadata", {})
-                auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+                task_info_auth_token, task_info_task_id = (
+                    _extract_auth_context_from_task_info(task_info)
+                )
+                auth_token = task_info_auth_token
                 if not task_id:
-                    task_id = str(
-                        metadata.get("task_id") or task_info.get("task_id", "")
-                    )
+                    task_id = task_info_task_id
 
         if auth_token and task_id:
             logger.info(
@@ -335,11 +347,12 @@ async def _maybe_initialize_skills_from_env() -> None:
     if not auth_token:
         task_info = get_task_info()
         if task_info:
-            # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
-            metadata = task_info.get("metadata", {})
-            auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+            task_info_auth_token, task_info_task_id = (
+                _extract_auth_context_from_task_info(task_info)
+            )
+            auth_token = task_info_auth_token
             if not task_id:
-                task_id = str(metadata.get("task_id") or task_info.get("task_id", ""))
+                task_id = task_info_task_id
 
     if not auth_token or not task_id:
         logger.debug(

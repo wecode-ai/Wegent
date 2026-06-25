@@ -75,6 +75,58 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
+  test('renders file rows instead of inline diff preview when summary contains a diff', () => {
+    renderCard({
+      summary: {
+        ...summary,
+        file_count: 2,
+        additions: 6,
+        deletions: 4,
+        files: [
+          {
+            path: 'wework/src/components/layout/DesktopWorkbenchMain.tsx',
+            change_type: 'modified',
+            additions: 3,
+            deletions: 2,
+            binary: false,
+          },
+          {
+            path: 'wework/src/components/layout/MobileWorkbenchLayout.tsx',
+            change_type: 'modified',
+            additions: 3,
+            deletions: 2,
+            binary: false,
+          },
+        ],
+        diff: [
+          'diff --git a/wework/src/components/layout/DesktopWorkbenchMain.tsx b/wework/src/components/layout/DesktopWorkbenchMain.tsx',
+          '--- a/wework/src/components/layout/DesktopWorkbenchMain.tsx',
+          '+++ b/wework/src/components/layout/DesktopWorkbenchMain.tsx',
+          '@@ -1 +1 @@',
+          '-const name = "old"',
+          '+const name = "new"',
+          'diff --git a/wework/src/components/layout/MobileWorkbenchLayout.tsx b/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '--- a/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '+++ b/wework/src/components/layout/MobileWorkbenchLayout.tsx',
+          '@@ -1 +1 @@',
+          '-const mobile = "old"',
+          '+const mobile = "new"',
+        ].join('\n'),
+      },
+    })
+
+    expect(screen.queryByTestId('file-changes-inline-diff')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('file-change-row')).toHaveLength(2)
+    expect(
+      screen.getByText('wework/src/components/layout/DesktopWorkbenchMain.tsx')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('wework/src/components/layout/MobileWorkbenchLayout.tsx')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('-const name = "old"')).not.toBeInTheDocument()
+    expect(screen.queryByText('+const mobile = "new"')).not.toBeInTheDocument()
+  })
+
   test('requests the right review panel without loading diff immediately', async () => {
     const { onLoadDiff, onOpenReview } = renderCard()
 
@@ -86,6 +138,7 @@ describe('FileChangesCard', () => {
     expect(request.subtaskId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
+    expect(request.focusFilePath).toBeUndefined()
     expect(request.loadDiff).toEqual(expect.any(Function))
     expect(onLoadDiff).not.toHaveBeenCalled()
 
@@ -122,6 +175,7 @@ describe('FileChangesCard', () => {
     expect(request.subtaskId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
+    expect(request.focusFilePath).toBe('src/file-2.ts')
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()

@@ -11,6 +11,7 @@ from shared.models.execution import ExecutionRequest
 def test_build_task_identity_context_returns_standard_skill_identity_env():
     """Task identity context should expose the standard skill identity env keys."""
     request = ExecutionRequest(
+        auth_token="task-jwt",
         user_name="alice",
         skill_identity_token="skill-jwt",
     )
@@ -18,6 +19,7 @@ def test_build_task_identity_context_returns_standard_skill_identity_env():
     env = build_task_identity_context(request)
 
     assert env == {
+        "AUTH_TOKEN": "task-jwt",
         "WEGENT_SKILL_IDENTITY_TOKEN": "skill-jwt",
         "WEGENT_SKILL_USER_NAME": "alice",
     }

@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+import socketio
 
+import executor.modes.local.websocket_client as websocket_client_module
+from executor.config import config
 from executor.modes.local.websocket_client import (
     WebSocketClient,
-    build_runtime_auth_file_report,
     _is_usable_device_ip,
+    build_runtime_auth_file_report,
 )
 
 
@@ -129,3 +132,69 @@ async def test_connect_disconnects_stale_engineio_transport_before_connecting():
     assert client.sio.disconnect_called is True
     assert client.sio.connect_called is True
     assert client._registered is False
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_treats_socketio_timeout_as_timeout(monkeypatch):
+    client = WebSocketClient.__new__(WebSocketClient)
+    warnings = []
+
+    class FakeSocket:
+        async def call(self, *args, **kwargs):
+            raise socketio.exceptions.TimeoutError()
+
+    client.sio = FakeSocket()
+    client._connected = True
+    client._socketio_connected = lambda: True
+    client.device_id = "device-1"
+    client.capability_reporter = type(
+        "FakeCapabilityReporter",
+        (),
+        {
+            "build_report": lambda self: {
+                "revision": 1,
+                "digest": "digest",
+                "full": False,
+            }
+        },
+    )()
+    client._get_runtime_transfer_host = lambda: "127.0.0.1"
+    monkeypatch.setattr(websocket_client_module.logger, "warning", warnings.append)
+
+    assert await client.send_heartbeat(timeout=0.01) is False
+    assert "Heartbeat timeout" in warnings
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_uses_configured_default_timeout(monkeypatch):
+    client = WebSocketClient.__new__(WebSocketClient)
+
+    class FakeSocket:
+        def __init__(self):
+            self.timeout = None
+
+        async def call(self, *args, **kwargs):
+            self.timeout = kwargs["timeout"]
+            return {"success": True}
+
+    fake_socket = FakeSocket()
+    client.sio = fake_socket
+    client._connected = True
+    client._socketio_connected = lambda: True
+    client.device_id = "device-1"
+    client.capability_reporter = type(
+        "FakeCapabilityReporter",
+        (),
+        {
+            "build_report": lambda self: {
+                "revision": 1,
+                "digest": "digest",
+                "full": False,
+            }
+        },
+    )()
+    client._get_runtime_transfer_host = lambda: "127.0.0.1"
+    monkeypatch.setattr(config, "LOCAL_HEARTBEAT_CALL_TIMEOUT", 12)
+
+    assert await client.send_heartbeat() is True
+    assert fake_socket.timeout == 12

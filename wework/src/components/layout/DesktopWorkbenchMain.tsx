@@ -127,6 +127,7 @@ interface DesktopReviewState {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
   reloadDiff?: () => Promise<string>
 }
 
@@ -136,6 +137,7 @@ interface DesktopReviewMetadata {
   defaultFileTreeVisible?: boolean
   branchName?: string
   targetBranchName?: string
+  focusFilePath?: string
 }
 
 type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
@@ -157,10 +159,12 @@ interface DesktopWorkbenchMainProps {
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  isWaitingForAssistant?: boolean
   error?: string | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
@@ -222,6 +226,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  isWaitingForAssistant = isSending,
   error,
   environmentInfo,
   onRefreshEnvironmentInfo,
@@ -304,10 +309,12 @@ export function DesktopWorkbenchMain({
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = messages.length > 0 || currentRuntimeTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
-  const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentProject,
-    standaloneDeviceId: projectWork.currentStandaloneDeviceId,
-  })
+  const activeDeviceId =
+    currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject,
+      standaloneDeviceId: projectWork.currentStandaloneDeviceId,
+    })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
@@ -317,6 +324,7 @@ export function DesktopWorkbenchMain({
   )
   const noStandaloneCompatibleDevice =
     !currentProject &&
+    !currentRuntimeTask &&
     !activeDeviceId &&
     !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
@@ -324,20 +332,21 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
-  const composerDisabledReason = isSending
-    ? t('workbench.sending_message')
-    : activeDeviceUnavailable
-      ? t('workbench.device_status_active_unavailable', {
+  const composerDisabledReason = activeDeviceUnavailable
+    ? t('workbench.device_status_active_unavailable', {
+        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+      })
+    : activeDeviceVersionUnsupported
+      ? t('workbench.device_status_active_upgrade_required', {
           device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
-      : activeDeviceVersionUnsupported
-        ? t('workbench.device_status_active_upgrade_required', {
-            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-            version: WEWORK_MIN_EXECUTOR_VERSION,
-          })
-        : noStandaloneCompatibleDevice
-          ? t('workbench.device_status_no_online_device')
-          : undefined
+      : noStandaloneCompatibleDevice
+        ? t('workbench.device_status_no_online_device')
+        : undefined
+  const inlineComposerDisabledReason = showConversationDeviceBanner
+    ? undefined
+    : composerDisabledReason
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...projectChat,
     modelSelectorOpenSignal,
@@ -386,6 +395,7 @@ export function DesktopWorkbenchMain({
         defaultFileTreeVisible: metadata.defaultFileTreeVisible,
         branchName: metadata.branchName,
         targetBranchName: metadata.targetBranchName,
+        focusFilePath: metadata.focusFilePath,
         reloadDiff: loadDiff,
       })
       try {
@@ -400,6 +410,7 @@ export function DesktopWorkbenchMain({
             defaultFileTreeVisible: metadata.defaultFileTreeVisible,
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
+            focusFilePath: metadata.focusFilePath,
             reloadDiff: loadDiff,
           })
         }
@@ -418,6 +429,7 @@ export function DesktopWorkbenchMain({
             defaultFileTreeVisible: metadata.defaultFileTreeVisible,
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
+            focusFilePath: metadata.focusFilePath,
             reloadDiff: loadDiff,
           })
         }
@@ -491,11 +503,13 @@ export function DesktopWorkbenchMain({
       defaultFileTreeVisible: reviewState.defaultFileTreeVisible,
       branchName: reviewState.branchName,
       targetBranchName: reviewState.targetBranchName,
+      focusFilePath: reviewState.focusFilePath,
     })
   }, [
     openReviewFromDiffLoader,
     reviewState.branchName,
     reviewState.defaultFileTreeVisible,
+    reviewState.focusFilePath,
     reviewState.reloadDiff,
     reviewState.reviewMode,
     reviewState.reviewTitle,
@@ -705,6 +719,7 @@ export function DesktopWorkbenchMain({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
+              isWaitingForAssistant={isWaitingForAssistant}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={currentRuntimeTask?.localTaskId ?? null}
@@ -722,7 +737,12 @@ export function DesktopWorkbenchMain({
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
-              onOpenFileChangesReview={({ loadDiff, reviewTitle, defaultFileTreeVisible }) => {
+              onOpenFileChangesReview={({
+                loadDiff,
+                reviewTitle,
+                defaultFileTreeVisible,
+                focusFilePath,
+              }) => {
                 previousTurnReviewRef.current = {
                   loadDiff,
                   defaultFileTreeVisible,
@@ -732,6 +752,7 @@ export function DesktopWorkbenchMain({
                   reviewTitle,
                   reviewMode: 'previous-turn',
                   defaultFileTreeVisible,
+                  focusFilePath,
                 })
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
@@ -773,7 +794,7 @@ export function DesktopWorkbenchMain({
                   onSubmit={onSend}
                   disabled={composerDisabled}
                   error={error}
-                  disabledReason={composerDisabledReason}
+                  disabledReason={inlineComposerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
@@ -820,7 +841,7 @@ export function DesktopWorkbenchMain({
                 onSubmit={onSend}
                 disabled={composerDisabled}
                 error={error}
-                disabledReason={composerDisabledReason}
+                disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}

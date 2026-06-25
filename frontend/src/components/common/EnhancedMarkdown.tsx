@@ -100,7 +100,7 @@ function splitArtifactBlocks(source: string): ContentPart[] {
 
 function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
   const parts: ContentPart[] = []
-  const specialBlockRegex = /```(mermaid|latex)\s*\n([\s\S]*?)```/g
+  const specialBlockRegex = /```[ \t]*(mermaid|latex)\b[^\n]*\n([\s\S]*?)```/gi
   let lastIndex = 0
   let match: RegExpExecArray | null
 
@@ -112,7 +112,7 @@ function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
       }
     }
 
-    const blockType = match[1] as 'mermaid' | 'latex'
+    const blockType = match[1].toLowerCase() as 'mermaid' | 'latex'
     const blockCode = match[2].trim()
     if (blockCode) {
       parts.push({ type: blockType, content: blockCode })

@@ -28,31 +28,45 @@ export function mergeChunkContent(
     }
   }
 
+  const existingCodePoints = Array.from(existingContent)
+  const incomingCodePoints = Array.from(incomingContent)
+  const existingLength = existingCodePoints.length
+
+  const sliceExisting = (start: number, end?: number) =>
+    existingCodePoints.slice(start, end).join('')
+  const sliceIncoming = (start: number, end?: number) =>
+    incomingCodePoints.slice(start, end).join('')
+  const getAppendedContent = (content: string) => {
+    const contentCodePoints = Array.from(content)
+    return contentCodePoints.length > existingLength
+      ? contentCodePoints.slice(existingLength).join('')
+      : ''
+  }
+
   const replaceTail = () => {
-    const content = existingContent.slice(0, offset) + incomingContent
+    const content = sliceExisting(0, offset) + incomingContent
     return {
       content,
-      appendedContent:
-        content.length > existingContent.length ? content.slice(existingContent.length) : '',
+      appendedContent: getAppendedContent(content),
     }
   }
 
-  if (offset > existingContent.length) {
+  if (offset > existingLength) {
     return replaceTail()
   }
 
-  const existingAtOffset = existingContent.slice(offset, offset + incomingContent.length)
+  const existingAtOffset = sliceExisting(offset, offset + incomingCodePoints.length)
   if (existingAtOffset === incomingContent) {
     return { content: existingContent, appendedContent: '' }
   }
 
-  if (offset < existingContent.length) {
-    const overlapLength = existingContent.length - offset
-    const existingOverlap = existingContent.slice(offset)
-    const incomingOverlap = incomingContent.slice(0, overlapLength)
+  if (offset < existingLength) {
+    const overlapLength = existingLength - offset
+    const existingOverlap = sliceExisting(offset)
+    const incomingOverlap = sliceIncoming(0, overlapLength)
 
     if (existingOverlap === incomingOverlap) {
-      const appendedContent = incomingContent.slice(overlapLength)
+      const appendedContent = sliceIncoming(overlapLength)
       return {
         content: existingContent + appendedContent,
         appendedContent,

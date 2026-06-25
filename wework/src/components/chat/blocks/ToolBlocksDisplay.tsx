@@ -59,7 +59,7 @@ export function ToolBlocksDisplay({
   if (blocks.length === 0 && !isStreaming) return null
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = buildProcessingDisplayRows(blocks)
+  const rows = buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning })
   const expanded = forceExpanded || isRunning || userExpanded
   const hasLiveNarrativeBlock = rows.some(
     row =>
@@ -105,6 +105,7 @@ export function ToolBlocksDisplay({
               <ToolBlockItem
                 key={row.id}
                 block={row.block}
+                forceExpanded={isRunning && row.block.type === 'tool'}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
             )

@@ -133,7 +133,7 @@ function runtimeWork(
         },
       ],
     })),
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
 }
@@ -240,6 +240,60 @@ describe('ChatInput', () => {
     expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('keeps queued rows compact without generic queue notices', () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-notice',
+        content: '执行pwd',
+        status: 'queued',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+        notice: '已排队，当前回复结束后发送',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.getByText('执行pwd')).toBeInTheDocument()
+    expect(screen.queryByText('已排队，当前回复结束后发送')).not.toBeInTheDocument()
+  })
+
+  test('shows sending notices for queued rows that are actively being sent', () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-sending',
+        content: '执行ls',
+        status: 'sending',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+        notice: '正在发送',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.getByText('执行ls')).toBeInTheDocument()
+    expect(screen.getByText('正在发送')).toBeInTheDocument()
   })
 
   test('keeps the compact mobile composer close to one-line input height', () => {

@@ -19,10 +19,19 @@ from typing import Any, Callable, Optional
 from executor.config import config
 from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
 from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+from executor.runtime_work.codex_global_state import (
+    CodexGlobalProject,
+    CodexGlobalProjectIndex,
+    CodexGlobalState,
+    ensure_codex_global_project,
+    load_codex_global_state,
+    notify_running_codex_app_workspace_root,
+    remove_codex_global_project,
+    rename_codex_global_project,
+)
 from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     LocalTaskStore,
-    LocalWorkspaceRecord,
     normalize_workspace_path,
     utc_now_iso,
 )
@@ -48,6 +57,9 @@ CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+RUNTIME_SEARCH_DEFAULT_LIMIT = 20
+RUNTIME_SEARCH_MAX_LIMIT = 50
+RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS = 60
 
 
 def _compress_runtime_rpc_response(
@@ -74,6 +86,32 @@ def _compress_runtime_rpc_response(
         "rawBytes": len(raw),
         "compressedBytes": len(compressed),
     }
+
+
+def _runtime_message_attachments(attachments: Any) -> list[dict[str, Any]]:
+    if not isinstance(attachments, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = attachment.get("id")
+        normalized.append(
+            {
+                "id": attachment_id,
+                "filename": attachment.get("original_filename")
+                or attachment.get("filename")
+                or f"attachment-{attachment_id}",
+                "file_size": attachment.get("file_size") or 0,
+                "mime_type": attachment.get("mime_type") or "application/octet-stream",
+                "status": "ready",
+                "subtask_id": attachment.get("subtask_id") or 0,
+                "file_extension": attachment.get("file_extension") or "",
+                "created_at": utc_now_iso(),
+            }
+        )
+    return normalized
 
 
 class LocalTaskResponsesTransport(EventTransport):
@@ -157,6 +195,7 @@ class RuntimeWorkRpcHandler:
         self.responses_event_emitter = responses_event_emitter
         self.adapters = adapters or self._default_adapters()
         self._running_sdk_tasks: set[asyncio.Task] = set()
+        self._running_sdk_tasks_by_local_task_id: dict[str, asyncio.Task] = {}
         self._running_sdk_task_ids: set[str] = set()
         self._sdk_codex_task_records: dict[str, LocalTaskRecord] = {}
         self._codex_seen_updated_at: dict[str, str] = {}
@@ -171,8 +210,17 @@ class RuntimeWorkRpcHandler:
             if method == "runtime.tasks.list":
                 response = self._list_tasks(payload)
                 return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.tasks.search":
+                response = await self._search(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.workspaces.open":
                 response = await self._open_workspace(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.workspaces.rename":
+                response = self._rename_workspace(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.workspaces.remove":
+                response = self._remove_workspace(payload)
                 return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.transcript":
                 response = await self._transcript(payload)
@@ -180,8 +228,26 @@ class RuntimeWorkRpcHandler:
             if method == "runtime.tasks.send":
                 response = await self._send(payload)
                 return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.tasks.cancel":
+                response = await self._cancel(payload)
+                return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.archive":
                 response = await self._archive(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.tasks.rename":
+                response = await self._rename(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.archived_conversations.list":
+                response = self._list_archived_conversations(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.archived_conversations.unarchive":
+                response = await self._unarchive_archived_conversation(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.archived_conversations.delete":
+                response = await self._delete_archived_conversation(payload)
+                return _compress_runtime_rpc_response(response, method=method)
+            if method == "runtime.archived_conversations.delete_bulk":
+                response = await self._delete_archived_conversations_bulk(payload)
                 return _compress_runtime_rpc_response(response, method=method)
             if method == "runtime.tasks.status":
                 response = self._status(payload)
@@ -203,7 +269,6 @@ class RuntimeWorkRpcHandler:
                 return _compress_runtime_rpc_response(response, method=method)
             if method in {
                 "runtime.tasks.create",
-                "runtime.tasks.cancel",
             }:
                 response = await self._adapter_method(method, payload)
                 return _compress_runtime_rpc_response(response, method=method)
@@ -218,14 +283,239 @@ class RuntimeWorkRpcHandler:
             return self._error(str(exc), code="internal_error")
 
     def _list_tasks(self, payload: dict[str, Any]) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        discover_started_at = time.perf_counter()
         discovered_tasks = self._refresh_discovered_tasks()
+        discover_ms = int((time.perf_counter() - discover_started_at) * 1000)
         workspace_path = payload.get("workspacePath")
         include_archived = bool(payload.get("includeArchived", False))
+        store_started_at = time.perf_counter()
         store_tasks = self.store.list_tasks(
             workspace_path=workspace_path,
             include_archived=include_archived,
         )
-        store_workspaces = self.store.list_workspaces(
+        store_ms = int((time.perf_counter() - store_started_at) * 1000)
+        visible_started_at = time.perf_counter()
+        tasks = self._list_visible_tasks(
+            store_tasks=store_tasks,
+            discovered_tasks=discovered_tasks,
+            workspace_path=workspace_path,
+            include_archived=include_archived,
+        )
+        visible_ms = int((time.perf_counter() - visible_started_at) * 1000)
+        global_state_started_at = time.perf_counter()
+        codex_global_state = self._load_codex_global_state()
+        codex_project_index = (
+            codex_global_state.project_index()
+            if codex_global_state is not None
+            else None
+        )
+        global_state_ms = int((time.perf_counter() - global_state_started_at) * 1000)
+
+        group_started_at = time.perf_counter()
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        workspace_labels: dict[str, str] = {}
+        workspace_metadata: dict[str, dict[str, str]] = {}
+        for project in self._codex_global_projects(codex_project_index, workspace_path):
+            grouped[project.workspace_path] = []
+            workspace_labels[project.workspace_path] = project.name
+            workspace_metadata[project.workspace_path] = {
+                "workspaceSource": project.source,
+            }
+            if project.host_id:
+                workspace_metadata[project.workspace_path]["remoteHostId"] = (
+                    project.host_id
+                )
+        for task in tasks:
+            group_workspace = self._task_group_workspace(task, codex_project_index)
+            if group_workspace is None:
+                continue
+            grouped[group_workspace].append(self._task_summary(task))
+        group_ms = int((time.perf_counter() - group_started_at) * 1000)
+        workspaces = self._workspace_summaries(
+            grouped,
+            workspace_labels,
+            workspace_metadata,
+        )
+        logger.info(
+            "[RuntimeWorkRpc] Listed runtime tasks: workspace_path=%s include_archived=%s discovered_count=%s store_task_count=%s visible_task_count=%s workspace_count=%s elapsed_ms=%s discover_ms=%s store_ms=%s visible_ms=%s global_state_ms=%s group_ms=%s global_state_loaded=%s",
+            workspace_path,
+            include_archived,
+            len(discovered_tasks),
+            len(store_tasks),
+            len(tasks),
+            len(workspaces),
+            int((time.perf_counter() - started_at) * 1000),
+            discover_ms,
+            store_ms,
+            visible_ms,
+            global_state_ms,
+            group_ms,
+            codex_global_state is not None,
+        )
+
+        return {
+            "success": True,
+            "workspaces": workspaces,
+        }
+
+    def _list_archived_conversations(self, payload: dict[str, Any]) -> dict[str, Any]:
+        workspace_path = payload.get("workspacePath")
+        if workspace_path is not None and not isinstance(workspace_path, str):
+            raise ValueError("workspacePath must be a string")
+
+        search_term = payload.get("search")
+        if search_term is not None and not isinstance(search_term, str):
+            raise ValueError("search must be a string")
+
+        codex_project_index = self._codex_project_index()
+        archived_tasks = [
+            task
+            for task in self._list_archived_tasks(
+                workspace_path=workspace_path,
+                search_term=search_term,
+            )
+            if self._is_visible_runtime_task_scope(task, codex_project_index)
+        ]
+        grouped: dict[str, int] = defaultdict(int)
+        for task in archived_tasks:
+            grouped[task.workspace_path] += 1
+
+        return {
+            "success": True,
+            "items": [
+                self._archived_conversation_summary(task) for task in archived_tasks
+            ],
+            "groups": [
+                {
+                    "workspacePath": workspace,
+                    "count": count,
+                }
+                for workspace, count in sorted(grouped.items())
+            ],
+        }
+
+    def _load_codex_global_state(self) -> Optional[CodexGlobalState]:
+        codex_home = self._codex_home()
+        if codex_home is None:
+            return None
+        return load_codex_global_state(codex_home)
+
+    def _codex_project_index(self) -> Optional[CodexGlobalProjectIndex]:
+        codex_global_state = self._load_codex_global_state()
+        if codex_global_state is None:
+            return None
+        return codex_global_state.project_index()
+
+    def _codex_home(self) -> Optional[Any]:
+        if self.codex_discovery is None:
+            return None
+        return getattr(self.codex_discovery, "codex_home", None)
+
+    def _codex_global_projects(
+        self,
+        codex_project_index: Optional[CodexGlobalProjectIndex],
+        workspace_path: Any,
+    ) -> list[CodexGlobalProject]:
+        if codex_project_index is None:
+            return []
+        normalized_workspace = (
+            normalize_workspace_path(workspace_path)
+            if isinstance(workspace_path, str) and workspace_path.strip()
+            else None
+        )
+        return [
+            project
+            for project in codex_project_index.projects
+            if normalized_workspace is None
+            or project.workspace_path == normalized_workspace
+        ]
+
+    def _task_group_workspace(
+        self,
+        task: LocalTaskRecord,
+        codex_project_index: Optional[CodexGlobalProjectIndex],
+    ) -> Optional[str]:
+        if task.workspace_kind == "chat":
+            return task.workspace_path
+        if not self._is_codex_runtime(task.runtime):
+            return None
+        if codex_project_index is None or not codex_project_index.projects:
+            return None
+
+        thread_id = self._sdk_codex_thread_id(task) or task.local_task_id
+        project = codex_project_index.project_for_thread(thread_id, task.workspace_path)
+        if project is not None:
+            return project.workspace_path
+        return None
+
+    def _is_visible_runtime_task_scope(
+        self,
+        task: LocalTaskRecord,
+        codex_project_index: Optional[CodexGlobalProjectIndex],
+    ) -> bool:
+        return self._task_group_workspace(task, codex_project_index) is not None
+
+    def _workspace_summaries(
+        self,
+        grouped: dict[str, list[dict[str, Any]]],
+        workspace_labels: dict[str, str],
+        workspace_metadata: dict[str, dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        summaries = []
+        for workspace_path, workspace_tasks in grouped.items():
+            summary = {
+                "workspacePath": workspace_path,
+                "localTasks": workspace_tasks,
+            }
+            summary.update(workspace_metadata.get(workspace_path, {}))
+            label = workspace_labels.get(workspace_path)
+            if label:
+                summary["label"] = label
+            summaries.append(summary)
+        return summaries
+
+    def _list_archived_tasks(
+        self,
+        *,
+        workspace_path: Any,
+        search_term: Any,
+    ) -> list[LocalTaskRecord]:
+        tasks: list[LocalTaskRecord] = []
+        if self.codex_discovery is not None:
+            discover_archived = getattr(
+                self.codex_discovery,
+                "discover_archived",
+                None,
+            )
+            if callable(discover_archived):
+                tasks.extend(
+                    discover_archived(
+                        workspace_path=workspace_path,
+                        search_term=search_term,
+                    )
+                )
+
+        tasks.extend(
+            task
+            for task in self.store.list_tasks(
+                workspace_path=workspace_path,
+                include_archived=True,
+            )
+            if task.status == "archived" and not self._is_sdk_codex_task(task)
+        )
+        return self._dedupe_and_sort_tasks(tasks)
+
+    async def _search(self, payload: dict[str, Any]) -> dict[str, Any]:
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            return {"success": True, "query": "", "items": []}
+
+        limit = self._bounded_search_limit(payload.get("limit"))
+        workspace_path = payload.get("workspacePath")
+        include_archived = bool(payload.get("includeArchived", False))
+        discovered_tasks = self._refresh_discovered_tasks()
+        store_tasks = self.store.list_tasks(
             workspace_path=workspace_path,
             include_archived=include_archived,
         )
@@ -236,22 +526,135 @@ class RuntimeWorkRpcHandler:
             include_archived=include_archived,
         )
 
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for workspace in store_workspaces:
-            grouped[workspace.workspace_path] = []
+        items: list[dict[str, Any]] = []
+        metadata_matched_task_ids: set[str] = set()
         for task in tasks:
-            grouped[task.workspace_path].append(self._task_summary(task))
+            task_matches = self._search_task_metadata(task, query)
+            if not task_matches:
+                continue
+            metadata_matched_task_ids.add(task.local_task_id)
+            items.extend(task_matches)
+            if len(items) >= limit:
+                return {
+                    "success": True,
+                    "query": query,
+                    "items": items[:limit],
+                }
+
+        for task in tasks:
+            if task.local_task_id in metadata_matched_task_ids:
+                continue
+            messages = await self._task_transcript_messages(task)
+            normalized_messages = self._normalize_messages(task, messages)
+            task_matches = self._search_task_messages(task, normalized_messages, query)
+            items.extend(task_matches)
+            if len(items) >= limit:
+                break
 
         return {
             "success": True,
-            "workspaces": [
-                {
-                    "workspacePath": workspace_path,
-                    "localTasks": workspace_tasks,
-                }
-                for workspace_path, workspace_tasks in sorted(grouped.items())
-            ],
+            "query": query,
+            "items": items[:limit],
         }
+
+    def _bounded_search_limit(self, value: Any) -> int:
+        if isinstance(value, bool):
+            return RUNTIME_SEARCH_DEFAULT_LIMIT
+        if isinstance(value, int):
+            return max(1, min(value, RUNTIME_SEARCH_MAX_LIMIT))
+        if isinstance(value, str) and value.isdigit():
+            return max(1, min(int(value), RUNTIME_SEARCH_MAX_LIMIT))
+        return RUNTIME_SEARCH_DEFAULT_LIMIT
+
+    def _search_task_metadata(
+        self,
+        task: LocalTaskRecord,
+        query: str,
+    ) -> list[dict[str, Any]]:
+        fields = [
+            ("title", task.title, task.updated_at),
+            ("workspace", task.workspace_path, task.updated_at),
+        ]
+        query_lower = query.lower()
+        for role, content, created_at in fields:
+            match_start = content.lower().find(query_lower)
+            if match_start < 0:
+                continue
+            match_end = match_start + len(query)
+            return [
+                self._search_item(
+                    task=task,
+                    content=content,
+                    match_start=match_start,
+                    match_end=match_end,
+                    message_id="",
+                    message_role=role,
+                    message_created_at=created_at,
+                )
+            ]
+        return []
+
+    def _search_task_messages(
+        self,
+        task: LocalTaskRecord,
+        messages: list[dict[str, Any]],
+        query: str,
+    ) -> list[dict[str, Any]]:
+        query_lower = query.lower()
+        matches: list[dict[str, Any]] = []
+        for message in messages:
+            content = self._string_content(message.get("content"))
+            match_start = content.lower().find(query_lower)
+            if match_start < 0:
+                continue
+            match_end = match_start + len(query)
+            matches.append(
+                self._search_item(
+                    task=task,
+                    content=content,
+                    match_start=match_start,
+                    match_end=match_end,
+                    message_id=str(message.get("id") or ""),
+                    message_role=str(message.get("role") or ""),
+                    message_created_at=message.get("createdAt"),
+                )
+            )
+            break
+        return matches
+
+    def _search_item(
+        self,
+        *,
+        task: LocalTaskRecord,
+        content: str,
+        match_start: int,
+        match_end: int,
+        message_id: str,
+        message_role: str,
+        message_created_at: Any,
+    ) -> dict[str, Any]:
+        return {
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+            "runtime": task.runtime,
+            "title": task.title,
+            "updatedAt": task.updated_at,
+            "messageId": message_id,
+            "messageRole": message_role,
+            "messageCreatedAt": message_created_at,
+            "snippet": self._search_snippet(content, match_start, match_end),
+            "matchStart": match_start,
+            "matchEnd": match_end,
+        }
+
+    def _search_snippet(self, content: str, match_start: int, match_end: int) -> str:
+        if len(content) <= RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS * 2:
+            return content
+        start = max(0, match_start - RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS)
+        end = min(len(content), match_end + RUNTIME_SEARCH_SNIPPET_CONTEXT_CHARS)
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(content) else ""
+        return f"{prefix}{content[start:end]}{suffix}"
 
     async def _open_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime = str(payload.get("runtime") or "codex").strip()
@@ -265,44 +668,126 @@ class RuntimeWorkRpcHandler:
             raise ValueError("workspacePath is required")
 
         normalized_workspace_path = normalize_workspace_path(workspace_path)
-        open_workspace = getattr(self.codex_discovery, "open_workspace", None)
-        if not callable(open_workspace):
+        codex_home = self._codex_home()
+        if codex_home is None:
             return self._error(
                 "Codex SDK workspace adapter is not available",
                 code="unsupported_runtime",
             )
 
-        result = await self._maybe_await(open_workspace(normalized_workspace_path))
-        if not isinstance(result, dict):
-            result = {}
-        thread_id = result.get("threadId")
-        runtime_handle = {"openedBy": "wegent"}
-        if isinstance(thread_id, str) and thread_id.strip():
-            runtime_handle["threadId"] = thread_id.strip()
-        self.store.upsert_workspace(
-            LocalWorkspaceRecord(
-                workspace_path=normalized_workspace_path,
-                runtime="codex",
-                title=self._workspace_title(result, normalized_workspace_path),
-                runtime_handle=runtime_handle,
+        label = payload.get("label")
+        project = ensure_codex_global_project(
+            codex_home,
+            normalized_workspace_path,
+            label=label if isinstance(label, str) else None,
+        )
+        codex_app_notified = notify_running_codex_app_workspace_root(
+            normalized_workspace_path
+        )
+        refreshed_state = load_codex_global_state(codex_home)
+        persisted_roots = (
+            refreshed_state.saved_workspace_roots if refreshed_state is not None else []
+        )
+        if project.workspace_path not in persisted_roots:
+            return self._error(
+                "Codex global project state was not persisted",
+                code="codex_global_state_not_persisted",
             )
+        logger.info(
+            "[RuntimeWorkRpc] Registered Codex workspace: codex_home=%s "
+            "workspace_path=%s codex_app_notified=%s saved_root_count=%s",
+            codex_home,
+            project.workspace_path,
+            codex_app_notified,
+            len(persisted_roots),
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "runtime": "codex",
+            "workspacePath": project.workspace_path,
+        }
+
+    def _rename_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime = str(payload.get("runtime") or "codex").strip()
+        if not self._is_codex_runtime(runtime):
+            return self._error(
+                "Only Codex runtime workspaces can be renamed without a turn",
+                code="unsupported_runtime",
+            )
+        workspace_path = payload.get("workspacePath") or payload.get("workspace_path")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("workspacePath is required")
+        label = payload.get("label") or payload.get("name")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("label is required")
+
+        codex_home = self._codex_home()
+        if codex_home is None:
+            return self._error(
+                "Codex SDK workspace adapter is not available",
+                code="unsupported_runtime",
+            )
+
+        project = rename_codex_global_project(
+            codex_home,
+            normalize_workspace_path(workspace_path),
+            label.strip(),
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "runtime": "codex",
+            "workspacePath": project.workspace_path,
+        }
+
+    def _remove_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime = str(payload.get("runtime") or "codex").strip()
+        if not self._is_codex_runtime(runtime):
+            return self._error(
+                "Only Codex runtime workspaces can be removed without a turn",
+                code="unsupported_runtime",
+            )
+        workspace_path = payload.get("workspacePath") or payload.get("workspace_path")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("workspacePath is required")
+
+        codex_home = self._codex_home()
+        if codex_home is None:
+            return self._error(
+                "Codex SDK workspace adapter is not available",
+                code="unsupported_runtime",
+            )
+
+        normalized_workspace_path = remove_codex_global_project(
+            codex_home,
+            normalize_workspace_path(workspace_path),
         )
         return {
             "success": True,
             "accepted": True,
             "runtime": "codex",
             "workspacePath": normalized_workspace_path,
-            "threadId": runtime_handle.get("threadId"),
         }
 
     def _refresh_discovered_tasks(self) -> list[LocalTaskRecord]:
         if self.codex_discovery is None:
             return []
+        started_at = time.perf_counter()
         try:
-            return self.codex_discovery.discover()
+            records = self.codex_discovery.discover()
         except Exception:
-            logger.exception("Failed to discover Codex runtime tasks")
+            logger.exception(
+                "Failed to discover Codex runtime tasks: elapsed_ms=%s",
+                int((time.perf_counter() - started_at) * 1000),
+            )
             return []
+        logger.info(
+            "[RuntimeWorkRpc] Codex discovery completed: record_count=%s elapsed_ms=%s",
+            len(records),
+            int((time.perf_counter() - started_at) * 1000),
+        )
+        return records
 
     async def poll_codex_updates_once(self) -> None:
         """Detect native Codex thread updates and report them to Backend."""
@@ -442,6 +927,7 @@ class RuntimeWorkRpcHandler:
         include_archived: bool,
     ) -> list[LocalTaskRecord]:
         visible_tasks: list[LocalTaskRecord] = []
+        title_overrides = self._codex_title_overrides(store_tasks)
         for task in store_tasks:
             if not self._is_codex_runtime(task.runtime):
                 visible_tasks.append(task)
@@ -453,7 +939,7 @@ class RuntimeWorkRpcHandler:
             if thread_id
         }
         visible_tasks.extend(
-            task
+            self._apply_codex_title_override(task, title_overrides)
             for task in self._sdk_codex_task_records.values()
             if task.local_task_id not in discovered_ids
             and self._include_discovered_task(
@@ -463,7 +949,7 @@ class RuntimeWorkRpcHandler:
             )
         )
         visible_tasks.extend(
-            task
+            self._apply_codex_title_override(task, title_overrides)
             for task in discovered_tasks
             if task.local_task_id not in active_memory_thread_ids
             if self._include_discovered_task(
@@ -480,6 +966,27 @@ class RuntimeWorkRpcHandler:
             ),
             reverse=True,
         )
+
+    def _codex_title_overrides(
+        self,
+        store_tasks: list[LocalTaskRecord],
+    ) -> dict[tuple[str, str], LocalTaskRecord]:
+        return {
+            (task.local_task_id, task.workspace_path): task
+            for task in store_tasks
+            if self._is_codex_runtime(task.runtime)
+            and task.runtime_handle.get("titleOverride") is True
+        }
+
+    def _apply_codex_title_override(
+        self,
+        task: LocalTaskRecord,
+        title_overrides: dict[tuple[str, str], LocalTaskRecord],
+    ) -> LocalTaskRecord:
+        override = title_overrides.get((task.local_task_id, task.workspace_path))
+        if override is None:
+            return task
+        return replace(task, title=override.title, updated_at=override.updated_at)
 
     def _include_discovered_task(
         self,
@@ -607,6 +1114,14 @@ class RuntimeWorkRpcHandler:
             if codex_page is not None and (
                 codex_page["messages"] or before_cursor is not None
             ):
+                if before_cursor is None:
+                    codex_page = {
+                        **codex_page,
+                        "messages": self._merge_recent_transcript_messages(
+                            codex_page["messages"],
+                            self._runtime_handle_messages_for_codex_thread(task),
+                        ),
+                    }
                 return codex_page
 
         fallback_started_at = time.perf_counter()
@@ -714,7 +1229,12 @@ class RuntimeWorkRpcHandler:
             payload.get("source") if isinstance(payload.get("source"), dict) else None
         )
         if self._is_sdk_codex_task(task):
-            return await self._send_sdk_codex_task(task, content.strip(), source)
+            return await self._send_sdk_codex_task(
+                task,
+                content.strip(),
+                source,
+                attachments=_runtime_message_attachments(payload.get("attachments")),
+            )
 
         adapter = self.adapters.get(task.runtime)
         if not adapter or not hasattr(adapter, "send"):
@@ -735,6 +1255,7 @@ class RuntimeWorkRpcHandler:
         task: LocalTaskRecord,
         message: str,
         source: Optional[dict[str, Any]],
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         stream_message = getattr(self.codex_discovery, "stream_message", None)
         if not callable(stream_message):
@@ -756,6 +1277,13 @@ class RuntimeWorkRpcHandler:
 
         subtask_id = self._next_sdk_codex_subtask_id(task)
         task = self._mark_task_running(task, subtask_id)
+        task = self._record_sdk_codex_user_message(
+            task,
+            message,
+            subtask_id,
+            source=source,
+            attachments=attachments,
+        )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
         sdk_task = asyncio.create_task(
@@ -769,7 +1297,13 @@ class RuntimeWorkRpcHandler:
             )
         )
         self._running_sdk_tasks.add(sdk_task)
-        sdk_task.add_done_callback(self._running_sdk_tasks.discard)
+        self._running_sdk_tasks_by_local_task_id[task.local_task_id] = sdk_task
+        sdk_task.add_done_callback(
+            lambda completed_task, local_task_id=task.local_task_id: (
+                self._running_sdk_tasks.discard(completed_task),
+                self._pop_running_sdk_task(local_task_id, completed_task),
+            )
+        )
         return {
             "success": True,
             "accepted": True,
@@ -813,6 +1347,8 @@ class RuntimeWorkRpcHandler:
                 cwd=task.workspace_path,
                 emitter=emitter,
             )
+        except asyncio.CancelledError:
+            await emitter.incomplete(reason="cancelled")
         except Exception as exc:
             logger.exception("Failed to continue Codex SDK thread: %s", thread_id)
             try:
@@ -859,6 +1395,46 @@ class RuntimeWorkRpcHandler:
             return current + 1
         return int(time.time() * 1000)
 
+    def _pop_running_sdk_task(
+        self,
+        local_task_id: str,
+        completed_task: asyncio.Task,
+    ) -> None:
+        if (
+            self._running_sdk_tasks_by_local_task_id.get(local_task_id)
+            is completed_task
+        ):
+            self._running_sdk_tasks_by_local_task_id.pop(local_task_id, None)
+
+    async def _cancel(self, payload: dict[str, Any]) -> dict[str, Any]:
+        task = self._load_payload_task(payload)
+        if self._is_sdk_codex_task(task):
+            running_task = self._running_sdk_tasks_by_local_task_id.get(
+                task.local_task_id
+            )
+            if running_task and not running_task.done():
+                running_task.cancel()
+            self._running_sdk_task_ids.discard(task.local_task_id)
+            self._mark_sdk_codex_task_not_running(task.local_task_id)
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": task.local_task_id,
+                "workspacePath": task.workspace_path,
+                "runtime": task.runtime,
+            }
+
+        adapter = self.adapters.get(task.runtime)
+        if not adapter or not hasattr(adapter, "cancel"):
+            return self._error(
+                "Runtime cancel adapter is not available",
+                code="unsupported_runtime",
+            )
+        result = await self._maybe_await(getattr(adapter, "cancel")(payload))
+        if isinstance(result, dict):
+            return {"success": True, **result}
+        return {"success": True, "result": result}
+
     def _is_sdk_codex_task(self, task: LocalTaskRecord) -> bool:
         if not self._is_codex_runtime(task.runtime):
             return False
@@ -904,6 +1480,162 @@ class RuntimeWorkRpcHandler:
             "accepted": True,
             "localTaskId": archived.local_task_id,
             "workspacePath": archived.workspace_path,
+        }
+
+    async def _rename(self, payload: dict[str, Any]) -> dict[str, Any]:
+        task = self._load_payload_task(payload)
+        title = payload.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("title is required")
+        normalized_title = title.strip()
+
+        def rename_record(current: LocalTaskRecord) -> LocalTaskRecord:
+            runtime_handle = current.runtime_handle
+            if self._is_codex_runtime(current.runtime):
+                runtime_handle = {**current.runtime_handle, "titleOverride": True}
+            return replace(current, title=normalized_title, runtime_handle=runtime_handle)
+
+        codex_rename: Optional[dict[str, Any]] = None
+        if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
+            thread_id = self._sdk_codex_thread_id(task) or task.local_task_id
+            codex_rename = self.codex_discovery.rename_thread(
+                thread_id,
+                normalized_title,
+            )
+
+        try:
+            renamed = self.store.update_task(
+                task.local_task_id,
+                rename_record,
+                workspace_path=task.workspace_path,
+            )
+        except KeyError:
+            if not self._is_codex_runtime(task.runtime):
+                raise
+            renamed = rename_record(task)
+            self.store.upsert_task(renamed)
+
+        if task.local_task_id in self._sdk_codex_task_records:
+            self._remember_sdk_codex_task(renamed)
+        return {
+            "success": True,
+            "accepted": True,
+            "localTaskId": renamed.local_task_id,
+            "workspacePath": renamed.workspace_path,
+            "codexRename": codex_rename,
+        }
+
+    async def _unarchive_archived_conversation(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        task = self._load_archived_payload_task(payload)
+
+        if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
+            thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+            unarchive_thread = getattr(self.codex_discovery, "unarchive_thread", None)
+            if isinstance(thread_id, str) and thread_id.strip() and unarchive_thread:
+                await self._maybe_await(unarchive_thread(thread_id))
+
+        if self._is_sdk_codex_task(task):
+            active_task = replace(task, status="active", updated_at=utc_now_iso())
+            self._remember_sdk_codex_task(active_task)
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": task.local_task_id,
+                "workspacePath": task.workspace_path,
+            }
+
+        unarchived = self.store.update_task(
+            task.local_task_id,
+            lambda current: replace(current, running=False, status="active"),
+            workspace_path=task.workspace_path,
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "localTaskId": unarchived.local_task_id,
+            "workspacePath": unarchived.workspace_path,
+        }
+
+    async def _delete_archived_conversation(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        task = self._load_archived_payload_task(payload)
+        deleted_files: list[str] = []
+        deleted_state = False
+
+        if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
+            thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+            delete_thread = getattr(
+                self.codex_discovery,
+                "delete_archived_thread",
+                None,
+            )
+            if isinstance(thread_id, str) and thread_id.strip() and delete_thread:
+                result = await self._maybe_await(
+                    delete_thread(
+                        thread_id,
+                        session_path=task.runtime_handle.get("sessionPath"),
+                    )
+                )
+                if isinstance(result, dict):
+                    deleted_state = bool(result.get("deletedState"))
+                    deleted_files = [
+                        item
+                        for item in result.get("deletedFiles", [])
+                        if isinstance(item, str)
+                    ]
+
+        removed = self.store.delete_task(
+            task.local_task_id,
+            workspace_path=task.workspace_path,
+        )
+        self._sdk_codex_task_records.pop(task.local_task_id, None)
+        return {
+            "success": True,
+            "accepted": True,
+            "deleted": bool(deleted_state or deleted_files or removed is not None),
+            "deletedState": deleted_state,
+            "deletedFiles": deleted_files,
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+        }
+
+    async def _delete_archived_conversations_bulk(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise ValueError("items is required")
+
+        results = []
+        deleted_count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                results.append(
+                    {
+                        "success": False,
+                        "error": "Invalid archived conversation item",
+                    }
+                )
+                continue
+            try:
+                result = await self._delete_archived_conversation(item)
+            except (KeyError, ValueError) as exc:
+                result = self._error(str(exc), code="bad_request")
+            if result.get("success") and result.get("deleted"):
+                deleted_count += 1
+            results.append(result)
+
+        return {
+            "success": True,
+            "accepted": True,
+            "deletedCount": deleted_count,
+            "results": results,
         }
 
     def _status(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1225,6 +1957,7 @@ class RuntimeWorkRpcHandler:
             title=title,
             message=message,
             subtask_id=request.subtask_id,
+            attachments=_runtime_message_attachments(request.attachments),
         )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
@@ -1237,7 +1970,13 @@ class RuntimeWorkRpcHandler:
             )
         )
         self._running_sdk_tasks.add(sdk_task)
-        sdk_task.add_done_callback(self._running_sdk_tasks.discard)
+        self._running_sdk_tasks_by_local_task_id[task.local_task_id] = sdk_task
+        sdk_task.add_done_callback(
+            lambda completed_task, local_task_id=task.local_task_id: (
+                self._running_sdk_tasks.discard(completed_task),
+                self._pop_running_sdk_task(local_task_id, completed_task),
+            )
+        )
 
         return {
             "success": True,
@@ -1255,16 +1994,20 @@ class RuntimeWorkRpcHandler:
         message: str,
         task: LocalTaskRecord,
     ) -> None:
+        emitter: Optional[ResponsesAPIEmitter] = None
+
         def emitter_factory(thread_id: str) -> ResponsesAPIEmitter:
+            nonlocal emitter
             attached_task = self._attach_sdk_codex_thread(
                 local_task_id=task.local_task_id,
                 thread_id=thread_id,
             )
-            return self._create_local_task_emitter(
+            emitter = self._create_local_task_emitter(
                 attached_task,
                 source=None,
                 subtask_id=request.subtask_id,
             )
+            return emitter
 
         try:
             await self._maybe_await(
@@ -1275,6 +2018,9 @@ class RuntimeWorkRpcHandler:
                     emitter_factory=emitter_factory,
                 )
             )
+        except asyncio.CancelledError:
+            if emitter is not None:
+                await emitter.incomplete(reason="cancelled")
         except Exception as exc:
             logger.exception("Failed to create Codex SDK thread")
             emitter = self._create_local_task_emitter(
@@ -1322,6 +2068,7 @@ class RuntimeWorkRpcHandler:
         title: str,
         message: str,
         subtask_id: int,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> LocalTaskRecord:
         local_task_id = local_task_id.strip()
         if not local_task_id:
@@ -1343,6 +2090,7 @@ class RuntimeWorkRpcHandler:
                         "createdAt": now,
                         "status": "done",
                         "subtaskId": subtask_id,
+                        **({"attachments": attachments} if attachments else {}),
                     }
                 ],
             },
@@ -1420,6 +2168,13 @@ class RuntimeWorkRpcHandler:
         if workspace_path is not None and not isinstance(workspace_path, str):
             raise ValueError("workspacePath must be a string")
 
+        sdk_task = self._find_sdk_codex_task(
+            local_task_id,
+            workspace_path=workspace_path,
+        )
+        if sdk_task is not None:
+            return sdk_task
+
         try:
             task = self.store.get_task(local_task_id, workspace_path=workspace_path)
             if self._is_codex_runtime(task.runtime):
@@ -1429,13 +2184,6 @@ class RuntimeWorkRpcHandler:
             return task
         except KeyError:
             pass
-
-        sdk_task = self._find_sdk_codex_task(
-            local_task_id,
-            workspace_path=workspace_path,
-        )
-        if sdk_task is not None:
-            return sdk_task
 
         return LocalTaskRecord(
             local_task_id=local_task_id.strip(),
@@ -1459,10 +2207,56 @@ class RuntimeWorkRpcHandler:
         task = self._sdk_codex_task_records.get(local_task_id)
         if task is None:
             return
-        self._sdk_codex_task_records[local_task_id] = replace(
+        self._remember_sdk_codex_task(
+            replace(
+                task,
+                running=False,
+                updated_at=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat(),
+            )
+        )
+
+    def _record_sdk_codex_user_message(
+        self,
+        task: LocalTaskRecord,
+        message: str,
+        subtask_id: int,
+        *,
+        source: Optional[dict[str, Any]],
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> LocalTaskRecord:
+        handle = dict(task.runtime_handle)
+        messages = self._runtime_handle_messages(task)
+        message_id = f"{task.local_task_id}:user:{subtask_id}"
+        if not any(str(existing.get("id")) == message_id for existing in messages):
+            messages.append(
+                {
+                    "id": message_id,
+                    "role": "user",
+                    "content": message,
+                    "createdAt": utc_now_iso(),
+                    "status": "done",
+                    "subtaskId": subtask_id,
+                    **({"attachments": attachments} if attachments else {}),
+                }
+            )
+        elif attachments:
+            for existing in messages:
+                if str(existing.get("id")) == message_id:
+                    existing["attachments"] = attachments
+                    break
+        handle["messages"] = messages
+        if source is not None:
+            source_by_message_id = handle.get("sourceMetadataByMessageId")
+            if not isinstance(source_by_message_id, dict):
+                source_by_message_id = {}
+            source_by_message_id[message_id] = dict(source)
+            handle["sourceMetadataByMessageId"] = source_by_message_id
+        return replace(
             task,
-            running=False,
-            updated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            runtime_handle=handle,
+            updated_at=utc_now_iso(),
         )
 
     def _record_sdk_codex_response_event(
@@ -1477,11 +2271,7 @@ class RuntimeWorkRpcHandler:
             return
 
         handle = dict(task.runtime_handle)
-        messages = [
-            dict(message)
-            for message in handle.get("messages", [])
-            if isinstance(message, dict)
-        ]
+        messages = self._runtime_handle_messages(task)
 
         def assistant_message() -> dict[str, Any]:
             message_id = f"{local_task_id}:assistant:{subtask_id}"
@@ -1512,6 +2302,9 @@ class RuntimeWorkRpcHandler:
             completed_text = self._response_completed_text(data)
             if completed_text:
                 message["content"] = completed_text
+            file_changes = self._response_completed_file_changes(data)
+            if file_changes:
+                message["fileChanges"] = file_changes
             message["status"] = "done"
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             message = assistant_message()
@@ -1524,10 +2317,12 @@ class RuntimeWorkRpcHandler:
 
         handle["messages"] = messages
         handle["activeSubtaskId"] = subtask_id
-        self._sdk_codex_task_records[local_task_id] = replace(
-            task,
-            runtime_handle=handle,
-            updated_at=utc_now_iso(),
+        self._remember_sdk_codex_task(
+            replace(
+                task,
+                runtime_handle=handle,
+                updated_at=utc_now_iso(),
+            )
         )
 
     def _response_completed_text(self, data: dict[str, Any]) -> str:
@@ -1547,6 +2342,159 @@ class RuntimeWorkRpcHandler:
                 if isinstance(text, str):
                     chunks.append(text)
         return "".join(chunks)
+
+    def _response_completed_file_changes(
+        self,
+        data: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        response = data.get("response")
+        if not isinstance(response, dict):
+            return None
+        file_changes = response.get("file_changes") or response.get("fileChanges")
+        return file_changes if isinstance(file_changes, dict) else None
+
+    def _runtime_handle_messages(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        messages = task.runtime_handle.get("messages", [])
+        if not isinstance(messages, list):
+            return []
+        return [dict(message) for message in messages if isinstance(message, dict)]
+
+    def _runtime_handle_messages_for_codex_thread(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        messages = self._runtime_handle_messages(task)
+        thread_id = self._sdk_codex_thread_id(task)
+        if not thread_id:
+            return messages
+
+        for sdk_task in self._sdk_codex_task_records.values():
+            if sdk_task.local_task_id == task.local_task_id:
+                continue
+            if self._sdk_codex_thread_id(sdk_task) != thread_id:
+                continue
+            messages = self._merge_recent_transcript_messages(
+                messages,
+                self._runtime_handle_messages(sdk_task),
+            )
+        return messages
+
+    def _merge_recent_transcript_messages(
+        self,
+        codex_messages: Any,
+        cached_messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not isinstance(codex_messages, list):
+            codex_messages = []
+        normalized_codex = [
+            message for message in codex_messages if isinstance(message, dict)
+        ]
+        if not cached_messages:
+            return normalized_codex
+        if not normalized_codex:
+            return [
+                message
+                for message in cached_messages
+                if self._has_recoverable_message_content(message)
+            ]
+
+        result: list[dict[str, Any]] = []
+        cursor = 0
+        used_codex_indexes: set[int] = set()
+
+        for cached_message in cached_messages:
+            match_index = self._find_equivalent_codex_message(
+                cached_message,
+                normalized_codex,
+                start_index=cursor,
+                used_indexes=used_codex_indexes,
+            )
+            if match_index is None:
+                if self._has_recoverable_message_content(cached_message):
+                    result.append(cached_message)
+                continue
+
+            while cursor <= match_index and cursor < len(normalized_codex):
+                if cursor not in used_codex_indexes:
+                    candidate = normalized_codex[cursor]
+                    if cursor == match_index and self._message_has_attachments(
+                        cached_message
+                    ):
+                        candidate = cached_message
+                    if self._has_recoverable_message_content(candidate):
+                        result.append(candidate)
+                    used_codex_indexes.add(cursor)
+                cursor += 1
+
+        while cursor < len(normalized_codex):
+            if cursor not in used_codex_indexes:
+                candidate = normalized_codex[cursor]
+                if self._has_recoverable_message_content(candidate):
+                    result.append(candidate)
+            cursor += 1
+
+        return result
+
+    def _find_equivalent_codex_message(
+        self,
+        cached_message: dict[str, Any],
+        codex_messages: list[dict[str, Any]],
+        *,
+        start_index: int,
+        used_indexes: set[int],
+    ) -> Optional[int]:
+        cached_key = self._message_equivalence_key(cached_message)
+        if cached_key is None:
+            return None
+        for index in range(start_index, len(codex_messages)):
+            if index in used_indexes:
+                continue
+            if self._message_equivalence_key(codex_messages[index]) == cached_key:
+                return index
+        return None
+
+    def _message_equivalence_key(
+        self,
+        message: dict[str, Any],
+    ) -> Optional[tuple[str, str]]:
+        role = str(message.get("role") or "").lower()
+        content = self._canonical_message_equivalence_content(
+            self._string_content(message.get("content"))
+        ).strip()
+        if not role or not content:
+            return None
+        return role, content
+
+    def _canonical_message_equivalence_content(self, content: str) -> str:
+        if (
+            "# Files mentioned by the user:" not in content
+            or "## My request for Codex:" not in content
+        ):
+            return content
+        return content.split("## My request for Codex:", maxsplit=1)[1].strip()
+
+    def _has_recoverable_message_content(self, message: dict[str, Any]) -> bool:
+        content = self._string_content(message.get("content")).strip()
+        if content:
+            return True
+        return self._message_has_attachments(message) or self._message_has_blocks(
+            message
+        )
+
+    def _message_has_attachments(self, message: dict[str, Any]) -> bool:
+        attachments = message.get("attachments")
+        return isinstance(attachments, list) and any(
+            isinstance(attachment, dict) for attachment in attachments
+        )
+
+    def _message_has_blocks(self, message: dict[str, Any]) -> bool:
+        blocks = message.get("blocks")
+        return isinstance(blocks, list) and any(
+            isinstance(block, dict) for block in blocks
+        )
 
     def _find_sdk_codex_task(
         self,
@@ -1591,6 +2539,64 @@ class RuntimeWorkRpcHandler:
                 continue
             return task
         return None
+
+    def _load_archived_payload_task(self, payload: dict[str, Any]) -> LocalTaskRecord:
+        local_task_id = payload.get("localTaskId")
+        if not isinstance(local_task_id, str) or not local_task_id.strip():
+            raise ValueError("localTaskId is required")
+
+        workspace_path = payload.get("workspacePath")
+        if workspace_path is not None and not isinstance(workspace_path, str):
+            raise ValueError("workspacePath must be a string")
+
+        codex_project_index = self._codex_project_index()
+
+        try:
+            task = self.store.get_task(local_task_id, workspace_path=workspace_path)
+            if task.status == "archived" and self._is_visible_runtime_task_scope(
+                task,
+                codex_project_index,
+            ):
+                return task
+        except KeyError:
+            pass
+
+        for task in self._list_archived_tasks(
+            workspace_path=workspace_path,
+            search_term=None,
+        ):
+            if task.local_task_id != local_task_id.strip():
+                continue
+            if not self._is_visible_runtime_task_scope(task, codex_project_index):
+                continue
+            return task
+
+        raise KeyError(f"Archived local task not found: {local_task_id}")
+
+    def _dedupe_and_sort_tasks(
+        self,
+        tasks: list[LocalTaskRecord],
+    ) -> list[LocalTaskRecord]:
+        by_key: dict[tuple[str, str], LocalTaskRecord] = {}
+        for task in tasks:
+            by_key[(task.workspace_path, task.local_task_id)] = task
+        return sorted(
+            by_key.values(),
+            key=lambda task: (
+                self._parse_task_time(task.updated_at),
+                self._parse_task_time(task.created_at),
+            ),
+            reverse=True,
+        )
+
+    def _archived_conversation_summary(
+        self,
+        task: LocalTaskRecord,
+    ) -> dict[str, Any]:
+        summary = self._task_summary(task)
+        summary["id"] = task.local_task_id
+        summary["source"] = "local"
+        return summary
 
     def _task_summary(self, task: LocalTaskRecord) -> dict[str, Any]:
         summary = {

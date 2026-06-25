@@ -20,6 +20,7 @@ interface FileChangesCardProps {
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
 }
 
@@ -82,12 +83,13 @@ export function FileChangesCard({
   const reviewDisabled = actionsDisabled || !onOpenReview
   const canRevert = summary.status === 'active' && summary.revertible !== false
 
-  const openReview = () => {
+  const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
       subtaskId,
       loadDiff: () => onLoadDiff(subtaskId),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
+      focusFilePath,
     })
   }
 
@@ -182,7 +184,7 @@ export function FileChangesCard({
               key={`${file.old_path ?? ''}:${file.path}`}
               file={file}
               disabled={reviewDisabled}
-              onPreview={() => openReview()}
+              onPreview={() => openReview(file.path)}
             />
           ))}
         </div>

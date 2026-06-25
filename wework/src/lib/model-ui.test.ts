@@ -70,9 +70,7 @@ describe('model-ui', () => {
     expect(glmGroup?.config.label).toBe('GLM')
     expect(glmGroup?.models.map(model => model.name)).toEqual(['glm-5'])
     expect(deepseekGroup?.config.label).toBe('DeepSeek')
-    expect(deepseekGroup?.models.map(model => model.name)).toEqual([
-      'ali-deepseek-v4-flash(公网)',
-    ])
+    expect(deepseekGroup?.models.map(model => model.name)).toEqual(['ali-deepseek-v4-flash(公网)'])
     expect(qwenGroup?.config.label).toBe('Qwen')
     expect(qwenGroup?.models.map(model => model.name)).toEqual(['ali-qwen3.5-plus(公网)'])
     expect(minimaxGroup?.config.label).toBe('MiniMax')
@@ -151,6 +149,12 @@ describe('model-ui', () => {
       type: 'user',
       runtime: { family: 'openai.openai-responses' },
     }
+    const chatGptModel: UnifiedModel = {
+      name: 'gpt-5-2025-08-07',
+      type: 'public',
+      provider: 'openai',
+      runtime: { family: 'openai', provider: 'openai' },
+    }
     const geminiModel: UnifiedModel = {
       name: 'gemini-2.5-pro',
       type: 'public',
@@ -161,6 +165,7 @@ describe('model-ui', () => {
     expect(getModelCompatibilityFamily(claudeCompatibleDeepseek)).toBe('claude.claude')
     expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, claudeModel)).toBe(true)
     expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, gptModel)).toBe(false)
+    expect(areModelsProtocolCompatible(gptModel, chatGptModel)).toBe(true)
     expect(areModelsProtocolCompatible(gptModel, geminiModel)).toBe(false)
   })
 
@@ -206,9 +211,6 @@ describe('model-ui', () => {
       },
     }
 
-    expect(getControlsForModel(model).map(control => control.id)).toEqual([
-      'reasoning',
-      'speed',
-    ])
+    expect(getControlsForModel(model).map(control => control.id)).toEqual(['reasoning', 'speed'])
   })
 })
