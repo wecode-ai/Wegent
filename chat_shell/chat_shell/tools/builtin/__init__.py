@@ -10,11 +10,14 @@ from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool, ScopedKnowledgeBaseTool
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
+from .read_attachment import ReadAttachmentInput, ReadAttachmentTool
 from .silent_exit import SilentExitException
 from .web_search import WebSearchTool
 
 __all__ = [
     "WebSearchTool",
+    "ReadAttachmentTool",
+    "ReadAttachmentInput",
     "KnowledgeBaseTool",
     "ScopedKnowledgeBaseTool",
     "KbLsTool",

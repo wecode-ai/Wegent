@@ -2197,6 +2197,72 @@ async def test_execute_device_command_endpoint_allows_explicit_root_project_work
 
 
 @pytest.mark.asyncio
+async def test_execute_device_command_endpoint_allows_absolute_git_checkout_workspace(
+    monkeypatch,
+    test_db,
+):
+    """Workspace file commands should allow absolute Wework git checkout paths."""
+    from app.api.endpoints import devices
+    from app.core.constants import CLIENT_ORIGIN_WEWORK
+    from app.models.project import Project
+    from app.schemas.device import DeviceCommandRequest
+
+    checkout_path = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent"
+    test_db.add(
+        Project(
+            user_id=7,
+            name="Wegent",
+            client_origin=CLIENT_ORIGIN_WEWORK,
+            is_active=True,
+            config={
+                "mode": "workspace",
+                "execution": {
+                    "targetType": "local",
+                    "deviceId": "device-abc",
+                },
+                "workspace": {
+                    "source": "git",
+                    "checkoutPath": checkout_path,
+                },
+                "git": {
+                    "url": "https://example.com/weibo/wegent.git",
+                    "branch": "main",
+                },
+            },
+        )
+    )
+    test_db.commit()
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"path": f"{checkout_path}/wework", "entries": []},
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(
+            command_key="workspace_tree",
+            path=f"{checkout_path}/wework",
+            env={"EXISTING": "1"},
+        ),
+        db=test_db,
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    service_mock.assert_awaited_once()
+    _, kwargs = service_mock.await_args
+    assert kwargs["env"]["EXISTING"] == "1"
+    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == checkout_path
+
+
+@pytest.mark.asyncio
 async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
     monkeypatch,
     test_db,
@@ -2244,6 +2310,69 @@ async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
     )
 
     assert response.success is True
+    service_mock.assert_awaited_once()
+    _, kwargs = service_mock.await_args
+    assert kwargs["env"]["EXISTING"] == "1"
+    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == workspace_path
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
+    monkeypatch,
+    test_db,
+):
+    """Workspace file commands should allow active runtime workspaces reported by the device."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    workspace_path = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent"
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"path": workspace_path, "entries": []},
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    runtime_rpc_mock = AsyncMock(
+        return_value={
+            "workspaces": [
+                {
+                    "workspacePath": workspace_path,
+                    "localTasks": [
+                        {
+                            "localTaskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
+                            "workspacePath": workspace_path,
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(
+            command_key="workspace_tree",
+            path=workspace_path,
+            env={"EXISTING": "1"},
+        ),
+        db=test_db,
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    runtime_rpc_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-abc",
+        method="runtime.tasks.list",
+        payload={},
+        timeout_seconds=5,
+    )
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["env"]["EXISTING"] == "1"

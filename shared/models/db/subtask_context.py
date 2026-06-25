@@ -166,6 +166,18 @@ class SubtaskContext(Base):
             return self.type_data.get("encryption_version", 0)
         return 0
 
+    @property
+    def is_truncated(self) -> bool:
+        """Whether extracted_text was truncated during parsing (attachment type).
+
+        Recorded from the parser's truncation result at parse time, so it is
+        accurate regardless of the final text length (smart truncation rarely
+        fills the cap exactly, so a length-vs-cap comparison under-reports).
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            return self.type_data.get("is_truncated", False)
+        return False
+
     # === Helper properties for knowledge_base type ===
 
     @property

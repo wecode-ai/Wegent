@@ -224,14 +224,6 @@ export function FileWorkspacePanel({
         error={treeError}
         onOpenDirectory={openDirectory}
         onOpenFile={entry => void openFile(entry)}
-        onExpandedPathsChange={updaterOrValue => {
-          setExpandedPaths(previous => {
-            const previousPaths = Array.from(previous)
-            const nextPaths =
-              typeof updaterOrValue === 'function' ? updaterOrValue(previousPaths) : updaterOrValue
-            return new Set(nextPaths)
-          })
-        }}
         onRefresh={() => void loadTree(treeRetryPath ?? activeDirectoryPath)}
       />
     </div>

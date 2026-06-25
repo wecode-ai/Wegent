@@ -55,6 +55,37 @@ def _local_path_project(
     return project
 
 
+def _absolute_git_project(
+    test_db,
+    user_id: int,
+    *,
+    device_id: str = "device-1",
+    path: str = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent",
+    name: str = "Wegent",
+) -> Project:
+    project = Project(
+        user_id=user_id,
+        name=name,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": device_id},
+            "workspace": {"source": "git", "checkoutPath": path},
+            "git": {
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "repo": "wecode-ai/Wegent",
+                "domain": "github.com",
+                "branch": "main",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    return project
+
+
 def _git_project(test_db, user_id: int, name: str = "Wegent") -> Project:
     project = Project(
         user_id=user_id,
@@ -1800,6 +1831,65 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         timeout_seconds=600,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_uses_absolute_git_checkout_path_without_prefix(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    checkout_path = "/Volumes/OuterHD/OuterIdeaProjects/weibo_wegent/github_wegent"
+    project = _absolute_git_project(test_db, test_user.id, path=checkout_path)
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        lambda **kwargs: SimpleNamespace(
+            to_dict=lambda: {
+                "team_id": kwargs["request"].team_id,
+                "prompt": kwargs["request"].message,
+                "project_workspace_path": kwargs["target"].workspace_path,
+            }
+        ),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "runtime-1",
+            "workspacePath": checkout_path,
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            projectId=project.id,
+            teamId=3,
+            runtime="codex",
+            message="create runtime task",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.workspace_path == checkout_path
+    rpc.assert_awaited_once()
+    assert rpc.await_args.kwargs["payload"]["workspacePath"] == checkout_path
+    assert (
+        rpc.await_args.kwargs["payload"]["executionRequest"]["project_workspace_path"]
+        == checkout_path
+    )
 
 
 @pytest.mark.asyncio
