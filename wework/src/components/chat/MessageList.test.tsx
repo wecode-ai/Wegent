@@ -526,6 +526,30 @@ describe('MessageList', () => {
     expect(token).not.toHaveClass('bg-primary/10', 'text-primary')
   })
 
+  test('renders Codex file-path skill mentions as inline tokens', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$browser:control-in-app-browser](/Users/yunpeng7/.codex/plugins/cache/openai-bundled/browser/26.608.12217/skills/control-in-app-browser/SKILL.md)',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const token = screen.getByTestId('sent-local-skill-token-browser-control-in-app-browser')
+    expect(token).toHaveTextContent('$browser:control-in-app-browser')
+    expect(
+      screen.getByTestId('sent-local-skill-icon-browser-control-in-app-browser')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Users\/yunpeng7\/\.codex\/plugins/)).not.toBeInTheDocument()
+  })
+
   test('renders image attachments in user messages', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()

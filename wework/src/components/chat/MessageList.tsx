@@ -406,13 +406,15 @@ function MessageHoverActions({
   )
 }
 
-const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
+const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\(((?:skill:\/\/|\/)[^)]+\/SKILL\.md)\)/g
 
 function localSkillTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
 function displayLocalSkillName(name: string): string {
+  if (name.includes(':')) return `$${name}`
+
   return name
     .split(/[-_\s]+/)
     .filter(Boolean)
