@@ -12,7 +12,7 @@ class TestKnowledgeApiJwtAuth:
 
     def test_list_with_jwt_bearer_returns_200(
         self, test_client: TestClient, test_token: str
-    ):
+    ) -> None:
         """GET /api/knowledge/list with JWT Bearer token should authenticate successfully."""
         response = test_client.get(
             "/api/knowledge/list",
@@ -26,7 +26,7 @@ class TestKnowledgeApiJwtAuth:
 
     def test_list_with_scope_personal_returns_200(
         self, test_client: TestClient, test_token: str
-    ):
+    ) -> None:
         """GET /api/knowledge/list?scope=personal with JWT Bearer token should work."""
         response = test_client.get(
             "/api/knowledge/list",
@@ -38,7 +38,7 @@ class TestKnowledgeApiJwtAuth:
         body = response.json()
         assert "items" in body
 
-    def test_list_no_auth_returns_401(self, test_client: TestClient):
+    def test_list_no_auth_returns_401(self, test_client: TestClient) -> None:
         """GET /api/knowledge/list without any auth should return 401."""
         response = test_client.get("/api/knowledge/list")
 
@@ -48,19 +48,24 @@ class TestKnowledgeApiJwtAuth:
 
     def test_search_with_jwt_bearer_auth_passes(
         self, test_client: TestClient, test_token: str
-    ):
-        """POST /api/knowledge/search with JWT Bearer token should pass auth (422 on missing kb_id is OK)."""
+    ) -> None:
+        """POST /api/knowledge/search with JWT Bearer token should pass auth.
+
+        Sending a request without knowledge_base_id triggers a 422
+        validation error, which confirms the request passed authentication
+        and reached endpoint-level Pydantic validation.
+        """
         response = test_client.post(
             "/api/knowledge/search",
             json={"query": "test", "limit": 3},
             headers={"Authorization": f"Bearer {test_token}"},
         )
 
-        assert response.status_code != 401
+        assert response.status_code == 422
 
     def test_list_with_task_token_returns_200(
         self, test_client: TestClient, test_task_token: str
-    ):
+    ) -> None:
         """GET /api/knowledge/list with task token should pass auth and return data."""
         response = test_client.get(
             "/api/knowledge/list",

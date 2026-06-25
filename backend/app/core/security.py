@@ -432,8 +432,13 @@ def get_api_key_from_header(
     # Priority: X-API-Key > Authorization Bearer > wegent-source
     if x_api_key and x_api_key.startswith("wg-"):
         return x_api_key
-    if authorization.startswith("Bearer wg-"):
-        return authorization[7:]  # Remove "Bearer " prefix
+    if authorization and authorization.strip():
+        # Case-insensitive, whitespace-tolerant Bearer parsing (RFC 7235)
+        parts = authorization.split(maxsplit=1)
+        if parts[0].lower() == "bearer" and len(parts) == 2:
+            token = parts[1].strip()
+            if token.startswith("wg-"):
+                return token
     if wegent_source and wegent_source.startswith("wg-"):
         return wegent_source
     return ""
