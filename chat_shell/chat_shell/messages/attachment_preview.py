@@ -49,10 +49,15 @@ from shared.utils.mime_types import is_text_readable_mime
 
 _ATTACHMENT_BLOCK = re.compile(r"<attachment>(.*?)</attachment>", re.DOTALL)
 
-# Matches the shared attachment/image header start and captures its id. The
-# header is a single line produced by shared.utils.attachment_block; the
-# ``| ID: <n> |`` segment is distinctive enough to anchor on.
-_SEGMENT_HEADER = re.compile(r"\[(?:Image )?Attachment: [^\n]*? \| ID: (\d+) \|")
+# Matches an attachment/image/video header start and captures its id. The
+# header is a single line produced by shared.utils.attachment_block (or the
+# video metadata builder); the ``| ID: <n> |`` segment anchors on it. Matching
+# video too lets a video segment be isolated and kept verbatim instead of being
+# absorbed into a neighbouring document segment's truncatable body.
+_SEGMENT_HEADER = re.compile(r"\[(?:Image |Video )?Attachment: [^\n]*? \| ID: (\d+) \|")
+# Video headers start with this; their content is a separate video_url block, so
+# the inline segment (header + tiny metadata) is preserved verbatim.
+_VIDEO_HEADER_PREFIX = "[Video Attachment:"
 _HEADER_TYPE = re.compile(r"\| Type: ([^|\]]+)")
 _HEADER_PATH = re.compile(r"File Path[^:]*: ([^\]]+)")
 
@@ -140,32 +145,54 @@ def _preview_attachment_body(
         segments.append(body[match.start() : end])
         ids.append(match.group(1))
 
-    # Consolidate ids up front when multiple attachments share the block, so
-    # every read_attachment id is discoverable even after heavy truncation.
-    # Per-segment hints (below) carry the type-aware "how to get the rest".
-    id_line = ""
-    if len(ids) > 1:
-        id_line = "[Attachment IDs in this message: " + ", ".join(ids) + "]\n"
-
-    # Reserve budget for the id line and every header (always kept), then
-    # distribute the remainder across segment bodies.
-    reserved = counter.count_text(preamble) + counter.count_text(id_line)
     headers_and_bodies: list[tuple[str, str]] = [
         _split_header_body(seg) for seg in segments
     ]
+    is_video = [
+        header.startswith(_VIDEO_HEADER_PREFIX) for header, _ in headers_and_bodies
+    ]
+
+    # Consolidate ids up front when multiple attachments share the block, so
+    # every read_attachment id is discoverable even after heavy truncation.
+    # Video ids are excluded: read_attachment serves parsed text, but a video's
+    # content is a separate video_url block, not a read_attachment target.
+    doc_ids = [i for i, video in zip(ids, is_video, strict=True) if not video]
+    id_line = ""
+    if len(doc_ids) > 1:
+        id_line = "[Attachment IDs in this message: " + ", ".join(doc_ids) + "]\n"
+
+    # Reserve budget for the id line, every header (always kept), and video
+    # segments kept verbatim (tiny metadata; real content is a video_url block).
+    # The remainder is distributed across the truncatable document/text bodies.
+    reserved = counter.count_text(preamble) + counter.count_text(id_line)
     reserved += sum(counter.count_text(header) for header, _ in headers_and_bodies)
+    reserved += sum(
+        counter.count_text(seg_body)
+        for (_, seg_body), video in zip(headers_and_bodies, is_video, strict=True)
+        if video
+    )
     body_budget = max(0, total_limit - reserved)
 
-    body_sizes = [counter.count_text(seg_body) for _, seg_body in headers_and_bodies]
+    # Video bodies are not part of the truncatable budget (kept verbatim → size 0).
+    body_sizes = [
+        0 if video else counter.count_text(seg_body)
+        for (_, seg_body), video in zip(headers_and_bodies, is_video, strict=True)
+    ]
     allocations = _allocate_budget(body_sizes, body_budget)
 
     rebuilt: list[str] = []
     truncated_segments = 0
     before_tokens = 0
     after_tokens = 0
-    for (header, seg_body), alloc, attachment_id, orig_tokens in zip(
-        headers_and_bodies, allocations, ids, body_sizes, strict=True
+    for (header, seg_body), alloc, attachment_id, orig_tokens, video in zip(
+        headers_and_bodies, allocations, ids, body_sizes, is_video, strict=True
     ):
+        if video:
+            # Keep the video header + tiny metadata verbatim. The real content is
+            # a separate video_url block (never touched here); never truncate or
+            # add a read_attachment hint (read_attachment has no text for video).
+            rebuilt.append(f"{header}\n{seg_body}" if seg_body else header)
+            continue
         if not seg_body:
             rebuilt.append(header)  # image header etc. — no body to bound
             continue

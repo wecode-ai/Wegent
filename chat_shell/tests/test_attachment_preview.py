@@ -196,6 +196,44 @@ def test_truncated_binary_attachment_hints_read_attachment():
     assert "sandbox file" in new
 
 
+def test_video_segment_kept_verbatim_no_truncation_or_hint():
+    # A video segment (header + tiny fid metadata) is preserved as-is: not
+    # truncated, not annotated, and never given a read_attachment hint (the real
+    # content is a separate video_url block, untouched).
+    video = (
+        "[Video Attachment: clip.mp4 | ID: 9 | Type: video/mp4 | Size: 10.0 MB]\n"
+        '{"fid": "abc123"}\n'
+    )
+    text = _attachment_block(video)
+    messages = [{"role": "user", "content": text}]
+    out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
+    new = out[0]["content"]
+    assert "[Video Attachment: clip.mp4 | ID: 9" in new
+    assert '{"fid": "abc123"}' in new
+    assert "tokens truncated" not in new
+    assert "read_attachment" not in new
+    assert "Truncated:" not in new  # no Chars/Tokens/Truncated annotation
+
+
+def test_mixed_doc_and_video_keeps_video_intact_while_doc_truncates():
+    doc = "[Attachment: big.pdf | ID: 1 | Type: application/pdf]\n" + ("word " * 5000)
+    video = (
+        "[Video Attachment: clip.mp4 | ID: 2 | Type: video/mp4 | Size: 5.0 MB]\n"
+        '{"fid": "v2"}\n'
+    )
+    text = _attachment_block(doc + "\n\n" + video)
+    messages = [{"role": "user", "content": text}]
+    out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
+    new = out[0]["content"]
+    # Document body is truncated; video metadata survives verbatim.
+    assert "tokens truncated" in new
+    assert "[Video Attachment: clip.mp4 | ID: 2" in new
+    assert '{"fid": "v2"}' in new
+    # Only one non-video (doc) id, so no consolidated id list — and the video id
+    # is never advertised as a read_attachment target.
+    assert "Attachment IDs in this message" not in new
+
+
 def test_truncated_xmind_attachment_hints_read_attachment():
     # XMind is a binary (zip) doc: the sandbox file isn't text, so the hint must
     # point to read_attachment, not the sandbox path (shared MIME classification).
