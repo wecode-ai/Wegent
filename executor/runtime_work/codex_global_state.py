@@ -84,27 +84,18 @@ class CodexGlobalState:
         return bool(self.saved_workspace_roots)
 
     def projects(self) -> list[CodexGlobalProject]:
-        order_index = {key: index for index, key in enumerate(self.project_order)}
         projects: list[CodexGlobalProject] = []
-        for root in self.saved_workspace_roots:
+        for index, root in enumerate(self.saved_workspace_roots):
             projects.append(
                 CodexGlobalProject(
                     key=root,
                     name=self.workspace_root_labels.get(root) or _path_basename(root),
                     workspace_path=root,
                     source="local",
-                    order_index=order_index.get(root),
+                    order_index=index,
                 )
             )
-        return sorted(
-            projects,
-            key=lambda project: (
-                project.order_index is None,
-                project.order_index if project.order_index is not None else 0,
-                project.name.lower(),
-                project.key,
-            ),
-        )
+        return projects
 
     def project_index(self) -> CodexGlobalProjectIndex:
         projects = self.projects()

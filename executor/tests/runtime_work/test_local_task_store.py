@@ -60,6 +60,10 @@ class FakeCodexThreadListClient:
         return SimpleNamespace(id=thread_id, title=title or name)
 
 
+def _codex_thread_source_name(value):
+    return getattr(value, "value", value)
+
+
 def _codex_discovery_for_threads(codex_home, *threads):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 
@@ -664,6 +668,41 @@ async def test_runtime_work_handler_places_new_codex_project_first(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_orders_codex_projects_by_saved_roots(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(
+        codex_home,
+        saved_roots=[
+            "/Users/crystal/Documents/hello-g",
+            "/Users/crystal/Documents/hello-d",
+            "/Users/crystal/Documents/hello-f",
+            "/Users/crystal/Documents/hello-c",
+        ],
+        project_order=[
+            "/Users/crystal/Documents/hello-f",
+            "/Users/crystal/Documents/hello-c",
+        ],
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(codex_home)
+
+    result = await RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
+
+    assert result["success"] is True
+    assert [workspace["workspacePath"] for workspace in result["workspaces"]] == [
+        "/Users/crystal/Documents/hello-g",
+        "/Users/crystal/Documents/hello-d",
+        "/Users/crystal/Documents/hello-f",
+        "/Users/crystal/Documents/hello-c",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_lists_codex_tasks_from_sdk_only(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
@@ -750,8 +789,8 @@ async def test_runtime_work_handler_uses_codex_global_projects(tmp_path):
 
     assert result["success"] is True
     assert [workspace["workspacePath"] for workspace in result["workspaces"]] == [
-        "/repo/Wegent",
         "/repo/empty",
+        "/repo/Wegent",
     ]
     workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
     assert workspaces["/repo/Wegent"]["label"] == "Wegent"
@@ -2351,7 +2390,10 @@ async def test_codex_discovery_opens_workspace_as_user_thread(tmp_path):
     result = await discovery.open_workspace("/repo/Wegent")
 
     assert result["threadId"] == "codex-thread-1"
-    assert getattr(fake_codex.thread_start_kwargs["thread_source"], "value", None) == "user"
+    assert (
+        _codex_thread_source_name(fake_codex.thread_start_kwargs["thread_source"])
+        == "user"
+    )
 
 
 def test_codex_discovery_thread_start_kwargs_keeps_provider_for_managed_config():
@@ -2370,7 +2412,7 @@ def test_codex_discovery_thread_start_kwargs_keeps_provider_for_managed_config()
         sandbox=object(),
     )
 
-    assert getattr(kwargs["thread_source"], "value", None) == "user"
+    assert _codex_thread_source_name(kwargs["thread_source"]) == "user"
     assert kwargs["model_provider"] == "wecode-openai"
 
 
@@ -2390,7 +2432,7 @@ def test_codex_discovery_thread_start_kwargs_omits_provider_for_user_config():
         sandbox=object(),
     )
 
-    assert getattr(kwargs["thread_source"], "value", None) == "user"
+    assert _codex_thread_source_name(kwargs["thread_source"]) == "user"
     assert "model_provider" not in kwargs
 
 
