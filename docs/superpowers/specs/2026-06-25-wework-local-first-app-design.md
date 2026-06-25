@@ -13,19 +13,23 @@ workbench, and `WorkbenchProvider` creates API services from
 Backend lists local work by fanning out `runtime:rpc` calls to online local
 executors, and executor-local state remains on the user's device.
 
-The new product direction is stronger than the existing standalone Docker mode:
-packaged WeWork should be a real local desktop app. Its main coding workflow
-must not depend on Backend being started. Backend remains useful after an
-optional login for cloud capabilities such as model synchronization, cloud
-projects, remote devices, and web control of the user's local computer.
+The product direction is stronger than standalone Docker mode: packaged WeWork
+should behave like a real local desktop app. Its main coding workflow must run
+without Backend, and the local app must not start an additional local gateway,
+HTTP service, FastAPI service, or Socket.IO server. The local runtime consists
+of the WeWork desktop app UI and one executor process managed by the app.
 
-The existing Wegent frontend must not change. Web users should continue to reach
-local computers through Backend and the existing local executor WebSocket
-channel.
+Backend remains useful after an optional login for cloud capabilities such as
+model synchronization, cloud projects, remote devices, and web control of the
+user's local computer. The existing Wegent frontend must not change. Web users
+should continue to reach local computers through Backend and the existing local
+executor WebSocket channel.
 
 ## Goals
 
 - Let packaged desktop WeWork open and run local tasks without Backend.
+- Keep the local runtime to two processes: the WeWork app and an executor child
+  or managed sidecar.
 - Make the local app path the primary WeWork runtime path, not a fallback after a
   failed Backend request.
 - Keep Backend connection optional for login, model synchronization, cloud
@@ -44,26 +48,29 @@ channel.
 
 - Do not change the Wegent frontend.
 - Do not require users to run the full Backend stack for local WeWork tasks.
+- Do not start a local app gateway, local HTTP API, FastAPI helper, or app-owned
+  Socket.IO server for the desktop local path.
 - Do not embed MySQL, Redis, or the Backend service inside the desktop app.
 - Do not make Backend the owner of local runtime task state.
 - Do not implement full cloud model/project sync in the first local execution
   pass; design the seam so sync can be added without changing local execution.
-- Do not expose a public executor HTTP API from the user's machine. App and
-  executor communication stays on loopback.
+- Do not expose a public executor API from the user's machine.
+- Do not expose raw shell execution to the renderer.
 - Do not remove the current Backend device WebSocket protocol.
 
 ## Recommended Architecture
 
-Packaged WeWork owns a local control plane. The control plane is a small
-loopback service started and supervised by the Tauri app. It exposes a
-Backend-compatible subset of APIs to WeWork and a `/local-executor` Socket.IO
-namespace to local executors.
+Packaged WeWork owns a direct local control plane. Tauri supervises an executor
+sidecar or managed child process and talks to it over newline-delimited JSON-RPC
+on stdin/stdout. React does not manage processes directly. The renderer uses
+local service adapters that call Tauri commands and listen for Tauri events.
 
 ```mermaid
 flowchart LR
     subgraph "User Desktop"
-        WW["WeWork Tauri App"]
-        LG["Local App Gateway"]
+        UI["WeWork React UI"]
+        TAURI["Tauri Rust Shell"]
+        IPC["stdin/stdout JSON-RPC"]
         EX["Wegent Executor"]
         RT["Codex / Claude Code"]
         FS["Local Files"]
@@ -74,34 +81,33 @@ flowchart LR
         WEB["Wegent Frontend"]
     end
 
-    WW -->|HTTP + app events on loopback| LG
-    EX <-->|Socket.IO /local-executor| LG
+    UI -->|"Tauri invoke + events"| TAURI
+    TAURI <-->|"child process stdio"| IPC
+    IPC <-->|"newline JSON messages"| EX
     EX --> RT
     RT --> FS
 
-    WW -. optional login/sync .-> BE
-    EX -. optional second Socket.IO channel .-> BE
+    UI -. optional login/sync .-> BE
+    EX -. optional Socket.IO backend channel .-> BE
     WEB -. existing Backend path .-> BE
     BE -. existing /local-executor routing .-> EX
 ```
 
-The local app gateway should be implemented in Python/FastAPI/Socket.IO and
-shipped as part of the desktop app's bundled local runtime helper. The helper
-can be the executor binary running a gateway mode, or a sibling binary built
-from the same executor package. The desktop app must not require a separately
-installed helper for the default local path, although it may reuse or upgrade a
-compatible installed executor when one already exists. This avoids
-reimplementing Socket.IO server behavior in Rust and matches the existing
-executor dependencies: the executor package already includes FastAPI, uvicorn,
-and python-socketio.
-
 Tauri remains responsible for process ownership:
 
-- choose local gateway port and token
-- start or find the local gateway
-- start or find the local executor
-- pass local connection settings to the React app
-- surface gateway or executor startup errors in WeWork settings
+- locate the bundled or managed executor binary
+- start the executor with local app IPC enabled
+- pass optional Backend channel settings to the executor when cloud/web control
+  is configured
+- parse executor stdout lines into JSON responses and events
+- write JSON requests to executor stdin
+- expose request commands and event subscriptions to React
+- restart or reconnect the child process only after explicit local runtime retry
+- surface executor startup errors in WeWork settings and workbench state
+
+The executor remains responsible for runtime work, device commands, tool
+execution, and optional Backend registration. No additional local process sits
+between the app and executor.
 
 ## Runtime Modes
 
@@ -114,7 +120,7 @@ Local-first mode is the default for packaged desktop WeWork.
 - `WorkbenchProvider` receives local services through the existing `services`
   injection boundary.
 - Runtime tasks, device commands, model defaults, skills, and workspace
-  metadata come from the local app gateway.
+  metadata come from local service adapters backed by Tauri executor IPC.
 - Backend being unavailable does not block workbench bootstrap or task send.
 
 ### Cloud-Connected Mode
@@ -125,8 +131,8 @@ mode.
 - A user can sign in to Backend from settings or login UI.
 - Backend services can synchronize model definitions, cloud projects, remote
   device metadata, and other account-scoped data into local app state.
-- Local task execution still routes through the local gateway unless the user
-  explicitly selects a cloud/remote device.
+- Local task execution still routes through direct app-to-executor IPC unless
+  the user explicitly selects a cloud/remote device.
 - If Backend disconnects, local tasks continue and sync status degrades to
   offline.
 
@@ -134,19 +140,94 @@ mode.
 
 Web-control mode is the existing Backend path used by the Wegent frontend.
 
-- The executor keeps an optional Backend channel.
+- The executor keeps an optional Backend Socket.IO channel.
 - Backend still owns web auth, device online state, command RPC, and
   runtime-work fan-out for web users.
 - No Wegent frontend change is required.
 
-## Local App Gateway Responsibilities
+## Direct App IPC Protocol
 
-The gateway provides the minimal Backend-like surface that WeWork needs for
-local coding workflows.
+The app-to-executor protocol is newline-delimited JSON over the executor
+process's stdin/stdout. Each line is one complete JSON object encoded as UTF-8.
+The protocol has three message classes.
+
+### Request
+
+```json
+{
+  "type": "request",
+  "id": "local-req-0001",
+  "method": "runtime.tasks.create",
+  "params": {
+    "device_id": "local-device",
+    "runtime_family": "codex",
+    "message": "Implement the selected change",
+    "workspace": {
+      "path": "/Users/example/project"
+    }
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "type": "response",
+  "id": "local-req-0001",
+  "ok": true,
+  "result": {
+    "task": {
+      "deviceId": "local-device",
+      "localTaskId": "task_123"
+    }
+  }
+}
+```
+
+Errors use the same envelope and include a stable code and human-readable
+message:
+
+```json
+{
+  "type": "response",
+  "id": "local-req-0001",
+  "ok": false,
+  "error": {
+    "code": "executor_not_ready",
+    "message": "The local executor is still starting."
+  }
+}
+```
+
+### Event
+
+```json
+{
+  "type": "event",
+  "event": "response.output_text.delta",
+  "payload": {
+    "deviceId": "local-device",
+    "localTaskId": "task_123",
+    "delta": "Done"
+  }
+}
+```
+
+The Tauri bridge keeps an in-memory map from request id to pending request,
+enforces request timeouts, and emits executor events to the renderer as
+`local-executor:event`. Requests that outlive the child process fail with
+`executor_disconnected`.
+
+## Local Service Responsibilities
+
+The local service layer provides the minimal Backend-like surface that WeWork
+needs for local coding workflows. These services live in the WeWork frontend and
+call Tauri commands rather than Backend HTTP APIs.
 
 ### Local Session
 
-The gateway returns a local user:
+Local-first mode returns a local user:
 
 ```json
 {
@@ -162,7 +243,7 @@ credentials and sync metadata.
 
 ### Default Team
 
-The gateway returns one local default Team for workbench execution:
+Local-first mode returns one local default Team for workbench execution:
 
 ```json
 {
@@ -180,7 +261,7 @@ object only satisfies WeWork's UI and send payload contract.
 
 ### Models
 
-The gateway returns local model definitions from local runtime configuration,
+The local service returns model definitions from local runtime configuration,
 Codex config, Claude Code config, and optional cloud sync cache. Local models
 must be enough for `useWorkbenchModels` to infer the runtime family and build a
 `RuntimeTaskCreateRequest`.
@@ -190,10 +271,9 @@ not depend on a successful sync.
 
 ### Devices
 
-The gateway maintains an in-memory and lightweight persisted registry of
-executors connected to the app. A local executor connected to the gateway is
-reported as an online `local` device. The device shape should match the current
-WeWork expectations, including:
+The Tauri bridge reports the managed executor as an online `local` device when
+the child process is running and has completed IPC initialization. The device
+shape should match the current WeWork expectations, including:
 
 - `device_id`
 - `name`
@@ -208,7 +288,8 @@ WeWork expectations, including:
 
 ### Runtime Work
 
-The gateway exposes the same local runtime work API shape used by WeWork:
+The local runtime-work service exposes the same API shape used by
+`WorkbenchProvider`:
 
 - list runtime work
 - search local work
@@ -220,8 +301,8 @@ The gateway exposes the same local runtime work API shape used by WeWork:
 - open, rename, and remove runtime workspaces
 - fork runtime tasks where both source and target devices are available
 
-The gateway should call the target executor through the same
-`runtime:rpc` event and method names currently used by Backend:
+The service calls the executor through the same method names currently used by
+Backend's `runtime:rpc` path:
 
 - `runtime.tasks.list`
 - `runtime.tasks.search`
@@ -233,25 +314,20 @@ The gateway should call the target executor through the same
 - `runtime.workspaces.rename`
 - `runtime.workspaces.remove`
 
-The response shapes should stay compatible with `wework/src/types/api.ts`.
+The response shapes stay compatible with `wework/src/types/api.ts`.
 
 ### Device Commands
 
-The gateway exposes local equivalents of:
-
-```text
-POST /devices/{device_id}/commands
-```
-
-It resolves command keys through a command registry equivalent to Backend's
-`DEFAULT_LOCAL_DEVICE_COMMANDS` and sends `device:execute_command` to the
-executor. WeWork should not gain a raw shell execution API.
+The local device service exposes the same high-level command operations used by
+WeWork today. It resolves command keys through a registry equivalent to
+Backend's `DEFAULT_LOCAL_DEVICE_COMMANDS` and sends `device.execute_command` to
+the executor over app IPC. The renderer never sends raw shell commands.
 
 ### Streaming
 
-Runtime Responses events emitted by the executor should be forwarded to the
-WeWork renderer over the same logical event names currently handled by the
-workbench stream layer:
+Runtime Responses events emitted by the executor are forwarded to the WeWork
+renderer over the same logical event names currently handled by the workbench
+stream layer:
 
 - `response.created`
 - `response.in_progress`
@@ -260,25 +336,23 @@ workbench stream layer:
 - `response.incomplete`
 - `error`
 
-The first implementation can keep the existing Socket.IO client abstraction by
-providing a local Socket.IO namespace that behaves like the current chat stream
-for runtime events.
+The local stream client subscribes to Tauri's `local-executor:event`, filters by
+`deviceId + localTaskId`, and feeds existing chat stream reducers. Backend
+Socket.IO remains in use only for Backend mode and web-control mode.
 
-## Executor Multi-Channel Model
+## Executor Direct-App Mode
 
-The executor should separate device runtime logic from connection ownership.
-Instead of a single implicit Backend connection, it should support named
-channels:
+The executor should separate runtime logic from connection ownership. It gains a
+direct app IPC channel in addition to its existing Backend WebSocket channel.
 
 ```json
 {
+  "app_ipc": {
+    "enabled": true,
+    "transport": "stdio",
+    "device_id": "local-device"
+  },
   "channels": [
-    {
-      "name": "app",
-      "url": "http://127.0.0.1:<local-gateway-port>",
-      "auth_token": "<ephemeral-local-token>",
-      "enabled": true
-    },
     {
       "name": "backend",
       "url": "https://backend.example.com",
@@ -292,23 +366,21 @@ channels:
 For compatibility, existing `connection.backend_url` and
 `connection.auth_token` remain supported and map to a single `backend` channel.
 
-Each channel has independent:
+Direct app IPC and Backend channel each have independent:
 
-- WebSocket client
-- registration state
-- heartbeat loop
+- registration or readiness state
+- heartbeat or liveness reporting
 - runtime RPC request handling
 - command RPC request handling
 - streaming event emitter
-- reconnect policy
+- reconnect policy for Backend only
 
 The same runtime task can be created through the app channel or Backend channel,
 but an individual request is owned by the channel that dispatched it. Streaming
-events should return to the same channel to avoid duplicate UI updates. Native
-Codex watcher notifications should also include the channel context that caused
-the send when possible; passive native updates can be broadcast to connected
-channels only after terminal messages are deduplicated by `deviceId +
-localTaskId`.
+events return to the same channel to avoid duplicate UI updates. Native Codex
+watcher notifications should include the channel context that caused the send
+when possible; passive native updates can be broadcast to connected channels
+only after terminal messages are deduplicated by `deviceId + localTaskId`.
 
 ## WeWork Service Boundary
 
@@ -370,47 +442,48 @@ Backend:
 
 - WeWork frontend assets
 - Tauri native shell
-- bundled local app gateway helper
-- bundled local executor helper
+- bundled executor sidecar or managed executor binary
 - optional reuse of a compatible managed installed executor
 
 On startup:
 
-1. Tauri chooses a loopback gateway port and creates an ephemeral token.
-2. Tauri starts the local app gateway if it is not already healthy.
-3. Tauri starts or locates the local executor.
-4. Tauri configures the executor `app` channel with the gateway URL and token.
-5. React receives local gateway API/socket config through runtime config.
-6. WeWork bootstraps from local services.
+1. Tauri creates the local executor supervisor state.
+2. Tauri starts or locates the executor with app IPC enabled.
+3. Tauri passes optional Backend channel settings to the executor when the user
+   has configured cloud/web control.
+4. React receives local runtime mode and local executor readiness through
+   runtime config and Tauri commands.
+5. WeWork bootstraps from local services.
 
 If the executor cannot start, WeWork should still open and show a connection
 state that lets the user retry setup. It should not redirect to Backend login.
 
 ## Security
 
-- The local gateway listens only on loopback.
-- The gateway uses a per-launch token generated by Tauri.
-- The token is passed to the renderer only through runtime config and to the
-  executor through process environment or channel config.
+- App-to-executor communication stays inside the parent/child process boundary.
+- The executor process is launched only from a configured bundled binary or a
+  verified managed executor path.
 - Device commands remain key-based and registry-controlled.
 - Raw shell command execution is not exposed to the renderer.
 - Cloud credentials are stored separately from local session state.
-- Logs must redact local gateway tokens and cloud tokens.
+- Logs must redact cloud tokens and any generated process credentials.
+- Renderer access to local IPC is limited to explicit Tauri commands.
 
 ## Error Handling
 
 - Backend unavailable: local workbench remains usable; cloud sync shows
   disconnected.
-- Local gateway unavailable: packaged app shows a local runtime startup error
+- Executor startup failure: packaged app shows a local runtime startup error
   and retry action.
-- Executor unavailable: workbench opens, device list shows no online local
-  executor, and sending is blocked with a local executor setup message.
-- Executor connected to Backend but not app: web control still works; app-local
-  work remains unavailable until the app channel connects.
-- App connected but Backend disconnected: local tasks continue; web control and
-  cloud sync are unavailable.
-- Same executor connected to both channels: each channel reports independent
-  online state and routes only its own requests.
+- Executor disconnected: pending local IPC requests fail with
+  `executor_disconnected`, device list shows no online local executor, and
+  sending is blocked with a local executor setup message.
+- Executor connected to Backend but not app IPC: web control still works; app
+  local work remains unavailable until the app IPC channel is ready.
+- App IPC connected but Backend disconnected: local tasks continue; web control
+  and cloud sync are unavailable.
+- Same executor connected to both paths: each path reports independent online
+  state and routes only its own requests.
 
 ## First Implementation Scope
 
@@ -419,15 +492,14 @@ main path:
 
 - Packaged desktop WeWork opens without Backend.
 - WeWork renders the workbench with a local user and local default Team.
-- The app starts or discovers the local gateway.
 - The app starts or discovers a local executor.
-- The executor registers to the app channel.
-- WeWork lists local runtime work through the local gateway.
+- The executor initializes direct app IPC over stdio.
+- WeWork lists local runtime work through Tauri-backed local services.
 - WeWork can create a new local runtime task without Backend.
 - WeWork can continue an existing local runtime task without Backend.
 - Runtime Responses events stream back to the current WeWork window.
 - Basic device commands used by workspace, git, diff, and file views work
-  through the local gateway.
+  through direct app IPC.
 - Existing Backend path remains available for the Wegent frontend and for
   optional executor Backend channel registration.
 
@@ -445,17 +517,20 @@ Unit tests:
 - Workbench default services select local services in local-first mode.
 - Local service adapters return the expected user, Team, model, device, and
   runtime-work shapes.
+- Tauri local executor IPC bridge correlates responses by request id and emits
+  executor events to the renderer.
 - Executor channel config maps legacy `connection` to a `backend` channel.
-- Executor can build independent `app` and `backend` channel clients.
+- Executor can run direct app IPC and optional Backend channel independently.
 
 Integration tests:
 
-- Local gateway accepts executor registration and heartbeat.
-- Local gateway dispatches `runtime:rpc` to a connected executor and returns the
-  response.
-- Local gateway dispatches `device:execute_command` through the command registry.
-- Runtime Responses events emitted by executor are forwarded to WeWork's local
-  stream client.
+- Executor app IPC accepts `runtime.tasks.list` and returns the runtime-work
+  response shape.
+- Executor app IPC accepts `runtime.tasks.create` and emits streaming response
+  events for the created task.
+- Executor app IPC accepts `device.execute_command` through the command
+  registry.
+- Tauri local services can bootstrap Workbench with Backend stopped.
 
 Manual verification:
 
@@ -464,7 +539,7 @@ Manual verification:
 - Verify a local executor appears online.
 - Send a new local task and observe streaming assistant output.
 - Refresh the app and reopen the LocalTask transcript.
-- Start Backend separately, connect the executor backend channel, and verify
+- Start Backend separately, connect the executor Backend channel, and verify
   web control still works without changing the Wegent frontend.
 
 ## Documentation Updates
