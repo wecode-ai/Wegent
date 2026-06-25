@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { remoteWorkspaceApis } from '@/apis/remoteWorkspace'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -451,8 +451,8 @@ describe('RemoteWorkspaceDialog', () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     await user.click(screen.getByRole('button', { name: 'Edit path' }))
     const pathInput = screen.getByRole('textbox', { name: 'Path' })
-    await user.clear(pathInput)
-    await user.type(pathInput, '/workspace/src{enter}')
+    fireEvent.change(pathInput, { target: { value: '/workspace/src' } })
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
