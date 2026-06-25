@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chat_shell.tools.builtin.knowledge_listing import KbHeadTool, KbLsTool
+from chat_shell.tools.builtin.knowledge_listing import (
+    KbHeadTool,
+    KbLsTool,
+    KnowledgeListDocumentsTool,
+)
 from shared.models.knowledge import KnowledgeBaseScope
 
 
@@ -149,6 +153,203 @@ class TestKbLsTool:
             )
 
         assert result["error_code"] == "document_scope_violation"
+
+
+class TestKnowledgeListDocumentsTool:
+    @pytest.mark.asyncio
+    async def test_lists_internal_and_external_documents_together(self) -> None:
+        """Mounted internal and external sources should be visible in one listing."""
+        tool = KnowledgeListDocumentsTool(
+            knowledge_base_ids=[107],
+            external_knowledge_refs=[
+                {
+                    "provider": "demo",
+                    "id": "demo-kb-1",
+                    "name": "External Demo",
+                    "scope": "organization",
+                    "mode": "explicit",
+                }
+            ],
+            user_id=2,
+            user_name="wuhua3",
+            auth_token="user-token",
+        )
+        internal_response = MagicMock()
+        internal_response.status_code = 200
+        internal_response.json.return_value = {
+            "documents": [
+                {
+                    "id": 501,
+                    "name": "api-reference.md",
+                    "file_extension": "md",
+                    "file_size": 128,
+                    "short_summary": "internal summary",
+                    "is_active": True,
+                }
+            ],
+            "total": 1,
+            "returned_count": 1,
+            "offset": 0,
+            "limit": 20,
+            "has_more": False,
+        }
+        external_response = MagicMock()
+        external_response.status_code = 200
+        external_response.json.return_value = {
+            "documents": [
+                {
+                    "provider": "demo",
+                    "source_id": "demo-kb-1",
+                    "source_name": "External Demo",
+                    "document_id": "document:demo-doc-1",
+                    "title": "external-summary.csv",
+                    "node_id": "document:demo-doc-1",
+                    "file_extension": "csv",
+                }
+            ],
+            "total_returned": 1,
+            "warnings": [],
+        }
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(side_effect=[internal_response, external_response])
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            result = json.loads(await tool._arun())
+
+        assert post.await_count == 2
+        assert post.await_args_list[0].args == (
+            "http://backend/api/internal/rag/list-docs",
+        )
+        assert post.await_args_list[0].kwargs["json"] == {
+            "knowledge_base_id": 107,
+            "offset": 0,
+            "limit": 20,
+        }
+        assert post.await_args_list[1].args == (
+            "http://backend/api/internal/knowledge/list-documents",
+        )
+        assert post.await_args_list[1].kwargs["json"] == {
+            "external_knowledge_refs": [
+                {
+                    "provider": "demo",
+                    "id": "demo-kb-1",
+                    "name": "External Demo",
+                    "scope": "organization",
+                    "mode": "explicit",
+                }
+            ],
+            "user_id": 2,
+            "limit": 20,
+            "offset": 0,
+            "user_name": "wuhua3",
+        }
+        assert result["internal_returned"] == 1
+        assert result["external_returned"] == 1
+        assert result["must_include_all_selected_sources"] is True
+        assert "selected sources with zero documents" in result["answer_hint"]
+        assert result["selected_sources"] == [
+            {
+                "provider": "internal",
+                "source_id": "107",
+                "source_name": "KB-107",
+                "document_count": 1,
+                "documents": [
+                    {
+                        "document_id": 501,
+                        "title": "api-reference.md",
+                        "node_id": "document:501",
+                        "parent_id": None,
+                        "file_extension": "md",
+                        "source_uri": None,
+                    }
+                ],
+            },
+            {
+                "provider": "demo",
+                "source_id": "demo-kb-1",
+                "source_name": "External Demo",
+                "scope": "organization",
+                "mode": "explicit",
+                "document_count": 1,
+                "documents": [
+                    {
+                        "document_id": "document:demo-doc-1",
+                        "title": "external-summary.csv",
+                        "node_id": "document:demo-doc-1",
+                        "parent_id": None,
+                        "file_extension": "csv",
+                        "source_uri": None,
+                    }
+                ],
+            },
+        ]
+        assert result["documents"] == [
+            {
+                "provider": "internal",
+                "source_id": "107",
+                "source_name": "KB-107",
+                "document_id": 501,
+                "title": "api-reference.md",
+                "node_id": "document:501",
+                "parent_id": None,
+                "mime_type": None,
+                "file_extension": "md",
+                "source_uri": None,
+                "summary": "internal summary",
+            },
+            {
+                "provider": "demo",
+                "source_id": "demo-kb-1",
+                "source_name": "External Demo",
+                "document_id": "document:demo-doc-1",
+                "title": "external-summary.csv",
+                "node_id": "document:demo-doc-1",
+                "file_extension": "csv",
+            },
+        ]
+
+    def test_description_prefers_unified_listing_over_kb_ls(self) -> None:
+        """Tool metadata should route file-list requests away from internal-only kb_ls."""
+        description = KnowledgeListDocumentsTool().description
+
+        assert "Prefer this over kb_ls" in description
+        assert "kb_ls only lists internal knowledge bases" in description
+        assert "sources with zero documents" in description
+
+    @pytest.mark.asyncio
+    async def test_external_listing_error_remains_json_response(self) -> None:
+        """Provider listing errors should not break the tool response shape."""
+        tool = KnowledgeListDocumentsTool(
+            external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
+            user_id=2,
+        )
+        external_response = MagicMock()
+        external_response.status_code = 503
+        external_response.text = "provider unavailable"
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(return_value=external_response)
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            result = json.loads(await tool._arun())
+
+        assert result == {
+            "error": "Failed to list knowledge documents",
+            "status_code": 503,
+        }
 
 
 class TestKbHeadTool:

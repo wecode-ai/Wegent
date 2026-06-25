@@ -8,7 +8,12 @@ from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool, ScopedKnowledgeBaseTool
-from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
+from .knowledge_listing import (
+    KbHeadTool,
+    KbLsTool,
+    KBToolCallCounter,
+    KnowledgeListDocumentsTool,
+)
 from .load_skill import LoadSkillTool
 from .read_attachment import ReadAttachmentInput, ReadAttachmentTool
 from .silent_exit import SilentExitException
@@ -21,6 +26,7 @@ __all__ = [
     "KnowledgeBaseTool",
     "ScopedKnowledgeBaseTool",
     "KbLsTool",
+    "KnowledgeListDocumentsTool",
     "KbHeadTool",
     "KBToolCallCounter",
     "DataTableTool",

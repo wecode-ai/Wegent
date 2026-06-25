@@ -6,12 +6,14 @@ from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
+from app.api.endpoints.internal.rag import RetrieveRecord
 from app.core.config import settings
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     QueryRuntimeSpec,
 )
+from app.services.rag.sources import RetrievalSourceSummary
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RuntimeEmbeddingModelConfig,
@@ -103,7 +105,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
             new_callable=AsyncMock,
             return_value={
                 "mode": "rag_retrieval",
@@ -154,6 +156,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     body = response.json()
     assert body["mode"] == "restricted_safe_summary"
     assert body["retrieval_mode"] == "rag_retrieval"
+    assert "source_summaries" not in body
     mock_persist.assert_called_once()
     mock_transform.assert_awaited_once()
 
@@ -333,7 +336,7 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
             new_callable=AsyncMock,
             return_value={
                 "mode": "rag_retrieval",
@@ -353,7 +356,7 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
         )
 
     assert response.status_code == 200
-    mock_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_query.assert_awaited_once_with(ANY, ANY)
     mock_persist.assert_called_once()
 
 
@@ -372,7 +375,7 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
             new_callable=AsyncMock,
             return_value={
                 "mode": "rag_retrieval",
@@ -468,9 +471,150 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
         )
 
     assert response.status_code == 200
+    assert "source_summaries" not in response.json()
     mock_get_query_gateway.assert_not_called()
     mock_query.assert_awaited_once_with(ANY, db=ANY)
     mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "user_id": 7,
+        "knowledge_base_ids": [1],
+        "external_knowledge_refs": [
+            {
+                "provider": "fake",
+                "mode": "explicit",
+                "id": "external-kb-1",
+            }
+        ],
+        "route_mode": "direct_injection",
+        "persistence_context": {
+            "user_subtask_id": 11,
+            "user_id": 7,
+            "restricted_mode": False,
+        },
+    }
+    internal_records = [
+        {
+            "content": "complete internal content",
+            "title": "Internal doc",
+            "knowledge_base_id": 1,
+            "document_id": 10,
+        }
+    ]
+    external_records = [
+        RetrieveRecord(
+            content="external snippet",
+            title="External doc",
+            source_type="fake",
+            source_id="external-kb-1",
+            source_uri="fake://external-kb-1/doc-1",
+            source_name="External KB",
+        )
+    ]
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                route_mode="direct_injection",
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "direct_injection",
+                "records": internal_records,
+                "total": 1,
+                "total_estimated_tokens": 10,
+            },
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._retrieve_external_sources",
+            new_callable=AsyncMock,
+            return_value=(
+                external_records,
+                [
+                    RetrievalSourceSummary(
+                        provider="fake",
+                        searched_source_ids=["external-kb-1"],
+                        ignored_source_ids=[],
+                    )
+                ],
+            ),
+        ) as mock_external_retrieve,
+        patch(
+            "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
+        ) as mock_persist,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "rag_retrieval"
+    assert body["total"] == 2
+    assert [record["content"] for record in body["records"]] == [
+        "complete internal content",
+        "external snippet",
+    ]
+    assert body["records"][1]["source_type"] == "fake"
+    assert body["source_summaries"][0]["provider"] == "fake"
+    mock_external_retrieve.assert_awaited_once()
+    mock_persist.assert_called_once()
+    assert mock_persist.call_args.kwargs["mode"] == "direct_injection"
+    assert mock_persist.call_args.kwargs["records"] == internal_records
+
+
+def test_internal_retrieve_requires_user_id_for_external_refs(test_client):
+    response = test_client.post(
+        "/api/internal/rag/retrieve",
+        json={
+            "query": "plan",
+            "external_knowledge_refs": [
+                {"provider": "fake", "mode": "explicit", "id": "external-kb-1"}
+            ],
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "user_id is required for external knowledge retrieval"
+    )
+
+
+def test_internal_list_documents_requires_user_id_for_external_refs(test_client):
+    response = test_client.post(
+        "/api/internal/knowledge/list-documents",
+        json={
+            "external_knowledge_refs": [
+                {"provider": "fake", "mode": "explicit", "id": "external-kb-1"}
+            ],
+            "limit": 20,
+            "offset": 0,
+        },
+        headers=_internal_headers(),
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "user_id is required for external knowledge document listing"
+    )
 
 
 def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(

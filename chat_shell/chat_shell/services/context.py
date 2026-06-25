@@ -352,6 +352,9 @@ class ChatContext:
         tracer_name="chat_shell.services",
         extract_attributes=lambda self, db, *args, **kwargs: {
             "context.kb_ids_count": len(self._request.knowledge_base_ids or []),
+            "context.external_refs_count": len(
+                self._request.external_knowledge_refs or []
+            ),
         },
     )
     async def _prepare_kb_tools(self, db: AsyncSession):
@@ -365,8 +368,9 @@ class ChatContext:
         from shared.models.knowledge import KnowledgeBaseToolsResult
 
         base_system_prompt = self._request.system_prompt or ""
-        if not self._request.knowledge_base_ids:
-            add_span_event("no_kb_ids_skipped")
+        external_refs = self._request.external_knowledge_refs or []
+        if not self._request.knowledge_base_ids and not external_refs:
+            add_span_event("no_kb_targets_skipped")
             return KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt=base_system_prompt,
@@ -375,7 +379,10 @@ class ChatContext:
 
         add_span_event(
             "preparing_kb_tools",
-            {"kb_ids_count": len(self._request.knowledge_base_ids)},
+            {
+                "kb_ids_count": len(self._request.knowledge_base_ids or []),
+                "external_refs_count": len(external_refs),
+            },
         )
         model_id = (
             self._request.model_config.get("model_id")
@@ -402,6 +409,7 @@ class ChatContext:
         # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
+            external_knowledge_refs=external_refs,
             user_id=self._request.user_id,
             db=db,
             base_system_prompt=base_system_prompt,

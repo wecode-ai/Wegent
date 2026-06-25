@@ -75,6 +75,7 @@ from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
     conversion_callback_router,
+    knowledge_router,
     object_storage_router,
     rag_content_router,
     services_router,
@@ -268,6 +269,9 @@ api_router.include_router(
 if not settings.STANDALONE_MODE:
     api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
 
+api_router.include_router(
+    knowledge_router, prefix="/internal", tags=["internal-knowledge"]
+)
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
 api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(

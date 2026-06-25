@@ -36,6 +36,21 @@ DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
 
 
+def _retrieval_source_entry(provider: Any, source_id: Any) -> dict[str, str] | None:
+    """Build a provider/source entry when source identity exists."""
+    if source_id is None:
+        return None
+    return {"provider": str(provider or ""), "source_id": str(source_id)}
+
+
+def _retrieval_source_key(provider: Any, source_id: Any) -> tuple[str, str] | None:
+    """Build the normalized provider/source key when identity exists."""
+    entry = _retrieval_source_entry(provider, source_id)
+    if entry is None:
+        return None
+    return entry["provider"], entry["source_id"]
+
+
 class KnowledgeBaseInput(BaseModel):
     """Input schema for knowledge base retrieval tool."""
 
@@ -89,6 +104,7 @@ class KnowledgeBaseTool(BaseTool):
 
     # Knowledge base IDs to search (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
+    external_knowledge_refs: list[dict] = Field(default_factory=list)
 
     # Document IDs to filter (optional, for searching specific documents only)
     # When set, only chunks from these documents will be returned
@@ -600,7 +616,7 @@ class KnowledgeBaseTool(BaseTool):
         try:
             effective_document_ids = document_ids or []
             effective_document_names = document_names or []
-            if not self.knowledge_base_ids:
+            if not self.knowledge_base_ids and not self.external_knowledge_refs:
                 return json.dumps(
                     {"error": "No knowledge bases configured for this conversation."}
                 )
@@ -616,19 +632,25 @@ class KnowledgeBaseTool(BaseTool):
 
             # Step 0: Fetch KB info to populate cache (if not already fetched)
             # This ensures _get_kb_limits() and _get_kb_name() can access cached data
-            kb_info = await self._get_kb_info()
+            kb_info = {"items": []}
+            if self.knowledge_base_ids:
+                kb_info = await self._get_kb_info()
 
             # Step 0.5: Check if any KB has RAG enabled
             # If no KB has RAG configured, return helpful error message
             items = kb_info.get("items", [])
             rag_enabled_kbs = [item for item in items if item.get("rag_enabled", False)]
 
-            if not rag_enabled_kbs:
+            if self.knowledge_base_ids and not rag_enabled_kbs:
                 kb_names = [item.get("name", f"KB-{item.get('id')}") for item in items]
                 logger.warning(
                     f"[KnowledgeBaseTool] RAG not configured for any KB. KBs: {kb_names}"
                 )
-                if self._is_restricted_search_only():
+                if self.external_knowledge_refs:
+                    logger.info(
+                        "[KnowledgeBaseTool] Continuing with external knowledge refs despite internal KBs without RAG"
+                    )
+                elif self._is_restricted_search_only():
                     return json.dumps(
                         {
                             "status": "error",
@@ -639,19 +661,20 @@ class KnowledgeBaseTool(BaseTool):
                         },
                         ensure_ascii=False,
                     )
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "error_code": "rag_not_configured",
-                        "message": "RAG retrieval is not available for this knowledge base. "
-                        "The knowledge base was created without a retriever configuration. "
-                        "Please use kb_ls to list documents and kb_head to read document contents instead.",
-                        "suggestion": f"Use kb_ls(knowledge_base_id={self.knowledge_base_ids[0]}) to list available documents, "
-                        "then use kb_head(document_ids=[...]) to read specific documents.",
-                        "knowledge_base_ids": self.knowledge_base_ids,
-                    },
-                    ensure_ascii=False,
-                )
+                if not self.external_knowledge_refs:
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error_code": "rag_not_configured",
+                            "message": "RAG retrieval is not available for this knowledge base. "
+                            "The knowledge base was created without a retriever configuration. "
+                            "Please use kb_ls to list documents and kb_head to read document contents instead.",
+                            "suggestion": f"Use kb_ls(knowledge_base_id={self.knowledge_base_ids[0]}) to list available documents, "
+                            "then use kb_head(document_ids=[...]) to read specific documents.",
+                            "knowledge_base_ids": self.knowledge_base_ids,
+                        },
+                        ensure_ascii=False,
+                    )
 
             # Step 1: Check call limits BEFORE executing search
             max_calls, _exempt_calls = self._get_kb_limits()
@@ -671,7 +694,8 @@ class KnowledgeBaseTool(BaseTool):
             # In that case, we use HTTP API to communicate with backend
 
             logger.info(
-                f"[KnowledgeBaseTool] Searching {len(self.knowledge_base_ids)} knowledge bases with query: {query}"
+                f"[KnowledgeBaseTool] Searching {len(self.knowledge_base_ids)} knowledge bases "
+                f"and {len(self.external_knowledge_refs)} external refs with query: {query}"
                 + (
                     f", filtering by {len(effective_document_ids)} documents"
                     if effective_document_ids
@@ -700,7 +724,14 @@ class KnowledgeBaseTool(BaseTool):
             )
 
             if route_mode == "restricted_safe_summary":
-                return json.dumps(raw_result, ensure_ascii=False)
+                return self._format_restricted_safe_summary_result(raw_result, query)
+            if route_mode == "mixed_restricted_retrieval":
+                return await self._format_mixed_restricted_result(
+                    raw_result,
+                    query,
+                    max_results,
+                    warning_level,
+                )
             if raw_result.get("error_code") == "document_scope_violation":
                 return json.dumps(
                     {
@@ -714,8 +745,12 @@ class KnowledgeBaseTool(BaseTool):
                     ensure_ascii=False,
                 )
 
-            kb_chunks = self._group_retrieved_records_by_kb(
-                raw_result.get("records", [])
+            retrieved_records = raw_result.get("records", [])
+            kb_chunks = self._group_retrieved_records_by_kb(retrieved_records)
+            retrieval_summary = self._build_retrieval_summary(
+                raw_result.get("source_summaries"),
+                records=retrieved_records,
+                mode=route_mode,
             )
             if not kb_chunks:
                 default_message = (
@@ -730,6 +765,7 @@ class KnowledgeBaseTool(BaseTool):
                         "results": [],
                         "count": 0,
                         "sources": [],
+                        "retrieval_summary": retrieval_summary,
                         "message": message,
                     },
                     ensure_ascii=False,
@@ -744,11 +780,11 @@ class KnowledgeBaseTool(BaseTool):
                     len(injection_result.get("chunks_used", [])),
                 )
                 return await self._format_direct_injection_result(
-                    injection_result, query, warning_level
+                    injection_result, query, warning_level, retrieval_summary
                 )
 
             return await self._format_rag_result(
-                kb_chunks, query, max_results, warning_level
+                kb_chunks, query, max_results, warning_level, retrieval_summary
             )
 
         except Exception as e:
@@ -837,17 +873,20 @@ class KnowledgeBaseTool(BaseTool):
     def _group_retrieved_records_by_kb(
         self,
         records: List[Dict[str, Any]],
-    ) -> Dict[int, List[Dict[str, Any]]]:
-        """Group Backend retrieve records by knowledge base ID."""
-        kb_chunks: Dict[int, List[Dict[str, Any]]] = {}
+    ) -> Dict[Any, List[Dict[str, Any]]]:
+        """Group Backend retrieve records by internal KB ID or external source ID."""
+        kb_chunks: Dict[Any, List[Dict[str, Any]]] = {}
         for record in records:
             kb_id = record.get("knowledge_base_id")
+            source_id = record.get("source_id")
             if kb_id is None:
-                if len(self.knowledge_base_ids) == 1:
+                if source_id:
+                    kb_id = source_id
+                elif len(self.knowledge_base_ids) == 1:
                     kb_id = self.knowledge_base_ids[0]
                 else:
                     logger.warning(
-                        "[KnowledgeBaseTool] Missing knowledge_base_id in multi-KB response"
+                        "[KnowledgeBaseTool] Missing knowledge_base_id/source_id in multi-source response"
                     )
                     continue
 
@@ -856,10 +895,232 @@ class KnowledgeBaseTool(BaseTool):
                     "content": record.get("content", ""),
                     "source": record.get("title", "Unknown"),
                     "score": record.get("score"),
-                    "knowledge_base_id": kb_id,
+                    "document_id": record.get("document_id"),
+                    "knowledge_base_id": record.get("knowledge_base_id"),
+                    "source_type": record.get("source_type"),
+                    "source_id": source_id,
+                    "source_uri": record.get("source_uri"),
+                    "source_name": record.get("source_name"),
                 }
             )
         return kb_chunks
+
+    @staticmethod
+    def _normalize_source_status(
+        status: Any,
+    ) -> dict[str, Any] | None:
+        """Normalize one source status entry from Backend or provider output."""
+        if not isinstance(status, dict):
+            return None
+        source_id = status.get("source_id") or status.get("id")
+        if source_id is None:
+            return None
+        provider = str(status.get("provider") or "")
+        normalized_status = status.get("status") or "no_hit"
+        if normalized_status not in {"hit", "no_hit", "ignored", "failed"}:
+            normalized_status = "no_hit"
+        return {
+            "provider": provider,
+            "source_id": str(source_id),
+            "source_name": status.get("source_name"),
+            "status": normalized_status,
+            "record_count": max(0, int(status.get("record_count") or 0)),
+            "citation_count": max(0, int(status.get("citation_count") or 0)),
+            "mode": status.get("mode"),
+        }
+
+    def _get_kb_names_by_id(self) -> dict[int, str]:
+        """Return cached KB names keyed by ID."""
+        kb_info = self._get_kb_info_sync()
+        names: dict[int, str] = {}
+        for item in kb_info.get("items", []):
+            try:
+                kb_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            names[kb_id] = item.get("name") or f"KB-{kb_id}"
+        return names
+
+    def _build_internal_source_statuses(
+        self,
+        records: list[dict[str, Any]],
+        mode: str | None,
+    ) -> list[dict[str, Any]]:
+        """Build source statuses for internal KB retrieval results."""
+        if not self.knowledge_base_ids:
+            return []
+
+        record_counts: dict[int, int] = {}
+        for record in records:
+            if record.get("source_id"):
+                continue
+            kb_id = record.get("knowledge_base_id")
+            if kb_id is None:
+                continue
+            try:
+                normalized_kb_id = int(kb_id)
+            except (TypeError, ValueError):
+                continue
+            record_counts[normalized_kb_id] = record_counts.get(normalized_kb_id, 0) + 1
+
+        kb_names = self._get_kb_names_by_id()
+        statuses: list[dict[str, Any]] = []
+        for kb_id in self.knowledge_base_ids:
+            count = record_counts.get(kb_id, 0)
+            statuses.append(
+                {
+                    "provider": "internal",
+                    "source_id": str(kb_id),
+                    "source_name": kb_names.get(kb_id, f"KB-{kb_id}"),
+                    "status": "hit" if count > 0 else "no_hit",
+                    "record_count": count,
+                    "citation_count": 0,
+                    "mode": mode,
+                }
+            )
+        return statuses
+
+    def _build_retrieval_summary(
+        self,
+        source_summaries: Any,
+        *,
+        records: list[dict[str, Any]] | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Build a response-level retrieval summary from provider summaries."""
+        if not isinstance(source_summaries, list):
+            source_summaries = []
+
+        searched_sources: dict[tuple[str, str], dict[str, str]] = {}
+        ignored_sources: dict[tuple[str, str], dict[str, str]] = {}
+        source_statuses: dict[tuple[str, str], dict[str, Any]] = {}
+
+        for status in self._build_internal_source_statuses(records or [], mode):
+            source_key = _retrieval_source_key(
+                status.get("provider"), status.get("source_id")
+            )
+            if source_key is None:
+                continue
+            source_statuses[source_key] = status
+
+        for source_summary in source_summaries:
+            if not isinstance(source_summary, dict):
+                continue
+            provider = source_summary.get("provider")
+            statuses = source_summary.get("source_statuses")
+            if isinstance(statuses, list):
+                for status in statuses:
+                    normalized_status = self._normalize_source_status(status)
+                    if normalized_status is None:
+                        continue
+                    source_key = _retrieval_source_key(
+                        normalized_status["provider"],
+                        normalized_status["source_id"],
+                    )
+                    if source_key is None:
+                        continue
+                    existing = source_statuses.get(source_key)
+                    if (
+                        existing is None
+                        or existing.get("status") != "hit"
+                        or normalized_status["status"] == "hit"
+                    ):
+                        source_statuses[source_key] = normalized_status
+
+            searched = source_summary.get("searched_source_ids")
+            ignored = source_summary.get("ignored_source_ids")
+            if isinstance(searched, list):
+                for source_id in searched:
+                    entry = _retrieval_source_entry(provider, source_id)
+                    if entry is None:
+                        continue
+                    source_key = (entry["provider"], entry["source_id"])
+                    searched_sources.setdefault(source_key, entry)
+                    ignored_sources.pop(source_key, None)
+                    source_statuses.setdefault(
+                        source_key,
+                        {
+                            **entry,
+                            "source_name": None,
+                            "status": "no_hit",
+                            "record_count": 0,
+                            "citation_count": 0,
+                            "mode": mode,
+                        },
+                    )
+            if isinstance(ignored, list):
+                for source_id in ignored:
+                    entry = _retrieval_source_entry(provider, source_id)
+                    if entry is None:
+                        continue
+                    source_key = (entry["provider"], entry["source_id"])
+                    if source_key not in searched_sources:
+                        ignored_sources.setdefault(source_key, entry)
+                    source_statuses.setdefault(
+                        source_key,
+                        {
+                            **entry,
+                            "source_name": None,
+                            "status": "ignored",
+                            "record_count": 0,
+                            "citation_count": 0,
+                            "mode": mode,
+                        },
+                    )
+
+        searched_entries = list(searched_sources.values())
+        ignored_entries = list(ignored_sources.values())
+        status_entries = list(source_statuses.values())
+        if not searched_entries and not ignored_entries and not status_entries:
+            return None
+        return {
+            "searched_source_ids": [entry["source_id"] for entry in searched_entries],
+            "ignored_source_ids": [entry["source_id"] for entry in ignored_entries],
+            "searched_sources": searched_entries,
+            "ignored_sources": ignored_entries,
+            "source_statuses": status_entries,
+        }
+
+    @staticmethod
+    def _source_reference_status_key(source: dict[str, Any]) -> tuple[str, str] | None:
+        """Return the source status key represented by a citation source."""
+        source_id = source.get("source_id")
+        if source_id:
+            return str(source.get("source_type") or ""), str(source_id)
+        kb_id = source.get("kb_id")
+        if kb_id is not None:
+            return "internal", str(kb_id)
+        return None
+
+    def _with_citation_counts(
+        self,
+        retrieval_summary: Optional[dict[str, Any]],
+        source_references: list[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        """Attach citation counts to source statuses without changing retrieval output."""
+        if not retrieval_summary:
+            return retrieval_summary
+        citation_counts: dict[tuple[str, str], int] = {}
+        for source in source_references:
+            source_key = self._source_reference_status_key(source)
+            if source_key is None:
+                continue
+            citation_counts[source_key] = citation_counts.get(source_key, 0) + 1
+
+        source_statuses = []
+        for status in retrieval_summary.get("source_statuses") or []:
+            if not isinstance(status, dict):
+                continue
+            source_key = _retrieval_source_key(
+                status.get("provider"), status.get("source_id")
+            )
+            next_status = dict(status)
+            if source_key is not None:
+                next_status["citation_count"] = citation_counts.get(source_key, 0)
+                if next_status["citation_count"] > 0:
+                    next_status["status"] = "hit"
+            source_statuses.append(next_status)
+        return {**retrieval_summary, "source_statuses": source_statuses}
 
     def _get_used_context_tokens(self) -> int:
         """Calculate approximate tokens already used by the current conversation."""
@@ -890,7 +1151,7 @@ class KnowledgeBaseTool(BaseTool):
 
     def _build_backend_direct_injection_result(
         self,
-        kb_chunks: Dict[int, List[Dict[str, Any]]],
+        kb_chunks: Dict[Any, List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
         """Build direct injection payload from Backend-approved chunks."""
         all_chunks: List[Dict[str, Any]] = []
@@ -930,6 +1191,22 @@ class KnowledgeBaseTool(BaseTool):
         document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
+        if self.external_knowledge_refs:
+            result = await self._retrieve_with_strategy_via_http(
+                query=query,
+                max_results=max_results,
+                route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
+            )
+            mode = result.get("mode", InjectionMode.RAG_ONLY)
+            logger.info(
+                "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
+                len(result.get("records", [])),
+                mode,
+            )
+            return mode, result
+
         if self.db_session is None:
             result = await self._retrieve_with_strategy_via_http(
                 query=query,
@@ -1219,11 +1496,14 @@ class KnowledgeBaseTool(BaseTool):
 
         payload = {
             "query": query,
+            "user_id": self.user_id,
             "knowledge_base_ids": self.knowledge_base_ids,
             "max_results": max_results,
             "route_mode": route_mode,
             "runtime_context": self._build_runtime_context(),
         }
+        if self.external_knowledge_refs:
+            payload["external_knowledge_refs"] = self.external_knowledge_refs
         if self.knowledge_base_scopes:
             payload["knowledge_base_scopes"] = self._scope_payloads()
         persistence_context = self._build_persistence_context()
@@ -1295,6 +1575,7 @@ class KnowledgeBaseTool(BaseTool):
         injection_result: Dict[str, Any],
         query: str,
         warning_level: Optional[str] = None,
+        retrieval_summary: Optional[dict[str, Any]] = None,
     ) -> str:
         """Format result for direct injection mode.
 
@@ -1311,13 +1592,14 @@ class KnowledgeBaseTool(BaseTool):
 
         # Build source references from chunks_used
         source_references = []
-        seen_sources: dict[tuple[int, str], int] = {}
+        seen_sources: dict[tuple[Any, str], int] = {}
         source_index = 1
 
         for chunk in chunks_used:
             kb_id = chunk.get("knowledge_base_id")
+            source_id = chunk.get("source_id")
             source_file = chunk.get("source", "Unknown")
-            source_key = (kb_id, source_file)
+            source_key = (source_id or kb_id, source_file)
 
             if source_key not in seen_sources:
                 seen_sources[source_key] = source_index
@@ -1326,9 +1608,18 @@ class KnowledgeBaseTool(BaseTool):
                         "index": source_index,
                         "title": self._display_source_title(source_file, source_index),
                         "kb_id": kb_id,
+                        "document_id": chunk.get("document_id"),
+                        "source_id": source_id,
+                        "source_type": chunk.get("source_type"),
+                        "source_uri": chunk.get("source_uri"),
+                        "source_name": chunk.get("source_name"),
                     }
                 )
                 source_index += 1
+
+        retrieval_summary = self._with_citation_counts(
+            retrieval_summary, source_references
+        )
 
         injected_content = injection_result.get("injected_content", "")
         self._accumulated_tokens += self._estimate_tokens_from_content(injected_content)
@@ -1347,6 +1638,7 @@ class KnowledgeBaseTool(BaseTool):
                 "chunks_used": len(chunks_used),
                 "count": len(chunks_used),
                 "sources": source_references,
+                "retrieval_summary": retrieval_summary,
                 "decision_details": injection_result["decision_details"],
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
                 "message": (
@@ -1358,12 +1650,94 @@ class KnowledgeBaseTool(BaseTool):
             ensure_ascii=False,
         )
 
-    async def _format_rag_result(
+    def _format_restricted_safe_summary_result(
         self,
-        kb_chunks: Dict[int, List[Dict[str, Any]]],
+        raw_result: Dict[str, Any],
+        query: str,
+    ) -> str:
+        """Format Backend-restricted results without exposing raw records."""
+        return json.dumps(
+            {
+                "query": query,
+                "mode": "restricted_safe_summary",
+                "retrieval_mode": raw_result.get("retrieval_mode"),
+                "restricted_safe_summary": raw_result.get("restricted_safe_summary"),
+                "answer_contract": raw_result.get("answer_contract"),
+                "message": raw_result.get("message"),
+                "results": [],
+                "count": 0,
+                "sources": [],
+                "retrieval_summary": self._build_retrieval_summary(
+                    raw_result.get("source_summaries")
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    async def _format_mixed_restricted_result(
+        self,
+        raw_result: Dict[str, Any],
         query: str,
         max_results: int,
         warning_level: Optional[str] = None,
+    ) -> str:
+        """Format restricted internal summary alongside ordinary external hits."""
+        retrieval_summary = self._build_retrieval_summary(
+            raw_result.get("source_summaries")
+        )
+        external_chunks = self._group_retrieved_records_by_kb(
+            raw_result.get("external_records") or []
+        )
+        if external_chunks:
+            external_payload = json.loads(
+                await self._format_rag_result(
+                    external_chunks,
+                    query,
+                    max_results,
+                    warning_level,
+                    retrieval_summary,
+                    redact_source_titles=False,
+                )
+            )
+        else:
+            external_payload = {
+                "results": [],
+                "count": 0,
+                "sources": [],
+                "retrieval_summary": retrieval_summary,
+            }
+
+        external_results = external_payload.get("results", [])
+        return json.dumps(
+            {
+                "query": query,
+                "mode": "mixed_restricted_retrieval",
+                "retrieval_mode": raw_result.get("retrieval_mode"),
+                "restricted_internal": {
+                    "restricted_safe_summary": raw_result.get(
+                        "restricted_safe_summary"
+                    ),
+                    "answer_contract": raw_result.get("answer_contract"),
+                    "message": raw_result.get("message"),
+                },
+                "external_results": external_results,
+                "results": external_results,
+                "count": len(external_results),
+                "sources": external_payload.get("sources", []),
+                "retrieval_summary": retrieval_summary,
+                "strategy_stats": self.injection_strategy.get_injection_statistics(),
+            },
+            ensure_ascii=False,
+        )
+
+    async def _format_rag_result(
+        self,
+        kb_chunks: Dict[Any, List[Dict[str, Any]]],
+        query: str,
+        max_results: int,
+        warning_level: Optional[str] = None,
+        retrieval_summary: Optional[dict[str, Any]] = None,
+        redact_source_titles: bool = True,
     ) -> str:
         """Format result for RAG fallback mode.
 
@@ -1380,22 +1754,31 @@ class KnowledgeBaseTool(BaseTool):
         all_chunks = []
         source_references = []
         source_index = 1
-        seen_sources: dict[tuple[int, str], int] = {}
+        seen_sources: dict[tuple[Any, str], int] = {}
 
         for kb_id, chunks in kb_chunks.items():
             for chunk in chunks:
                 source_file = chunk.get("source", "Unknown")
-                source_key = (kb_id, source_file)
+                source_id = chunk.get("source_id")
+                internal_kb_id = chunk.get("knowledge_base_id")
+                source_key = (source_id or internal_kb_id or kb_id, source_file)
+                source_title = (
+                    self._display_source_title(source_file, source_index)
+                    if redact_source_titles
+                    else source_file
+                )
 
                 if source_key not in seen_sources:
                     seen_sources[source_key] = source_index
                     source_references.append(
                         {
                             "index": source_index,
-                            "title": self._display_source_title(
-                                source_file, source_index
-                            ),
-                            "kb_id": kb_id,
+                            "title": source_title,
+                            "kb_id": internal_kb_id,
+                            "source_id": source_id,
+                            "source_type": chunk.get("source_type"),
+                            "source_uri": chunk.get("source_uri"),
+                            "source_name": chunk.get("source_name"),
                         }
                     )
                     source_index += 1
@@ -1403,12 +1786,21 @@ class KnowledgeBaseTool(BaseTool):
                 all_chunks.append(
                     {
                         "content": chunk["content"],
-                        "source": self._display_source_title(
-                            source_file, seen_sources[source_key]
+                        "source": (
+                            self._display_source_title(
+                                source_file, seen_sources[source_key]
+                            )
+                            if redact_source_titles
+                            else source_file
                         ),
                         "source_index": seen_sources[source_key],
                         "score": chunk["score"],
-                        "knowledge_base_id": kb_id,
+                        "document_id": chunk.get("document_id"),
+                        "knowledge_base_id": internal_kb_id,
+                        "source_id": source_id,
+                        "source_type": chunk.get("source_type"),
+                        "source_uri": chunk.get("source_uri"),
+                        "source_name": chunk.get("source_name"),
                     }
                 )
 
@@ -1417,6 +1809,19 @@ class KnowledgeBaseTool(BaseTool):
 
         # Limit total results
         all_chunks = all_chunks[:max_results]
+        referenced_indexes = {
+            chunk.get("source_index")
+            for chunk in all_chunks
+            if chunk.get("source_index") is not None
+        }
+        source_references = [
+            source
+            for source in source_references
+            if source.get("index") in referenced_indexes
+        ]
+        retrieval_summary = self._with_citation_counts(
+            retrieval_summary, source_references
+        )
 
         logger.info(
             f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
@@ -1438,6 +1843,7 @@ class KnowledgeBaseTool(BaseTool):
                 "results": all_chunks,
                 "count": len(all_chunks),
                 "sources": source_references,
+                "retrieval_summary": retrieval_summary,
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
             },
             ensure_ascii=False,
