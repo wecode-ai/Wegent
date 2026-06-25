@@ -275,6 +275,200 @@ async def test_default_kb_search_ignores_per_call_document_filters():
         )
 
 
+@pytest.mark.asyncio
+async def test_default_kb_without_rag_does_not_suggest_exploration_tools():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1],
+        default_knowledge_base_ids=[1],
+        user_id=7,
+    )
+
+    with patch.object(
+        tool,
+        "_get_kb_info",
+        AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": 1,
+                        "name": "Default KB",
+                        "rag_enabled": False,
+                        "max_calls_per_conversation": 10,
+                        "exempt_calls_before_check": 5,
+                    }
+                ]
+            }
+        ),
+    ):
+        result = json.loads(await tool._arun(query="release checklist"))
+
+    assert result["error_code"] == "rag_not_configured_default_search_only"
+    assert "knowledge_base_search cannot retrieve content" in result["message"]
+    assert "kb_ls" not in result["message"]
+    assert "kb_head" not in result["message"]
+    assert "Use kb_ls" not in result["suggestion"]
+    assert "use kb_ls" not in result["suggestion"]
+    assert "then use kb_head" not in result["suggestion"]
+    assert "do not expose kb_ls or kb_head" in result["suggestion"]
+
+
+@pytest.mark.asyncio
+async def test_mixed_default_and_explicit_kbs_without_rag_suggests_explicit_kb():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1, 2],
+        default_knowledge_base_ids=[1],
+        user_id=7,
+    )
+
+    with patch.object(
+        tool,
+        "_get_kb_info",
+        AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": 1,
+                        "name": "Default KB",
+                        "rag_enabled": False,
+                        "max_calls_per_conversation": 10,
+                        "exempt_calls_before_check": 5,
+                    },
+                    {
+                        "id": 2,
+                        "name": "Explicit KB",
+                        "rag_enabled": False,
+                        "max_calls_per_conversation": 10,
+                        "exempt_calls_before_check": 5,
+                    },
+                ]
+            }
+        ),
+    ):
+        result = json.loads(await tool._arun(query="release checklist"))
+
+    assert result["error_code"] == "rag_not_configured"
+    assert "kb_ls(knowledge_base_id=2)" in result["suggestion"]
+    assert "kb_ls(knowledge_base_id=1)" not in result["suggestion"]
+
+
+@pytest.mark.asyncio
+async def test_mixed_default_and_explicit_kbs_split_per_call_filters():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1, 2, 3],
+        default_knowledge_base_ids=[1],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False),
+            KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False),
+            KnowledgeBaseScope(knowledge_base_id=3, scope_restricted=False),
+        ],
+        user_id=7,
+    )
+    calls: list[dict] = []
+
+    async def _fake_retrieve(**kwargs):
+        calls.append(
+            {
+                "knowledge_base_ids": list(tool.knowledge_base_ids),
+                "default_knowledge_base_ids": list(tool.default_knowledge_base_ids),
+                "document_ids": kwargs["document_ids"],
+                "document_names": kwargs["document_names"],
+            }
+        )
+        records = [
+            {
+                "knowledge_base_id": kb_id,
+                "content": f"result-{kb_id}",
+                "score": 0.9 - index * 0.1,
+            }
+            for index, kb_id in enumerate(tool.knowledge_base_ids)
+        ]
+        return {
+            "mode": "rag_retrieval",
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": len(records),
+        }
+
+    with patch.object(
+        tool,
+        "_retrieve_with_strategy_via_http",
+        AsyncMock(side_effect=_fake_retrieve),
+    ):
+        mode, result = await tool._retrieve_with_strategy_from_all_kbs(
+            query="release checklist",
+            max_results=8,
+            document_ids=[201, 301],
+            document_names=["b1.md", "c1.md"],
+        )
+
+    assert mode == "rag_only"
+    assert [record["knowledge_base_id"] for record in result["records"]] == [1, 2, 3]
+    assert calls == [
+        {
+            "knowledge_base_ids": [1],
+            "default_knowledge_base_ids": [1],
+            "document_ids": None,
+            "document_names": None,
+        },
+        {
+            "knowledge_base_ids": [2, 3],
+            "default_knowledge_base_ids": [],
+            "document_ids": [201, 301],
+            "document_names": ["b1.md", "c1.md"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mixed_default_and_explicit_kbs_merge_sort_and_truncate_results():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1, 2],
+        default_knowledge_base_ids=[1],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False),
+            KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False),
+        ],
+        user_id=7,
+    )
+
+    async def _fake_retrieve(**kwargs):
+        if tool.knowledge_base_ids == [1]:
+            records = [
+                {"knowledge_base_id": 1, "content": "default-high", "score": 0.95},
+                {"knowledge_base_id": 1, "content": "default-low", "score": 0.2},
+            ]
+        else:
+            records = [
+                {"knowledge_base_id": 2, "content": "explicit-mid", "score": 0.8},
+                {"knowledge_base_id": 2, "content": "explicit-low", "score": 0.1},
+            ]
+        return {
+            "mode": "rag_retrieval",
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": len(records),
+        }
+
+    with patch.object(
+        tool,
+        "_retrieve_with_strategy_via_http",
+        AsyncMock(side_effect=_fake_retrieve),
+    ):
+        _mode, result = await tool._retrieve_with_strategy_from_all_kbs(
+            query="release checklist",
+            max_results=2,
+            document_ids=[201],
+        )
+
+    assert [
+        (record["knowledge_base_id"], record["content"]) for record in result["records"]
+    ] == [
+        (1, "default-high"),
+        (2, "explicit-mid"),
+    ]
+    assert result["total"] == 2
+
+
 def test_scoped_tool_schema_hides_document_filters():
     """Scoped search should not expose document override arguments to the model."""
     schema = ScopedKnowledgeBaseTool().args_schema.model_json_schema()

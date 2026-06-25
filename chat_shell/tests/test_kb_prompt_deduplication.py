@@ -305,6 +305,42 @@ class TestKnowledgeFactoryDynamicContext:
             assert len(result.extra_tools) == 1
 
     @pytest.mark.asyncio
+    async def test_default_kb_only_without_rag_uses_search_only_prompt(self):
+        """Default-only no-RAG KBs should not prompt unavailable exploration tools."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch("chat_shell.tools.builtin.KbLsTool") as mock_kb_ls_class,
+            patch("chat_shell.tools.builtin.KbHeadTool") as mock_kb_head_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=False,
+            ),
+        ):
+            mock_kb_tool_class.return_value = MagicMock()
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                default_knowledge_base_ids=[1],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=False,
+            )
+
+            mock_kb_ls_class.assert_not_called()
+            mock_kb_head_class.assert_not_called()
+            assert "Knowledge Base Restricted Analysis" in result.enhanced_system_prompt
+            assert (
+                "Knowledge Base (Exploration Mode)" not in result.enhanced_system_prompt
+            )
+            assert "Call `kb_ls`" not in result.enhanced_system_prompt
+            assert "MUST NOT use `kb_ls` or `kb_head`" in result.enhanced_system_prompt
+
+    @pytest.mark.asyncio
     async def test_default_kb_is_filtered_from_exploration_tools(self):
         """kb_ls/kb_head should only receive non-default knowledge bases."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools

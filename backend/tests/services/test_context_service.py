@@ -14,6 +14,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from shared.models.knowledge import KnowledgeBaseScope
+
 
 class _FakeStorageBackend:
     backend_type = "mysql"
@@ -24,6 +26,20 @@ class _FakeStorageBackend:
     def save(self, storage_key: str, binary_data: bytes, metadata: dict) -> str:
         self.saved.append((storage_key, binary_data, metadata))
         return storage_key
+
+
+def test_effective_default_kb_ids_exclude_requested_kbs() -> None:
+    """Explicit or task KBs should remove the same KB from default-only IDs."""
+    from app.services.chat.preprocessing.contexts import (
+        _get_effective_default_knowledge_base_ids,
+    )
+
+    default_scopes = [
+        KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False),
+        KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False),
+    ]
+
+    assert _get_effective_default_knowledge_base_ids(default_scopes, {2, 3}) == [1]
 
 
 class TestSubtaskContextBrief:

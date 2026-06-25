@@ -221,13 +221,22 @@ async def prepare_knowledge_base_tools(
         knowledge_base_ids, auth_token
     )
 
+    has_exploration_tools = bool(exploration_knowledge_base_ids)
+
     # Choose prompt based on RAG availability and user selection mode
     if not has_rag_enabled:
-        # No-RAG mode: Use exploration tools only
-        kb_instruction = KB_PROMPT_NO_RAG
-        logger.info(
-            "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
-        )
+        if has_exploration_tools:
+            # No-RAG mode: Use exploration tools only
+            kb_instruction = KB_PROMPT_NO_RAG
+            logger.info(
+                "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
+            )
+        else:
+            kb_instruction = KB_PROMPT_RESTRICTED_ANALYST
+            logger.info(
+                "[knowledge_factory] Using search-only prompt because no retriever "
+                "or exploration tools are available"
+            )
     elif is_user_selected:
         # Strict mode: User explicitly selected KB for this message
         kb_instruction = KB_PROMPT_STRICT

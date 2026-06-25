@@ -537,7 +537,13 @@ class KnowledgeBaseTool(BaseTool):
                     "Per-call document filters are not allowed for scoped knowledge base access"
                 )
             return [], []
-        if self.default_knowledge_base_ids and (document_ids or document_names):
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        configured_kb_ids = set(self.knowledge_base_ids or [])
+        if (
+            configured_kb_ids
+            and configured_kb_ids.issubset(default_kb_ids)
+            and (document_ids or document_names)
+        ):
             logger.info(
                 "[KnowledgeBaseTool] Ignoring per-call document filters for default KB search-only access"
             )
@@ -645,6 +651,23 @@ class KnowledgeBaseTool(BaseTool):
                         },
                         ensure_ascii=False,
                     )
+                default_kb_ids = set(self.default_knowledge_base_ids or [])
+                exploration_kb_ids = [
+                    kb_id
+                    for kb_id in (self.knowledge_base_ids or [])
+                    if kb_id not in default_kb_ids
+                ]
+                if not exploration_kb_ids:
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error_code": "rag_not_configured_default_search_only",
+                            "message": "Default knowledge bases are connected to the search tool, but their retrievers are not enabled, so knowledge_base_search cannot retrieve content from them.",
+                            "suggestion": "Default knowledge bases do not expose kb_ls or kb_head exploration tools. Ask an administrator to enable a retriever for these knowledge bases, or explicitly select a knowledge base that allows exploration.",
+                            "knowledge_base_ids": self.knowledge_base_ids,
+                        },
+                        ensure_ascii=False,
+                    )
                 return json.dumps(
                     {
                         "status": "error",
@@ -652,7 +675,7 @@ class KnowledgeBaseTool(BaseTool):
                         "message": "RAG retrieval is not available for this knowledge base. "
                         "The knowledge base was created without a retriever configuration. "
                         "Please use kb_ls to list documents and kb_head to read document contents instead.",
-                        "suggestion": f"Use kb_ls(knowledge_base_id={self.knowledge_base_ids[0]}) to list available documents, "
+                        "suggestion": f"Use kb_ls(knowledge_base_id={exploration_kb_ids[0]}) to list available documents, "
                         "then use kb_head(document_ids=[...]) to read specific documents.",
                         "knowledge_base_ids": self.knowledge_base_ids,
                     },
@@ -936,6 +959,15 @@ class KnowledgeBaseTool(BaseTool):
         document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
+        if self._should_split_default_filtered_search(document_ids, document_names):
+            return await self._retrieve_with_split_default_filtered_search(
+                query=query,
+                max_results=max_results,
+                route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
+            )
+
         if self.db_session is None:
             result = await self._retrieve_with_strategy_via_http(
                 query=query,
@@ -1058,6 +1090,147 @@ class KnowledgeBaseTool(BaseTool):
             mode,
         )
         return mode, result
+
+    def _should_split_default_filtered_search(
+        self,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> bool:
+        """Detect mixed default-only and explicit KB search with per-call filters."""
+        if self._has_restricted_scope() or not (document_ids or document_names):
+            return False
+
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        if not default_kb_ids:
+            return False
+
+        configured_kb_ids = set(self.knowledge_base_ids or [])
+        default_only_kb_ids = configured_kb_ids.intersection(default_kb_ids)
+        explicit_kb_ids = configured_kb_ids.difference(default_kb_ids)
+        return bool(default_only_kb_ids and explicit_kb_ids)
+
+    async def _retrieve_with_split_default_filtered_search(
+        self,
+        query: str,
+        max_results: int,
+        route_mode: str,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Search default-only KBs broadly and explicit KBs with per-call filters."""
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        configured_kb_ids = list(self.knowledge_base_ids or [])
+        default_only_kb_ids = [
+            kb_id for kb_id in configured_kb_ids if kb_id in default_kb_ids
+        ]
+        explicit_kb_ids = [
+            kb_id for kb_id in configured_kb_ids if kb_id not in default_kb_ids
+        ]
+
+        default_mode, default_result = await self._retrieve_with_temporary_kb_context(
+            knowledge_base_ids=default_only_kb_ids,
+            knowledge_base_scopes=self._filter_scopes_for_kbs(default_only_kb_ids),
+            default_knowledge_base_ids=default_only_kb_ids,
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            document_ids=None,
+            document_names=None,
+        )
+        explicit_mode, explicit_result = await self._retrieve_with_temporary_kb_context(
+            knowledge_base_ids=explicit_kb_ids,
+            knowledge_base_scopes=self._filter_scopes_for_kbs(explicit_kb_ids),
+            default_knowledge_base_ids=[],
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            document_ids=document_ids,
+            document_names=document_names,
+        )
+
+        combined_result = self._combine_retrieve_results(
+            default_result,
+            explicit_result,
+            max_results=max_results,
+        )
+        combined_mode = (
+            InjectionMode.DIRECT_INJECTION
+            if {default_mode, explicit_mode} == {InjectionMode.DIRECT_INJECTION}
+            else InjectionMode.RAG_ONLY
+        )
+        combined_result["mode"] = combined_mode
+        return combined_mode, combined_result
+
+    async def _retrieve_with_temporary_kb_context(
+        self,
+        knowledge_base_ids: list[int],
+        knowledge_base_scopes: list[KnowledgeBaseScope],
+        default_knowledge_base_ids: list[int],
+        query: str,
+        max_results: int,
+        route_mode: str,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Run retrieval for a KB subset using the existing routing implementation."""
+        original_knowledge_base_ids = self.knowledge_base_ids
+        original_knowledge_base_scopes = self.knowledge_base_scopes
+        original_default_knowledge_base_ids = self.default_knowledge_base_ids
+        try:
+            self.knowledge_base_ids = knowledge_base_ids
+            self.knowledge_base_scopes = knowledge_base_scopes
+            self.default_knowledge_base_ids = default_knowledge_base_ids
+            return await self._retrieve_with_strategy_from_all_kbs(
+                query=query,
+                max_results=max_results,
+                route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
+            )
+        finally:
+            self.knowledge_base_ids = original_knowledge_base_ids
+            self.knowledge_base_scopes = original_knowledge_base_scopes
+            self.default_knowledge_base_ids = original_default_knowledge_base_ids
+
+    def _filter_scopes_for_kbs(
+        self,
+        knowledge_base_ids: list[int],
+    ) -> list[KnowledgeBaseScope]:
+        """Return configured scopes that belong to the selected KB IDs."""
+        kb_id_set = set(knowledge_base_ids)
+        return [
+            scope
+            for scope in (self.knowledge_base_scopes or [])
+            if scope.knowledge_base_id in kb_id_set
+        ]
+
+    def _combine_retrieve_results(
+        self,
+        *results: Dict[str, Any],
+        max_results: int,
+    ) -> Dict[str, Any]:
+        """Combine route results from split default and explicit KB searches."""
+        records: list[dict[str, Any]] = []
+        total_estimated_tokens = 0
+        messages: list[str] = []
+        for result in results:
+            records.extend(result.get("records", []) or [])
+            total_estimated_tokens += result.get("total_estimated_tokens", 0) or 0
+            message = result.get("message")
+            if message:
+                messages.append(message)
+
+        records.sort(key=lambda item: item.get("score") or 0, reverse=True)
+        records = records[:max_results]
+        combined: Dict[str, Any] = {
+            "mode": InjectionMode.RAG_ONLY,
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": total_estimated_tokens,
+        }
+        if messages and not records:
+            combined["message"] = " ".join(messages)
+        return combined
 
     def _has_restricted_scope(self) -> bool:
         """Return whether any configured KB scope is restricted."""

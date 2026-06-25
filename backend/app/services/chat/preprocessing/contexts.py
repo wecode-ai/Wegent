@@ -1306,9 +1306,11 @@ def _prepare_kb_tools_from_contexts(
     if task_id:
         default_scopes = _get_task_default_knowledge_base_scopes(db, task_id, user_id)
         if default_scopes:
-            default_knowledge_base_ids = [
-                scope.knowledge_base_id for scope in default_scopes
-            ]
+            requested_knowledge_base_ids = set(knowledge_base_ids)
+            default_knowledge_base_ids = _get_effective_default_knowledge_base_ids(
+                default_scopes,
+                requested_knowledge_base_ids,
+            )
             knowledge_base_scopes = _merge_knowledge_base_scopes(
                 default_scopes, knowledge_base_scopes
             )
@@ -1484,6 +1486,18 @@ def _merge_knowledge_base_scopes(
     for scope in requested_scopes:
         merged[scope.knowledge_base_id] = scope
     return list(merged.values())
+
+
+def _get_effective_default_knowledge_base_ids(
+    default_scopes: List[KnowledgeBaseScope],
+    requested_knowledge_base_ids: set[int],
+) -> List[int]:
+    """Return default-only KB IDs after explicit or task KBs take precedence."""
+    return [
+        scope.knowledge_base_id
+        for scope in default_scopes
+        if scope.knowledge_base_id not in requested_knowledge_base_ids
+    ]
 
 
 def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
