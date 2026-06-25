@@ -330,7 +330,9 @@ def test_auto_compact_token_limit_clamps_trigger_and_target(monkeypatch):
     # reserved = min(clamp(1000, 16k, 48k), 4000) = 4000 -> available 6000
     assert config.available_tokens == 6000
     assert config.trigger_limit == 3000
-    assert config.target_limit == 3000
+    # target is clamped strictly below the trigger so compaction lands under the
+    # trigger threshold rather than exactly on it (trigger_limit - 1).
+    assert config.target_limit == 2999
 
 
 def test_auto_compact_token_limit_never_exceeds_available_tokens(monkeypatch):

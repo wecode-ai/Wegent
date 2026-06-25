@@ -88,6 +88,7 @@
       "daysAgo": "{{count}}天前"
     },
     "allKnowledgeBases": "全部知识库",
+    "backToList": "返回知识库列表",
     "dingtalk": {
       "sync": "同步",
       "syncing": "同步中...",

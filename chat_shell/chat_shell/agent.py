@@ -365,6 +365,7 @@ class ChatAgent:
         model_id: str | None = None,
         inject_datetime: bool | None = None,
         dynamic_context: str | None = None,
+        model_config: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
@@ -420,6 +421,39 @@ class ChatAgent:
         # assembles. The hook fires before every model call (turn start +
         # every follow-up) so both pre-turn and mid-turn budgets share the
         # same accounting and policy.
+
+        # Bound the inline attachment preview to a token budget. This is content
+        # normalization (a fixed-size preview, like the legacy char cap), not
+        # budget enforcement: the full content stays reachable via the sandbox
+        # file / read_attachment. Runs on the assembled layout so the current
+        # turn and replayed history are treated identically. The budget is
+        # capped relative to the model window so a small-context model is not
+        # swamped by the preview: min(window * 50%, configured limit).
+        from chat_shell.compression.config import get_model_context_config
+        from chat_shell.compression.token_counter import TokenCounter
+        from chat_shell.core.config import settings
+        from chat_shell.messages.attachment_preview import apply_attachment_preview
+
+        # Fall back to the AgentConfig's model_config (the canonical CRD source)
+        # so the CRD-provided context_window is honored even if the explicit
+        # model_config arg is omitted.
+        effective_model_config = model_config or (
+            config.model_config if config else None
+        )
+        effective_model_id = model_id or (
+            effective_model_config.get("model_id", "") if effective_model_config else ""
+        )
+        context_window = get_model_context_config(
+            effective_model_id, model_config=effective_model_config
+        ).context_window
+        preview_limit = min(
+            context_window // 2, settings.ATTACHMENT_PREVIEW_TOKEN_LIMIT
+        )
+        messages = apply_attachment_preview(
+            messages,
+            token_counter=TokenCounter(model_name=effective_model_id),
+            limit=preview_limit,
+        )
 
         # Apply Anthropic explicit cache breakpoints on the assembled layout
         # so breakpoints land on the final structure. The guard never edits
