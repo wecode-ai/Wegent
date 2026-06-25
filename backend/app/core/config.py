@@ -469,7 +469,7 @@ class Settings(BaseSettings):
     # page the full text via read_attachment, and executor/device modes read the
     # downloaded file directly. Keeps the prompt bounded for modes without the
     # chat_shell token-level preview (executor/device, which have no L3 guard).
-    ATTACHMENT_INJECT_MAX_CHARS: int = 64000
+    ATTACHMENT_INJECT_MAX_CHARS: int = 32000
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"

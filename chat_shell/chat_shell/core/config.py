@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     # a message share one <attachment> block). The full content stays available
     # via the sandbox file / read_attachment. The budget is split across
     # per-attachment segments (head/tail each), every header is preserved.
-    ATTACHMENT_PREVIEW_TOKEN_LIMIT: int = 30000
+    ATTACHMENT_PREVIEW_TOKEN_LIMIT: int = 15000
 
     # Backend RAG service configuration (for knowledge base HTTP fallback)
     BACKEND_RAG_URL: str = "http://localhost:8000/api/knowledge/v1/retrieve"
