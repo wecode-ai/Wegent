@@ -16,6 +16,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { cn } from '@/lib/utils'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -32,17 +33,14 @@ import type {
 } from '@/types/api'
 import {
   getRuntimeChatSidebarTaskItems,
-  getRuntimeDirectoryWorkspaces,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
-  getRuntimeWorkspaceLabel,
   getVisibleRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
-  sortRuntimeTasks,
 } from './runtimeTaskSidebarHelpers'
 
 const MOBILE_RUNNING_SPINNER_CLASS = 'h-3.5 w-3.5 shrink-0 animate-spin'
@@ -154,19 +152,12 @@ export function MobileDrawer({
   )
   const runtimeWorkByProjectId = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return new Map(items.map(item => [item.project.id, item]))
+    return new Map(items.map(item => [runtimeProjectUiId(item.project), item]))
   }, [runtimeWork])
-  const unmappedWorkspaces = useMemo(
-    () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
-    [runtimeWork]
-  )
-  const unmappedDirectoryWorkspaces = useMemo(
-    () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
-    [unmappedWorkspaces]
-  )
-  const unmappedChatTaskItems = useMemo(
-    () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
-    [unmappedWorkspaces]
+  const chatWorkspaces = useMemo(() => runtimeWork?.chats ?? [], [runtimeWork])
+  const chatTaskItems = useMemo(
+    () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
+    [chatWorkspaces]
   )
 
   if (!open) return null
@@ -350,13 +341,20 @@ export function MobileDrawer({
                   <span className="min-w-0 truncate">{t('workbench.new_project', '新建项目')}</span>
                 </button>
               </div>
-              {unmappedChatTaskItems.length > 0 && (
-                <section className="mt-5">
-                  <div className="mb-2 px-6 text-[18px] font-bold leading-6 text-[#111111]">
-                    {t('workbench.chats', '对话')}
-                  </div>
-                  <div className="space-y-1">
-                    {unmappedChatTaskItems.map(({ workspace, task }) => {
+              <section className="mt-5" data-testid="mobile-runtime-chat-section">
+                <div className="mb-2 px-6 text-[18px] font-bold leading-6 text-[#111111]">
+                  {t('workbench.chats', '对话')}
+                </div>
+                <div className="space-y-1">
+                  {chatTaskItems.length === 0 ? (
+                    <div
+                      data-testid="mobile-runtime-chat-empty"
+                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]"
+                    >
+                      {t('workbench.no_chats', '暂无会话')}
+                    </div>
+                  ) : (
+                    chatTaskItems.map(({ workspace, task }) => {
                       const selectedTask = isRuntimeTaskSelected(
                         currentRuntimeTask,
                         workspace,
@@ -402,10 +400,10 @@ export function MobileDrawer({
                           )}
                         </button>
                       )
-                    })}
-                  </div>
-                </section>
-              )}
+                    })
+                  )}
+                </div>
+              </section>
               {projects.map(project => {
                 const runtimeProjectWork = runtimeWorkByProjectId.get(project.id)
                 const workspaces = runtimeProjectWork?.deviceWorkspaces ?? []
@@ -592,78 +590,6 @@ export function MobileDrawer({
                   </div>
                 )
               })}
-            </div>
-          </section>
-
-          <section className="mt-8">
-            <div className="mb-3 flex items-center justify-between px-6">
-              <h2 className="text-[18px] font-bold leading-6 text-[#111111]">
-                {t('workbench.unmapped_device_workspaces', '未映射工作区')}
-              </h2>
-            </div>
-            <div className="space-y-2">
-              {unmappedDirectoryWorkspaces.length === 0 ? (
-                <div className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]">
-                  {t('workbench.no_unmapped_device_workspaces', '暂无未映射工作区')}
-                </div>
-              ) : (
-                unmappedDirectoryWorkspaces.map(workspace => (
-                  <div
-                    key={`${workspace.deviceId}:${workspace.workspacePath}`}
-                    className="mx-3 rounded-[14px]"
-                  >
-                    <div className="flex h-9 items-center rounded-lg px-3 text-left text-[13px] font-medium text-[#6B7280]">
-                      <span className="min-w-0 flex-1 truncate">
-                        {getRuntimeWorkspaceLabel(workspace)}
-                      </span>
-                    </div>
-                    {sortRuntimeTasks(workspace.localTasks).map(task => {
-                      const selectedTask = isRuntimeTaskSelected(
-                        currentRuntimeTask,
-                        workspace,
-                        task
-                      )
-                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
-                      return (
-                        <button
-                          key={task.localTaskId}
-                          type="button"
-                          data-testid="mobile-unmapped-runtime-task-button"
-                          disabled={disabled}
-                          onClick={() => {
-                            if (disabled) return
-                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
-                            onClose()
-                          }}
-                          className={[
-                            'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
-                            selectedTask
-                              ? 'bg-[#F1F1F1] text-[#111111]'
-                              : 'text-[#111111] hover:bg-[#F7F7F7]',
-                          ].join(' ')}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                          {task.running ? (
-                            renderRuntimeTaskRunningStatus(
-                              `mobile-unmapped-runtime-task-running-${task.localTaskId}`
-                            )
-                          ) : (
-                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
-                              {isRuntimeWorktreeTask(task) && (
-                                <GitCompareArrows
-                                  className="h-3.5 w-3.5 shrink-0"
-                                  aria-label="Worktree"
-                                />
-                              )}
-                              {formatRelativeTime(getRuntimeTaskTime(task))}
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                ))
-              )}
             </div>
           </section>
         </div>

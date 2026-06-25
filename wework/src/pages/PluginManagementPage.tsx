@@ -24,7 +24,12 @@ export function PluginManagementPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
+    openStandaloneWorkspace,
     refreshDevices,
     refreshWorkLists,
     createProject,
@@ -91,28 +96,27 @@ export function PluginManagementPage() {
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          standaloneDeviceId={state.standaloneDeviceId}
+          standaloneWorkspacePath={state.standaloneWorkspacePath}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           activeItem="plugins"
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={handleNewChat}
-          onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
+          onRenameRuntimeLocalTask={renameRuntimeLocalTask}
           onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+          onArchiveProjectConversations={archiveProjectConversations}
+          onArchiveProjectsConversations={archiveProjectsConversations}
+          onArchiveChatConversations={archiveChatConversations}
+          onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
-          onCreateProject={createProject}
-          onCreateGitWorkspaceProject={createGitWorkspaceProject}
-          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
-          onListGitRepositories={listGitRepositories}
-          onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from executor.config import config
 from executor.modes.local.heartbeat import LocalHeartbeatService
 
 
@@ -67,3 +68,18 @@ async def test_heartbeat_forces_reconnect_after_repeated_ack_failures():
         await service.stop()
 
     assert client.send_heartbeat.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_recovers_before_backend_online_ttl_expires(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_HEARTBEAT_TIMEOUT", 0.03)
+    client = ConnectedHeartbeatFailingClient()
+    service = LocalHeartbeatService(client, interval=0.01)
+
+    await service.start()
+    try:
+        await asyncio.wait_for(client.reconnect_called.wait(), timeout=0.2)
+    finally:
+        await service.stop()
+
+    assert client.send_heartbeat.await_count == 2

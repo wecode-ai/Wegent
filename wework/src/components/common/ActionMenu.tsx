@@ -13,6 +13,7 @@ interface ActionMenuItem {
   onSelect: () => void | Promise<void>
   testId: string
   danger?: boolean
+  disabled?: boolean
 }
 
 interface ActionMenuProps {
@@ -52,6 +53,7 @@ export function ActionMenu({
   }
 
   const handleItemSelect = async (item: ActionMenuItem) => {
+    if (item.disabled) return
     setOpen(false)
     setMenuPosition(null)
     await item.onSelect()
@@ -100,10 +102,7 @@ export function ActionMenu({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
-      if (
-        !containerRef.current?.contains(target) &&
-        !menuRef.current?.contains(target)
-      ) {
+      if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
         setMenuPosition(null)
       }
@@ -149,7 +148,9 @@ export function ActionMenu({
                 key={item.testId}
                 type="button"
                 data-testid={item.testId}
+                disabled={item.disabled}
                 onPointerDown={event => {
+                  if (item.disabled) return
                   event.preventDefault()
                   event.stopPropagation()
                   pointerSelectionRef.current = true
@@ -164,9 +165,8 @@ export function ActionMenu({
                 }}
                 className={[
                   'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
-                  item.danger
-                    ? 'text-red-500 hover:bg-red-50'
-                    : 'text-text-primary hover:bg-muted',
+                  item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
+                  item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
                 ].join(' ')}
               >
                 <item.icon className="h-4 w-4 shrink-0" />
@@ -174,7 +174,7 @@ export function ActionMenu({
               </button>
             ))}
           </div>,
-          document.body,
+          document.body
         )}
     </div>
   )

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -1338,6 +1339,61 @@ def test_list_owned_and_personal_task_ids_merge_legacy_and_owner_shard(
     assert personal_total == 2
     assert personal_ids == [shard_personal.id, legacy_personal.id]
     assert shard_group.id not in personal_ids
+
+
+def test_list_personal_task_ids_uses_sql_limited_pages(
+    test_db,
+    fixed_clock,
+):
+    store = ShardedTaskStore()
+    now = datetime(2026, 6, 12, 12, 0, 0)
+    user_id = 113
+    for index in range(5):
+        add_legacy_resource(
+            test_db,
+            task_id_value=1130 + index,
+            user_id=user_id,
+            client_origin="web",
+            created_at=now + timedelta(minutes=index),
+        )
+        add_shard_resource(
+            test_db,
+            task_id_value=new_task_id(user_id, index + 1),
+            user_id=user_id,
+            client_origin="web",
+            created_at=now + timedelta(minutes=index + 10),
+        )
+    test_db.commit()
+
+    statements: list[str] = []
+
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement.upper())
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", collect_selects)
+    try:
+        task_ids, total = store.list_personal_task_ids(
+            test_db,
+            user_id=user_id,
+            skip=0,
+            limit=2,
+            extra_limit=1,
+            client_origin="web",
+        )
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_selects)
+
+    assert total == 10
+    assert len(task_ids) == 3
+    row_selects = [
+        statement
+        for statement in statements
+        if "FROM TASKS" in statement and "COUNT" not in statement
+    ]
+    assert row_selects
+    assert all(" LIMIT " in statement for statement in row_selects)
 
 
 def test_list_accessible_task_ids_reads_members_by_id_across_shards(

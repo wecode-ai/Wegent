@@ -14,6 +14,26 @@ EXPLICIT_VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET+x}"
 EXPLICIT_VITE_API_PROXY_TARGET_VALUE="${VITE_API_PROXY_TARGET:-}"
 EXPLICIT_VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET+x}"
 EXPLICIT_VITE_SOCKET_PROXY_TARGET_VALUE="${VITE_SOCKET_PROXY_TARGET:-}"
+INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: bash wework/scripts/dev-mac-app.sh [options]
+
+Options:
+  -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
+  -h, --help            Show this help message.
+
+Environment:
+  WEWORK_PORT           Default dev server port when --port is not provided.
+  WEWORK_HOST           Host IP used to build backend proxy targets.
+  BACKEND_PORT          Backend port used when proxy targets are not set.
+
+Examples:
+  bash wework/scripts/dev-mac-app.sh --port 9130
+  WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
+EOF
+}
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -37,6 +57,39 @@ fi
 if [ -n "$EXPLICIT_VITE_SOCKET_PROXY_TARGET" ]; then
   export VITE_SOCKET_PROXY_TARGET="$EXPLICIT_VITE_SOCKET_PROXY_TARGET_VALUE"
 fi
+
+if [ -n "$INITIAL_WEWORK_PORT" ]; then
+  WEWORK_PORT="$INITIAL_WEWORK_PORT"
+fi
+
+REQUESTED_WEWORK_PORT=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -p|--port)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a port value." >&2
+        usage
+        exit 1
+      fi
+      REQUESTED_WEWORK_PORT="$2"
+      shift 2
+      ;;
+    --port=*)
+      REQUESTED_WEWORK_PORT="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 get_local_ip() {
   local ip
@@ -85,7 +138,13 @@ find_available_port() {
 
 LOCAL_IP="${WEWORK_HOST:-$(get_local_ip)}"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
-REQUESTED_WEWORK_PORT="${WEWORK_PORT:-1420}"
+REQUESTED_WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
+
+if ! [[ "$REQUESTED_WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$REQUESTED_WEWORK_PORT" -lt 1 ] || [ "$REQUESTED_WEWORK_PORT" -gt 65535 ]; then
+  echo "Error: WEWORK_PORT must be a number between 1 and 65535. Got: $REQUESTED_WEWORK_PORT" >&2
+  exit 1
+fi
+
 WEWORK_PORT="$(find_available_port "$REQUESTED_WEWORK_PORT")"
 
 export VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}"

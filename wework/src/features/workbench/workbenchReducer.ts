@@ -11,6 +11,9 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+
+type WorkbenchDeviceStatus = DeviceInfo['status']
 
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
@@ -23,6 +26,7 @@ export const initialWorkbenchState: WorkbenchState = {
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
+  standaloneWorkspacePath: null,
   input: '',
   isBootstrapping: true,
   isSending: false,
@@ -39,6 +43,7 @@ export type WorkbenchAction =
       runtimeWork?: RuntimeWorkListResponse | null
       currentProject?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
     }
   | {
       type: 'lists_refreshed'
@@ -46,11 +51,19 @@ export type WorkbenchAction =
       devices: DeviceInfo[]
       runtimeWork?: RuntimeWorkListResponse | null
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
     }
   | {
       type: 'devices_refreshed'
       devices: DeviceInfo[]
       standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
+    }
+  | {
+      type: 'device_status_changed'
+      deviceId: string
+      status: WorkbenchDeviceStatus
+      name?: string | null
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
@@ -62,7 +75,11 @@ export type WorkbenchAction =
       deviceWorkspaceId: number | null
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
-  | { type: 'project_cleared'; standaloneDeviceId?: string | null }
+  | {
+      type: 'project_cleared'
+      standaloneDeviceId?: string | null
+      standaloneWorkspacePath?: string | null
+    }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
   | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | {
@@ -83,6 +100,32 @@ function keepDevicesOnTransientEmpty(
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
   return nextDevices
+}
+
+function updateRuntimeWorkDeviceStatus(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  deviceId: string,
+  status: WorkbenchDeviceStatus
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    if (workspace.deviceId !== deviceId) return workspace
+    return {
+      ...workspace,
+      deviceStatus: status,
+      available: status !== 'offline',
+    }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
+  }
 }
 
 function runtimeWorkspaceFromMapping(
@@ -115,6 +158,7 @@ function upsertPreparedRuntimeWorkspace(
 ): RuntimeWorkListResponse {
   const project = projects.find(item => item.id === mapping.projectId)
   const projectRef = {
+    key: `project:${mapping.projectId}`,
     id: mapping.projectId,
     name: project?.name ?? '',
     description: project?.description,
@@ -122,14 +166,16 @@ function upsertPreparedRuntimeWorkspace(
   }
   const currentRuntimeWork = runtimeWork ?? {
     projects: [],
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
   const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
-  const hasProject = currentRuntimeWork.projects.some(item => item.project.id === mapping.projectId)
+  const hasProject = currentRuntimeWork.projects.some(
+    item => runtimeProjectUiId(item.project) === mapping.projectId
+  )
   const projectsWithTarget = hasProject
     ? currentRuntimeWork.projects.map(item => {
-        if (item.project.id !== mapping.projectId) return item
+        if (runtimeProjectUiId(item.project) !== mapping.projectId) return item
         const workspaces = item.deviceWorkspaces.filter(
           workspace =>
             !(
@@ -157,7 +203,7 @@ function upsertPreparedRuntimeWorkspace(
   return {
     ...currentRuntimeWork,
     projects: projectsWithTarget,
-    unmappedDeviceWorkspaces: currentRuntimeWork.unmappedDeviceWorkspaces.filter(
+    chats: currentRuntimeWork.chats.filter(
       workspace =>
         !(
           workspace.deviceId === mapping.deviceId &&
@@ -183,6 +229,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
         isBootstrapping: false,
         error: null,
       }
@@ -199,6 +249,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
       }
       return refreshedState
     }
@@ -210,6 +264,27 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
+      }
+    case 'device_status_changed':
+      return {
+        ...state,
+        devices: state.devices.map(device => {
+          if (device.device_id !== action.deviceId) return device
+          return {
+            ...device,
+            name: action.name || device.name,
+            status: action.status,
+          }
+        }),
+        runtimeWork: updateRuntimeWorkDeviceStatus(
+          state.runtimeWork,
+          action.deviceId,
+          action.status
+        ),
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
@@ -227,6 +302,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: action.project,
         selectedDeviceWorkspaceId: null,
         pendingProjectWorkspaceProjectId: null,
+        standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
     case 'device_workspace_prepared':
@@ -248,6 +324,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         selectedDeviceWorkspaceId: action.deviceWorkspaceId,
         pendingProjectWorkspaceProjectId:
           action.deviceWorkspaceId === null ? action.project.id : null,
+        standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
     case 'project_updated':
@@ -269,6 +346,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+        standaloneWorkspacePath:
+          action.standaloneWorkspacePath === undefined
+            ? state.standaloneWorkspacePath
+            : action.standaloneWorkspacePath,
         currentRuntimeTask: null,
       }
     case 'user_preferences_updated':
@@ -285,6 +366,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
+        standaloneWorkspacePath: null,
       }
     case 'runtime_task_opened':
       return {

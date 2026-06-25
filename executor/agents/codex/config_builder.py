@@ -74,6 +74,7 @@ class CodeXConfig:
     thread_config: dict[str, Any]
     effort: Optional[str]
     summary: Optional[str]
+    use_user_config: bool
     env: Optional[dict[str, str]] = None
 
 
@@ -126,6 +127,7 @@ def build_codex_config(
             thread_config=_build_thread_config(reasoning, service_tier),
             effort=reasoning.get("effort"),
             summary=reasoning.get("summary"),
+            use_user_config=True,
             env=proxy_env,
         )
 
@@ -167,6 +169,7 @@ def build_codex_config(
         thread_config=_build_thread_config(reasoning, service_tier),
         effort=reasoning.get("effort"),
         summary=reasoning.get("summary"),
+        use_user_config=False,
         env=proxy_env,
     )
 

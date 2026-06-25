@@ -41,6 +41,22 @@ def _get_encryption_key():
     return _aes_key, _aes_iv
 
 
+def _parse_aes_key(key: str) -> bytes:
+    """Parse raw, base64, or base64-prefixed AES key strings."""
+
+    if key.startswith("base64:"):
+        return base64.b64decode(key[7:], validate=True)
+
+    return key.encode("utf-8")
+
+
+def _get_embedded_iv_encryption_key() -> bytes:
+    """Get AES key for payloads that embed IV into ciphertext."""
+
+    aes_key = os.environ.get("USER_AES_KEY", "12345678901234567890123456789012")
+    return _parse_aes_key(aes_key)
+
+
 def _get_attachment_encryption_key():
     """
     Get or initialize attachment encryption key and IV from environment variables.
@@ -103,6 +119,76 @@ def encrypt_sensitive_data(plain_text: str) -> str:
         return base64.b64encode(encrypted_bytes).decode("utf-8")
     except Exception as e:
         logger.error(f"Failed to encrypt sensitive data: {str(e)}")
+        raise
+
+
+def encrypt_sensitive_data_with_embedded_iv(plain_text: str) -> str:
+    """
+    Encrypt sensitive data as base64(iv + ciphertext) for external clients.
+
+    Matches AesCBCDecryptWithEmbeddedIV: AES-CBC with PKCS7 padding and the first
+    16 decoded bytes used as IV.
+    """
+    if not plain_text:
+        return ""
+
+    if plain_text == "***":
+        return "***"
+
+    try:
+        aes_key = _get_embedded_iv_encryption_key()
+        aes_iv = os.urandom(16)
+
+        cipher = Cipher(
+            algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+
+        padder = padding.PKCS7(128).padder()
+        padded_data = padder.update(plain_text.encode("utf-8")) + padder.finalize()
+        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
+
+        return base64.b64encode(aes_iv + encrypted_bytes).decode("utf-8")
+    except Exception as e:
+        logger.error(f"Failed to encrypt sensitive data with embedded IV: {str(e)}")
+        raise
+
+
+def decrypt_sensitive_data_with_embedded_iv(encrypted_text: str) -> Optional[str]:
+    """
+    Decrypt sensitive data from base64(iv + ciphertext) for external clients.
+
+    Matches AesCBCDecryptWithEmbeddedIV: AES-CBC with PKCS7 padding and the first
+    16 decoded bytes used as IV.
+    """
+    if not encrypted_text:
+        return ""
+
+    if encrypted_text == "***":
+        return "***"
+
+    try:
+        raw = base64.b64decode(encrypted_text)
+        if len(raw) <= 16:
+            raise ValueError("ciphertext too short")
+
+        aes_key = _get_embedded_iv_encryption_key()
+        aes_iv = raw[:16]
+        encrypted_bytes = raw[16:]
+
+        cipher = Cipher(
+            algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend()
+        )
+        decryptor = cipher.decryptor()
+        decrypted_padded_bytes = (
+            decryptor.update(encrypted_bytes) + decryptor.finalize()
+        )
+
+        unpadder = padding.PKCS7(128).unpadder()
+        decrypted_bytes = unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
+        return decrypted_bytes.decode("utf-8")
+    except Exception as e:
+        logger.error(f"Failed to decrypt sensitive data with embedded IV: {str(e)}")
         raise
 
 

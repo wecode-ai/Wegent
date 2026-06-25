@@ -86,7 +86,7 @@ Click the attachment button to upload files:
 
 1. **Click the attachment icon** - Opens file selector
 2. **Select files** - Supports images, documents, code files
-3. **Wait for upload** - Files show preview after upload
+3. **Wait for upload** - Files show previews after upload; images use a local preview first, so the sent message does not need to download the image again
 
 Some system recommendation presets can add attachments automatically. Preset attachments are shown in the input attachment area and can be removed before sending. If you upload your own attachment, Wegent removes the attachments added by the current preset and sends only the files you uploaded.
 
@@ -187,7 +187,7 @@ Upload files to provide context:
 1. **Click the attachment button** (📎)
 2. **Select files** - Supports multiple formats
 3. **Supported formats**: Images, PDF, Word, code files
-4. **Paste upload**: Directly paste images from clipboard
+4. **Paste upload**: Directly paste images from clipboard; the sent message shows the image preview immediately
 
 ### Knowledge Base Context
 

@@ -44,6 +44,7 @@ export interface ProjectWorkControls {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null
+  currentProject?: ProjectWithTasks | null
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
   selectedDeviceWorkspaceId?: number | null
@@ -195,6 +196,7 @@ export function ChatInput({
               projects: [],
               devices: [],
               runtimeWork: null,
+              currentProject: null,
               currentProjectId: undefined,
               currentStandaloneDeviceId: null,
               selectedDeviceWorkspaceId: null,

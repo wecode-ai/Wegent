@@ -128,6 +128,21 @@ button:disabled {
     animation: local-skill-caret-blink 1s step-end infinite;
   }
 
+  @keyframes waiting-thinking-text {
+    0%,
+    100% {
+      color: rgb(var(--color-text-muted));
+    }
+
+    50% {
+      color: rgb(var(--color-text-secondary));
+    }
+  }
+
+  .waiting-thinking-text {
+    animation: waiting-thinking-text 1.4s ease-in-out infinite;
+  }
+
   .z-chrome {
     z-index: var(--z-chrome);
   }

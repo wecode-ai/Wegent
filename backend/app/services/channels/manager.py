@@ -106,6 +106,11 @@ class ChannelManager:
             ChannelType.DISCORD.value,
             self._create_discord_provider,
         )
+        # Register Weibo provider
+        self.register_provider_factory(
+            ChannelType.WEIBO.value,
+            self._create_weibo_provider,
+        )
         # Future providers can be registered here or via register_provider_factory()
 
     def register_provider_factory(
@@ -178,6 +183,13 @@ class ChannelManager:
         from app.services.channels.discord.service import DiscordChannelProvider
 
         return DiscordChannelProvider(channel)
+
+    @staticmethod
+    def _create_weibo_provider(channel: ChannelLike) -> "BaseChannelProvider":
+        """Create a Weibo provider instance."""
+        from app.services.channels.weibo.service import WeiboChannelProvider
+
+        return WeiboChannelProvider(channel)
 
     async def start_all_enabled(self, db: Session) -> int:
         """

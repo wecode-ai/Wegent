@@ -43,6 +43,7 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | **DingTalk** | ✅ Available | Stream mode, AI Card streaming, multi-turn conversations |
 | **Telegram** | ✅ Available | Private chat, command flow, Chat/Task modes, streaming message updates |
 | **Discord** | ✅ Available | Private chat, command flow, Chat/Task modes |
+| **Weibo DM** | ✅ Available | Private chat, WebSocket connection, streaming message accumulation, Wework local task continuation |
 | **Feishu/Lark** | 🔜 Planned | Coming soon |
 | **WeChat Work** | 🔜 Planned | Coming soon |
 
@@ -168,6 +169,8 @@ When platform streaming is enabled, you'll see responses appear in real time:
 
 DingTalk uses AI Card updates for streaming content. Telegram uses message updates to show streaming content and reasoning summaries.
 
+Weibo DM uses one stable message for streaming accumulation: the backend creates a stable Weibo `messageId`, then later content chunks and completion events update the same DM message. Runtime status events, such as "analyzing the issue", provide progress context, so the Weibo channel does not add an extra "thinking" placeholder.
+
 ### Private Chat Task Mode
 
 In IM channels that support private chats, use commands to choose chat or task mode:
@@ -181,6 +184,8 @@ In IM channels that support private chats, use commands to choose chat or task m
 | `/bind` | Bind the current private chat to a task |
 | `/status` | View current private chat status |
 | `/cancel` | Cancel the current selection flow |
+
+Weibo DM Task mode only supports local runtime tasks bound from Wework. First click **Continue in private chat** from the Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. If you use `/task` or `/switch` directly in Weibo without a bound local task, Wegent prompts you to return to Wework and choose a target private chat.
 
 ---
 
@@ -212,6 +217,18 @@ When editing a channel:
 - **Sensitive fields** (Client Secret) are masked with `***`
 - Leave sensitive fields **empty** to keep existing values
 - Enter new values to update credentials
+
+### Weibo DM Configuration
+
+When creating a Weibo DM channel:
+
+1. In **Admin Panel** → **IM Channels**, choose **Weibo**.
+2. DM Weibo Longxia Assistant to get the App ID and App Secret.
+3. Enter the App ID and App Secret in Wegent.
+4. Usually leave the WebSocket endpoint and token endpoint empty so Wegent uses the default Weibo Open IM endpoints; override them only for a proxy or test environment.
+5. Select the default Agent and enable the channel.
+
+When editing, leave App Secret empty to keep the existing value.
 
 ### Monitoring Metrics
 

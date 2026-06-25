@@ -26,7 +26,7 @@ interface DeviceFolderPickerProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onConfirm: (result: DeviceFolderPickerResult) => void
+  onConfirm: (result: DeviceFolderPickerResult) => Promise<void> | void
   onCancel: () => void
 }
 
@@ -171,11 +171,22 @@ export function DeviceFolderPicker({
     setError(null)
 
     if (mode === 'select') {
-      onConfirm({
-        deviceId: device.device_id,
-        path: selectedPath || currentPath,
-        action: mode,
-      })
+      setSubmitting(true)
+      try {
+        await onConfirm({
+          deviceId: device.device_id,
+          path: selectedPath || currentPath,
+          action: mode,
+        })
+      } catch (confirmError) {
+        setError(
+          confirmError instanceof Error
+            ? confirmError.message
+            : t('workbench.project_directory_select_failed', '项目打开失败')
+        )
+      } finally {
+        setSubmitting(false)
+      }
       return
     }
 
@@ -190,7 +201,7 @@ export function DeviceFolderPicker({
     setSubmitting(true)
     try {
       await onCreateDeviceDirectory(device.device_id, nextPath)
-      onConfirm({
+      await onConfirm({
         deviceId: device.device_id,
         path: nextPath,
         action: mode,

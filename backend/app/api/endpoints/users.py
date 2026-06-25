@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,7 @@ from app.services.admin_password_bootstrap import (
     get_cached_admin_password_setup_required,
     raise_admin_password_setup_required,
 )
+from app.services.auth import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
@@ -66,6 +67,7 @@ from app.services.weibo_account_binding import (
     WeiboBindingStatus,
     weibo_account_binding_service,
 )
+from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -203,6 +205,12 @@ class UserRuntimeConfigImportRequest(BaseModel):
     device_id: str
 
 
+class WegentRuntimeUserResponse(BaseModel):
+    """Encrypted user information for sandbox runtime clients."""
+
+    user: str
+
+
 @router.get("/features", response_model=FeatureFlags)
 async def get_feature_flags(
     _current_user: User = Depends(security.get_current_user),
@@ -258,6 +266,46 @@ async def read_current_user(
     return _build_user_response(
         current_user,
         admin_setup_completed=admin_setup_completed,
+    )
+
+
+@router.get("/me/wegent-runtime", response_model=WegentRuntimeUserResponse)
+async def read_wegent_runtime_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Return encrypted user information for a Wegent task token."""
+
+    token = extract_token_from_header(authorization or "")
+    token_info = verify_task_token(token or "")
+    if not token_info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Wegent token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == token_info.user_id, User.is_active.is_(True))
+        .first()
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    payload = {
+        "employee_id": "",
+        "email": user.email or "",
+        "name": user.user_name,
+        "uid": str(user.id),
+        "expire_at": int(token_info.expire_at or 0),
+    }
+    return WegentRuntimeUserResponse(
+        user=encrypt_sensitive_data_with_embedded_iv(
+            json.dumps(payload, ensure_ascii=False)
+        )
     )
 
 

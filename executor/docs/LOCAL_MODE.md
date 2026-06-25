@@ -117,6 +117,7 @@ Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device
 |----------|--------|------|
 | `LOCAL_HEARTBEAT_INTERVAL` | `30` (秒) | 心跳发送间隔 |
 | `LOCAL_HEARTBEAT_TIMEOUT` | `90` (秒) | 心跳超时时间 |
+| `LOCAL_HEARTBEAT_CALL_TIMEOUT` | `15` (秒) | 单次心跳 RPC 响应超时时间 |
 | `LOCAL_RECONNECT_DELAY` | `1` (秒) | 重连初始延迟 |
 | `LOCAL_RECONNECT_MAX_DELAY` | `30` (秒) | 重连最大延迟 |
 

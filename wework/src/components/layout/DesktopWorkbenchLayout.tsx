@@ -28,9 +28,12 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
@@ -42,10 +45,16 @@ import {
 } from '@/lib/workspace-target'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import {
+  StandaloneBlankProjectDialog,
+  StandaloneFolderProjectDialog,
+  type StandaloneWorkspaceDialogMode,
+} from '@/components/projects/StandaloneProjectDialogs'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -56,7 +65,11 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -67,9 +80,20 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onSearchRuntimeWork?: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
+  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void>
+  onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void>
+  onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
@@ -112,7 +136,8 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<void>
   onLoadEnvironmentDiff?: (
     project: ProjectWithTasks | null,
-    workspaceTarget: WorkspaceTarget
+    workspaceTarget: WorkspaceTarget,
+    mode?: EnvironmentDiffMode
   ) => Promise<string>
   onListEnvironmentBranches: (
     project: ProjectWithTasks | null,
@@ -153,7 +178,11 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  currentRuntimeTaskRunning = false,
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
@@ -163,9 +192,16 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onSearchRuntimeWork = async () => ({ items: [] }),
+  onLoadOlderRuntimeTranscript,
+  onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
+  onArchiveProjectConversations,
+  onArchiveProjectsConversations,
+  onArchiveChatConversations,
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
+  onOpenStandaloneWorkspace,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
@@ -214,7 +250,9 @@ export function DesktopWorkbenchLayout({
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
-  const [projectWorkCreateMode, setProjectWorkCreateMode] = useState<ProjectCreateMode | null>(null)
+  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
+  const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
+    useState<StandaloneWorkspaceDialogMode | null>(null)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
   )
@@ -227,6 +265,7 @@ export function DesktopWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
     useState<ImNotificationDialogMode | null>(null)
   const [imNotificationSettings, setImNotificationSettings] =
@@ -248,8 +287,7 @@ export function DesktopWorkbenchLayout({
       }),
     [state.currentRuntimeTask, state.projects, state.runtimeWork]
   )
-  const activeConversationProject =
-    state.currentProject ?? runtimeWorkspaceContext?.project ?? null
+  const activeConversationProject = state.currentProject ?? runtimeWorkspaceContext?.project ?? null
   const environmentProject = useMemo(() => {
     if (state.currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
@@ -369,6 +407,18 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k') return
+      if (!event.metaKey && !event.ctrlKey) return
+      event.preventDefault()
+      setSearchOpen(true)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  useEffect(() => {
     if (settingsOpen && autoOpenAddCloudDeviceDialog) {
       setAutoOpenAddCloudDeviceDialog(false)
     }
@@ -400,7 +450,10 @@ export function DesktopWorkbenchLayout({
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
-      setProjectWorkCreateMode(mode)
+      setBlankProjectDialogOpen(mode === 'scratch')
+      setStandaloneWorkspaceDialogMode(
+        mode === 'existing' ? 'existing' : mode === 'git' ? 'remote' : null
+      )
       setProjectWorkEditProject(null)
       void onRefreshDevices?.().catch(() => undefined)
     },
@@ -412,7 +465,8 @@ export function DesktopWorkbenchLayout({
       const project = state.projects.find(item => item.id === projectId)
       if (!project) return
       setProjectWorkEditProject(project)
-      setProjectWorkCreateMode(null)
+      setBlankProjectDialogOpen(false)
+      setStandaloneWorkspaceDialogMode(null)
       void onRefreshDevices?.().catch(() => undefined)
     },
     [onRefreshDevices, state.projects]
@@ -663,37 +717,35 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          standaloneDeviceId={state.standaloneDeviceId}
+          standaloneWorkspacePath={state.standaloneWorkspacePath}
           imNotificationSettings={imNotificationSettings}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
-          upgradingDevices={upgradingDevices}
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
+          onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+          onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
           onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+          onArchiveProjectConversations={onArchiveProjectConversations}
+          onArchiveProjectsConversations={onArchiveProjectsConversations}
+          onArchiveChatConversations={onArchiveChatConversations}
           onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
           onToggleGlobalImNotification={toggleGlobalImNotification}
           onOpenGlobalImNotificationSettings={() =>
             openImNotificationTargetDialog({ type: 'global' })
           }
-          onRememberExecutionDevice={onRememberExecutionDevice}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
-          onUpgradeDevice={onUpgradeDevice}
-          onCreateProject={onCreateProject}
-          onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
-          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-          onListGitRepositories={onListGitRepositories}
-          onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={options => {
@@ -727,9 +779,13 @@ export function DesktopWorkbenchLayout({
           upgradingDevices={upgradingDevices}
           messages={messages}
           isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
+          runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
+          isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
+          currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+          isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}
@@ -740,7 +796,8 @@ export function DesktopWorkbenchLayout({
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
           onLoadEnvironmentDiff={
             onLoadEnvironmentDiff
-              ? workspaceTarget => onLoadEnvironmentDiff(environmentProject, workspaceTarget)
+              ? (workspaceTarget, mode) =>
+                  onLoadEnvironmentDiff(environmentProject, workspaceTarget, mode)
               : undefined
           }
           onListEnvironmentBranches={() => {
@@ -760,6 +817,7 @@ export function DesktopWorkbenchLayout({
           onInputChange={onInputChange}
           onSend={onSend}
           onRetryFailedMessage={onRetryFailedMessage}
+          onLoadOlderRuntimeTranscript={onLoadOlderRuntimeTranscript}
           isResponseStreaming={isResponseStreaming}
           onPauseResponse={onPauseResponse}
           onCancelQueuedMessage={onCancelQueuedMessage}
@@ -789,17 +847,41 @@ export function DesktopWorkbenchLayout({
           }
         />
       )}
+      <StandaloneBlankProjectDialog
+        open={blankProjectDialogOpen}
+        devices={state.devices}
+        preferredDeviceId={
+          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+        }
+        onClose={() => setBlankProjectDialogOpen(false)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
+      <StandaloneFolderProjectDialog
+        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        open={standaloneWorkspaceDialogMode !== null}
+        mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        devices={state.devices}
+        preferredDeviceId={
+          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+        }
+        onClose={() => setStandaloneWorkspaceDialogMode(null)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
       <ProjectCreateDialog
-        open={projectWorkCreateMode !== null || projectWorkEditProject !== null}
-        mode={projectWorkEditProject ? 'existing' : (projectWorkCreateMode ?? 'scratch')}
+        open={projectWorkEditProject !== null}
+        mode="existing"
         project={projectWorkEditProject}
         devices={state.devices}
         onClose={() => {
-          setProjectWorkCreateMode(null)
           setProjectWorkEditProject(null)
         }}
         onOpenCloudDeviceSettings={() => {
-          setProjectWorkCreateMode(null)
           setProjectWorkEditProject(null)
           setAutoOpenAddCloudDeviceDialog(true)
           setSettingsOpen(true)
@@ -860,6 +942,15 @@ export function DesktopWorkbenchLayout({
         message={notice?.message ?? null}
         tone={notice?.tone}
         onClear={() => setNotice(null)}
+      />
+      <WorkbenchSearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearchRuntimeWork={onSearchRuntimeWork}
+        onOpenRuntimeLocalTask={async address => {
+          if (!onOpenRuntimeLocalTask) return
+          await onOpenRuntimeLocalTask(address)
+        }}
       />
     </div>
   )
