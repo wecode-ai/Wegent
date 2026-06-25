@@ -25,6 +25,7 @@ from executor.agents.codex.config_builder import _resolve_codex_binary
 from executor.config import config
 from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
+    infer_runtime_workspace_kind,
     normalize_workspace_path,
     utc_now_iso,
 )
@@ -42,7 +43,6 @@ CODEX_TRANSCRIPT_INITIAL_WINDOW_BYTES = 1024 * 1024
 CODEX_TRANSCRIPT_MAX_WINDOW_BYTES = 64 * 1024 * 1024
 CODEX_LOCAL_IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
 CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
-CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODEX_TRANSCRIPT_CURSOR_PATTERN = re.compile(r"^offset:(\d+)$")
 
 logger = setup_logger("codex_session_discovery")
@@ -407,8 +407,12 @@ class CodexSessionDiscovery:
             "workspacePath": _thread_state_text(thread_state, "cwd"),
             "title": _thread_state_text(thread_state, "title")
             or _thread_state_text(thread_state, "preview"),
-            "createdAt": _codex_time_to_iso(_thread_state_value(thread_state, "created_at")),
-            "updatedAt": _codex_time_to_iso(_thread_state_value(thread_state, "updated_at")),
+            "createdAt": _codex_time_to_iso(
+                _thread_state_value(thread_state, "created_at")
+            ),
+            "updatedAt": _codex_time_to_iso(
+                _thread_state_value(thread_state, "updated_at")
+            ),
         }
 
     async def stream_message(
@@ -629,13 +633,17 @@ def _filter_local_tasks(
     for record in records:
         if normalized_workspace and record.workspace_path != normalized_workspace:
             continue
-        if normalized_search and normalized_search not in " ".join(
-            [
-                record.title,
-                record.local_task_id,
-                record.workspace_path,
-            ]
-        ).lower():
+        if (
+            normalized_search
+            and normalized_search
+            not in " ".join(
+                [
+                    record.title,
+                    record.local_task_id,
+                    record.workspace_path,
+                ]
+            ).lower()
+        ):
             continue
         filtered.append(record)
     return filtered
@@ -684,11 +692,7 @@ def _find_codex_state_path(codex_home: Path) -> Optional[Path]:
         codex_home / "sqlite",
         codex_home / ".codex" / "sqlite",
     ]
-    candidates = [
-        root / "state_5.sqlite"
-        for root in roots
-        if root is not None
-    ]
+    candidates = [root / "state_5.sqlite" for root in roots if root is not None]
     for root in roots:
         with contextlib.suppress(OSError):
             candidates.extend(
@@ -733,8 +737,7 @@ def _rename_thread_state(
                 if not title_columns:
                     return {"updated": False, "matched": False}
                 if all(
-                    _sqlite_row_text(row, column) == title
-                    for column in title_columns
+                    _sqlite_row_text(row, column) == title for column in title_columns
                 ):
                     return {"updated": False, "matched": True}
 
@@ -929,19 +932,7 @@ def _thread_state_value(
 
 
 def _codex_thread_workspace_kind(cwd: str) -> str:
-    return "chat" if _is_codex_app_conversation_path(cwd) else "workspace"
-
-
-def _is_codex_app_conversation_path(cwd: str) -> bool:
-    try:
-        path = Path(cwd).expanduser().resolve(strict=False)
-        root = (Path.home() / "Documents" / "Codex").resolve(strict=False)
-        relative = path.relative_to(root)
-    except ValueError:
-        return False
-
-    parts = relative.parts
-    return len(parts) >= 2 and bool(CODEX_CONVERSATION_DATE_PATTERN.fullmatch(parts[0]))
+    return infer_runtime_workspace_kind(cwd)
 
 
 def _thread_title(thread: Any, thread_id: str) -> str:
