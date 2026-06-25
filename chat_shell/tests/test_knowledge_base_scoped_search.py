@@ -366,10 +366,10 @@ async def test_mixed_default_and_explicit_kbs_split_per_call_filters():
     calls: list[dict] = []
 
     async def _fake_retrieve(**kwargs):
+        active_kb_ids = kwargs["knowledge_base_ids"]
         calls.append(
             {
-                "knowledge_base_ids": list(tool.knowledge_base_ids),
-                "default_knowledge_base_ids": list(tool.default_knowledge_base_ids),
+                "knowledge_base_ids": list(active_kb_ids),
                 "document_ids": kwargs["document_ids"],
                 "document_names": kwargs["document_names"],
             }
@@ -380,7 +380,7 @@ async def test_mixed_default_and_explicit_kbs_split_per_call_filters():
                 "content": f"result-{kb_id}",
                 "score": 0.9 - index * 0.1,
             }
-            for index, kb_id in enumerate(tool.knowledge_base_ids)
+            for index, kb_id in enumerate(active_kb_ids)
         ]
         return {
             "mode": "rag_retrieval",
@@ -406,17 +406,17 @@ async def test_mixed_default_and_explicit_kbs_split_per_call_filters():
     assert calls == [
         {
             "knowledge_base_ids": [1],
-            "default_knowledge_base_ids": [1],
             "document_ids": None,
             "document_names": None,
         },
         {
             "knowledge_base_ids": [2, 3],
-            "default_knowledge_base_ids": [],
             "document_ids": [201, 301],
             "document_names": ["b1.md", "c1.md"],
         },
     ]
+    assert tool.knowledge_base_ids == [1, 2, 3]
+    assert tool.default_knowledge_base_ids == [1]
 
 
 @pytest.mark.asyncio
@@ -432,7 +432,7 @@ async def test_mixed_default_and_explicit_kbs_merge_sort_and_truncate_results():
     )
 
     async def _fake_retrieve(**kwargs):
-        if tool.knowledge_base_ids == [1]:
+        if kwargs["knowledge_base_ids"] == [1]:
             records = [
                 {"knowledge_base_id": 1, "content": "default-high", "score": 0.95},
                 {"knowledge_base_id": 1, "content": "default-low", "score": 0.2},

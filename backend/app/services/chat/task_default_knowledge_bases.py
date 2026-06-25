@@ -17,6 +17,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.readers import KindType, kindReader
+from app.services.task_team_resolver import resolve_task_team_ref
 from shared.models.knowledge import KnowledgeBaseScope
 
 
@@ -51,18 +52,10 @@ def _build_task_knowledge_base_ref(
 
 def _get_task_team(db: Session, task: TaskResource, task_crd: Task) -> Kind | None:
     """Resolve the Team used by a task using teamRef.user_id when present."""
-    team_ref = task_crd.spec.teamRef
-    team_owner_id = getattr(team_ref, "user_id", None) or task.user_id
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Team",
-            Kind.name == team_ref.name,
-            Kind.namespace == team_ref.namespace,
-            Kind.user_id == team_owner_id,
-            Kind.is_active == True,
-        )
-        .first()
+    return resolve_task_team_ref(
+        db,
+        team_ref=task_crd.spec.teamRef,
+        fallback_user_id=task.user_id,
     )
 
 

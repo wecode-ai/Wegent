@@ -24,6 +24,9 @@ from app.schemas.admin import (
 from app.schemas.kind import Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
 from app.services.knowledge.namespace_utils import is_organization_namespace
+from app.services.public_resource_validation import (
+    validate_public_ghost_default_knowledge_bases,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +110,7 @@ def _validate_bot_resource_references(
                     False,
                     f"Ghost '{ghost_namespace}/{ghost_name}' is not a public resource. Please create it as a public ghost first.",
                 )
+            validate_public_ghost_default_knowledge_bases(db, ghost.json)
 
     # Validate shellRef
     shell_ref = spec.get("shellRef", {})

@@ -18,6 +18,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from app.services.task_team_resolver import resolve_task_team_ref
 from app.stores.tasks import subtask_store, task_store
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
@@ -367,18 +368,7 @@ class TaskKindService(TaskResourceBaseService):
     def _resolve_task_team(self, db: Session, user_id: int, task_crd: Task) -> Kind:
         """Resolve and authorize the Team referenced by a task CRD."""
         team_ref = task_crd.spec.teamRef
-        team_owner_id = getattr(team_ref, "user_id", None) or user_id
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team_owner_id,
-                Kind.kind == "Team",
-                Kind.namespace == (team_ref.namespace or "default"),
-                Kind.name == team_ref.name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        team = resolve_task_team_ref(db, team_ref=team_ref, fallback_user_id=user_id)
         if not team:
             raise NotFoundException(
                 f"Team '{team_ref.name}' not found in namespace '{team_ref.namespace}'"

@@ -31,6 +31,7 @@ from app.services.task_skill_selection import (
     parse_additional_skill_names_from_labels,
     parse_requested_skill_refs_from_labels,
 )
+from app.services.task_team_resolver import get_team_ref_owner_id
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     task_crd = Task.model_validate(task.json)
     team_name = task_crd.spec.teamRef.name
     team_namespace = task_crd.spec.teamRef.namespace
-    task_owner_id = getattr(task_crd.spec.teamRef, "user_id", None) or task.user_id
+    task_owner_id = get_team_ref_owner_id(task_crd.spec.teamRef, task.user_id)
     labels = task_crd.metadata.labels or {}
     requested_skill_refs = parse_requested_skill_refs_from_labels(labels)
     user_selected_skills = parse_additional_skill_names_from_labels(labels)
@@ -428,11 +429,11 @@ def _resolve_team_owner_id(
     Shared teams execute under the task creator's context, but their related
     Bots, Ghosts, and private Skills still belong to the original team owner.
     """
-    if team and getattr(team, "user_id", None):
+    if team and getattr(team, "user_id", None) is not None:
         return team.user_id
 
     team_ref_user_id = getattr(task_crd.spec.teamRef, "user_id", None)
-    if team_ref_user_id:
+    if team_ref_user_id is not None:
         return team_ref_user_id
 
     return task.user_id

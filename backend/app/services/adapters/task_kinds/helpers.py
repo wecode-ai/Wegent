@@ -30,6 +30,7 @@ from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.services.task_fork_history import task_fork_history_resolver
+from app.services.task_team_resolver import get_team_ref_owner_id
 from app.stores.tasks import WorkspaceRefLookup
 
 from .converters import (
@@ -233,7 +234,13 @@ def get_tasks_related_data_batch(
             )
 
         if hasattr(task_crd.spec, "teamRef") and task_crd.spec.teamRef:
-            team_refs.add((task_crd.spec.teamRef.name, task_crd.spec.teamRef.namespace))
+            team_refs.add(
+                (
+                    task_crd.spec.teamRef.name,
+                    task_crd.spec.teamRef.namespace,
+                    get_team_ref_owner_id(task_crd.spec.teamRef, task.user_id),
+                )
+            )
 
         device_id = getattr(task_crd.spec, "device_id", None)
         if device_id:
@@ -273,7 +280,12 @@ def get_tasks_related_data_batch(
         )
 
         # Get team data
-        team_key = f"{task_crd.spec.teamRef.name}:{task_crd.spec.teamRef.namespace}"
+        team_owner_id = get_team_ref_owner_id(task_crd.spec.teamRef, task.user_id)
+        team_key = (
+            f"{task_crd.spec.teamRef.name}:"
+            f"{task_crd.spec.teamRef.namespace}:"
+            f"{team_owner_id}"
+        )
         task_team = team_data.get(team_key)
         team_id = task_team.id if task_team else None
         team_name = task_team.name if task_team else task_crd.spec.teamRef.name
@@ -411,11 +423,16 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
         if accessible_team_ids
         else owner_filter
     )
+    ref_keys = {(name, namespace, owner_id) for name, namespace, owner_id in team_refs}
+    lookup_pairs = {(name, namespace) for name, namespace, _ in ref_keys}
+    owner_ids = {owner_id for _, _, owner_id in ref_keys}
+
     accessible_teams = (
         db.query(Kind)
         .filter(
             Kind.kind == "Team",
-            tuple_(Kind.name, Kind.namespace).in_(team_refs),
+            tuple_(Kind.name, Kind.namespace).in_(lookup_pairs),
+            Kind.user_id.in_(owner_ids),
             Kind.is_active.is_(True),
             access_filter,
         )
@@ -423,13 +440,11 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     )
 
     team_data: Dict[str, Kind] = {}
-    team_priorities: Dict[str, int] = {}
     for team in accessible_teams:
-        key = f"{team.name}:{team.namespace}"
-        priority = _get_team_scope_priority(team, user_id)
-        if key not in team_data or priority < team_priorities[key]:
+        ref_key = (team.name, team.namespace, team.user_id)
+        if ref_key in ref_keys:
+            key = f"{team.name}:{team.namespace}:{team.user_id}"
             team_data[key] = team
-            team_priorities[key] = priority
 
     return team_data
 
@@ -542,15 +557,6 @@ def _get_namespace_granted_team_ids(
         .all()
     )
     return {row.resource_id for row in rows}
-
-
-def _get_team_scope_priority(team: Kind, user_id: int) -> int:
-    """Return lower priority for the preferred team scope."""
-    if team.user_id == user_id:
-        return 0
-    if team.user_id == 0:
-        return 2
-    return 1
 
 
 def _batch_query_devices(

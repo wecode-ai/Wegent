@@ -31,6 +31,7 @@ from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
+from app.services.task_team_resolver import get_team_ref_owner_id_from_dict
 
 logger = logging.getLogger(__name__)
 
@@ -338,12 +339,14 @@ class TaskMemberService:
             team_ref = spec.get("teamRef", {})
             team_name = team_ref.get("name")
             team_namespace = team_ref.get("namespace", "default")
+            team_owner_id = get_team_ref_owner_id_from_dict(team_ref, task.user_id)
 
             if team_name:
                 # Get the team Kind to get its ID
                 team = (
                     db.query(Kind)
                     .filter(
+                        Kind.user_id == team_owner_id,
                         Kind.name == team_name,
                         Kind.namespace == team_namespace,
                         Kind.kind == "Team",
@@ -370,12 +373,14 @@ class TaskMemberService:
             team_ref = spec.get("teamRef", {})
             team_name = team_ref.get("name")
             team_namespace = team_ref.get("namespace", "default")
+            team_owner_id = get_team_ref_owner_id_from_dict(team_ref, task.user_id)
 
             if team_name:
                 # Get the team Kind to get its display name
                 team = (
                     db.query(Kind)
                     .filter(
+                        Kind.user_id == team_owner_id,
                         Kind.name == team_name,
                         Kind.namespace == team_namespace,
                         Kind.kind == "Team",

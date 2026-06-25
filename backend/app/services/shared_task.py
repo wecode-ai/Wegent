@@ -37,6 +37,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.task_team_resolver import resolve_task_team_ref
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -291,18 +292,10 @@ class SharedTaskService:
 
     def _resolve_task_team(self, db: Session, task: TaskResource, task_crd) -> Kind:
         """Resolve a task's Team using teamRef.user_id before task owner fallback."""
-        team_ref = task_crd.spec.teamRef
-        team_owner_id = getattr(team_ref, "user_id", None) or task.user_id
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Team",
-                Kind.name == team_ref.name,
-                Kind.namespace == team_ref.namespace,
-                Kind.user_id == team_owner_id,
-                Kind.is_active == True,
-            )
-            .first()
+        team = resolve_task_team_ref(
+            db,
+            team_ref=task_crd.spec.teamRef,
+            fallback_user_id=task.user_id,
         )
         if not team:
             raise HTTPException(

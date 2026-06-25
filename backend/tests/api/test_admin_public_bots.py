@@ -7,11 +7,15 @@ from fastapi import HTTPException
 
 from app.api.endpoints.admin.public_bots import (
     _bot_to_response,
+    _validate_bot_resource_references,
     _validate_public_default_knowledge_base_refs,
 )
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.schemas.admin import PublicBotCreate, PublicBotUpdate
+from app.services.public_resource_validation import (
+    validate_public_ghost_default_knowledge_bases,
+)
 
 
 def _preload_skill_refs() -> dict:
@@ -154,5 +158,75 @@ def test_public_bot_default_kb_rejects_personal_knowledge_base(test_db):
 
     assert exc_info.value.status_code == 400
     assert "Public bots can only bind organization knowledge bases" in str(
+        exc_info.value.detail
+    )
+
+
+def test_public_ghost_default_kb_rejects_personal_knowledge_base(test_db):
+    kb = Kind(
+        user_id=7,
+        kind="KnowledgeBase",
+        name="private-kb",
+        namespace="default",
+        json={"spec": {"name": "Private Docs"}},
+        is_active=True,
+    )
+    test_db.add(kb)
+    test_db.commit()
+    test_db.refresh(kb)
+
+    with pytest.raises(HTTPException) as exc_info:
+        validate_public_ghost_default_knowledge_bases(
+            test_db,
+            {
+                "spec": {
+                    "defaultKnowledgeBaseRefs": [{"id": kb.id, "name": "Private Docs"}]
+                }
+            },
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Public resources can only bind organization knowledge bases" in str(
+        exc_info.value.detail
+    )
+
+
+def test_public_bot_raw_json_rejects_existing_ghost_with_personal_default_kb(test_db):
+    kb = Kind(
+        user_id=7,
+        kind="KnowledgeBase",
+        name="private-kb",
+        namespace="default",
+        json={"spec": {"name": "Private Docs"}},
+        is_active=True,
+    )
+    test_db.add(kb)
+    test_db.commit()
+    test_db.refresh(kb)
+
+    ghost = Kind(
+        user_id=0,
+        kind="Ghost",
+        name="public-ghost",
+        namespace="default",
+        json={
+            "spec": {
+                "systemPrompt": "hello",
+                "defaultKnowledgeBaseRefs": [{"id": kb.id, "name": "Private Docs"}],
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(ghost)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_bot_resource_references(
+            test_db,
+            {"spec": {"ghostRef": {"name": "public-ghost", "namespace": "default"}}},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Public resources can only bind organization knowledge bases" in str(
         exc_info.value.detail
     )

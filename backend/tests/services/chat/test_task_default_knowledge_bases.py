@@ -102,6 +102,40 @@ def _make_task_resource(user_id: int = 7, team_user_id: int = 7):
     return task
 
 
+def test_get_task_team_preserves_public_owner_zero(test_db):
+    from app.models.kind import Kind
+    from app.schemas.kind import Task
+    from app.services.chat.task_default_knowledge_bases import _get_task_team
+
+    public_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="team-alpha",
+        namespace="default",
+        json={"kind": "Team", "metadata": {"name": "team-alpha"}},
+        is_active=True,
+    )
+    private_same_name_team = Kind(
+        user_id=7,
+        kind="Team",
+        name="team-alpha",
+        namespace="default",
+        json={"kind": "Team", "metadata": {"name": "team-alpha"}},
+        is_active=True,
+    )
+    test_db.add_all([public_team, private_same_name_team])
+    test_db.commit()
+    test_db.refresh(public_team)
+
+    task = _make_task_resource(user_id=7, team_user_id=0)
+    task_crd = Task.model_validate(task.json)
+
+    team = _get_task_team(test_db, task, task_crd)
+
+    assert team.id == public_team.id
+    assert team.user_id == 0
+
+
 def test_build_initial_task_knowledge_base_refs_only_uses_explicit_selection():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_base_refs,
