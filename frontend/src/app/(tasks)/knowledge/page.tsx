@@ -16,7 +16,6 @@ import {
 import { TaskParamSync } from '@/features/tasks/components/params'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
-import '@wecode/i18n'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useTranslation } from '@/hooks/useTranslation'
