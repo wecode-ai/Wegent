@@ -432,8 +432,13 @@ def get_api_key_from_header(
     # Priority: X-API-Key > Authorization Bearer > wegent-source
     if x_api_key and x_api_key.startswith("wg-"):
         return x_api_key
-    if authorization.startswith("Bearer wg-"):
-        return authorization[7:]  # Remove "Bearer " prefix
+    if authorization and authorization.strip():
+        # Case-insensitive, whitespace-tolerant Bearer parsing (RFC 7235)
+        parts = authorization.split(maxsplit=1)
+        if parts[0].lower() == "bearer" and len(parts) == 2:
+            token = parts[1].strip()
+            if token.startswith("wg-"):
+                return token
     if wegent_source and wegent_source.startswith("wg-"):
         return wegent_source
     return ""
@@ -451,19 +456,22 @@ def get_auth_context(
     db: Session = Depends(get_db),
     api_key: str = Depends(get_api_key_from_header),
     wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
+    authorization: str = Header(default=""),
 ) -> AuthContext:
     """
-    Flexible authentication: supports personal API key and service key.
+    Flexible authentication: supports personal API key, service key, and JWT Bearer token.
 
     Authentication logic:
-    - Personal key: returns the key owner directly, ignores wegent-username
-    - Service key: requires username via wegent-username header OR api_key#username format
+    - Personal API key: returns the key owner directly, ignores wegent-username
+    - Service API key: requires username via wegent-username header OR api_key#username format
+    - JWT Bearer token: fallback when no API key is present; extracts user from JWT claims
 
     Args:
         db: Database session
         api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
                  For service keys, supports "api_key#username" format
         wegent_username: Username to impersonate (from wegent-username header, required for service keys)
+        authorization: Raw Authorization header for JWT Bearer token fallback
 
     Returns:
         AuthContext containing authenticated User and optional api_key_name
@@ -478,6 +486,78 @@ def get_auth_context(
             span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "api_key")
 
         if not api_key:
+            # Fallback: try JWT Bearer token from Authorization header
+            # (e.g. task tokens, session tokens)
+            if authorization and authorization.strip():
+                # Split on whitespace, compare scheme case-insensitively (RFC 7235)
+                parts = authorization.split(maxsplit=1)
+                if parts[0].lower() == "bearer" and len(parts) == 2:
+                    token = parts[1].strip()
+                    # Skip wg- prefixed tokens: already handled by get_api_key_from_header
+                    if not token.startswith("wg-"):
+                        from app.core.auth_utils import verify_jwt_token_with_db
+
+                        user = verify_jwt_token_with_db(db, token)
+                        if user and user.is_active:
+                            if is_telemetry_enabled():
+                                span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_TOKEN_TYPE, "bearer"
+                                )
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_SOURCE,
+                                    "authorization_header",
+                                )
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_RESULT, "success"
+                                )
+                                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                                span.set_attribute(
+                                    SpanAttributes.USER_NAME, user.user_name
+                                )
+                                _set_user_context(
+                                    user_id=str(user.id),
+                                    user_name=user.user_name,
+                                )
+                            return AuthContext(user=user, api_key_name=None)
+
+                        # Try task token as fallback
+                        from app.services.auth.task_token import verify_task_token
+
+                        token_info = verify_task_token(token)
+                        if token_info:
+                            user = (
+                                db.query(User)
+                                .filter(User.id == token_info.user_id)
+                                .first()
+                            )
+                            if user and user.is_active:
+                                if is_telemetry_enabled():
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_METHOD, "task_token"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_TOKEN_TYPE, "bearer"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_SOURCE,
+                                        "authorization_header",
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_RESULT, "success"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.USER_ID, str(user.id)
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.USER_NAME, user.user_name
+                                    )
+                                    _set_user_context(
+                                        user_id=str(user.id),
+                                        user_name=user.user_name,
+                                    )
+                                return AuthContext(user=user, api_key_name=None)
+
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
                 span.set_attribute(
