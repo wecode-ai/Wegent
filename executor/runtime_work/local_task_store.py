@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Any, Callable, Optional
 from executor.config import config
 
 INDEX_VERSION = 1
+CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def utc_now_iso() -> str:
@@ -25,6 +27,32 @@ def normalize_workspace_path(workspace_path: str) -> str:
     if not isinstance(workspace_path, str) or not workspace_path.strip():
         raise ValueError("workspace_path is required")
     return os.path.abspath(os.path.expanduser(workspace_path.strip()))
+
+
+def infer_runtime_workspace_kind(
+    workspace_path: str,
+    workspace_kind: Optional[str] = None,
+) -> str:
+    normalized_kind = workspace_kind.strip() if isinstance(workspace_kind, str) else ""
+    if normalized_kind and normalized_kind != "workspace":
+        return normalized_kind
+    if is_codex_conversation_workspace_path(workspace_path):
+        return "chat"
+    return normalized_kind or "workspace"
+
+
+def is_codex_conversation_workspace_path(workspace_path: str) -> bool:
+    if not isinstance(workspace_path, str) or not workspace_path.strip():
+        return False
+    try:
+        path = Path(workspace_path).expanduser().resolve(strict=False)
+        root = (Path.home() / "Documents" / "Codex").resolve(strict=False)
+        relative = path.relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+    parts = relative.parts
+    return len(parts) >= 2 and bool(CODEX_CONVERSATION_DATE_PATTERN.fullmatch(parts[0]))
 
 
 @dataclass
@@ -77,7 +105,10 @@ class LocalTaskStore:
             workspace_path=workspace_path,
             title=task.title,
             runtime=task.runtime,
-            workspace_kind=task.workspace_kind or "workspace",
+            workspace_kind=infer_runtime_workspace_kind(
+                workspace_path,
+                task.workspace_kind,
+            ),
             worktree_id=task.worktree_id,
             runtime_handle=task.runtime_handle,
             parent=task.parent,
@@ -212,14 +243,16 @@ class LocalTaskStore:
                 raise KeyError(f"Local task not found in workspace: {local_task_id}")
 
             updated = updater(current)
+            normalized_workspace_path = normalize_workspace_path(updated.workspace_path)
             normalized = LocalTaskRecord(
                 local_task_id=current.local_task_id,
-                workspace_path=normalize_workspace_path(updated.workspace_path),
+                workspace_path=normalized_workspace_path,
                 title=updated.title,
                 runtime=updated.runtime,
-                workspace_kind=updated.workspace_kind
-                or current.workspace_kind
-                or "workspace",
+                workspace_kind=infer_runtime_workspace_kind(
+                    normalized_workspace_path,
+                    updated.workspace_kind or current.workspace_kind,
+                ),
                 worktree_id=updated.worktree_id,
                 runtime_handle=updated.runtime_handle,
                 parent=updated.parent,
@@ -232,6 +265,29 @@ class LocalTaskStore:
             index["tasks"][current.local_task_id] = asdict(normalized)
             self._write_index(index)
             return normalized
+
+    def delete_task(
+        self,
+        local_task_id: str,
+        workspace_path: Optional[str] = None,
+    ) -> Optional[LocalTaskRecord]:
+        """Delete one task atomically and return the removed record."""
+
+        with self._lock:
+            index = self._read_index()
+            payload = index["tasks"].get(local_task_id)
+            if payload is None:
+                return None
+
+            current = self._payload_to_record(payload)
+            if workspace_path and current.workspace_path != normalize_workspace_path(
+                workspace_path
+            ):
+                raise KeyError(f"Local task not found in workspace: {local_task_id}")
+
+            index["tasks"].pop(local_task_id, None)
+            self._write_index(index)
+            return current
 
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
@@ -277,7 +333,10 @@ class LocalTaskStore:
             workspace_path=normalize_workspace_path(str(payload["workspace_path"])),
             title=str(payload["title"]),
             runtime=str(payload["runtime"]),
-            workspace_kind=str(payload.get("workspace_kind") or "workspace"),
+            workspace_kind=infer_runtime_workspace_kind(
+                str(payload["workspace_path"]),
+                str(payload.get("workspace_kind") or "workspace"),
+            ),
             worktree_id=self._optional_text_value(payload.get("worktree_id")),
             runtime_handle=self._dict_value(payload.get("runtime_handle")),
             parent=self._optional_dict_value(payload.get("parent")),

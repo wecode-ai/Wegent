@@ -11,6 +11,7 @@ const completedCommandBlock: ProcessingBlock = {
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
+  toolOutput: '/workspace/project\n',
   status: 'done',
   createdAt: 1770000000000,
 }
@@ -111,6 +112,14 @@ describe('ToolBlocksDisplay', () => {
     })
 
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
+  })
+
+  test('keeps completed tools expanded until the assistant turn finishes', () => {
+    render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
+
+    expect(screen.queryByText('已运行 1 条命令')).not.toBeInTheDocument()
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {

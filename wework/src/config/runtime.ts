@@ -1,8 +1,11 @@
+export type RuntimeMode = 'local-first' | 'backend'
+
 export interface RuntimeConfig {
   appBasePath: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
+  runtimeMode: RuntimeMode
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
   cloudDeviceScalingWikiUrl: string
@@ -30,7 +33,7 @@ function runtimeOverrides(): RuntimeConfigOverrides {
 
 function runtimeString(
   overrides: RuntimeConfigOverrides,
-  key: keyof RuntimeConfig,
+  key: keyof RuntimeConfig
 ): string | undefined {
   const value = overrides[key]
   return typeof value === 'string' && value.length > 0 ? value : undefined
@@ -38,6 +41,24 @@ function runtimeString(
 
 function isValidLoginMode(value: string): value is RuntimeConfig['loginMode'] {
   return value === 'password' || value === 'oidc' || value === 'all'
+}
+
+function isValidRuntimeMode(value: string): value is RuntimeMode {
+  return value === 'local-first' || value === 'backend'
+}
+
+function resolveRuntimeMode(overrides: RuntimeConfigOverrides): RuntimeMode {
+  const runtimeValue = runtimeString(overrides, 'runtimeMode')
+  if (runtimeValue && isValidRuntimeMode(runtimeValue)) {
+    return runtimeValue
+  }
+
+  const envValue = import.meta.env.VITE_WEWORK_RUNTIME_MODE
+  if (envValue && isValidRuntimeMode(envValue)) {
+    return envValue
+  }
+
+  return 'local-first'
 }
 
 function resolveLoginMode(overrides: RuntimeConfigOverrides): RuntimeConfig['loginMode'] {
@@ -96,7 +117,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   const appBasePath = normalizeBasePath(
     runtimeString(overrides, 'appBasePath') ||
       import.meta.env.VITE_APP_BASE_PATH ||
-      import.meta.env.BASE_URL,
+      import.meta.env.BASE_URL
   )
   const apiBaseUrl =
     runtimeString(overrides, 'apiBaseUrl') ||
@@ -116,6 +137,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
+    runtimeMode: resolveRuntimeMode(overrides),
     loginMode: resolveLoginMode(overrides),
     oidcLoginText:
       runtimeString(overrides, 'oidcLoginText') || import.meta.env.VITE_OIDC_LOGIN_TEXT || '',

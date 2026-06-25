@@ -97,7 +97,7 @@ const runtimeWork: RuntimeWorkListResponse = {
       ],
     },
   ],
-  unmappedDeviceWorkspaces: [],
+  chats: [],
   totalLocalTasks: 0,
 }
 
@@ -111,7 +111,7 @@ describe('ProjectWorkBar', () => {
         devices={[device]}
         runtimeWork={{
           projects: [],
-          unmappedDeviceWorkspaces: [],
+          chats: [],
           totalLocalTasks: 0,
         }}
         currentProjectId={undefined}
@@ -156,7 +156,7 @@ describe('ProjectWorkBar', () => {
         devices={[device]}
         runtimeWork={{
           projects: [],
-          unmappedDeviceWorkspaces: [],
+          chats: [],
           totalLocalTasks: 0,
         }}
         currentProjectId={undefined}
@@ -340,7 +340,7 @@ describe('ProjectWorkBar', () => {
         devices={[remoteDevice, localDevice]}
         runtimeWork={{
           projects: [],
-          unmappedDeviceWorkspaces: [],
+          chats: [],
           totalLocalTasks: 0,
         }}
         currentProjectId={undefined}
@@ -461,7 +461,7 @@ describe('ProjectWorkBar', () => {
         devices={[device]}
         runtimeWork={{
           projects: [],
-          unmappedDeviceWorkspaces: [],
+          chats: [],
           totalLocalTasks: 0,
         }}
         currentProjectId={undefined}

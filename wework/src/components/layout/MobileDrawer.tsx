@@ -154,13 +154,10 @@ export function MobileDrawer({
     const items = runtimeWork?.projects ?? []
     return new Map(items.map(item => [runtimeProjectUiId(item.project), item]))
   }, [runtimeWork])
-  const unmappedWorkspaces = useMemo(
-    () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
-    [runtimeWork]
-  )
-  const unmappedChatTaskItems = useMemo(
-    () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
-    [unmappedWorkspaces]
+  const chatWorkspaces = useMemo(() => runtimeWork?.chats ?? [], [runtimeWork])
+  const chatTaskItems = useMemo(
+    () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
+    [chatWorkspaces]
   )
 
   if (!open) return null
@@ -349,7 +346,7 @@ export function MobileDrawer({
                   {t('workbench.chats', '对话')}
                 </div>
                 <div className="space-y-1">
-                  {unmappedChatTaskItems.length === 0 ? (
+                  {chatTaskItems.length === 0 ? (
                     <div
                       data-testid="mobile-runtime-chat-empty"
                       className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]"
@@ -357,7 +354,7 @@ export function MobileDrawer({
                       {t('workbench.no_chats', '暂无会话')}
                     </div>
                   ) : (
-                    unmappedChatTaskItems.map(({ workspace, task }) => {
+                    chatTaskItems.map(({ workspace, task }) => {
                       const selectedTask = isRuntimeTaskSelected(
                         currentRuntimeTask,
                         workspace,

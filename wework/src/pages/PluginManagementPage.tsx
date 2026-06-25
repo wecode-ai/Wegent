@@ -24,7 +24,11 @@ export function PluginManagementPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     openStandaloneWorkspace,
     refreshDevices,
     refreshWorkLists,
@@ -100,23 +104,19 @@ export function PluginManagementPage() {
           activeItem="plugins"
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={handleNewChat}
-          onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
+          onRenameRuntimeLocalTask={renameRuntimeLocalTask}
           onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+          onArchiveProjectConversations={archiveProjectConversations}
+          onArchiveProjectsConversations={archiveProjectsConversations}
+          onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
-          onCreateProject={createProject}
-          onCreateGitWorkspaceProject={createGitWorkspaceProject}
-          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
-          onListGitRepositories={listGitRepositories}
-          onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}

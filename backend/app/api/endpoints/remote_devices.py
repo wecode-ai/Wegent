@@ -313,7 +313,6 @@ async def create_docker_start_command(
     )
 
     env = {
-        "EXECUTOR_MODE": "local",
         "DEVICE_TYPE": DeviceType.REMOTE.value,
         "DEVICE_ID": device_id,
         "DEVICE_NAME": device_name,

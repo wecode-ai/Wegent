@@ -70,9 +70,7 @@ describe('model-ui', () => {
     expect(glmGroup?.config.label).toBe('GLM')
     expect(glmGroup?.models.map(model => model.name)).toEqual(['glm-5'])
     expect(deepseekGroup?.config.label).toBe('DeepSeek')
-    expect(deepseekGroup?.models.map(model => model.name)).toEqual([
-      'ali-deepseek-v4-flash(公网)',
-    ])
+    expect(deepseekGroup?.models.map(model => model.name)).toEqual(['ali-deepseek-v4-flash(公网)'])
     expect(qwenGroup?.config.label).toBe('Qwen')
     expect(qwenGroup?.models.map(model => model.name)).toEqual(['ali-qwen3.5-plus(公网)'])
     expect(minimaxGroup?.config.label).toBe('MiniMax')
@@ -213,9 +211,6 @@ describe('model-ui', () => {
       },
     }
 
-    expect(getControlsForModel(model).map(control => control.id)).toEqual([
-      'reasoning',
-      'speed',
-    ])
+    expect(getControlsForModel(model).map(control => control.id)).toEqual(['reasoning', 'speed'])
   })
 })

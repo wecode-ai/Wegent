@@ -115,7 +115,11 @@ export function StandaloneBlankProjectDialog({
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const [projectName, setProjectName] = useState('New project')
@@ -154,7 +158,7 @@ export function StandaloneBlankProjectDialog({
       )
       const workspacePath = joinPath(documentsPath, projectDirectoryName)
       await onCreateDeviceDirectory(targetDevice.device_id, workspacePath)
-      onOpenStandaloneWorkspace?.(targetDevice.device_id, workspacePath)
+      await onOpenStandaloneWorkspace?.(targetDevice.device_id, workspacePath, trimmedName)
       onClose()
     } catch (submitError) {
       setError(
@@ -260,7 +264,11 @@ export function StandaloneFolderProjectDialog({
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const selectableDevices = useMemo(
@@ -356,8 +364,8 @@ export function StandaloneFolderProjectDialog({
               onListDeviceDirectories={onListDeviceDirectories}
               onCreateDeviceDirectory={onCreateDeviceDirectory}
               onCancel={onClose}
-              onConfirm={result => {
-                onOpenStandaloneWorkspace?.(result.deviceId, result.path)
+              onConfirm={async result => {
+                await onOpenStandaloneWorkspace?.(result.deviceId, result.path)
                 onClose()
               }}
             />

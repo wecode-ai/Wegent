@@ -144,7 +144,6 @@ RUN set -e; \
     && chown -R wegent:wegent /app /home/wegent
 
 ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
-ENV EXECUTOR_MODE=local
 ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
 ENV DEVICE_PUBLIC_BASE_URL=
@@ -157,7 +156,6 @@ set -euo pipefail
 
 export CODE_SERVER_PASSWORD="${CODE_SERVER_PASSWORD:-${PASSWORD:-wegent}}"
 export PASSWORD="$CODE_SERVER_PASSWORD"
-export EXECUTOR_MODE="${EXECUTOR_MODE:-local}"
 export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"

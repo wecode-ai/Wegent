@@ -1346,17 +1346,20 @@ class TestContextServiceFormatting:
         assert "File Path(already in sandbox)" in prefix
 
     def test_build_document_text_prefix_with_truncation(self):
-        """Test building document text prefix with truncation notice"""
+        """Truncated attachments get a length-free partial-content notice.
+
+        The notice is driven by the persisted ``is_truncated`` flag (not a
+        length-vs-cap comparison) and intentionally omits any character count,
+        so it never restates the old "(truncated to N characters)" wording.
+        """
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
-        from app.services.attachment.parser import DocumentParser
         from app.services.context import context_service
 
-        # Arrange - set text_length >= max to trigger truncation notice
-        max_text_length = DocumentParser.get_max_text_length()
+        # Arrange - parse-time truncation recorded in type_data
         context = SubtaskContext(
             subtask_id=0,
             user_id=1,
@@ -1364,11 +1367,12 @@ class TestContextServiceFormatting:
             name="large.pdf",
             status=ContextStatus.READY.value,
             extracted_text="Content...",
-            text_length=max_text_length,  # At max length
+            text_length=10,
             type_data={
                 "original_filename": "large.pdf",
                 "mime_type": "application/pdf",
                 "file_size": 5242880,  # 5 MB
+                "is_truncated": True,
             },
         )
         context.id = 100
@@ -1380,10 +1384,83 @@ class TestContextServiceFormatting:
         assert prefix is not None
         assert "[Attachment: large.pdf |" in prefix
         assert "ID: 100" in prefix
-        assert "Type: application/pdf" in prefix
-        assert "Size: 5.0 MB" in prefix
-        assert "URL: /api/attachments/100/download" in prefix
-        assert "truncated" in prefix.lower()
+        # Partial-content notice present, but no character count.
+        assert "only partial content is shown" in prefix
+        assert "has been truncated to" not in prefix
+        assert "characters" not in prefix
+
+    def test_build_document_text_prefix_bounds_injected_text(self):
+        """Long extracted text is bounded inline; full text stays in the DB."""
+        from app.core.config import settings
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        long_text = "x" * (settings.ATTACHMENT_INJECT_MAX_CHARS + 50_000)
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="huge.txt",
+            status=ContextStatus.READY.value,
+            extracted_text=long_text,
+            text_length=len(long_text),
+            type_data={
+                "original_filename": "huge.txt",
+                "mime_type": "text/plain",
+                "file_size": len(long_text),
+                # Parse also truncated this file: the merged logic must still emit
+                # only the inline marker, not an additional prefix note.
+                "is_truncated": True,
+            },
+        )
+        context.id = 102
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        # Inline copy is bounded well below the stored text length.
+        assert len(prefix) < len(long_text)
+        assert "inline preview truncated" in prefix
+        # Mode-neutral marker: no chat_shell-only read_attachment mention.
+        assert "read_attachment" not in prefix
+        # Merged signal: the inline marker is the only notice — no separate
+        # "(parsing truncated ...)" prefix note is duplicated.
+        assert "parsing truncated this file" not in prefix
+
+    def test_build_document_text_prefix_without_truncation_has_no_notice(self):
+        """Non-truncated attachments get no partial-content notice."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="small.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="Full content.",
+            text_length=13,
+            type_data={
+                "original_filename": "small.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 1024,
+            },
+        )
+        context.id = 101
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        assert "only partial content is shown" not in prefix
+        assert "Full content." in prefix
 
 
 class TestContextServiceOverwrite:
@@ -1460,6 +1537,68 @@ class TestContextServiceOverwrite:
         assert saved_key == storage_key
         assert saved_data == new_binary_data
         assert saved_metadata["file_size"] == len(new_binary_data)
+
+    def test_overwrite_clears_stale_is_truncated_flag(self):
+        """Overwriting a truncated attachment with a non-truncated file clears
+        the persisted is_truncated flag (so prefixes/readback stop warning)."""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import ParseResult
+        from app.services.context.context_service import context_service as cs_instance
+
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        mock_db = Mock()
+        storage_key = "attachments/test_trunc"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="big.txt",
+            status=ContextStatus.READY.value,
+            binary_data=b"old big data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "original_filename": "big.txt",
+                "file_extension": ".txt",
+                "file_size": 12,
+                "mime_type": "text/plain",
+                "is_encrypted": False,
+                "is_truncated": True,  # previously truncated
+            },
+        )
+        context.id = 101
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        # New parse does NOT truncate (no truncation_info).
+        parse_result = ParseResult(text="small", text_length=5)
+
+        with patch.object(cs_module, "_should_encrypt", return_value=False):
+            with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+                mock_get_backend.return_value = Mock()
+                with patch.object(
+                    cs_instance.parser, "parse", return_value=parse_result
+                ):
+                    updated_context, truncation_info = cs_instance.overwrite_attachment(
+                        db=mock_db,
+                        context_id=context.id,
+                        user_id=context.user_id,
+                        filename="small.txt",
+                        binary_data=b"small",
+                    )
+
+        assert truncation_info is None
+        assert updated_context.is_truncated is False
 
 
 class TestContextServiceCreateKnowledgeBaseContextWithResult:

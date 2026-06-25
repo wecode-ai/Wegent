@@ -94,16 +94,19 @@ coverage/
 # claude
 .claude/
 !.claude/settings.json
+.gstack/
 .history
-.wegentrc
-.wegent/
-.worktrees/
-.superpowers/
+.omo/
 .playwright-mcp/
+.superpowers/
+.wegent/
+.wegentrc
+.worktrees/
 
 # PyInstaller
 *.spec
 executor/build/
 executor/dist/
+wework/src-tauri/binaries/
 docs/superpowers/
 .worktrees/

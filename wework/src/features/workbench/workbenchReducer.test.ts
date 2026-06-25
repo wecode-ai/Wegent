@@ -39,7 +39,7 @@ describe('workbenchReducer', () => {
           ],
         },
       ],
-      unmappedDeviceWorkspaces: [],
+      chats: [],
       totalLocalTasks: 1,
     }
 
@@ -115,7 +115,7 @@ describe('workbenchReducer', () => {
       ],
       runtimeWork: {
         projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [] }],
-        unmappedDeviceWorkspaces: [
+        chats: [
           {
             deviceId: 'device-1',
             workspacePath: '/workspace/repo',
@@ -156,7 +156,7 @@ describe('workbenchReducer', () => {
         mapped: true,
       }),
     ])
-    expect(updated.runtimeWork?.unmappedDeviceWorkspaces).toEqual([])
+    expect(updated.runtimeWork?.chats).toEqual([])
   })
 
   test('keeps existing devices when a device refresh returns a transient empty list', () => {
@@ -208,6 +208,55 @@ describe('workbenchReducer', () => {
     expect(refreshed.devices).toEqual([device])
   })
 
+  test('reconciles legacy local-device current task to the refreshed ready device id', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        localTaskId: 'task-1',
+      },
+    }
+
+    const refreshed = workbenchReducer(state, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-uuid',
+          name: 'Local Executor',
+          status: 'online' as const,
+          is_default: true,
+        },
+      ],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-uuid',
+            workspacePath: '/Users/me/chat',
+            available: true,
+            mapped: true,
+            localTasks: [
+              {
+                localTaskId: 'task-1',
+                workspacePath: '/Users/me/chat',
+                title: 'Chat',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 1,
+      },
+    })
+
+    expect(refreshed.currentRuntimeTask).toEqual({
+      deviceId: 'device-uuid',
+      localTaskId: 'task-1',
+    })
+  })
+
   test('updates cached device and runtime workspace status from websocket events', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
@@ -242,7 +291,7 @@ describe('workbenchReducer', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 0,
       },
     })

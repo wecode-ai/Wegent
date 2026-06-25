@@ -133,7 +133,6 @@ docker run -d --platform linux/amd64 \
   --name wegent-device \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
-  -e EXECUTOR_MODE=local \
   -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
@@ -156,7 +155,6 @@ docker run -d --platform linux/amd64 \
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
-  -e EXECUTOR_MODE=local \
   -e DEVICE_TYPE=remote \
   -e DEVICE_ID=<generated-device-id> \
   -e DEVICE_NAME=<generated-device-name> \
@@ -227,7 +225,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；如果没有传 `EXECUTOR_MODE`、`WEGENT_BACKEND_URL` 或 `WEGENT_AUTH_TOKEN`，executor 会读取该文件中的 `mode`、`connection.backend_url` 和 `connection.auth_token`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；无参数启动且没有远端地址时，executor 监听 `~/.wegent-executor/app-ipc.sock` 并且不连接 Backend。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。`~/.wegent-executor/app-ipc.lock` 会限制同一用户目录下最多一个 executor 进程，避免网页版看到重复设备连接。日志写入 `~/.wegent-executor/logs/executor.log`。
 
 ### 获取 JWT Token
 

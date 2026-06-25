@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from app.api.ws.events import ServerEvents
+from app.core.constants import get_wework_user_room
 from app.core.socketio import get_sio
 from app.services.channels.callback import (
     forward_event_to_channel_callbacks,
@@ -53,6 +54,17 @@ class LocalTaskResponsesHandler:
             async with lock:
                 source = (
                     data.get("source") if isinstance(data.get("source"), dict) else None
+                )
+                await emit_response_api_event(
+                    event_name=event_type,
+                    payload=local_task_response_payload(
+                        data=data,
+                        device_id=device_id,
+                        local_task_id=local_task_id,
+                        subtask_id=subtask_id,
+                        message_id=message_id,
+                    ),
+                    room=get_wework_user_room(user_id),
                 )
                 event = self.execution_event(
                     event_type=event_type,
@@ -381,6 +393,38 @@ async def emit_local_task_chat_event(
         room=f"user:{user_id}",
         namespace="/chat",
     )
+
+
+async def emit_response_api_event(
+    *,
+    event_name: str,
+    payload: dict[str, Any],
+    room: str,
+) -> None:
+    await get_sio().emit(
+        event_name,
+        payload,
+        room=room,
+        namespace="/chat",
+    )
+
+
+def local_task_response_payload(
+    *,
+    data: dict,
+    device_id: str,
+    local_task_id: str,
+    subtask_id: int,
+    message_id: Optional[int],
+) -> dict[str, Any]:
+    payload = dict(data)
+    payload["task_id"] = payload.get("task_id") if payload.get("task_id") else 0
+    payload["subtask_id"] = subtask_id
+    payload["device_id"] = device_id
+    payload["local_task_id"] = local_task_id
+    if message_id is not None:
+        payload["message_id"] = message_id
+    return payload
 
 
 def runtime_subtask_id(data: dict, device_id: str, local_task_id: str) -> int:

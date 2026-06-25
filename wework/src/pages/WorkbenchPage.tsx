@@ -15,6 +15,7 @@ export function WorkbenchPage() {
     guidanceMessages,
     codeCommentContexts,
     currentRuntimeTaskRunning,
+    isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore,
     isRuntimeTranscriptLoadingMore,
@@ -34,7 +35,11 @@ export function WorkbenchPage() {
     openRuntimeLocalTask,
     searchRuntimeWork,
     loadOlderRuntimeTranscript,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
@@ -109,6 +114,7 @@ export function WorkbenchPage() {
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
       currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+      isAwaitingAssistantStart={isAwaitingAssistantStart}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
       isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
@@ -123,7 +129,11 @@ export function WorkbenchPage() {
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
       onSearchRuntimeWork={searchRuntimeWork}
       onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
+      onRenameRuntimeLocalTask={renameRuntimeLocalTask}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+      onArchiveProjectConversations={archiveProjectConversations}
+      onArchiveProjectsConversations={archiveProjectsConversations}
+      onArchiveChatConversations={archiveChatConversations}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onOpenStandaloneWorkspace={openStandaloneWorkspace}

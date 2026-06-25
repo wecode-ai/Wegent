@@ -1,9 +1,6 @@
 import { CornerDownRight, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-} from '@/types/workbench'
+import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 
 interface ConversationQueuePanelProps {
   queuedMessages: QueuedWorkbenchMessage[]
@@ -88,11 +85,11 @@ function QueueRow({
   const isBusy = status === 'sending'
   const statusText =
     status === 'failed'
-      ? error ?? '发送失败'
+      ? (error ?? '发送失败')
       : status === 'expired'
-        ? error ?? '已过期'
+        ? (error ?? '已过期')
         : status === 'sending'
-          ? notice ?? '正在发送'
+          ? (notice ?? '正在发送')
           : null
 
   return (

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-PowerPoint truncation strategy using head + uniform sampling + tail approach.
+PowerPoint truncation strategy using head + tail (contiguous, middle dropped) approach.
 """
 
 from typing import List, Tuple
@@ -17,7 +17,7 @@ from .base import (
 
 class PowerPointTruncationStrategy(BaseTruncationStrategy):
     """
-    Smart truncation for PowerPoint files using head + uniform sampling + tail strategy.
+    Smart truncation for PowerPoint files using head + tail (contiguous, middle dropped) strategy.
 
     This strategy preserves:
     1. Head slides - title, agenda, introduction
@@ -29,7 +29,7 @@ class PowerPointTruncationStrategy(BaseTruncationStrategy):
         self, slides_text: List[str], max_length: int
     ) -> Tuple[str, SmartTruncationInfo]:
         """
-        Truncate PowerPoint with head + uniform sampling + tail strategy.
+        Truncate PowerPoint with head + tail (contiguous, middle dropped) strategy.
 
         Args:
             slides_text: List of text content per slide
@@ -98,7 +98,9 @@ class PowerPointTruncationStrategy(BaseTruncationStrategy):
             )
         )
 
-        # Sample middle section uniformly
+        # Sample middle section uniformly. Only reached when MIDDLE_RATIO > 0;
+        # with the default MIDDLE_RATIO = 0 the middle folds into head
+        # (contiguous head + tail), so this branch is inactive by default.
         if middle_count > 0 and middle_available > 0:
             if middle_count >= middle_available:
                 middle_indices = list(range(middle_available))
@@ -171,10 +173,10 @@ class PowerPointTruncationStrategy(BaseTruncationStrategy):
             "total_kept": head_count + len(middle_section) + len(tail_section),
             "omitted_slides": total_slides
             - (head_count + len(middle_section) + len(tail_section)),
-            "sampling_method": "head_uniform_tail",
+            "sampling_method": "head_tail_contiguous",
         }
         info.summary_message = (
-            f"[Smart Truncation Applied - Head + Uniform Sampling + Tail]\n"
+            f"[Smart Truncation Applied - Head + Tail (contiguous)]\n"
             f"Total: {total_slides} slides\n"
             f"Kept: {head_count} head + {len(middle_section)} middle (sampled) + {len(tail_section)} tail slides\n"
             f"Omitted: {total_slides - (head_count + len(middle_section) + len(tail_section))} slides"

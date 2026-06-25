@@ -18,10 +18,11 @@ def test_local_sh_allows_device_config_connection_values():
     assert "overrides device-config.json" in script
 
 
-def test_local_sh_does_not_override_existing_device_config_mode():
+def test_local_sh_does_not_set_executor_mode_for_local_defaults():
     script = (Path(__file__).resolve().parents[2] / "local.sh").read_text(
         encoding="utf-8"
     )
 
     assert 'export EXECUTOR_MODE="${EXECUTOR_MODE:-local}"' not in script
-    assert 'if [[ ! -f "$DEVICE_CONFIG_PATH" && -z "${EXECUTOR_MODE:-}" ]]' in script
+    assert "export EXECUTOR_MODE=local" not in script
+    assert "DEVICE_CONFIG_PATH" not in script

@@ -46,6 +46,7 @@ export interface AuthenticatedSocketClientOptions {
   authErrorEvent?: string
   onAuthError?: (error: unknown) => void
   isAuthError?: (error: Error) => boolean
+  auth?: Record<string, unknown>
   logger?: Pick<Console, 'error' | 'info'>
 }
 
@@ -259,7 +260,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
 
     const socket = io(joinNamespace(socketBaseUrl, this.options.namespace), {
       path: this.options.path,
-      auth: { token },
+      auth: { ...this.options.auth, token },
       autoConnect: false,
       reconnection: false,
       transports: this.options.transports,

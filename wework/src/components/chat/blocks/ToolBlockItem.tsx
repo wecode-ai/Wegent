@@ -9,12 +9,18 @@ const THINKING_PREVIEW_MAX_LENGTH = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  forceExpanded?: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }
 
-export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps) {
-  const [expanded, setExpanded] = useState(false)
+export function ToolBlockItem({
+  block,
+  forceExpanded = false,
+  onOpenWorkspaceFile,
+}: ToolBlockItemProps) {
+  const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -36,7 +42,7 @@ export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps
               onOpenWorkspaceFile(workspaceFilePath)
               return
             }
-            setExpanded(value => !value)
+            setUserExpanded(value => !value)
           }}
           className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
         >
@@ -46,7 +52,7 @@ export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps
         </button>
         <button
           type="button"
-          onClick={() => setExpanded(value => !value)}
+          onClick={() => setUserExpanded(value => !value)}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
           aria-label={expanded ? '收起工具详情' : '展开工具详情'}
           aria-expanded={expanded}

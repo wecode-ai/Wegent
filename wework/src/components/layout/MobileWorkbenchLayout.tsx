@@ -63,6 +63,7 @@ interface MobileWorkbenchLayoutProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
   currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -79,7 +80,11 @@ interface MobileWorkbenchLayoutProps {
   onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
-  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -162,6 +167,7 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -524,7 +530,7 @@ export function MobileWorkbenchLayout({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
-              isWaitingForAssistant={state.isSending}
+              isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={state.currentRuntimeTask?.localTaskId ?? null}

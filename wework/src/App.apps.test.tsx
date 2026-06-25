@@ -26,6 +26,12 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+}))
+
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
@@ -100,7 +106,7 @@ describe('App center route', () => {
 
     render(<App />)
 
-    await userEvent.click(screen.getByTestId('chrome-tab-apps'))
+    await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()

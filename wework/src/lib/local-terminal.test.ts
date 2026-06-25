@@ -14,6 +14,7 @@ import {
 } from './local-terminal'
 
 vi.mock('@tauri-apps/api/core', () => ({
+  isTauri: vi.fn(() => false),
   invoke: vi.fn(),
 }))
 

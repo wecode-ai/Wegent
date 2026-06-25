@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-PDF truncation strategy using head + uniform sampling + tail approach.
+PDF truncation strategy using head + tail (contiguous, middle dropped) approach.
 """
 
 from typing import List, Tuple
@@ -17,7 +17,7 @@ from .base import (
 
 class PDFTruncationStrategy(BaseTruncationStrategy):
     """
-    Smart truncation for PDF files using head + uniform sampling + tail strategy.
+    Smart truncation for PDF files using head + tail (contiguous, middle dropped) strategy.
 
     This strategy preserves:
     1. Head pages - introduction, abstract, table of contents
@@ -29,7 +29,7 @@ class PDFTruncationStrategy(BaseTruncationStrategy):
         self, pages_text: List[str], max_length: int
     ) -> Tuple[str, SmartTruncationInfo]:
         """
-        Truncate PDF with head + uniform sampling + tail strategy.
+        Truncate PDF with head + tail (contiguous, middle dropped) strategy.
 
         Args:
             pages_text: List of text content per page
@@ -103,7 +103,9 @@ class PDFTruncationStrategy(BaseTruncationStrategy):
             )
         )
 
-        # Sample middle section uniformly
+        # Sample middle section uniformly. Only reached when MIDDLE_RATIO > 0;
+        # with the default MIDDLE_RATIO = 0 the middle folds into head
+        # (contiguous head + tail), so this branch is inactive by default.
         if middle_count > 0 and middle_available > 0:
             if middle_count >= middle_available:
                 middle_indices = list(range(middle_available))
@@ -176,10 +178,10 @@ class PDFTruncationStrategy(BaseTruncationStrategy):
             "total_kept": head_count + len(middle_section) + len(tail_section),
             "omitted_pages": total_pages
             - (head_count + len(middle_section) + len(tail_section)),
-            "sampling_method": "head_uniform_tail",
+            "sampling_method": "head_tail_contiguous",
         }
         info.summary_message = (
-            f"[Smart Truncation Applied - Head + Uniform Sampling + Tail]\n"
+            f"[Smart Truncation Applied - Head + Tail (contiguous)]\n"
             f"Total: {total_pages} pages\n"
             f"Kept: {head_count} head + {len(middle_section)} middle (sampled) + {len(tail_section)} tail pages\n"
             f"Omitted: {total_pages - (head_count + len(middle_section) + len(tail_section))} pages"

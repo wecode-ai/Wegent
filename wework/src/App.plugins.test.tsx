@@ -5,6 +5,12 @@ import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvid
 import './i18n'
 import App from './App'
 
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+}))
+
 const mockViewport = vi.hoisted(() => ({
   isMobile: false,
 }))
