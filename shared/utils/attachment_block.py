@@ -50,6 +50,28 @@ def build_sandbox_path(
     return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
 
+# Inline notice prepended to a truncated attachment body. It is intentionally
+# length-free: the old "(truncated to N characters)" notice reported the fixed
+# parse cap (not the real injected length), which drifted from the actual text
+# and clashed with chat_shell's per-preview "Truncated" header field. This note
+# only signals that the parsed text is partial — its main value is for execution
+# modes WITHOUT the chat_shell preview (executor / device), which otherwise have
+# no leading indication that the file was cut and the full file should be read.
+ATTACHMENT_TRUNCATION_NOTE = (
+    "(Note: parsing truncated this file; only partial content is shown below. "
+    "Read the full file at the path above for the complete content.)"
+)
+
+
+def build_truncation_note(is_truncated: bool) -> str:
+    """Return the truncation notice line (trailing newline) or empty string.
+
+    Prepended to a truncated attachment body so every execution mode — including
+    those without chat_shell's token-budget preview — knows the text is partial.
+    """
+    return f"{ATTACHMENT_TRUNCATION_NOTE}\n" if is_truncated else ""
+
+
 def build_attachment_header(
     *,
     attachment_id: int,

@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from shared.utils.attachment_block import (
+    ATTACHMENT_TRUNCATION_NOTE,
     build_attachment_download_url,
     build_attachment_header,
     build_sandbox_path,
+    build_truncation_note,
     format_file_size,
 )
 
@@ -68,6 +70,17 @@ def test_document_header_without_sandbox_path():
         "[Attachment: report.pdf | ID: 7 | Type: unknown | "
         "Size: 0 bytes | URL: /api/attachments/7/download]"
     )
+
+
+def test_build_truncation_note_when_truncated():
+    note = build_truncation_note(True)
+    assert note == ATTACHMENT_TRUNCATION_NOTE + "\n"
+    # Length-free: must not restate a character count.
+    assert "characters" not in note
+
+
+def test_build_truncation_note_when_not_truncated():
+    assert build_truncation_note(False) == ""
 
 
 def test_image_header_uses_image_label_and_wording():

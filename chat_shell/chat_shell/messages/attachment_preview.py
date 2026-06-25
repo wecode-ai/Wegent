@@ -15,6 +15,10 @@ Design (all attachments share one ``<attachment>`` block):
 
 * **Shared budget** across all attachments in the block (avoids N×budget blowups
   with many attachments), configurable via ``ATTACHMENT_PREVIEW_TOKEN_LIMIT``.
+  The bound applies to the budget split across bodies; every header is always
+  kept (for read_attachment discoverability), so the inherent floor is the sum
+  of header lines. When bodies can't all fit, the smallest get 0 budget and
+  render header-only rather than each leaking a token past the bound.
 * **Per-segment head/tail**: the shared body budget is split across attachment
   segments so every attachment keeps both a head and a tail, each truncated with
   the same logic as tool outputs (:func:`guard.tool_output._truncate_body`).
@@ -82,7 +86,7 @@ def _full_content_hint(header: str, attachment_id: str) -> str:
             )
     return (
         f"\n[Preview truncated. Use read_attachment(attachment_id={attachment_id}) "
-        f"for the full text.]"
+        f"to read the full extracted text (parsed from the binary).]"
     )
 
 
@@ -168,14 +172,22 @@ def _preview_attachment_body(
         if not seg_body:
             rebuilt.append(header)  # image header etc. — no body to bound
             continue
-        rendered, _t, truncated, _f = _truncate_body(
-            seg_body, TruncationPolicy(kind="tokens", limit=alloc), counter
-        )
+        if alloc <= 0:
+            # Budget exhausted (many attachments): keep only the annotated header
+            # + hint so growth is bounded to the header cost, instead of letting
+            # _truncate_body emit its two truncation markers per segment.
+            rendered = ""
+            truncated = True
+        else:
+            rendered, _t, truncated, _f = _truncate_body(
+                seg_body, TruncationPolicy(kind="tokens", limit=alloc), counter
+            )
         annotated = _annotate_header(
             header, chars=len(seg_body), tokens=orig_tokens, truncated=truncated
         )
         hint = _full_content_hint(header, attachment_id) if truncated else ""
-        rebuilt.append(f"{annotated}\n{rendered}{hint}")
+        body_part = f"\n{rendered}" if rendered else ""
+        rebuilt.append(f"{annotated}{body_part}{hint}")
         if truncated:
             truncated_segments += 1
             before_tokens += orig_tokens
@@ -196,14 +208,16 @@ def _allocate_budget(sizes: list[int], budget: int) -> list[int]:
     leftover to the pool; the fair share is recomputed for the remaining
     (larger) segments so big attachments absorb the freed budget instead of
     being over-truncated while small ones waste their allocation. Result sums to
-    at most *budget* (each allocation floored at 1 so truncation stays valid).
+    **at most** *budget* — allocations are not floored, so when the budget is
+    exhausted (many attachments) a segment may get 0 and render header-only,
+    rather than each segment leaking a minimum token past the bound.
     """
     allocations = [0] * len(sizes)
     remaining_budget = budget
     # Smallest first: a segment that fits its share frees budget for the rest.
     for rank, idx in enumerate(sorted(range(len(sizes)), key=lambda i: sizes[i])):
         share = remaining_budget // (len(sizes) - rank)
-        take = max(1, min(sizes[idx], share))
+        take = min(sizes[idx], share)
         allocations[idx] = take
         remaining_budget = max(0, remaining_budget - take)
     return allocations

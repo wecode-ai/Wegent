@@ -7,11 +7,38 @@ from types import SimpleNamespace
 import pytest
 
 from chat_shell.history.loader import (
+    _build_document_text_prefix,
     _build_knowledge_base_text_prefix,
     _extract_user_text,
     _truncate_history,
     get_chat_history,
 )
+
+
+class TestBuildDocumentTextPrefix:
+    def _context(self, **extra):
+        return SimpleNamespace(
+            id=7,
+            name="report.pdf",
+            extracted_text="partial content",
+            mime_type="application/pdf",
+            file_size=2048,
+            **extra,
+        )
+
+    def test_truncated_context_gets_partial_content_notice(self):
+        prefix = _build_document_text_prefix(self._context(is_truncated=True))
+        assert "only partial content is shown" in prefix
+        assert "characters" not in prefix
+
+    def test_non_truncated_context_has_no_notice(self):
+        prefix = _build_document_text_prefix(self._context(is_truncated=False))
+        assert "only partial content is shown" not in prefix
+
+    def test_missing_flag_defaults_to_no_notice(self):
+        # Remote-mode contexts may not carry the attribute at all.
+        prefix = _build_document_text_prefix(self._context())
+        assert "only partial content is shown" not in prefix
 
 
 class TestHistoryLoaderRestrictedKnowledgeBase:

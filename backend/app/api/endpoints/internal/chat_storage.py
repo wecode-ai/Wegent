@@ -47,6 +47,13 @@ router = APIRouter(prefix="/chat", tags=["internal-chat"])
 # Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
 
+# Hard upper bound for a single attachment-text slice (characters). read_attachment
+# is a paginated reader; a page is token-clamped by the caller anyway, so there is
+# no legitimate reason to request a huge slice. This is HTTP-layer defense-in-depth:
+# the caller's real page window is page_token_limit * chars-per-token (~60K today),
+# so this sits just above it. Raise it if that page window grows.
+MAX_ATTACHMENT_TEXT_SLICE = 64_000
+
 
 def _is_restricted_kb_context(kb_ctx: SubtaskContext) -> bool:
     """Whether a KB history context should be suppressed for restricted mode."""
@@ -915,6 +922,9 @@ class AttachmentTextResponse(BaseModel):
     offset: int
     text: str
     has_more: bool
+    # Whether extracted_text itself was parse-truncated. When True, paging to
+    # has_more=False means "end of the extract", NOT "end of the original file".
+    source_truncated: bool
 
 
 @router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
@@ -922,16 +932,25 @@ async def get_attachment_text(
     attachment_id: int,
     session_id: str = Query(..., description="Conversation session, e.g. task-123"),
     offset: int = Query(0, ge=0, description="Start character offset (codepoint)"),
-    limit: int = Query(..., gt=0, description="Max characters to return"),
+    limit: int = Query(
+        ...,
+        gt=0,
+        le=MAX_ATTACHMENT_TEXT_SLICE,
+        description="Max characters to return (codepoint)",
+    ),
     db: Session = Depends(get_db),
 ):
     """Return a character slice of an attachment's extracted text.
 
     Scoped to the conversation: the attachment must belong to a subtask of the
-    session's task (or be unlinked). This mirrors the visibility of attachments
-    already injected into the chat history, so group-chat members can read each
-    other's attachments while cross-task access is denied. Pagination/token
-    budgeting is done by the caller (chat_shell); this endpoint only slices.
+    session's task, or be unlinked *and owned by the task's user*. This mirrors
+    the visibility of attachments already injected into the chat history, so
+    group-chat members can read each other's attachments while cross-task access
+    is denied. Unlinked attachments (subtask_id == 0, e.g. a just-uploaded or
+    quick-launch preset attachment not yet bound to a subtask) are restricted to
+    the same user, so the model cannot probe arbitrary ids across users.
+    Pagination/token budgeting is done by the caller (chat_shell); this endpoint
+    only slices.
     """
     session_type, task_id = parse_session_id(session_id)
     if session_type != "task":
@@ -955,10 +974,13 @@ async def get_attachment_text(
     if context is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Task scoping: the attachment's subtask must belong to this task (or be
-    # unlinked). Not user-scoped — attachments are shared conversation context.
+    # Task scoping: a linked attachment must belong to this task; an unlinked
+    # one (subtask_id == 0) must at least belong to this task's user, so the
+    # model cannot read arbitrary unlinked attachments across users.
     task_subtask_ids = set(subtask_store.list_ids_by_task(db, task_id=task_id))
-    if not (context.subtask_id == 0 or context.subtask_id in task_subtask_ids):
+    is_in_task = context.subtask_id in task_subtask_ids
+    is_unlinked_same_user = context.subtask_id == 0 and context.user_id == task.user_id
+    if not (is_in_task or is_unlinked_same_user):
         raise HTTPException(
             status_code=403, detail="Attachment does not belong to this conversation"
         )
@@ -974,6 +996,7 @@ async def get_attachment_text(
         offset=offset,
         text=chunk,
         has_more=offset + len(chunk) < total_chars,
+        source_truncated=context.is_truncated,
     )
 
 

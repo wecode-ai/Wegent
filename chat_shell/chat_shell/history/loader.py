@@ -27,6 +27,7 @@ from shared.prompts.constants import parse_prompt_blocks
 from shared.utils.attachment_block import (
     build_attachment_header,
     build_sandbox_path,
+    build_truncation_note,
 )
 
 logger = logging.getLogger(__name__)
@@ -800,7 +801,8 @@ def _build_document_text_prefix(
         file_size=context.file_size if hasattr(context, "file_size") else 0,
         sandbox_path=sandbox_path,
     )
-    return f"{header}\n{context.extracted_text}\n\n"
+    note = build_truncation_note(getattr(context, "is_truncated", False))
+    return f"{header}\n{note}{context.extracted_text}\n\n"
 
 
 def _build_knowledge_base_text_prefix(context) -> str:

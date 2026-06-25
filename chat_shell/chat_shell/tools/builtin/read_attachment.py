@@ -95,7 +95,12 @@ class ReadAttachmentTool(BaseTool):
         self._call_count += 1
 
         offset = max(0, offset)
-        char_window = limit if limit > 0 else self.page_token_limit * _CHARS_PER_TOKEN
+        # Cap the fetch window. A page is token-clamped to page_token_limit, so
+        # fetching more than that many tokens' worth of chars is pure waste — the
+        # excess crosses the wire only to be discarded by the clamp. Capping here
+        # also makes an arbitrarily large caller-supplied limit harmless.
+        max_window = self.page_token_limit * _CHARS_PER_TOKEN
+        char_window = min(limit, max_window) if limit > 0 else max_window
 
         try:
             payload = await fetch_attachment_text(
@@ -131,21 +136,32 @@ class ReadAttachmentTool(BaseTool):
         next_offset = offset + chars_read
         has_more = next_offset < total_chars
 
-        return json.dumps(
-            {
-                "status": "success",
-                "attachment_id": attachment_id,
-                "name": payload.get("name", ""),
-                "mime_type": payload.get("mime_type", ""),
-                "offset": offset,
-                "chars_read": chars_read,
-                "total_chars": total_chars,
-                "next_offset": next_offset if has_more else None,
-                "has_more": has_more,
-                "content": clamped,
-            },
-            ensure_ascii=False,
-        )
+        # The extracted text may itself be a parse-time truncation of a larger
+        # original (big pdf/docx). When the model reaches the end of the extract
+        # (has_more=False) but the source was truncated, reaching the end does
+        # NOT mean the whole file was read — say so explicitly.
+        source_truncated = bool(payload.get("source_truncated", False))
+        result: dict[str, Any] = {
+            "status": "success",
+            "attachment_id": attachment_id,
+            "name": payload.get("name", ""),
+            "mime_type": payload.get("mime_type", ""),
+            "offset": offset,
+            "chars_read": chars_read,
+            "total_chars": total_chars,
+            "next_offset": next_offset if has_more else None,
+            "has_more": has_more,
+            "source_truncated": source_truncated,
+            "content": clamped,
+        }
+        if source_truncated and not has_more:
+            result["warning"] = (
+                "End of extracted text reached, but the original file was "
+                "truncated during parsing — this is NOT the complete file. "
+                "Some content beyond this point is unavailable."
+            )
+
+        return json.dumps(result, ensure_ascii=False)
 
     def _clamp_to_tokens(self, text: str, token_limit: int) -> str:
         """Return the longest prefix of *text* within *token_limit* tokens."""

@@ -39,6 +39,7 @@ from shared.utils.attachment_block import (
     build_attachment_download_url,
     build_attachment_header,
     build_sandbox_path,
+    build_truncation_note,
     format_file_size,
 )
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
@@ -281,6 +282,13 @@ class ContextService:
                     original_length=parse_result.truncation_info.original_length,
                     truncated_length=parse_result.truncation_info.truncated_length,
                 )
+                # Persist the parse-time truncation flag so the injected
+                # attachment block can render a partial-content notice for modes
+                # without the chat_shell preview (executor / device).
+                context.type_data = {
+                    **context.type_data,
+                    "is_truncated": parse_result.truncation_info.is_truncated,
+                }
         except DocumentParseError as e:
             logger.exception(f"Document parsing failed for context {context.id}: {e}")
             context.status = ContextStatus.FAILED.value
@@ -733,9 +741,9 @@ class ContextService:
             return None
 
         # Build attachment metadata header (shared with chat_shell loader).
-        # Parse-time truncation is self-described by the omission marker baked
-        # into extracted_text; no separate "(Note: truncated ...)" line is added
-        # (it duplicated that marker and the chat_shell preview's Truncated flag).
+        # When the parser truncated the file, prepend a length-free partial-content
+        # notice so modes without the chat_shell preview (executor / device) still
+        # know the text is incomplete and the full file should be read.
         filename = context.original_filename
         sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
         header = build_attachment_header(
@@ -745,7 +753,8 @@ class ContextService:
             file_size=context.file_size or 0,
             sandbox_path=sandbox_path,
         )
-        return f"{header}\n{context.extracted_text}\n\n"
+        note = build_truncation_note(context.is_truncated)
+        return f"{header}\n{note}{context.extracted_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================
 

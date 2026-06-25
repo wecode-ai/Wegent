@@ -102,6 +102,7 @@ def test_get_attachment_text_returns_slice(
     assert body["total_chars"] == 10
     assert body["has_more"] is True
     assert body["mime_type"] == "application/pdf"
+    assert body["source_truncated"] is False
 
     # Tail slice
     resp2 = test_client.get(
@@ -130,6 +131,78 @@ def test_cross_task_attachment_is_denied(
         params={"session_id": f"task-{task_a}", "offset": 0, "limit": 10},
     )
     assert resp.status_code == 403
+
+
+def test_unlinked_attachment_same_user_allowed(
+    test_client: TestClient, test_db: Session, test_user: User
+):
+    task_id = 7401
+    _create_task(test_db, user_id=test_user.id, task_id=task_id)
+    # Unlinked (subtask_id == 0) but owned by the task's user — readable.
+    ctx = _create_attachment(
+        test_db, user_id=test_user.id, subtask_id=0, extracted_text="preset"
+    )
+    resp = test_client.get(
+        f"/api/internal/chat/attachments/{ctx.id}/text",
+        params={"session_id": f"task-{task_id}", "offset": 0, "limit": 10},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["text"] == "preset"
+
+
+def test_unlinked_attachment_other_user_denied(
+    test_client: TestClient, test_db: Session, test_user: User
+):
+    task_id = 7501
+    _create_task(test_db, user_id=test_user.id, task_id=task_id)
+    # Unlinked attachment owned by a DIFFERENT user — must not be readable, so
+    # the model cannot probe arbitrary unlinked ids across users.
+    ctx = _create_attachment(
+        test_db, user_id=test_user.id + 9999, subtask_id=0, extracted_text="secret"
+    )
+    resp = test_client.get(
+        f"/api/internal/chat/attachments/{ctx.id}/text",
+        params={"session_id": f"task-{task_id}", "offset": 0, "limit": 10},
+    )
+    assert resp.status_code == 403
+
+
+def test_source_truncated_flag_propagates(
+    test_client: TestClient, test_db: Session, test_user: User
+):
+    task_id = 7601
+    _create_task(test_db, user_id=test_user.id, task_id=task_id)
+    sub = _create_user_subtask(test_db, user_id=test_user.id, task_id=task_id)
+    ctx = _create_attachment(
+        test_db, user_id=test_user.id, subtask_id=sub.id, extracted_text="partial"
+    )
+    # Mark the stored extract as parse-truncated.
+    ctx.type_data = {**ctx.type_data, "is_truncated": True}
+    test_db.commit()
+
+    resp = test_client.get(
+        f"/api/internal/chat/attachments/{ctx.id}/text",
+        params={"session_id": f"task-{task_id}", "offset": 0, "limit": 100},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source_truncated"] is True
+
+
+def test_oversized_limit_is_rejected(
+    test_client: TestClient, test_db: Session, test_user: User
+):
+    task_id = 7701
+    _create_task(test_db, user_id=test_user.id, task_id=task_id)
+    sub = _create_user_subtask(test_db, user_id=test_user.id, task_id=task_id)
+    ctx = _create_attachment(
+        test_db, user_id=test_user.id, subtask_id=sub.id, extracted_text="0123456789"
+    )
+    # A page is token-clamped anyway; the endpoint caps a single slice.
+    resp = test_client.get(
+        f"/api/internal/chat/attachments/{ctx.id}/text",
+        params={"session_id": f"task-{task_id}", "offset": 0, "limit": 10_000_000},
+    )
+    assert resp.status_code == 422
 
 
 def test_missing_attachment_returns_404(

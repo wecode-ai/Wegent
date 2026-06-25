@@ -6,11 +6,13 @@
 
 Mirrors the loader's mode switch: HTTP mode calls the backend internal endpoint
 (``/chat/attachments/{id}/text``) via ``RemoteHistoryStore``; package mode reads
-the database directly. Both enforce the same task scoping as the endpoint (the
-attachment's subtask must belong to the task, or be unlinked).
+the database directly. Both enforce the same task scoping as the endpoint: a
+linked attachment must belong to the task; an unlinked one must belong to the
+task's user.
 
 The returned payload matches the backend ``AttachmentTextResponse`` shape:
-``{attachment_id, name, mime_type, total_chars, offset, text, has_more}``.
+``{attachment_id, name, mime_type, total_chars, offset, text, has_more,
+source_truncated}``.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ def _fetch_local(
         ContextType,
         SubtaskContext,
     )
+    from app.models.task import TaskResource
 
     db = SessionLocal()
     try:
@@ -66,11 +69,22 @@ def _fetch_local(
         if context is None:
             raise AttachmentNotAvailable("Attachment not found")
 
+        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+        if task is None:
+            raise AttachmentNotAvailable("Task not found")
+
+        # Linked attachment must belong to this task; an unlinked one must belong
+        # to the task's user, so the model cannot read arbitrary unlinked
+        # attachments across users.
         task_subtask_ids = {
             row[0]
             for row in db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
         }
-        if not (context.subtask_id == 0 or context.subtask_id in task_subtask_ids):
+        is_in_task = context.subtask_id in task_subtask_ids
+        is_unlinked_same_user = (
+            context.subtask_id == 0 and context.user_id == task.user_id
+        )
+        if not (is_in_task or is_unlinked_same_user):
             raise AttachmentNotAvailable(
                 "Attachment does not belong to this conversation"
             )
@@ -85,6 +99,7 @@ def _fetch_local(
             "offset": offset,
             "text": chunk,
             "has_more": offset + len(chunk) < len(full_text),
+            "source_truncated": context.is_truncated,
         }
     finally:
         db.close()

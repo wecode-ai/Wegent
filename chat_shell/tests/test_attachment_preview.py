@@ -30,6 +30,13 @@ def test_allocate_budget_all_fit():
     assert alloc == [1000, 2000]
 
 
+def test_allocate_budget_exhausted_does_not_floor_past_bound():
+    # Budget smaller than the segment count: with the old max(1) floor this
+    # summed to 5 (one token each); now it stays within budget.
+    alloc = _allocate_budget([1000] * 5, 3)
+    assert sum(alloc) <= 3
+
+
 def _attachment_block(body: str) -> str:
     return f"<attachment>{body}</attachment>"
 
@@ -47,6 +54,28 @@ def test_small_attachment_body_preserved_and_marked_not_truncated():
     assert "Truncated: no" in new
     assert "Chars:" in new and "Tokens:" in new
     assert "Preview truncated" not in new
+
+
+def test_many_attachments_exhausted_budget_render_header_only():
+    # Many attachments + tiny limit: header cost alone exceeds the budget, so
+    # every body gets 0 allocation and renders header-only — no per-segment
+    # truncation markers leaking past the bound (the bug Fix 3 addresses).
+    blocks = "".join(
+        f"[Attachment: f{i}.pdf | ID: {i} | Type: application/pdf]\n" + ("word " * 1000)
+        for i in range(8)
+    )
+    text = _attachment_block(blocks)
+    messages = [{"role": "user", "content": [{"type": "text", "text": text}]}]
+    out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=50)
+    new = out[0]["content"][0]["text"]
+    # All ids stay discoverable for read_attachment.
+    for i in range(8):
+        assert f"ID: {i}" in new
+    # No per-segment truncation markers emitted (header-only segments).
+    assert "tokens truncated" not in new
+    # Still marked truncated with a pointer to the full content.
+    assert "Truncated: yes" in new
+    assert "read_attachment" in new
 
 
 def test_truncated_attachment_header_marks_truncated_yes():
@@ -163,6 +192,8 @@ def test_truncated_binary_attachment_hints_read_attachment():
     new = out[0]["content"]
     assert "read_attachment(attachment_id=9)" in new
     assert "Full file readable in sandbox" not in new
+    # Binary hint makes clear this is parsed/extracted text, not the raw file.
+    assert "extracted text (parsed from the binary)" in new
 
 
 def test_truncated_text_attachment_hints_sandbox_path():

@@ -1346,22 +1346,20 @@ class TestContextServiceFormatting:
         assert "File Path(already in sandbox)" in prefix
 
     def test_build_document_text_prefix_with_truncation(self):
-        """At-cap attachments no longer get a separate truncation notice.
+        """Truncated attachments get a length-free partial-content notice.
 
-        Parse-time truncation is self-described by the omission marker baked into
-        extracted_text, so build_document_text_prefix does not add a duplicate
-        "(Note: truncated ...)" line anymore.
+        The notice is driven by the persisted ``is_truncated`` flag (not a
+        length-vs-cap comparison) and intentionally omits any character count,
+        so it never restates the old "(truncated to N characters)" wording.
         """
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
-        from app.services.attachment.parser import DocumentParser
         from app.services.context import context_service
 
-        # Arrange - set text_length >= max to trigger truncation notice
-        max_text_length = DocumentParser.get_max_text_length()
+        # Arrange - parse-time truncation recorded in type_data
         context = SubtaskContext(
             subtask_id=0,
             user_id=1,
@@ -1369,11 +1367,12 @@ class TestContextServiceFormatting:
             name="large.pdf",
             status=ContextStatus.READY.value,
             extracted_text="Content...",
-            text_length=max_text_length,  # At max length
+            text_length=10,
             type_data={
                 "original_filename": "large.pdf",
                 "mime_type": "application/pdf",
                 "file_size": 5242880,  # 5 MB
+                "is_truncated": True,
             },
         )
         context.id = 100
@@ -1385,11 +1384,41 @@ class TestContextServiceFormatting:
         assert prefix is not None
         assert "[Attachment: large.pdf |" in prefix
         assert "ID: 100" in prefix
-        assert "Type: application/pdf" in prefix
-        assert "Size: 5.0 MB" in prefix
-        assert "URL: /api/attachments/100/download" in prefix
-        # No separate "(Note: ... truncated to N characters ...)" line.
+        # Partial-content notice present, but no character count.
+        assert "only partial content is shown" in prefix
         assert "has been truncated to" not in prefix
+        assert "characters" not in prefix
+
+    def test_build_document_text_prefix_without_truncation_has_no_notice(self):
+        """Non-truncated attachments get no partial-content notice."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="small.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="Full content.",
+            text_length=13,
+            type_data={
+                "original_filename": "small.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 1024,
+            },
+        )
+        context.id = 101
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        assert "only partial content is shown" not in prefix
+        assert "Full content." in prefix
 
 
 class TestContextServiceOverwrite:
