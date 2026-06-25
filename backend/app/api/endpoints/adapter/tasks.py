@@ -729,48 +729,11 @@ def join_shared_task(
     Copy a shared task to the current user's task list.
     This creates a new task with all the subtasks (messages) from the shared task.
     """
-    from app.models.kind import Kind
-
-    # If team_id is provided, validate it belongs to the user
-    if request.team_id:
-        user_team = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Team",
-                Kind.id == request.team_id,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not user_team:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid team_id or team does not belong to you",
-            )
-    else:
-        # Get user's first active team if not specified
-        user_team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == current_user.id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not user_team:
-            raise HTTPException(
-                status_code=400,
-                detail="You need to have at least one team to copy a shared task",
-            )
-
     return shared_task_service.join_shared_task(
         db=db,
         share_token=request.share_token,
         user_id=current_user.id,
-        team_id=user_team.id,
+        team_id=request.team_id,
         model_id=request.model_id,
         force_override_bot_model=bool(request.model_id)
         or bool(request.force_override_bot_model),

@@ -126,6 +126,7 @@ class ExecutionRequest:
 
     # === Knowledge Base Configuration ===
     knowledge_base_ids: Optional[list] = None
+    default_knowledge_base_ids: list[int] = field(default_factory=list)
     document_ids: Optional[list] = None
     knowledge_base_scopes: list[KnowledgeBaseScope] = field(default_factory=list)
     table_contexts: list = field(default_factory=list)

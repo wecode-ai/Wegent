@@ -148,6 +148,7 @@ def test_to_execution_request_preserves_message_history_and_stateless_flag():
 def test_round_trip_preserves_knowledge_base_scopes():
     request = ExecutionRequest(
         knowledge_base_ids=[1, 2],
+        default_knowledge_base_ids=[2],
         knowledge_base_scopes=[
             KnowledgeBaseScope(
                 knowledge_base_id=1,
@@ -162,6 +163,7 @@ def test_round_trip_preserves_knowledge_base_scopes():
     converted = OpenAIRequestConverter.to_execution_request(openai_request)
 
     assert converted.knowledge_base_scopes == request.knowledge_base_scopes
+    assert converted.default_knowledge_base_ids == [2]
 
 
 def test_to_execution_request_ignores_malformed_scope_document_ids():

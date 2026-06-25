@@ -10,9 +10,14 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus
+from app.models.share_link import ResourceType
+from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Ghost, Team
+from app.schemas.kind import Bot, Ghost, Task, Team
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.readers import KindType, kindReader
+from shared.models.knowledge import KnowledgeBaseScope
 
 
 def _get_accessible_knowledge_base(
@@ -44,13 +49,93 @@ def _build_task_knowledge_base_ref(
     }
 
 
-def _iter_team_member_default_knowledge_base_ids(
+def _get_task_team(db: Session, task: TaskResource, task_crd: Task) -> Kind | None:
+    """Resolve the Team used by a task using teamRef.user_id when present."""
+    team_ref = task_crd.spec.teamRef
+    team_owner_id = getattr(team_ref, "user_id", None) or task.user_id
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Team",
+            Kind.name == team_ref.name,
+            Kind.namespace == team_ref.namespace,
+            Kind.user_id == team_owner_id,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+
+def _get_default_knowledge_base(db: Session, knowledge_base_id: int) -> Kind | None:
+    """Load an active knowledge base by ID."""
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.id == knowledge_base_id,
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+
+def _can_use_public_default_kb(db: Session, knowledge_base: Kind) -> bool:
+    """Public agents may only use organization knowledge bases as defaults."""
+    return is_organization_namespace(db, knowledge_base.namespace)
+
+
+def _can_grant_principal_read_kb(
+    db: Session, grant_principal_user_id: int | None, knowledge_base_id: int
+) -> bool:
+    """Return whether the grant principal currently has read access to a KB."""
+    if not grant_principal_user_id:
+        return False
+    return (
+        _get_accessible_knowledge_base(db, grant_principal_user_id, knowledge_base_id)
+        is not None
+    )
+
+
+def _can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
+    """Return whether the current task actor can use the task's Team."""
+    if team.user_id == user_id or team.user_id == 0:
+        return True
+
+    from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
+
+    accessible_team_ids = _get_accessible_team_ids(
+        db,
+        user_id,
+        [ResourceType.TEAM.value, ResourceType.TEAM.name],
+        [MemberStatus.APPROVED.value, "APPROVED"],
+    )
+    return team.id in accessible_team_ids
+
+
+def get_task_default_knowledge_base_scopes(
     db: Session,
-    team,
-) -> list[int]:
-    """Collect default knowledge base IDs from all team member Ghosts."""
+    task_id: int,
+    user_id: int,
+) -> list[KnowledgeBaseScope]:
+    """Resolve runtime default KB scopes for the task's current Team config."""
+    task = (
+        db.query(TaskResource)
+        .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
+        .first()
+    )
+    if not task or not task.json:
+        return []
+
+    task_crd = Task.model_validate(task.json)
+    team = _get_task_team(db, task, task_crd)
+    if not team or not team.json:
+        return []
+    if not _can_user_use_team(db, user_id, team):
+        return []
+
     team_crd = Team.model_validate(team.json)
-    knowledge_base_ids: list[int] = []
+    is_public_team = team.user_id == 0
+    scopes_by_id: dict[int, KnowledgeBaseScope] = {}
 
     for member in team_crd.spec.members or []:
         bot = kindReader.get_by_name_and_namespace(
@@ -76,9 +161,27 @@ def _iter_team_member_default_knowledge_base_ids(
 
         ghost_crd = Ghost.model_validate(ghost.json)
         for ref in ghost_crd.spec.defaultKnowledgeBaseRefs or []:
-            knowledge_base_ids.append(ref.id)
+            if ref.id in scopes_by_id:
+                continue
+            knowledge_base = _get_default_knowledge_base(db, ref.id)
+            if not knowledge_base:
+                continue
+            if is_public_team:
+                if not _can_use_public_default_kb(db, knowledge_base):
+                    continue
+            else:
+                grant_principal_user_id = ref.grantPrincipalUserId or ghost.user_id
+                if not _can_grant_principal_read_kb(
+                    db, grant_principal_user_id, ref.id
+                ):
+                    continue
+            scopes_by_id[ref.id] = KnowledgeBaseScope(
+                knowledge_base_id=ref.id,
+                scope_restricted=False,
+                document_ids=[],
+            )
 
-    return knowledge_base_ids
+    return list(scopes_by_id.values())
 
 
 def build_initial_task_knowledge_base_refs(
@@ -87,12 +190,15 @@ def build_initial_task_knowledge_base_refs(
     team,
     knowledge_base_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Build task-level knowledge base refs from Ghost defaults plus explicit selection."""
+    """Build task-level knowledge base refs only from explicit user selection.
+
+    Ghost-level default knowledge bases are resolved at runtime and must not be
+    persisted into Task.spec.knowledgeBaseRefs.
+    """
     bound_at = datetime.now().isoformat()
     refs_by_id: dict[int, dict[str, Any]] = {}
 
-    team_default_ids = _iter_team_member_default_knowledge_base_ids(db, team)
-    candidates = [(candidate_id, team.user_id) for candidate_id in team_default_ids]
+    candidates: list[tuple[int, int]] = []
     if knowledge_base_id is not None:
         candidates.append((knowledge_base_id, user.id))
 

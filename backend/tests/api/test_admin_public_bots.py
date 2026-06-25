@@ -2,8 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints.admin.public_bots import _bot_to_response
+import pytest
+from fastapi import HTTPException
+
+from app.api.endpoints.admin.public_bots import (
+    _bot_to_response,
+    _validate_public_default_knowledge_base_refs,
+)
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.schemas.admin import PublicBotCreate, PublicBotUpdate
 
 
@@ -99,3 +106,53 @@ def test_public_bot_response_includes_preload_skill_fields(test_db):
 
     assert response.preload_skills == ["repo-reader"]
     assert _dump_refs(response.preload_skill_refs) == _preload_skill_refs()
+
+
+def test_public_bot_default_kb_allows_organization_knowledge_base(test_db):
+    namespace = Namespace(
+        name="company",
+        display_name="Company",
+        owner_user_id=1,
+        visibility="public",
+        level="organization",
+        is_active=True,
+    )
+    kb = Kind(
+        user_id=1,
+        kind="KnowledgeBase",
+        name="company-kb",
+        namespace="company",
+        json={"spec": {"name": "Company Docs"}},
+        is_active=True,
+    )
+    test_db.add_all([namespace, kb])
+    test_db.commit()
+    test_db.refresh(kb)
+
+    _validate_public_default_knowledge_base_refs(
+        test_db, [{"id": kb.id, "name": "Company Docs"}]
+    )
+
+
+def test_public_bot_default_kb_rejects_personal_knowledge_base(test_db):
+    kb = Kind(
+        user_id=7,
+        kind="KnowledgeBase",
+        name="private-kb",
+        namespace="default",
+        json={"spec": {"name": "Private Docs"}},
+        is_active=True,
+    )
+    test_db.add(kb)
+    test_db.commit()
+    test_db.refresh(kb)
+
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_public_default_knowledge_base_refs(
+            test_db, [{"id": kb.id, "name": "Private Docs"}]
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Public bots can only bind organization knowledge bases" in str(
+        exc_info.value.detail
+    )

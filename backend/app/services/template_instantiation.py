@@ -512,6 +512,7 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
                 "teamRef": {
                     "namespace": team_ref.get("namespace", NAMESPACE),
                     "name": team_ref["name"],
+                    "user_id": team_ref.get("user_id", 0),
                 },
                 "triggerMode": trigger_mode,
             }
@@ -522,6 +523,7 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
                 "teamRef": {
                     "namespace": NAMESPACE,
                     "name": created_team.name,
+                    "user_id": created_team.user_id,
                 },
                 "triggerMode": trigger_mode,
             }

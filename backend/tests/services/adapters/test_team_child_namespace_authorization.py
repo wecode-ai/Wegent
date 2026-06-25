@@ -339,7 +339,7 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
     assert "parent-skill" in resolved["skills"]
 
 
-def test_authorized_parent_team_defaults_can_bind_parent_knowledge_base(
+def test_authorized_parent_team_defaults_do_not_bind_task_knowledge_refs(
     test_db: Session,
 ):
     _owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
@@ -354,11 +354,4 @@ def test_authorized_parent_team_defaults_can_bind_parent_knowledge_base(
     )
 
     assert kb is not None
-    assert refs == [
-        {
-            "id": kb.id,
-            "name": "Parent KB",
-            "boundBy": child_member.user_name,
-            "boundAt": refs[0]["boundAt"],
-        }
-    ]
+    assert refs == []

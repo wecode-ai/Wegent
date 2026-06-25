@@ -131,14 +131,26 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     task_crd = Task.model_validate(task.json)
     team_name = task_crd.spec.teamRef.name
     team_namespace = task_crd.spec.teamRef.namespace
-    task_owner_id = task.user_id
+    task_owner_id = getattr(task_crd.spec.teamRef, "user_id", None) or task.user_id
     labels = task_crd.metadata.labels or {}
     requested_skill_refs = parse_requested_skill_refs_from_labels(labels)
     user_selected_skills = parse_additional_skill_names_from_labels(labels)
 
-    team = kindReader.get_by_name_and_namespace(
-        db, task_owner_id, KindType.TEAM, team_namespace, team_name
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == task_owner_id,
+            Kind.kind == KindType.TEAM.value,
+            Kind.namespace == team_namespace,
+            Kind.name == team_name,
+            Kind.is_active == True,
+        )
+        .first()
     )
+    if not team or getattr(team, "kind", None) != KindType.TEAM.value:
+        team = kindReader.get_by_name_and_namespace(
+            db, task_owner_id, KindType.TEAM, team_namespace, team_name
+        )
     team_owner_id = _resolve_team_owner_id(task=task, task_crd=task_crd, team=team)
     binding_context = _build_skill_binding_context(
         task=task,

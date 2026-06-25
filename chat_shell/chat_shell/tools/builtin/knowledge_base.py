@@ -95,6 +95,7 @@ class KnowledgeBaseTool(BaseTool):
     document_ids: list[int] = Field(default_factory=list)
     document_names: list[str] = Field(default_factory=list)
     knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
+    default_knowledge_base_ids: list[int] = Field(default_factory=list)
 
     # User ID for access control
     user_id: int = 0
@@ -535,6 +536,11 @@ class KnowledgeBaseTool(BaseTool):
                 raise ValueError(
                     "Per-call document filters are not allowed for scoped knowledge base access"
                 )
+            return [], []
+        if self.default_knowledge_base_ids and (document_ids or document_names):
+            logger.info(
+                "[KnowledgeBaseTool] Ignoring per-call document filters for default KB search-only access"
+            )
             return [], []
         effective_document_ids = (
             self.document_ids if document_ids is None else document_ids

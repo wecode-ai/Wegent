@@ -112,7 +112,7 @@ export interface TaskShareInfo {
 
 export interface JoinSharedTaskRequest {
   share_token: string
-  team_id?: number // Optional: if not provided, backend will use user's first team
+  team_id?: number // Deprecated: backend keeps the original shared task team
   model_id?: string // Model name (not database ID)
   force_override_bot_model?: boolean // Force override bot's predefined model
   force_override_bot_model_type?: string // Model type: 'public', 'user', 'group'

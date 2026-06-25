@@ -22,7 +22,7 @@ def test_bot_create_schema_preserves_default_knowledge_base_refs():
     )
 
     assert payload.model_dump()["default_knowledge_base_refs"] == [
-        {"id": 101, "name": "Product Docs"}
+        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": None}
     ]
 
 
@@ -36,6 +36,7 @@ def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
     duplicate_check_query.first.return_value = None
     db.query.return_value = duplicate_check_query
 
+    readable_kb = SimpleNamespace(id=101, user_id=7, namespace="default")
     with patch.object(service, "_encrypt_agent_config", return_value={}):
         with patch(
             "app.services.adapters.bot_kinds.get_shell_info_by_name",
@@ -57,24 +58,28 @@ def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
                         "_convert_to_bot_dict",
                         return_value={"id": 1},
                     ):
-                        service.create_with_user(
-                            db,
-                            obj_in=BotCreate(
-                                name="kb-bot",
-                                shell_name="ClaudeCode",
-                                agent_config={},
-                                default_knowledge_base_refs=[
-                                    {"id": 101, "name": "Product Docs"}
-                                ],
-                            ),
-                            user_id=7,
-                        )
+                        with patch(
+                            "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
+                            return_value=readable_kb,
+                        ):
+                            service.create_with_user(
+                                db,
+                                obj_in=BotCreate(
+                                    name="kb-bot",
+                                    shell_name="ClaudeCode",
+                                    agent_config={},
+                                    default_knowledge_base_refs=[
+                                        {"id": 101, "name": "Product Docs"}
+                                    ],
+                                ),
+                                user_id=7,
+                            )
 
     ghost = next(
         obj for obj in added_objects if isinstance(obj, Kind) and obj.kind == "Ghost"
     )
     assert ghost.json["spec"]["defaultKnowledgeBaseRefs"] == [
-        {"id": 101, "name": "Product Docs"}
+        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": 7}
     ]
 
 
@@ -135,19 +140,25 @@ def test_update_with_user_writes_default_knowledge_bases_into_ghost_spec():
                     "default_knowledge_base_refs": [{"id": 101, "name": "Product Docs"}]
                 },
             ):
-                service.update_with_user(
-                    db,
-                    bot_id=17,
-                    obj_in=BotUpdate(
-                        default_knowledge_base_refs=[
-                            {"id": 101, "name": "Product Docs"}
-                        ]
+                with patch(
+                    "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
+                    return_value=SimpleNamespace(
+                        id=101, user_id=7, namespace="default"
                     ),
-                    user_id=7,
-                )
+                ):
+                    service.update_with_user(
+                        db,
+                        bot_id=17,
+                        obj_in=BotUpdate(
+                            default_knowledge_base_refs=[
+                                {"id": 101, "name": "Product Docs"}
+                            ]
+                        ),
+                        user_id=7,
+                    )
 
     assert ghost.json["spec"]["defaultKnowledgeBaseRefs"] == [
-        {"id": 101, "name": "Product Docs"}
+        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": 7}
     ]
 
 
@@ -190,7 +201,7 @@ def test_convert_to_bot_dict_exposes_default_knowledge_base_refs():
     result = service._convert_to_bot_dict(bot, ghost, None, None)
 
     assert result["default_knowledge_base_refs"] == [
-        {"id": 101, "name": "Product Docs"}
+        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": None}
     ]
 
 
@@ -255,9 +266,10 @@ def test_create_with_user_rejects_non_group_knowledge_bases_for_group_bots():
                                 )
                             except HTTPException as exc:
                                 assert exc.status_code == 400
-                                assert (
-                                    exc.detail
-                                    == "Group bots can only bind knowledge bases from the current group or the organization"
+                                assert exc.detail == (
+                                    "Bots can only bind knowledge bases readable by the "
+                                    "editor and group bots can only bind knowledge bases "
+                                    "from the current group or the organization"
                                 )
                             else:
                                 raise AssertionError("Expected HTTPException")
@@ -347,9 +359,10 @@ def test_update_with_user_rejects_non_group_knowledge_bases_for_group_bots():
                         )
                     except HTTPException as exc:
                         assert exc.status_code == 400
-                        assert (
-                            exc.detail
-                            == "Group bots can only bind knowledge bases from the current group or the organization"
+                        assert exc.detail == (
+                            "Bots can only bind knowledge bases readable by the editor "
+                            "and group bots can only bind knowledge bases from the "
+                            "current group or the organization"
                         )
                     else:
                         raise AssertionError("Expected HTTPException")

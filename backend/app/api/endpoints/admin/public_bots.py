@@ -23,6 +23,7 @@ from app.schemas.admin import (
 )
 from app.schemas.kind import Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
+from app.services.knowledge.namespace_utils import is_organization_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,41 @@ def _validate_bot_resource_references(
                 )
 
     return (True, None)
+
+
+def _validate_public_default_knowledge_base_refs(
+    db: Session, refs: Optional[list[dict]]
+) -> None:
+    """Ensure public bots only bind organization knowledge bases."""
+    if not refs:
+        return
+
+    invalid_names: list[str] = []
+    for ref in refs:
+        kb_id = ref.get("id") if isinstance(ref, dict) else None
+        kb_name = ref.get("name") if isinstance(ref, dict) else str(ref)
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+            if kb_id
+            else None
+        )
+        if not kb or not is_organization_namespace(db, kb.namespace):
+            invalid_names.append(kb_name or str(kb_id))
+
+    if invalid_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Public bots can only bind organization knowledge bases: "
+                + ", ".join(invalid_names)
+            ),
+        )
 
 
 def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:
@@ -542,10 +578,18 @@ async def create_public_bot(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_message,
             )
+        ghost_spec = (bot_data.bot_json.get("spec", {}) or {}).get("ghost", {})
+        if isinstance(ghost_spec, dict):
+            _validate_public_default_knowledge_base_refs(
+                db, ghost_spec.get("defaultKnowledgeBaseRefs")
+            )
         bot_json = bot_data.bot_json
     elif bot_data.shell_name:
         # Form data mode - auto-create Ghost and optionally Model
         logger.info(f"Creating public bot '{bot_data.name}' in form data mode")
+        _validate_public_default_knowledge_base_refs(
+            db, bot_data.default_knowledge_base_refs
+        )
 
         # Validate shell exists as public resource
         shell = (
@@ -797,12 +841,18 @@ async def update_public_bot(
                         _normalize_skill_refs(bot_data.preload_skill_refs) or None
                     )
                 if bot_data.default_knowledge_base_refs is not None:
+                    _validate_public_default_knowledge_base_refs(
+                        db, bot_data.default_knowledge_base_refs
+                    )
                     ghost_crd.spec.defaultKnowledgeBaseRefs = (
                         bot_data.default_knowledge_base_refs
                     )
                 existing_ghost.json = ghost_crd.model_dump()
                 flag_modified(existing_ghost, "json")
             else:
+                _validate_public_default_knowledge_base_refs(
+                    db, bot_data.default_knowledge_base_refs
+                )
                 # Create new ghost
                 ghost = _create_public_ghost(
                     db,

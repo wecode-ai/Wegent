@@ -1278,6 +1278,7 @@ def _prepare_kb_tools_from_contexts(
     is_user_selected_kb = bool(subtask_kb_ids)
 
     knowledge_base_scopes: List[KnowledgeBaseScope] = []
+    default_knowledge_base_ids: List[int] = []
 
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
@@ -1302,6 +1303,24 @@ def _prepare_kb_tools_from_contexts(
     else:
         knowledge_base_ids = []
 
+    if task_id:
+        default_scopes = _get_task_default_knowledge_base_scopes(db, task_id, user_id)
+        if default_scopes:
+            default_knowledge_base_ids = [
+                scope.knowledge_base_id for scope in default_scopes
+            ]
+            knowledge_base_scopes = _merge_knowledge_base_scopes(
+                default_scopes, knowledge_base_scopes
+            )
+            knowledge_base_ids = [
+                scope.knowledge_base_id for scope in knowledge_base_scopes
+            ]
+            logger.info(
+                "[_prepare_kb_tools_from_contexts] Added %d runtime default KB scopes for task_id=%d",
+                len(default_scopes),
+                task_id,
+            )
+
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
     # Normalize to int, skip invalid values, and deduplicate while preserving order.
     document_ids: List[int] = []
@@ -1325,11 +1344,18 @@ def _prepare_kb_tools_from_contexts(
             is_user_selected_kb=False,
             document_ids=[],
             knowledge_base_scopes=[],
+            default_knowledge_base_ids=[],
             kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
         )
 
+    default_knowledge_base_id_set = set(default_knowledge_base_ids)
+    explicit_knowledge_base_ids = [
+        kb_id
+        for kb_id in knowledge_base_ids
+        if kb_id not in default_knowledge_base_id_set
+    ]
     kb_tool_access_mode, access_reason = _get_user_kb_tool_access_mode(
-        db, user_id, knowledge_base_ids
+        db, user_id, explicit_knowledge_base_ids
     )
     is_restricted_search_only = (
         kb_tool_access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
@@ -1367,6 +1393,7 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
+        default_knowledge_base_ids=default_knowledge_base_ids,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
@@ -1417,6 +1444,7 @@ def _prepare_kb_tools_from_contexts(
         is_user_selected_kb=is_user_selected_kb,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
+        default_knowledge_base_ids=default_knowledge_base_ids,
         kb_tool_access_mode=kb_tool_access_mode,
     )
 
@@ -1443,6 +1471,19 @@ def _build_scopes_from_kb_contexts(
             )
         )
     return scopes
+
+
+def _merge_knowledge_base_scopes(
+    default_scopes: List[KnowledgeBaseScope],
+    requested_scopes: List[KnowledgeBaseScope],
+) -> List[KnowledgeBaseScope]:
+    """Merge default and requested scopes, preserving explicit requested scopes."""
+    merged: dict[int, KnowledgeBaseScope] = {
+        scope.knowledge_base_id: scope for scope in default_scopes
+    }
+    for scope in requested_scopes:
+        merged[scope.knowledge_base_id] = scope
+    return list(merged.values())
 
 
 def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
@@ -1545,6 +1586,28 @@ def _get_bound_knowledge_base_scopes(
     except Exception as exc:
         logger.warning(
             "Failed to get bound KB scopes for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
+        return []
+
+
+def _get_task_default_knowledge_base_scopes(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> List[KnowledgeBaseScope]:
+    """Resolve runtime default knowledge base scopes for a task."""
+    from app.services.chat.task_default_knowledge_bases import (
+        get_task_default_knowledge_base_scopes,
+    )
+
+    try:
+        return get_task_default_knowledge_base_scopes(db, task_id, user_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to get runtime default KB scopes for task %s: %s",
             task_id,
             exc,
             exc_info=True,

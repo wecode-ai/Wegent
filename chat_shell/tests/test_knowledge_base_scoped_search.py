@@ -220,6 +220,61 @@ async def test_unrestricted_scopes_do_not_block_per_call_document_filters():
     assert http_retrieve.await_args.kwargs["document_names"] == ["release.md"]
 
 
+@pytest.mark.asyncio
+async def test_default_kb_search_ignores_per_call_document_filters():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1],
+        default_knowledge_base_ids=[1],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False)
+        ],
+        user_id=7,
+    )
+
+    async def _fake_retrieve(**kwargs):
+        assert kwargs["document_ids"] == []
+        assert kwargs["document_names"] == []
+        return (
+            "rag_retrieval",
+            {
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        )
+
+    with (
+        patch.object(
+            tool,
+            "_get_kb_info",
+            AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": 1,
+                            "name": "Default KB",
+                            "rag_enabled": True,
+                            "max_calls_per_conversation": 10,
+                            "exempt_calls_before_check": 5,
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch.object(
+            tool,
+            "_retrieve_with_strategy_from_all_kbs",
+            AsyncMock(side_effect=_fake_retrieve),
+        ),
+    ):
+        await tool._arun(
+            query="release checklist",
+            document_ids=[101],
+            document_names=["release.md"],
+        )
+
+
 def test_scoped_tool_schema_hides_document_filters():
     """Scoped search should not expose document override arguments to the model."""
     schema = ScopedKnowledgeBaseTool().args_schema.model_json_schema()

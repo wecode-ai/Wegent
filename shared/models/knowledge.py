@@ -50,6 +50,7 @@ class KnowledgeBaseToolsResult:
     is_user_selected_kb: bool = False
     document_ids: list[int] = None  # type: ignore[assignment]
     knowledge_base_scopes: list[KnowledgeBaseScope] = None  # type: ignore[assignment]
+    default_knowledge_base_ids: list[int] = None  # type: ignore[assignment]
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     def __post_init__(self) -> None:
@@ -60,6 +61,8 @@ class KnowledgeBaseToolsResult:
             object.__setattr__(self, "document_ids", [])
         if self.knowledge_base_scopes is None:
             object.__setattr__(self, "knowledge_base_scopes", [])
+        if self.default_knowledge_base_ids is None:
+            object.__setattr__(self, "default_knowledge_base_ids", [])
 
 
 @dataclass(frozen=True)

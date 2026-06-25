@@ -364,6 +364,45 @@ class TaskKindService(TaskResourceBaseService):
     def __init__(self):
         super().__init__("Task")
 
+    def _resolve_task_team(self, db: Session, user_id: int, task_crd: Task) -> Kind:
+        """Resolve and authorize the Team referenced by a task CRD."""
+        team_ref = task_crd.spec.teamRef
+        team_owner_id = getattr(team_ref, "user_id", None) or user_id
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team_owner_id,
+                Kind.kind == "Team",
+                Kind.namespace == (team_ref.namespace or "default"),
+                Kind.name == team_ref.name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not team:
+            raise NotFoundException(
+                f"Team '{team_ref.name}' not found in namespace '{team_ref.namespace}'"
+            )
+        if team.user_id == user_id or team.user_id == 0:
+            return team
+
+        from app.models.resource_member import MemberStatus
+        from app.models.share_link import ResourceType
+        from app.services.adapters.task_kinds.helpers import _get_accessible_team_ids
+
+        accessible_team_ids = _get_accessible_team_ids(
+            db,
+            user_id,
+            [ResourceType.TEAM.value, ResourceType.TEAM.name],
+            [MemberStatus.APPROVED.value, "APPROVED"],
+        )
+        if team.id in accessible_team_ids:
+            return team
+
+        raise NotFoundException(
+            f"Team '{team_ref.name}' not found in namespace '{team_ref.namespace}'"
+        )
+
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
@@ -371,25 +410,7 @@ class TaskKindService(TaskResourceBaseService):
         task_crd = Task.model_validate(resource)
 
         # Check if referenced team exists
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace or "default"
-
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Team",
-                Kind.namespace == team_namespace,
-                Kind.name == team_name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not team:
-            raise NotFoundException(
-                f"Team '{team_name}' not found in namespace '{team_namespace}'"
-            )
+        self._resolve_task_team(db, user_id, task_crd)
 
         # Check if referenced workspace exists
         workspace_name = task_crd.spec.workspaceRef.name
@@ -437,21 +458,7 @@ class TaskKindService(TaskResourceBaseService):
         try:
             task_crd = Task.model_validate(resource)
 
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Team",
-                    Kind.name == task_crd.spec.teamRef.name,
-                    Kind.namespace == task_crd.spec.teamRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if not team:
-                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
-                return
+            team = self._resolve_task_team(db, user_id, task_crd)
 
             # Call _create_subtasks method to create subtasks
             task_kinds_service._create_subtasks(
@@ -483,21 +490,7 @@ class TaskKindService(TaskResourceBaseService):
         try:
             task_crd = Task.model_validate(resource)
 
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Team",
-                    Kind.name == task_crd.spec.teamRef.name,
-                    Kind.namespace == task_crd.spec.teamRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if not team:
-                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
-                return
+            team = self._resolve_task_team(db, user_id, task_crd)
 
             # Call _create_subtasks method to update subtasks (append mode)
             task_kinds_service._create_subtasks(
