@@ -29,3 +29,17 @@ def test_user_preferences_accept_runtime_model_selection():
     assert user.preferences is not None
     assert user.preferences.wework_new_chat_model_selection is not None
     assert user.preferences.wework_new_chat_model_selection.modelType == "runtime"
+
+
+def test_user_preferences_accept_employee_id():
+    user = UserInDB(
+        id=1,
+        user_name="admin",
+        email="admin@example.com",
+        preferences=json.dumps({"employee_id": "10086"}),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    assert user.preferences is not None
+    assert user.preferences.employee_id == "10086"

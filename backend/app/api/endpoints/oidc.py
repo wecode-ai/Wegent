@@ -7,6 +7,7 @@ import logging
 import secrets
 import time
 import uuid
+from typing import Any
 
 import jwt  # pip install pyjwt
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,10 +39,49 @@ router = APIRouter()
 
 STATE_JWT_SECRET = settings.OIDC_STATE_SECRET_KEY
 STATE_EXPIRE_TIME = settings.OIDC_STATE_EXPIRE_SECONDS
+EMPLOYEE_ID_PREFERENCE_KEY = "employee_id"
 
 # CLI login session TTL (5 minutes)
 CLI_SESSION_EXPIRE_SECONDS = 300
 CLI_SESSION_KEY_PREFIX = "cli_login_session:"
+
+
+def _clean_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    value = value.strip()
+    return value or None
+
+
+def _extract_cas_employee_id(user_data: dict[str, Any]) -> str | None:
+    return _clean_string(user_data.get("userid"))
+
+
+def _load_preferences(raw_preferences: Any) -> dict[str, Any]:
+    if isinstance(raw_preferences, dict):
+        return dict(raw_preferences)
+    if not raw_preferences:
+        return {}
+    try:
+        parsed = json.loads(raw_preferences)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _store_employee_id_preference(user: User, employee_id: str | None) -> bool:
+    if not employee_id:
+        return False
+
+    preferences = _load_preferences(user.preferences)
+    if preferences.get(EMPLOYEE_ID_PREFERENCE_KEY) == employee_id:
+        return False
+
+    preferences[EMPLOYEE_ID_PREFERENCE_KEY] = employee_id
+    user.preferences = json.dumps(preferences, ensure_ascii=False)
+    return True
 
 
 def _normalize_frontend_base_path(value: str | None) -> str:
@@ -187,12 +227,16 @@ async def oidc_callback(
 
         # Find or create user
         user_name = email.split("@")[0] if "@" in email else user_id
+        employee_id = _extract_cas_employee_id(user_data)
 
         user = db.scalar(select(User).where(User.user_name == user_name))
 
         if not user:
             from app.core import security
 
+            preferences = {}
+            if employee_id:
+                preferences[EMPLOYEE_ID_PREFERENCE_KEY] = employee_id
             user = User(
                 user_name=user_name,
                 email=email,
@@ -200,6 +244,7 @@ async def oidc_callback(
                 password_hash=security.get_password_hash(str(uuid.uuid4())),
                 git_info=[],
                 auth_source="oidc",
+                preferences=json.dumps(preferences, ensure_ascii=False),
             )
             db.add(user)
             db.commit()
@@ -211,12 +256,17 @@ async def oidc_callback(
             # Apply default resources synchronously for new OIDC users
             apply_default_resources_sync(user.id)
         else:
+            changed = False
             if user.email != email:
                 user.email = email
+                changed = True
             # Update auth_source if it was unknown
             if user.auth_source == "unknown":
                 user.auth_source = "oidc"
-            db.commit()
+                changed = True
+            changed = _store_employee_id_preference(user, employee_id) or changed
+            if changed:
+                db.commit()
             db.refresh(user)
             logger.info(
                 f"Found existing OIDC user: user_id={user.id}, user_name={user.user_name}"
@@ -412,11 +462,15 @@ async def cli_oidc_callback(
 
         # Find or create user
         user_name = email.split("@")[0] if "@" in email else user_id
+        employee_id = _extract_cas_employee_id(user_data)
         user = db.scalar(select(User).where(User.user_name == user_name))
 
         if not user:
             from app.core import security
 
+            preferences = {}
+            if employee_id:
+                preferences[EMPLOYEE_ID_PREFERENCE_KEY] = employee_id
             user = User(
                 user_name=user_name,
                 email=email,
@@ -424,6 +478,7 @@ async def cli_oidc_callback(
                 password_hash=security.get_password_hash(str(uuid.uuid4())),
                 git_info=[],
                 auth_source="oidc",
+                preferences=json.dumps(preferences, ensure_ascii=False),
             )
             db.add(user)
             db.commit()
@@ -433,11 +488,16 @@ async def cli_oidc_callback(
             # Apply default resources synchronously for new CLI OIDC users
             apply_default_resources_sync(user.id)
         else:
+            changed = False
             if user.email != email:
                 user.email = email
+                changed = True
             if user.auth_source == "unknown":
                 user.auth_source = "oidc"
-            db.commit()
+                changed = True
+            changed = _store_employee_id_preference(user, employee_id) or changed
+            if changed:
+                db.commit()
             db.refresh(user)
 
         if not user.is_active:

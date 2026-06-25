@@ -17,6 +17,7 @@ Approach:
 - Re-implement the original endpoint behavior, with modification for new-user creation git_info handling.
 """
 
+import json
 import logging
 import time
 import uuid
@@ -26,7 +27,6 @@ from urllib.parse import quote
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 try:
@@ -56,6 +56,7 @@ from wecode.service.get_user_gitinfo import get_user_gitinfo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+COMPANY_PROFILE_PREFERENCE_KEY = "company_profile"
 
 
 def _normalize_frontend_base_path(value: str | None) -> str:
@@ -85,6 +86,47 @@ def _build_frontend_url(path: str, frontend_base_path: str | None = None) -> str
     app_base_path = _normalize_frontend_base_path(frontend_base_path)
     normalized_path = path if path.startswith("/") else f"/{path}"
     return f"{base_url}{app_base_path}{normalized_path}"
+
+
+def _clean_profile_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    value = value.strip()
+    return value or None
+
+
+def _store_company_profile_preference(
+    user: User,
+    *,
+    employee_id: str | None = None,
+    name: str | None = None,
+) -> bool:
+    clean_employee_id = _clean_profile_value(employee_id)
+    clean_name = _clean_profile_value(name)
+    if not clean_employee_id and not clean_name:
+        return False
+
+    preferences = oidc_module._load_preferences(user.preferences)
+    company_profile = preferences.get(COMPANY_PROFILE_PREFERENCE_KEY)
+    if not isinstance(company_profile, dict):
+        company_profile = {}
+
+    changed = False
+    if clean_employee_id and company_profile.get("employee_id") != clean_employee_id:
+        company_profile["employee_id"] = clean_employee_id
+        changed = True
+    if clean_name and company_profile.get("name") != clean_name:
+        company_profile["name"] = clean_name
+        changed = True
+
+    if not changed:
+        return False
+
+    preferences[COMPANY_PROFILE_PREFERENCE_KEY] = company_profile
+    user.preferences = json.dumps(preferences, ensure_ascii=False)
+    return True
 
 
 async def _patched_oidc_callback(
@@ -164,17 +206,30 @@ async def _patched_oidc_callback(
 
         # Find or create user
         user_name = email.split("@")[0] if "@" in email else user_id
+        employee_id = oidc_module._extract_cas_employee_id(user_data)
 
-        user = db.scalar(select(User).where(User.user_name == user_name))
+        user = db.query(User).filter(User.user_name == user_name).first()
 
         created_new_user = False
         if not user:
+            preferences = {}
+            company_profile = {
+                key: value
+                for key, value in {
+                    "employee_id": _clean_profile_value(employee_id),
+                    "name": _clean_profile_value(name),
+                }.items()
+                if value
+            }
+            if company_profile:
+                preferences[COMPANY_PROFILE_PREFERENCE_KEY] = company_profile
             # Create new user WITHOUT forcing git_info = []
             user = User(
                 user_name=user_name,
                 email=email,
                 is_active=True,
                 password_hash=security.get_password_hash(str(uuid.uuid4())),
+                preferences=json.dumps(preferences, ensure_ascii=False),
             )
             db.add(user)
             db.commit()
@@ -188,10 +243,19 @@ async def _patched_oidc_callback(
             background_tasks.add_task(apply_default_resources_async, user.id)
         else:
             # Update user email if changed
+            changed = False
             if user.email != email:
                 user.email = email
+                changed = True
+            changed = (
+                _store_company_profile_preference(
+                    user, employee_id=employee_id, name=name
+                )
+                or changed
+            )
+            if changed:
                 db.commit()
-                db.refresh(user)
+            db.refresh(user)
             logger.info(
                 f"Found existing OIDC user: user_id={user.id}, user_name={user.user_name}"
             )
@@ -240,6 +304,11 @@ async def _patched_oidc_callback(
 
             erp_employee = erp_client.search_employee(email)
             if erp_employee and erp_employee.ssn:
+                preference_changed = _store_company_profile_preference(
+                    user,
+                    employee_id=erp_employee.ssn,
+                    name=erp_employee.name,
+                )
                 ErpUserService.upsert_profile(
                     db=db,
                     user_id=user.id,
@@ -248,6 +317,8 @@ async def _patched_oidc_callback(
                     erp_name=erp_employee.name,
                     email=erp_employee.email,
                 )
+                if preference_changed:
+                    db.commit()
                 logger.info(
                     f"Synced ERP profile for OIDC user {user.id}: "
                     f"emp={ErpEntityResolver._mask_ssn(erp_employee.ssn or '')}, "

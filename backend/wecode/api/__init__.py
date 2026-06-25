@@ -33,7 +33,7 @@ import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oid
 import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
-import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
+import wecode.api.users_endpoint_patch as users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP employee_id handler
 import wecode.service.cloud_device_monitor_patch  # noqa: F401  register cloud device monitor background worker
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
@@ -107,6 +107,7 @@ def finalize_patches() -> None:
 
     This should be called after all routers are included in api_router.
     """
+    users_endpoint_patch.apply_patch()
     return None
 
 
