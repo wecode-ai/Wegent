@@ -81,7 +81,7 @@ function runtimeWork(
         },
       ],
     })),
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
 }
@@ -889,7 +889,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 1,
           },
         }}
@@ -947,7 +947,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 1,
           },
         }}
@@ -977,7 +977,7 @@ describe('MobileWorkbenchLayout', () => {
           ...baseState,
           runtimeWork: {
             projects: [],
-            unmappedDeviceWorkspaces: [
+            chats: [
               {
                 deviceId: 'local-device',
                 deviceName: 'Local Mac',
@@ -1086,7 +1086,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 6,
           },
         }}

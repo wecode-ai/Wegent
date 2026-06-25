@@ -83,7 +83,7 @@ describe('resolveWorkspaceTarget', () => {
               ],
             },
           ],
-          unmappedDeviceWorkspaces: [],
+          chats: [],
           totalLocalTasks: 1,
         },
       })

@@ -1,4 +1,6 @@
 import type {
+  ArchivedConversationsListRequest,
+  ArchivedConversationsListResponse,
   BindRuntimeTaskIMSessionsRequest,
   BindRuntimeTaskIMSessionsResponse,
   DeleteDeviceWorkspaceRequest,
@@ -9,6 +11,9 @@ import type {
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationSettingsResponse,
+  RuntimeArchiveProjectConversationsRequest,
+  RuntimeArchivedConversationBulkRequest,
+  RuntimeArchivedConversationBulkResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -17,12 +22,15 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskRenameRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
+  RuntimeWorkspaceRemoveRequest,
+  RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { HttpClient } from './http'
@@ -59,6 +67,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)
     },
+    renameRuntimeWorkspace(
+      data: RuntimeWorkspaceRenameRequest
+    ): Promise<RuntimeWorkspaceOpenResponse> {
+      return client.post('/runtime-work/workspaces/rename', data)
+    },
+    removeRuntimeWorkspace(
+      data: RuntimeWorkspaceRemoveRequest
+    ): Promise<RuntimeWorkspaceOpenResponse> {
+      return client.post('/runtime-work/workspaces/remove', data)
+    },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest
     ): Promise<BindRuntimeTaskIMSessionsResponse> {
@@ -84,6 +102,36 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     archiveRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archive', address)
+    },
+    renameRuntimeTask(data: RuntimeTaskRenameRequest): Promise<RuntimeTaskArchiveResponse> {
+      return client.post('/runtime-work/rename', data)
+    },
+    listArchivedConversations(
+      data: ArchivedConversationsListRequest = {}
+    ): Promise<ArchivedConversationsListResponse> {
+      return client.post('/runtime-work/archived-conversations/list', data)
+    },
+    archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return client.post('/runtime-work/archived-conversations/archive', address)
+    },
+    archiveProjectConversations(
+      data: RuntimeArchiveProjectConversationsRequest
+    ): Promise<RuntimeArchivedConversationBulkResponse> {
+      return client.post('/runtime-work/archived-conversations/archive-project', data)
+    },
+    archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
+      return client.post('/runtime-work/archived-conversations/archive-all', {})
+    },
+    unarchiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return client.post('/runtime-work/archived-conversations/unarchive', address)
+    },
+    deleteArchivedConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return client.post('/runtime-work/archived-conversations/delete', address)
+    },
+    deleteArchivedConversationsBulk(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationBulkResponse> {
+      return client.post('/runtime-work/archived-conversations/delete-bulk', data)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)

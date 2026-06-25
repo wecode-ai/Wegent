@@ -11,6 +11,8 @@ from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.runtime_work import (
+    ArchivedConversationsListRequest,
+    ArchivedConversationsListResponse,
     BindRuntimeTaskIMSessionsRequest,
     BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspacePrepareRequest,
@@ -18,6 +20,9 @@ from app.schemas.runtime_work import (
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeArchiveProjectConversationsRequest,
+    RuntimeArchivedConversationBulkRequest,
+    RuntimeArchivedConversationBulkResponse,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
@@ -29,11 +34,14 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
     RuntimeWorkspaceOpenRequest,
     RuntimeWorkspaceOpenResponse,
+    RuntimeWorkspaceRemoveRequest,
+    RuntimeWorkspaceRenameRequest,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -328,6 +336,156 @@ async def archive_runtime_task_endpoint(
 
 
 @router.post(
+    "/rename",
+    response_model=RuntimeTaskArchiveResponse,
+    response_model_by_alias=True,
+)
+async def rename_runtime_task_endpoint(
+    request: RuntimeTaskRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Rename one device-local runtime conversation."""
+
+    return await runtime_work_service.rename_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/archived-conversations/list",
+    response_model=ArchivedConversationsListResponse,
+    response_model_by_alias=True,
+)
+async def list_archived_conversations_endpoint(
+    request: ArchivedConversationsListRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List archived device-local conversations."""
+
+    return await runtime_work_service.list_archived_conversations(
+        db=db,
+        user_id=current_user.id,
+        request=request or ArchivedConversationsListRequest(),
+    )
+
+
+@router.post(
+    "/archived-conversations/archive",
+    response_model=RuntimeTaskArchiveResponse,
+    response_model_by_alias=True,
+)
+async def archive_conversation_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive one device-local conversation."""
+
+    return await runtime_work_service.archive_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/archived-conversations/archive-project",
+    response_model=RuntimeArchivedConversationBulkResponse,
+    response_model_by_alias=True,
+)
+async def archive_project_conversations_endpoint(
+    request: RuntimeArchiveProjectConversationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive active conversations under one runtime project."""
+
+    return await runtime_work_service.archive_project_conversations(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/archived-conversations/archive-all",
+    response_model=RuntimeArchivedConversationBulkResponse,
+    response_model_by_alias=True,
+)
+async def archive_all_conversations_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive all active device-local conversations."""
+
+    return await runtime_work_service.archive_all_conversations(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.post(
+    "/archived-conversations/unarchive",
+    response_model=RuntimeTaskArchiveResponse,
+    response_model_by_alias=True,
+)
+async def unarchive_conversation_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Unarchive one device-local conversation."""
+
+    return await runtime_work_service.unarchive_conversation(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/archived-conversations/delete",
+    response_model=RuntimeTaskArchiveResponse,
+    response_model_by_alias=True,
+)
+async def delete_archived_conversation_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete one archived device-local conversation."""
+
+    return await runtime_work_service.delete_archived_conversation(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/archived-conversations/delete-bulk",
+    response_model=RuntimeArchivedConversationBulkResponse,
+    response_model_by_alias=True,
+)
+async def delete_archived_conversations_bulk_endpoint(
+    request: RuntimeArchivedConversationBulkRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete multiple archived device-local conversations."""
+
+    return await runtime_work_service.delete_archived_conversations_bulk(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
     "/create",
     response_model=RuntimeTaskCreateResponse,
     response_model_by_alias=True,
@@ -359,6 +517,44 @@ async def open_runtime_workspace_endpoint(
     """Open a native runtime workspace without starting a turn."""
 
     return await runtime_work_service.open_runtime_workspace(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/workspaces/rename",
+    response_model=RuntimeWorkspaceOpenResponse,
+    response_model_by_alias=True,
+)
+async def rename_runtime_workspace_endpoint(
+    request: RuntimeWorkspaceRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Rename a native runtime workspace project without touching conversations."""
+
+    return await runtime_work_service.rename_runtime_workspace(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/workspaces/remove",
+    response_model=RuntimeWorkspaceOpenResponse,
+    response_model_by_alias=True,
+)
+async def remove_runtime_workspace_endpoint(
+    request: RuntimeWorkspaceRemoveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a native runtime workspace project without deleting conversations."""
+
+    return await runtime_work_service.remove_runtime_workspace(
         db=db,
         user_id=current_user.id,
         request=request,

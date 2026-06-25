@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowLeft,
   ChevronRight,
   GitBranch,
@@ -13,6 +14,7 @@ import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettings
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 
 interface MobileSettingsPageProps {
   onBack: () => void
@@ -22,7 +24,13 @@ interface MobileSettingsPageProps {
 export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
   const [activePage, setActivePage] = useState<
-    'menu' | 'appearance' | 'personal' | 'codex-auth' | 'skills' | 'worktrees'
+    | 'menu'
+    | 'appearance'
+    | 'personal'
+    | 'codex-auth'
+    | 'skills'
+    | 'worktrees'
+    | 'archived-conversations'
   >('menu')
 
   if (activePage === 'appearance') {
@@ -72,6 +80,34 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <WorktreesSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'archived-conversations') {
+    return (
+      <main
+        data-testid="mobile-archived-conversations-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-archived-conversations-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t('workbench.settings_nav_archived_conversations', '已归档对话')}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <ArchivedConversationsSettingsPage />
         </div>
       </main>
     )
@@ -233,6 +269,18 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <GitBranch className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_worktrees', '工作树')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        <button
+          type="button"
+          data-testid="mobile-settings-archived-conversations-button"
+          onClick={() => setActivePage('archived-conversations')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <Archive className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_archived_conversations', '已归档对话')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

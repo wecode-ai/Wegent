@@ -4,8 +4,10 @@
 
 import asyncio
 import json
+import sqlite3
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -14,19 +16,6 @@ import pytest
 class EmptyDiscovery:
     def discover(self):
         return []
-
-
-class OpenWorkspaceDiscovery(EmptyDiscovery):
-    def __init__(self):
-        self.opened = []
-
-    async def open_workspace(self, workspace_path):
-        self.opened.append(workspace_path)
-        return {
-            "threadId": "thread-1",
-            "workspacePath": workspace_path,
-            "title": "hello-0",
-        }
 
 
 class SequenceDiscovery:
@@ -45,6 +34,8 @@ class FakeCodexThreadListClient:
         self.threads = threads
         self.calls = []
         self.archived_thread_ids = []
+        self.unarchived_thread_ids = []
+        self.renamed_thread_titles = []
 
     def __enter__(self):
         return self
@@ -60,6 +51,14 @@ class FakeCodexThreadListClient:
         self.archived_thread_ids.append(thread_id)
         return SimpleNamespace(id=thread_id)
 
+    def thread_unarchive(self, thread_id):
+        self.unarchived_thread_ids.append(thread_id)
+        return SimpleNamespace(id=thread_id)
+
+    def thread_rename(self, thread_id, title=None, name=None):
+        self.renamed_thread_titles.append((thread_id, title or name))
+        return SimpleNamespace(id=thread_id, title=title or name)
+
 
 def _codex_discovery_for_threads(codex_home, *threads):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
@@ -72,11 +71,141 @@ def _codex_discovery_for_threads(codex_home, *threads):
     return discovery, fake_codex
 
 
+def _write_codex_global_state(
+    codex_home,
+    *,
+    saved_roots=None,
+    labels=None,
+    project_order=None,
+    projectless_thread_ids=None,
+    thread_workspace_root_hints=None,
+    remote_projects=None,
+):
+    codex_home.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "electron-saved-workspace-roots": saved_roots or [],
+        "electron-workspace-root-labels": labels or {},
+        "project-order": project_order or [],
+        "projectless-thread-ids": projectless_thread_ids or [],
+        "thread-workspace-root-hints": thread_workspace_root_hints or {},
+        "remote-projects": remote_projects or [],
+    }
+    (codex_home / ".codex-global-state.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
 def _write_codex_session(path, *items):
     path.write_text(
         "\n".join(json.dumps(item, ensure_ascii=False) for item in items),
         encoding="utf-8",
     )
+
+
+def _write_archived_codex_state(codex_home, *, thread_id, session_path):
+    state_dir = codex_home / "sqlite"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(state_dir / "state_5.sqlite")
+    try:
+        connection.execute(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL,
+                approval_mode TEXT NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE thread_dynamic_tools (
+                thread_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                input_schema TEXT NOT NULL,
+                PRIMARY KEY(thread_id, position)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, sandbox_policy, approval_mode, archived
+            ) VALUES (?, ?, 1, 2, 'sdk', 'openai', '/repo/Wegent',
+                'Archived thread', '{}', 'never', 1)
+            """,
+            (thread_id, str(session_path)),
+        )
+        connection.execute(
+            """
+            INSERT INTO thread_dynamic_tools (
+                thread_id, position, name, description, input_schema
+            ) VALUES (?, 0, 'tool', 'desc', '{}')
+            """,
+            (thread_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _write_codex_thread_state(
+    codex_home,
+    *,
+    thread_id,
+    session_path,
+    cwd="/repo/Wegent",
+    title="Original title",
+    preview="Original preview",
+    archived=0,
+):
+    state_dir = codex_home / "sqlite"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(state_dir / "state_5.sqlite")
+    try:
+        connection.execute(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL,
+                approval_mode TEXT NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0,
+                preview TEXT NOT NULL DEFAULT '',
+                updated_at_ms INTEGER
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, sandbox_policy, approval_mode, archived, preview,
+                updated_at_ms
+            ) VALUES (?, ?, 1, 2, 'sdk', 'openai', ?, ?, '{}', 'never', ?, ?, 2000)
+            """,
+            (thread_id, str(session_path), cwd, title, archived, preview),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 async def _drain_runtime_adapter(adapter):
@@ -232,7 +361,9 @@ def test_local_task_store_orders_tasks_by_parsed_updated_time(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
+async def test_runtime_work_handler_ignores_runtime_tasks_without_codex_projects(
+    tmp_path,
+):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 
@@ -267,19 +398,17 @@ async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
         codex_discovery=EmptyDiscovery(),
     ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
 
-    assert result["success"] is True
-    workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
-    assert workspaces["/repo/Wegent"]["localTasks"][0]["localTaskId"] == "claude-repo-1"
-    assert workspaces["/repo/Other"]["localTasks"][0]["runtime"] == "claude_code"
+    assert result == {"success": True, "workspaces": []}
 
 
 @pytest.mark.asyncio
-async def test_runtime_work_handler_opens_and_lists_empty_codex_workspace(tmp_path):
+async def test_runtime_work_handler_manages_codex_global_project_metadata(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskStore
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 
+    codex_home = tmp_path / "codex-home"
     store = LocalTaskStore(tmp_path / "index.json")
-    discovery = OpenWorkspaceDiscovery()
+    discovery, _fake_codex = _codex_discovery_for_threads(codex_home)
     handler = RuntimeWorkRpcHandler(store=store, codex_discovery=discovery)
 
     open_result = await handler.handle_runtime_rpc(
@@ -300,18 +429,100 @@ async def test_runtime_work_handler_opens_and_lists_empty_codex_workspace(tmp_pa
         "accepted": True,
         "runtime": "codex",
         "workspacePath": "/Users/crystal/Documents/hello-0",
-        "threadId": "thread-1",
     }
-    assert discovery.opened == ["/Users/crystal/Documents/hello-0"]
     assert list_result == {
         "success": True,
         "workspaces": [
             {
                 "workspacePath": "/Users/crystal/Documents/hello-0",
                 "localTasks": [],
+                "workspaceSource": "local",
+                "label": "hello-0",
             }
         ],
     }
+    payload = json.loads((codex_home / ".codex-global-state.json").read_text())
+    assert payload["electron-saved-workspace-roots"] == [
+        "/Users/crystal/Documents/hello-0"
+    ]
+    assert payload["project-order"] == ["/Users/crystal/Documents/hello-0"]
+
+    rename_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.workspaces.rename",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+                "label": "Hello project",
+            },
+        }
+    )
+    assert rename_result == {
+        "success": True,
+        "accepted": True,
+        "runtime": "codex",
+        "workspacePath": "/Users/crystal/Documents/hello-0",
+    }
+    payload = json.loads((codex_home / ".codex-global-state.json").read_text())
+    assert payload["electron-workspace-root-labels"] == {
+        "/Users/crystal/Documents/hello-0": "Hello project"
+    }
+
+    remove_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.workspaces.remove",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/Users/crystal/Documents/hello-0",
+            },
+        }
+    )
+    assert remove_result == {
+        "success": True,
+        "accepted": True,
+        "runtime": "codex",
+        "workspacePath": "/Users/crystal/Documents/hello-0",
+    }
+    payload = json.loads((codex_home / ".codex-global-state.json").read_text())
+    assert payload["electron-saved-workspace-roots"] == []
+    assert payload["project-order"] == []
+    assert payload["electron-workspace-root-labels"] == {}
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_places_new_codex_project_first(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(
+        codex_home,
+        saved_roots=["/Users/crystal/Documents/old-project"],
+        project_order=["/Users/crystal/Documents/old-project"],
+    )
+    store = LocalTaskStore(tmp_path / "index.json")
+    discovery, _fake_codex = _codex_discovery_for_threads(codex_home)
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=discovery)
+
+    await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/Users/crystal/Documents/New Project",
+            },
+        }
+    )
+
+    payload = json.loads((codex_home / ".codex-global-state.json").read_text())
+    assert payload["electron-saved-workspace-roots"] == [
+        "/Users/crystal/Documents/New Project",
+        "/Users/crystal/Documents/old-project",
+    ]
+    assert payload["project-order"] == [
+        "/Users/crystal/Documents/New Project",
+        "/Users/crystal/Documents/old-project",
+    ]
 
 
 @pytest.mark.asyncio
@@ -320,6 +531,7 @@ async def test_runtime_work_handler_lists_codex_tasks_from_sdk_only(tmp_path):
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 
     codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
     thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
     discovery, _fake_codex = _codex_discovery_for_threads(
         codex_home,
@@ -357,6 +569,98 @@ async def test_runtime_work_handler_lists_codex_tasks_from_sdk_only(tmp_path):
     tasks = workspaces["/repo/Wegent"]["localTasks"]
     assert [task["localTaskId"] for task in tasks] == [thread_id]
     assert tasks[0]["runtime"] == "codex"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_uses_codex_global_projects(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(
+        codex_home,
+        saved_roots=["/repo/empty", "/repo/Wegent"],
+        labels={"/repo/Wegent": "Wegent"},
+        project_order=["/repo/Wegent", "/repo/empty"],
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id="thread-in-project",
+            cwd="/repo/Wegent/wework",
+            name="Implement archive",
+            preview="hi",
+            path=str(tmp_path / "thread-in-project.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+        SimpleNamespace(
+            id="thread-outside-projects",
+            cwd="/repo/Other",
+            name="Outside",
+            preview="outside",
+            path=str(tmp_path / "thread-outside-projects.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
+
+    assert result["success"] is True
+    assert [workspace["workspacePath"] for workspace in result["workspaces"]] == [
+        "/repo/Wegent",
+        "/repo/empty",
+    ]
+    workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
+    assert workspaces["/repo/Wegent"]["label"] == "Wegent"
+    assert workspaces["/repo/Wegent"]["workspaceSource"] == "local"
+    assert [
+        task["localTaskId"] for task in workspaces["/repo/Wegent"]["localTasks"]
+    ] == ["thread-in-project"]
+    assert workspaces["/repo/empty"]["localTasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_ignores_remote_codex_global_projects(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(
+        codex_home,
+        project_order=["remote-project-id"],
+        remote_projects=[
+            {
+                "id": "remote-project-id",
+                "hostId": "remote-ssh-discovered:10.201.3.200",
+                "remotePath": "/home/ubuntu/workspace/Wegent",
+                "label": "Wegent",
+            }
+        ],
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id="remote-thread",
+            cwd="/home/ubuntu/workspace/Wegent/wework",
+            name="Remote work",
+            preview="hi",
+            path=str(tmp_path / "remote-thread.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
+
+    assert result == {"success": True, "workspaces": []}
 
 
 @pytest.mark.asyncio
@@ -412,8 +716,10 @@ async def test_runtime_work_handler_ignores_store_codex_and_keeps_live_discovery
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 
     sdk_thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
     discovery, _fake_codex = _codex_discovery_for_threads(
-        tmp_path / "codex-home",
+        codex_home,
         SimpleNamespace(
             id=sdk_thread_id,
             cwd="/repo/Wegent",
@@ -509,6 +815,322 @@ async def test_runtime_work_handler_archives_codex_thread_through_sdk(tmp_path):
     assert fake_codex.archived_thread_ids == [thread_id]
     with pytest.raises(KeyError):
         handler.store.get_task(thread_id, workspace_path="/repo/Wegent")
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_renames_discovered_codex_thread(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id=thread_id,
+            cwd="/repo/Wegent",
+            name=None,
+            preview="original title",
+            path=str(tmp_path / "thread.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.rename",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "title": "对齐需求核心点",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["accepted"] is True
+    renamed = handler.store.get_task(thread_id, workspace_path="/repo/Wegent")
+    assert renamed.title == "对齐需求核心点"
+    assert renamed.runtime_handle["titleOverride"] is True
+
+    listed = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.list", "payload": {}}
+    )
+
+    tasks = listed["workspaces"][0]["localTasks"]
+    assert tasks[0]["localTaskId"] == thread_id
+    assert tasks[0]["title"] == "对齐需求核心点"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_renames_codex_thread_state_for_codex_app(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    session_path = tmp_path / "thread.jsonl"
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    _write_codex_thread_state(
+        codex_home,
+        thread_id=thread_id,
+        session_path=session_path,
+        title="打开微博网站",
+        preview="打开微博网站",
+    )
+    discovery, fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id=thread_id,
+            cwd="/repo/Wegent",
+            name=None,
+            preview="打开微博网站",
+            path=str(session_path),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.rename",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "title": "open-weibo-com",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["codexRename"]["stateUpdated"] is True
+    assert fake_codex.renamed_thread_titles == [(thread_id, "open-weibo-com")]
+
+    connection = sqlite3.connect(codex_home / "sqlite" / "state_5.sqlite")
+    try:
+        row = connection.execute(
+            "SELECT title, preview, updated_at, updated_at_ms FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    title, preview, updated_at, updated_at_ms = row
+    assert title == "open-weibo-com"
+    assert preview == "open-weibo-com"
+    assert updated_at > 2
+    assert updated_at_ms > 2000
+
+
+def test_codex_discovery_lists_archived_threads(tmp_path):
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery, fake_codex = _codex_discovery_for_threads(
+        tmp_path / "codex-home",
+        SimpleNamespace(
+            id=thread_id,
+            cwd="/repo/Wegent",
+            preview="archived",
+            path=str(tmp_path / "codex-home" / "sessions" / "thread.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+
+    records = discovery.discover_archived(workspace_path="/repo/Wegent")
+
+    assert fake_codex.calls[0]["archived"] is True
+    assert [record.local_task_id for record in records] == [thread_id]
+    assert records[0].status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_unarchives_codex_thread_through_sdk(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
+    discovery, fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id=thread_id,
+            cwd="/repo/Wegent",
+            preview="archived",
+            path=str(tmp_path / "codex-home" / "sessions" / "thread.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.archived_conversations.unarchive",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    assert result == {
+        "success": True,
+        "accepted": True,
+        "localTaskId": thread_id,
+        "workspacePath": "/repo/Wegent",
+    }
+    assert fake_codex.unarchived_thread_ids == [thread_id]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_filters_archived_threads_to_visible_projects_and_chats(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
+    project_thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    other_thread_id = "029ee7f6-456a-78a1-96b1-66451afc310e"
+    chat_thread_id = "039ee7f6-456a-78a1-96b1-66451afc310e"
+    chat_workspace = Path.home() / "Documents" / "Codex" / "2026-06-23" / "chat-1"
+    discovery, fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id=project_thread_id,
+            cwd="/repo/Wegent",
+            preview="project archived",
+            path=str(codex_home / "sessions" / "project.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+        SimpleNamespace(
+            id=other_thread_id,
+            cwd="/repo/Other",
+            preview="outside archived",
+            path=str(codex_home / "sessions" / "other.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:16:58Z",
+        ),
+        SimpleNamespace(
+            id=chat_thread_id,
+            cwd=str(chat_workspace),
+            preview="chat archived",
+            path=str(codex_home / "sessions" / "chat.jsonl"),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:17:58Z",
+        ),
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    )
+
+    listed = await handler.handle_runtime_rpc(
+        {"method": "runtime.archived_conversations.list", "payload": {}}
+    )
+    rejected = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.archived_conversations.unarchive",
+            "payload": {
+                "workspacePath": "/repo/Other",
+                "localTaskId": other_thread_id,
+            },
+        }
+    )
+
+    assert {item["localTaskId"] for item in listed["items"]} == {
+        project_thread_id,
+        chat_thread_id,
+    }
+    assert {group["workspacePath"] for group in listed["groups"]} == {
+        "/repo/Wegent",
+        str(chat_workspace),
+    }
+    assert rejected["success"] is False
+    assert rejected["code"] == "not_found"
+    assert fake_codex.unarchived_thread_ids == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_deletes_archived_codex_state(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    codex_home = tmp_path / "codex-home"
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
+    session_path = codex_home / "sessions" / "thread.jsonl"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text("{}", encoding="utf-8")
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    _write_archived_codex_state(
+        codex_home,
+        thread_id=thread_id,
+        session_path=session_path,
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        codex_home,
+        SimpleNamespace(
+            id=thread_id,
+            cwd="/repo/Wegent",
+            preview="archived",
+            path=str(session_path),
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+        ),
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.archived_conversations.delete",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["deleted"] is True
+    assert result["deletedState"] is True
+    assert not session_path.exists()
+
+    connection = sqlite3.connect(codex_home / "sqlite" / "state_5.sqlite")
+    try:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM threads WHERE id = ?",
+                (thread_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM thread_dynamic_tools WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        connection.close()
 
 
 @pytest.mark.asyncio
@@ -1225,6 +1847,120 @@ def test_codex_discovery_passes_resolved_codex_binary_to_sdk(tmp_path, monkeypat
     assert (tmp_path / "codex-home").is_dir()
 
 
+@pytest.mark.asyncio
+async def test_codex_discovery_opens_workspace_as_user_thread(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeAsyncCodex:
+        def __init__(self):
+            self.thread_start_kwargs = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_start(self, **kwargs):
+            self.thread_start_kwargs = kwargs
+            return SimpleNamespace(id="codex-thread-1")
+
+    fake_codex = FakeAsyncCodex()
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    discovery._create_async_codex_client = lambda: fake_codex
+
+    result = await discovery.open_workspace("/repo/Wegent")
+
+    assert result["threadId"] == "codex-thread-1"
+    assert getattr(fake_codex.thread_start_kwargs["thread_source"], "value", None) == "user"
+
+
+def test_codex_discovery_thread_start_kwargs_keeps_provider_for_managed_config():
+    from executor.runtime_work.codex_discovery import _thread_start_kwargs
+
+    kwargs = _thread_start_kwargs(
+        approval_mode=object(),
+        codex_config=SimpleNamespace(
+            thread_config={},
+            model="gpt-5.5",
+            model_provider="wecode-openai",
+            use_user_config=False,
+        ),
+        cwd="/repo/Wegent",
+        developer_instructions=None,
+        sandbox=object(),
+    )
+
+    assert getattr(kwargs["thread_source"], "value", None) == "user"
+    assert kwargs["model_provider"] == "wecode-openai"
+
+
+def test_codex_discovery_thread_start_kwargs_omits_provider_for_user_config():
+    from executor.runtime_work.codex_discovery import _thread_start_kwargs
+
+    kwargs = _thread_start_kwargs(
+        approval_mode=object(),
+        codex_config=SimpleNamespace(
+            thread_config={},
+            model="gpt-5.5",
+            model_provider="wecode-openai",
+            use_user_config=True,
+        ),
+        cwd="/repo/Wegent",
+        developer_instructions=None,
+        sandbox=object(),
+    )
+
+    assert getattr(kwargs["thread_source"], "value", None) == "user"
+    assert "model_provider" not in kwargs
+
+
+def test_codex_lite_config_overrides_keep_managed_provider():
+    from executor.runtime_work.codex_discovery import _codex_lite_config_overrides
+
+    overrides = _codex_lite_config_overrides(
+        (
+            "forced_login_method=api",
+            "model=gpt-5.5",
+            "model_provider=wecode-openai",
+            "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+            'model_providers.wecode-openai.http_headers.wecode-project="42"',
+            "experimental_use_exec_command_tool=true",
+        ),
+        use_user_config=False,
+    )
+
+    assert overrides == (
+        "forced_login_method=api",
+        "model=gpt-5.5",
+        "model_provider=wecode-openai",
+        "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+        'model_providers.wecode-openai.http_headers.wecode-project="42"',
+        "experimental_use_exec_command_tool=true",
+    )
+
+
+def test_codex_lite_config_overrides_keep_codex_app_provider_for_user_config():
+    from executor.runtime_work.codex_discovery import _codex_lite_config_overrides
+
+    overrides = _codex_lite_config_overrides(
+        (
+            "forced_login_method=api",
+            "model=gpt-5.5",
+            "model_provider=wecode-openai",
+            "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+            'model_providers.wecode-openai.http_headers.wecode-project="42"',
+            "experimental_use_exec_command_tool=true",
+        ),
+        use_user_config=True,
+    )
+
+    assert overrides == (
+        "model=gpt-5.5",
+        "experimental_use_exec_command_tool=true",
+    )
+
+
 def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 
@@ -1538,7 +2274,7 @@ async def test_runtime_work_handler_refreshes_codex_sessions_before_listing(tmp_
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 
     codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
+    _write_codex_global_state(codex_home, saved_roots=["/repo/Wegent"])
     thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ac"
     discovery, _fake_codex = _codex_discovery_for_threads(
         codex_home,

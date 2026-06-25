@@ -32,7 +32,11 @@ export function WorkbenchPage() {
     startNewProjectChat,
     openRuntimeLocalTask,
     loadOlderRuntimeTranscript,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
@@ -119,7 +123,11 @@ export function WorkbenchPage() {
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
       onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
+      onRenameRuntimeLocalTask={renameRuntimeLocalTask}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+      onArchiveProjectConversations={archiveProjectConversations}
+      onArchiveProjectsConversations={archiveProjectsConversations}
+      onArchiveChatConversations={archiveChatConversations}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onOpenStandaloneWorkspace={openStandaloneWorkspace}

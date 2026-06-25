@@ -6,14 +6,14 @@ describe('createRuntimeWorkApi', () => {
   test('lists runtime work without client origin query', async () => {
     const get = vi.fn().mockResolvedValue({
       projects: [],
-      unmappedDeviceWorkspaces: [],
+      chats: [],
       totalLocalTasks: 0,
     })
     const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
 
     await expect(api.listRuntimeWork()).resolves.toEqual({
       projects: [],
-      unmappedDeviceWorkspaces: [],
+      chats: [],
       totalLocalTasks: 0,
     })
 
@@ -100,12 +100,73 @@ describe('createRuntimeWorkApi', () => {
       deviceId: 'device-1',
       workspacePath: '/Users/crystal/Documents/hello-0',
       runtime: 'codex',
-      threadId: 'thread-1',
     })
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
 
     await expect(
       api.openRuntimeWorkspace({
+        deviceId: 'device-1',
+        workspacePath: '/Users/crystal/Documents/hello-0',
+        runtime: 'codex',
+        label: 'Hello project',
+      })
+    ).resolves.toEqual({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+    })
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/open', {
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+      label: 'Hello project',
+    })
+  })
+
+  test('renames a runtime workspace project', async () => {
+    const post = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+    })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.renameRuntimeWorkspace({
+        deviceId: 'device-1',
+        workspacePath: '/Users/crystal/Documents/hello-0',
+        runtime: 'codex',
+        name: 'Hello project',
+      })
+    ).resolves.toEqual({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+    })
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/rename', {
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+      name: 'Hello project',
+    })
+  })
+
+  test('removes a runtime workspace project', async () => {
+    const post = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      workspacePath: '/Users/crystal/Documents/hello-0',
+      runtime: 'codex',
+    })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.removeRuntimeWorkspace({
         deviceId: 'device-1',
         workspacePath: '/Users/crystal/Documents/hello-0',
         runtime: 'codex',
@@ -115,10 +176,9 @@ describe('createRuntimeWorkApi', () => {
       deviceId: 'device-1',
       workspacePath: '/Users/crystal/Documents/hello-0',
       runtime: 'codex',
-      threadId: 'thread-1',
     })
 
-    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/open', {
+    expect(post).toHaveBeenCalledWith('/runtime-work/workspaces/remove', {
       deviceId: 'device-1',
       workspacePath: '/Users/crystal/Documents/hello-0',
       runtime: 'codex',

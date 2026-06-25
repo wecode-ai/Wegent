@@ -132,7 +132,7 @@ function upsertPreparedRuntimeWorkspace(
   }
   const currentRuntimeWork = runtimeWork ?? {
     projects: [],
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
   const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
@@ -169,7 +169,7 @@ function upsertPreparedRuntimeWorkspace(
   return {
     ...currentRuntimeWork,
     projects: projectsWithTarget,
-    unmappedDeviceWorkspaces: currentRuntimeWork.unmappedDeviceWorkspaces.filter(
+    chats: currentRuntimeWork.chats.filter(
       workspace =>
         !(
           workspace.deviceId === mapping.deviceId &&

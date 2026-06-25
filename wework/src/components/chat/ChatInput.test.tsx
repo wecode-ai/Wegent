@@ -133,7 +133,7 @@ function runtimeWork(
         },
       ],
     })),
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
 }

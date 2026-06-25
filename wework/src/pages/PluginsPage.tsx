@@ -24,7 +24,11 @@ export function PluginsPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     openStandaloneWorkspace,
     refreshDevices,
     refreshWorkLists,
@@ -100,10 +104,13 @@ export function PluginsPage() {
           activeItem="plugins"
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={handleNewChat}
-          onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
+          onRenameRuntimeLocalTask={renameRuntimeLocalTask}
           onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+          onArchiveProjectConversations={archiveProjectConversations}
+          onArchiveProjectsConversations={archiveProjectsConversations}
+          onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}

@@ -78,7 +78,11 @@ interface MobileWorkbenchLayoutProps {
   onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
-  onOpenStandaloneWorkspace?: (deviceId: string, workspacePath: string) => void
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
