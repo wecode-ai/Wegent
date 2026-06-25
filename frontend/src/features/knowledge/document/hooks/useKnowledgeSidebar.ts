@@ -31,7 +31,7 @@ const MAX_RECENT_ITEMS = 5
 export type GroupType = 'personal' | 'group' | 'organization' | 'dingtalk'
 
 /** View mode for the knowledge page */
-export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk'
+export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk' | 'source'
 
 export interface KnowledgeGroup {
   id: string
@@ -73,12 +73,14 @@ export interface UseKnowledgeSidebarReturn {
   // Selection
   selectedKbId: number | null
   selectedGroupId: string | null
+  selectedSourceViewId: string | null
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
   syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
+  selectSourceView: (sourceViewId: string) => void
   clearSelection: () => void
 
   // View mode
@@ -201,6 +203,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Selection state
   const [selectedKbId, setSelectedKbId] = useState<number | null>(null)
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [selectedSourceViewId, setSelectedSourceViewId] = useState<string | null>(null)
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
   // View mode state
@@ -482,6 +485,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
       setSelectedGroupId(null)
+      setSelectedSourceViewId(null)
       setViewMode('kb')
       addRecentAccess(kb)
 
@@ -572,6 +576,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectGroup = useCallback((groupId: string) => {
     setSelectedGroupId(groupId)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('group')
     setFilterGroupId(groupId)
@@ -580,6 +585,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectAll = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('all')
     setFilterGroupId(null)
@@ -588,6 +594,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectGroups = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('groups')
     setFilterGroupId(null)
@@ -596,8 +603,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectDingtalk = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('dingtalk')
+    setFilterGroupId(null)
+  }, [])
+
+  const selectSourceView = useCallback((sourceViewId: string) => {
+    setSelectedGroupId(null)
+    setSelectedKbId(null)
+    setSelectedSourceViewId(sourceViewId)
+    setSelectedKb(null)
+    setViewMode('source')
     setFilterGroupId(null)
   }, [])
 
@@ -605,6 +622,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     setSelectedKbId(null)
     setSelectedKb(null)
     setSelectedGroupId(null)
+    setSelectedSourceViewId(null)
     setViewMode('all')
     setFilterGroupId(null)
   }, [])
@@ -643,12 +661,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // Selection
     selectedKbId,
     selectedGroupId,
+    selectedSourceViewId,
     selectedKb,
     selectKb,
     syncKnowledgeBase,
     syncConvertedKnowledgeBase,
     selectGroup,
     selectGroups,
+    selectSourceView,
     clearSelection,
 
     // View mode
