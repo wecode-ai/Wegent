@@ -516,6 +516,43 @@ def get_auth_context(
                                 )
                             return AuthContext(user=user, api_key_name=None)
 
+                        # Try task token as fallback
+                        from app.services.auth.task_token import verify_task_token
+
+                        token_info = verify_task_token(token)
+                        if token_info:
+                            user = (
+                                db.query(User)
+                                .filter(User.id == token_info.user_id)
+                                .first()
+                            )
+                            if user and user.is_active:
+                                if is_telemetry_enabled():
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_METHOD, "task_token"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_TOKEN_TYPE, "bearer"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_SOURCE,
+                                        "authorization_header",
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_RESULT, "success"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.USER_ID, str(user.id)
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.USER_NAME, user.user_name
+                                    )
+                                    _set_user_context(
+                                        user_id=str(user.id),
+                                        user_name=user.user_name,
+                                    )
+                                return AuthContext(user=user, api_key_name=None)
+
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
                 span.set_attribute(
