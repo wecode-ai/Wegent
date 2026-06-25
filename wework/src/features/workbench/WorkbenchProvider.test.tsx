@@ -1069,6 +1069,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('creates a conversation workspace when sending without a selected project', async () => {
+    vi.setSystemTime(new Date('2026-06-25T09:30:00.000Z'))
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [], chats: [] })),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        localTaskId: 'conversation-created',
+        workspacePath: '/Users/alice/Documents/Codex/2026-06-25/ci',
+        runtime: 'codex',
+      }),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        getHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
+        createDirectory: vi.fn().mockResolvedValue(undefined),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('set input')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(services.deviceApi.getHomeDirectory).toHaveBeenCalledWith('device-1')
+    expect(services.deviceApi.createDirectory).toHaveBeenCalledWith(
+      'device-1',
+      '/Users/alice/Documents/Codex/2026-06-25/ci'
+    )
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/Users/alice/Documents/Codex/2026-06-25/ci',
+        teamId: 2,
+        message: '修复 CI',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(screen.getByTestId('workbench-error')).not.toHaveTextContent(
+      '请选择项目或打开设备工作区后再发送'
+    )
+  })
+
   test('registers a standalone Codex workspace with an optional label', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),

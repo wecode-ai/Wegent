@@ -121,6 +121,8 @@ const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
+const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
+const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
 const RUNTIME_BLOCK_SUBTASK_ID_OFFSET = 1_000_000_000
 
 type ProjectMutationOptions = {
@@ -260,6 +262,57 @@ export interface WorkbenchServices {
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   chatStream: ReturnType<typeof createChatStream>
+}
+
+async function createConversationWorkspace(
+  deviceApi: WorkbenchServices['deviceApi'],
+  deviceId: string,
+  message: string
+): Promise<string> {
+  const homeDirectory = await deviceApi.getHomeDirectory(deviceId)
+  const workspacePath = buildConversationWorkspacePath(homeDirectory, message)
+  await deviceApi.createDirectory(deviceId, workspacePath)
+  return workspacePath
+}
+
+function buildConversationWorkspacePath(homeDirectory: string, message: string): string {
+  return joinDevicePath(
+    homeDirectory,
+    'Documents',
+    'Codex',
+    formatConversationWorkspaceDate(new Date()),
+    slugifyConversationWorkspaceName(message)
+  )
+}
+
+function formatConversationWorkspaceDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function slugifyConversationWorkspaceName(message: string): string {
+  const words = message.match(/[A-Za-z0-9]+/g) ?? []
+  const name = words.length > 0 ? words.map(word => word.toLowerCase()).join('-') : ''
+  return trimConversationWorkspaceName(name || DEFAULT_CONVERSATION_WORKSPACE_NAME)
+}
+
+function trimConversationWorkspaceName(name: string): string {
+  const trimmed = name.slice(0, MAX_CONVERSATION_WORKSPACE_NAME_LENGTH).replace(/-+$/g, '')
+  return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
+}
+
+function joinDevicePath(root: string, ...segments: string[]): string {
+  const trimmedRoot = root.trim()
+  const normalizedRoot = trimmedRoot === '/' ? '' : trimmedRoot.replace(/\/+$/g, '')
+  const joined = [
+    normalizedRoot,
+    ...segments.map(segment => segment.replace(/^\/+|\/+$/g, '')),
+  ]
+    .filter(Boolean)
+    .join('/')
+  return trimmedRoot.startsWith('/') ? `/${joined.replace(/^\/+/g, '')}` : joined
 }
 
 export interface WorkbenchContextValue {
@@ -851,22 +904,6 @@ function getRememberedStandaloneDeviceId(
     devices,
     user.preferences?.default_execution_target ?? fallbackDeviceId
   )
-}
-
-function findRuntimeWorkspaceForDevice(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string | undefined
-): string | null {
-  if (!deviceId) return null
-  const workspaces = [
-    ...(runtimeWork?.chats ?? []),
-    ...(runtimeWork?.projects ?? []).flatMap(project => project.deviceWorkspaces),
-  ]
-  const matches = workspaces.filter(
-    item => item.deviceId === deviceId && item.available && item.workspacePath
-  )
-  const workspacePaths = [...new Set(matches.map(item => item.workspacePath))]
-  return workspacePaths.length === 1 ? workspacePaths[0] : null
 }
 
 function getSelectableProjectDeviceWorkspaces(
@@ -2356,7 +2393,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           ? selectedProjectWorkspace.deviceId
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
-              standaloneDeviceId: state.standaloneDeviceId,
+              standaloneDeviceId: getPreferredStandaloneDeviceId(
+                state.devices,
+                state.standaloneDeviceId
+              ),
             })
 
       const payload: ChatSendPayload = {
@@ -2420,6 +2460,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       projectWorktreeBaseBranch,
       projectExecutionMode,
       state.currentProject,
+      state.devices,
       state.defaultTeam,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
@@ -2439,6 +2480,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return false
       }
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
+      const selectedModel =
+        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+      const runtime = inferRuntimeName(selectedModel)
+      const localTaskId = createRuntimeLocalTaskId(runtime)
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
@@ -2466,9 +2511,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
       } else {
-        const workspacePath =
-          state.standaloneWorkspacePath ??
-          findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
+        let workspacePath = state.standaloneWorkspacePath
+        if (!workspacePath && activeDeviceId) {
+          try {
+            workspacePath = await createConversationWorkspace(
+              resolvedServices.deviceApi,
+              activeDeviceId,
+              displayMessage
+            )
+          } catch (error) {
+            reportSendBlocked(error instanceof Error ? error.message : '创建对话工作区失败')
+            return false
+          }
+        }
         if (!activeDeviceId || !workspacePath) {
           reportSendBlocked('请选择项目或打开设备工作区后再发送')
           return false
@@ -2480,10 +2535,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
       }
 
-      const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
-      const runtime = inferRuntimeName(selectedModel)
-      const localTaskId = createRuntimeLocalTaskId(runtime)
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         localTaskId,
@@ -2589,6 +2640,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       refreshWorkLists,
       rememberExecutionDevice,
       reportSendBlocked,
+      resolvedServices.deviceApi,
       resolvedServices.runtimeWorkApi,
       state.currentProject,
       state.projects,

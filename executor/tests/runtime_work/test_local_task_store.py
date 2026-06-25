@@ -749,6 +749,81 @@ async def test_runtime_work_handler_lists_codex_tasks_from_sdk_only(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_lists_standalone_chat_workspace_tasks(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    chat_workspace = home / "Documents" / "Codex" / "2026-06-25" / "ci"
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="chat-1",
+            workspace_path=str(chat_workspace),
+            title="CI",
+            runtime="claude_code",
+            runtime_handle={"messages": []},
+            created_at="2026-06-25T01:00:00Z",
+            updated_at="2026-06-25T01:05:00Z",
+            running=True,
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
+
+    assert result["success"] is True
+    workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
+    assert str(chat_workspace) in workspaces
+    task = workspaces[str(chat_workspace)]["localTasks"][0]
+    assert task["localTaskId"] == "chat-1"
+    assert task["workspaceKind"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_lists_pending_codex_chat_workspace_tasks(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    chat_workspace = home / "Documents" / "Codex" / "2026-06-25" / "ci"
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=EmptyDiscovery(),
+    )
+    handler._remember_sdk_codex_task(
+        handler._sdk_codex_create_record(
+            local_task_id="codex-chat-1",
+            workspace_path=str(chat_workspace),
+            title="CI",
+            message="run ci",
+            subtask_id=2001,
+        )
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.list", "payload": {}}
+    )
+
+    assert result["success"] is True
+    workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
+    task = workspaces[str(chat_workspace)]["localTasks"][0]
+    assert task["localTaskId"] == "codex-chat-1"
+    assert task["runtime"] == "codex"
+    assert task["workspaceKind"] == "chat"
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_uses_codex_global_projects(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskStore
     from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
