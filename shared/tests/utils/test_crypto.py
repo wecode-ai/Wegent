@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
 import os
 import sys
 
@@ -14,9 +15,11 @@ from utils.crypto import (
     decrypt_api_key,
     decrypt_git_token,
     decrypt_sensitive_data,
+    decrypt_sensitive_data_with_embedded_iv,
     encrypt_api_key,
     encrypt_git_token,
     encrypt_sensitive_data,
+    encrypt_sensitive_data_with_embedded_iv,
     is_api_key_encrypted,
     is_data_encrypted,
     is_token_encrypted,
@@ -75,6 +78,77 @@ class TestCoreSensitiveDataEncryption:
     def test_is_data_encrypted_with_empty_data(self):
         """Test is_data_encrypted returns False for empty data"""
         assert is_data_encrypted("") is False
+
+    def test_encrypt_sensitive_data_with_embedded_iv_matches_go_format(
+        self, monkeypatch
+    ):
+        """Embedded IV encryption returns base64(iv + ciphertext)."""
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        import utils.crypto as crypto_module
+
+        key = "0123456789abcdef0123456789abcde!"
+        monkeypatch.setenv("USER_AES_KEY", key)
+        crypto_module._aes_key = None
+        crypto_module._aes_iv = None
+
+        encrypted = encrypt_sensitive_data_with_embedded_iv("hello")
+        raw = base64.b64decode(encrypted)
+        iv = raw[:16]
+        ciphertext = raw[16:]
+
+        assert len(iv) == 16
+        assert len(ciphertext) > 0
+        assert len(ciphertext) % 16 == 0
+
+        cipher = Cipher(
+            algorithms.AES(key.encode("utf-8")),
+            modes.CBC(iv),
+            backend=default_backend(),
+        )
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        plaintext = unpadder.update(padded) + unpadder.finalize()
+
+        assert plaintext.decode("utf-8") == "hello"
+
+    def test_decrypt_sensitive_data_with_embedded_iv_round_trip(self, monkeypatch):
+        """Embedded IV encryption can be decrypted with USER_AES_KEY."""
+        key = "0123456789abcdef0123456789abcde!"
+        monkeypatch.setenv("USER_AES_KEY", key)
+
+        plain_text = (
+            '{"employee_id":"2180","email":"haan3@stcom","name":"李浩轩",'
+            '"uid":"604565","expire_at":1782357051}'
+        )
+
+        encrypted = encrypt_sensitive_data_with_embedded_iv(plain_text)
+        decrypted = decrypt_sensitive_data_with_embedded_iv(encrypted)
+
+        assert decrypted == plain_text
+
+    def test_decrypt_sensitive_data_with_embedded_iv_supports_base64_key(
+        self, monkeypatch
+    ):
+        """Embedded IV decryption supports base64-prefixed USER_AES_KEY."""
+        key = "base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        monkeypatch.setenv("USER_AES_KEY", key)
+
+        encrypted = encrypt_sensitive_data_with_embedded_iv("hello")
+        decrypted = decrypt_sensitive_data_with_embedded_iv(encrypted)
+
+        assert decrypted == "hello"
+
+    def test_parse_aes_key_treats_unprefixed_base64_chars_as_raw(self) -> None:
+        """Unprefixed AES keys are raw text even when they contain base64 chars."""
+        import utils.crypto as crypto_module
+
+        key = "12345678901234567890123456789012"
+
+        assert crypto_module._parse_aes_key(key) == key.encode("utf-8")
 
 
 @pytest.mark.unit
