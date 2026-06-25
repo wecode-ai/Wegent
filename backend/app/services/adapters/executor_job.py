@@ -84,6 +84,88 @@ class JobService(BaseService[Kind, None, None]):
             subtasks=subtasks,
         )
 
+    async def cleanup_orphan_pods(
+        self,
+        db: AsyncSession,
+        *,
+        older_than_hours: int = 48,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Scan K8s for old pods with no DB subtask records and clean them up.
+
+        Complements cleanup_stale_executors which only handles pods that have
+        corresponding subtask rows. This method finds orphan pods — those that
+        exist in K8s but have no DB record at all.
+        """
+        result: Dict[str, Any] = {
+            "target": "orphan_pods",
+            "older_than_hours": older_than_hours,
+            "dry_run": dry_run,
+            "total_scanned": 0,
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+        old_task_id_strs = await executor_kinds_service.get_old_task_ids_async(
+            older_than_hours
+        )
+        result["total_scanned"] = len(old_task_id_strs)
+
+        if not old_task_id_strs:
+            logger.info("[executor_job] No old pods found for orphan cleanup")
+            return result
+
+        for task_id_str in old_task_id_strs:
+            try:
+                task_id = int(task_id_str)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "[executor_job] Invalid task_id from K8s label: %s", task_id_str
+                )
+                continue
+
+            subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
+            if subtasks:
+                result["skipped"].append(
+                    {"task_id": task_id, "reason": "has_subtask_records"}
+                )
+                continue
+
+            if dry_run:
+                result["skipped"].append({"task_id": task_id, "reason": "dry_run"})
+                continue
+
+            cleanup_result = await self._cleanup_orphan_pod(
+                task_id=task_id,
+                inactive_hours=older_than_hours,
+            )
+            if cleanup_result.get("deleted"):
+                result["deleted"].append(
+                    {
+                        "task_id": task_id,
+                        "deleted_pods": cleanup_result.get("deleted_pods", []),
+                    }
+                )
+            elif cleanup_result.get("reason") == "executor_not_found":
+                result["skipped"].append(
+                    {"task_id": task_id, "reason": "pod_already_gone"}
+                )
+            else:
+                result["failed"].append(
+                    {"task_id": task_id, "reason": cleanup_result.get("reason")}
+                )
+
+        logger.info(
+            "[executor_job] Orphan pod cleanup complete "
+            "scanned=%d deleted=%d skipped=%d failed=%d",
+            result["total_scanned"],
+            len(result["deleted"]),
+            len(result["skipped"]),
+            len(result["failed"]),
+        )
+        return result
+
     async def cleanup_stale_task_executors(
         self,
         db: AsyncSession,

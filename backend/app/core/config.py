@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     EXECUTOR_DELETE_BY_TASK_ID_URL: str = (
         "http://localhost:8001/executor-manager/executor/delete-by-task-id"
     )
+    EXECUTOR_OLD_TASK_IDS_URL: str = (
+        "http://localhost:8001/executor-manager/executor/old-task-ids"
+    )
     EXECUTOR_CANCEL_TASK_URL: str = (
         "http://localhost:8001/executor-manager/tasks/cancel"
     )
@@ -215,6 +218,8 @@ class Settings(BaseSettings):
     TASK_EXECUTOR_CLEANUP_LOOKBACK_SCAN_LIMIT: int = 500
     # Cleanup scanning interval seconds
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
+    ORPHAN_POD_CLEANUP_INTERVAL_SECONDS: int = 10800  # 3 hours
+    ORPHAN_POD_MIN_AGE_HOURS: int = 48
 
     # Workspace archive configuration
     WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500

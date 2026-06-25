@@ -149,3 +149,46 @@ async def test_delete_executor_by_task_id_unsupported_executor(mocker):
         )
 
     assert exc_info.value.status_code == 501
+
+
+class OldTaskIdsExecutor:
+    def get_old_task_ids(self, older_than_hours: int = 48):
+        return {"status": "success", "task_ids": ["100", "200", "300"]}
+
+
+class NoOldTaskIdsExecutor:
+    def delete_executor(self, executor_name, executor_namespace=None):
+        return {"status": "success"}
+
+
+@pytest.mark.asyncio
+async def test_get_old_task_ids_returns_task_ids(mocker):
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    mocker.patch.object(
+        routers.ExecutorDispatcher,
+        "get_executor",
+        return_value=OldTaskIdsExecutor(),
+    )
+
+    result = await routers.get_old_task_ids(
+        older_than_hours=48, http_request=http_request
+    )
+
+    assert result["status"] == "success"
+    assert result["task_ids"] == ["100", "200", "300"]
+
+
+@pytest.mark.asyncio
+async def test_get_old_task_ids_unsupported_executor_returns_empty(mocker):
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    mocker.patch.object(
+        routers.ExecutorDispatcher,
+        "get_executor",
+        return_value=NoOldTaskIdsExecutor(),
+    )
+
+    result = await routers.get_old_task_ids(
+        older_than_hours=48, http_request=http_request
+    )
+
+    assert result == {"status": "success", "task_ids": []}

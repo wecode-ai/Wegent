@@ -439,6 +439,37 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.get("/executor/old-task-ids")
+async def get_old_task_ids(
+    older_than_hours: int = 48,
+    http_request: Request = None,
+):
+    """List task IDs for executor pods older than the given age threshold.
+
+    Used by the backend orphan pod cleanup job to identify pods that have
+    no corresponding DB subtask records.
+    """
+    try:
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            "Received request to get old task IDs (older_than_hours=%d) from %s",
+            older_than_hours,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "get_old_task_ids"):
+            return {"status": "success", "task_ids": []}
+        result = executor.get_old_task_ids(older_than_hours)
+        return result
+    except Exception as e:
+        logger.error("Error getting old task IDs: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/executor/load")
 async def get_executor_load(http_request: Request):
     try:

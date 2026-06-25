@@ -111,6 +111,25 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
             )
 
+    async def get_old_task_ids_async(self, older_than_hours: int = 48) -> List[str]:
+        """Fetch task IDs for executor pods older than the given age threshold."""
+        try:
+            logger.info(
+                f"executor.get_old_task_ids async request "
+                f"url={settings.EXECUTOR_OLD_TASK_IDS_URL} "
+                f"older_than_hours={older_than_hours}"
+            )
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    settings.EXECUTOR_OLD_TASK_IDS_URL,
+                    params={"older_than_hours": older_than_hours},
+                )
+                response.raise_for_status()
+                return response.json().get("task_ids", [])
+        except httpx.HTTPError as e:
+            logger.warning("Failed to fetch old task IDs from executor_manager: %s", e)
+            return []
+
     async def delete_executor_by_task_id_async(self, task_id: int) -> Dict:
         """Delete executor pod(s) by task_id label for orphan pod cleanup.
 

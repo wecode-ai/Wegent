@@ -13,7 +13,8 @@ import json
 import os
 import threading
 import time
-from typing import Any, Dict, Optional, Union
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Union
 
 import requests
 from kubernetes import client, config
@@ -1232,6 +1233,79 @@ class K8sExecutor(Executor):
             }
         except Exception as e:
             logger.error(f"Error listing Kubernetes pods: {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
+
+    def get_old_task_ids(self, older_than_hours: int = 48) -> Dict[str, Any]:
+        """Get task IDs for executor pods older than the given age threshold.
+
+        Used for orphan pod cleanup — finds pods that may no longer have
+        corresponding DB subtask records.
+
+        Args:
+            older_than_hours: Minimum pod age in hours.
+
+        Returns:
+            Dict with status and task_ids list.
+        """
+        start_time = time.time()
+        try:
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                    "task_ids": [],
+                }
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+            label_selector = "aigc.weibo.com/executor=wegent"
+
+            response = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=label_selector,
+                _preload_content=False,
+            )
+            data = json.loads(response.data.decode("utf-8"))
+            items = data.get("items", [])
+
+            old_task_ids: List[str] = []
+            for pod in items:
+                metadata = pod.get("metadata", {})
+                labels = metadata.get("labels", {})
+                task_id = labels.get("aigc.weibo.com/executor-task-id")
+                if not task_id:
+                    continue
+                creation_ts = metadata.get("creationTimestamp")
+                if not creation_ts:
+                    continue
+                try:
+                    creation_time = datetime.fromisoformat(
+                        creation_ts.replace("Z", "+00:00")
+                    )
+                    if creation_time < cutoff:
+                        old_task_ids.append(task_id)
+                except (ValueError, TypeError):
+                    continue
+
+            elapsed = time.time() - start_time
+            logger.info(
+                "Found %d old task IDs (older_than=%dh) in namespace %s (took %.2fs)",
+                len(old_task_ids),
+                older_than_hours,
+                K8S_NAMESPACE,
+                elapsed,
+            )
+            return {"status": "success", "task_ids": old_task_ids}
+
+        except ApiException as e:
+            logger.error("Kubernetes API error listing old pods: %s", e)
+            return {
+                "status": "failed",
+                "error_msg": f"Kubernetes API error: {e}",
+                "task_ids": [],
+            }
+        except Exception as e:
+            logger.error("Error listing old Kubernetes pods: %s", e)
             return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
 
     def get_executor_count(
