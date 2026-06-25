@@ -1389,6 +1389,48 @@ class TestContextServiceFormatting:
         assert "has been truncated to" not in prefix
         assert "characters" not in prefix
 
+    def test_build_document_text_prefix_bounds_injected_text(self):
+        """Long extracted text is bounded inline; full text stays in the DB."""
+        from app.core.config import settings
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        long_text = "x" * (settings.ATTACHMENT_INJECT_MAX_CHARS + 50_000)
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="huge.txt",
+            status=ContextStatus.READY.value,
+            extracted_text=long_text,
+            text_length=len(long_text),
+            type_data={
+                "original_filename": "huge.txt",
+                "mime_type": "text/plain",
+                "file_size": len(long_text),
+                # Parse also truncated this file: the merged logic must still emit
+                # only the inline marker, not an additional prefix note.
+                "is_truncated": True,
+            },
+        )
+        context.id = 102
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        # Inline copy is bounded well below the stored text length.
+        assert len(prefix) < len(long_text)
+        assert "inline preview truncated" in prefix
+        # Mode-neutral marker: no chat_shell-only read_attachment mention.
+        assert "read_attachment" not in prefix
+        # Merged signal: the inline marker is the only notice — no separate
+        # "(parsing truncated ...)" prefix note is duplicated.
+        assert "parsing truncated this file" not in prefix
+
     def test_build_document_text_prefix_without_truncation_has_no_notice(self):
         """Non-truncated attachments get no partial-content notice."""
         from app.models.subtask_context import (

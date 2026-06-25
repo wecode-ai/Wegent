@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -41,6 +42,7 @@ from shared.utils.attachment_block import (
     build_sandbox_path,
     build_truncation_note,
     format_file_size,
+    truncate_for_injection,
 )
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
@@ -758,8 +760,20 @@ class ContextService:
             file_size=context.file_size or 0,
             sandbox_path=sandbox_path,
         )
-        note = build_truncation_note(context.is_truncated)
-        return f"{header}\n{note}{context.extracted_text}\n\n"
+        # Bound the inline copy: the injected text is only a preview (the full
+        # file stays reachable via the downloaded file / sandbox, or read_attachment
+        # in chat_shell), so cap it well below the stored length. This is the only
+        # length guard for modes without the chat_shell token preview (executor /
+        # device).
+        inject_text, inj_truncated = truncate_for_injection(
+            context.extracted_text, settings.ATTACHMENT_INJECT_MAX_CHARS
+        )
+        # Single partial-content signal: when the injection was capped, its inline
+        # marker already flags partiality and points to the file. Fall back to a
+        # prefix note only when parsing truncated the stored text but the inject
+        # cap did not re-truncate (rare; e.g. an unusually small cap).
+        note = build_truncation_note(context.is_truncated and not inj_truncated)
+        return f"{header}\n{note}{inject_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================
 

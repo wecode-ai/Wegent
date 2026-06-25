@@ -463,7 +463,13 @@ class Settings(BaseSettings):
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
+    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted (stored) text length
+    # Max chars of extracted text injected inline into the prompt. Far smaller
+    # than the stored length: the inline copy is only a preview — chat_shell can
+    # page the full text via read_attachment, and executor/device modes read the
+    # downloaded file directly. Keeps the prompt bounded for modes without the
+    # chat_shell token-level preview (executor/device, which have no L3 guard).
+    ATTACHMENT_INJECT_MAX_CHARS: int = 64000
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"

@@ -9,7 +9,33 @@ from shared.utils.attachment_block import (
     build_sandbox_path,
     build_truncation_note,
     format_file_size,
+    truncate_for_injection,
 )
+
+
+def test_truncate_for_injection_short_text_unchanged():
+    text, truncated = truncate_for_injection("short", 64000)
+    assert text == "short"
+    assert truncated is False
+
+
+def test_truncate_for_injection_bounds_long_text():
+    text = "a" * 10000 + "b" * 10000
+    out, truncated = truncate_for_injection(text, 5000)
+    assert truncated is True
+    assert len(out) <= 5000
+    # Contiguous head + tail with a single marker pointing to the file in the
+    # header. The marker is mode-neutral and must NOT mention read_attachment
+    # (a chat_shell-only tool).
+    assert out.startswith("a")
+    assert out.endswith("b")
+    assert "inline preview truncated" in out
+    assert "header above" in out
+    assert "read_attachment" not in out
+
+
+def test_truncate_for_injection_zero_limit_noop():
+    assert truncate_for_injection("anything", 0) == ("anything", False)
 
 
 def test_format_file_size_units():

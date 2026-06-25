@@ -72,6 +72,38 @@ def build_truncation_note(is_truncated: bool) -> str:
     return f"{ATTACHMENT_TRUNCATION_NOTE}\n" if is_truncated else ""
 
 
+# Marker inserted where the inline injected copy is truncated. Points to the
+# full file referenced in the header (valid for every mode: executor/device read
+# the downloaded file, chat_shell reads the sandbox file). It deliberately does
+# NOT mention read_attachment — that tool is chat_shell-only; chat_shell surfaces
+# it via the tool list and its own L3 hint, not via this shared marker.
+_INJECT_TRUNCATION_MARKER = (
+    "\n\n…[inline preview truncated; the full file is referenced in the "
+    "header above]…\n\n"
+)
+
+
+def truncate_for_injection(text: str, max_chars: int) -> tuple[str, bool]:
+    """Bound the inline attachment text to *max_chars* (contiguous head + tail).
+
+    The injected ``<attachment>`` copy is only a preview; the full text stays
+    reachable via read_attachment (chat_shell) or the downloaded file
+    (executor/device). Returns ``(text, truncated)``. When truncation happens a
+    coherent head and tail are kept with a single marker between them, and the
+    result length stays within *max_chars*.
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text, False
+    budget = max_chars - len(_INJECT_TRUNCATION_MARKER)
+    if budget <= 0:
+        # max_chars smaller than the marker itself: fall back to a hard head cut.
+        return text[:max_chars], True
+    head = int(budget * 0.6)
+    tail = budget - head
+    truncated = text[:head] + _INJECT_TRUNCATION_MARKER + (text[-tail:] if tail else "")
+    return truncated, True
+
+
 def build_attachment_header(
     *,
     attachment_id: int,
