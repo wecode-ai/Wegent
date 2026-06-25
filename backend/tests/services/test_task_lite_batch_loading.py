@@ -16,6 +16,7 @@ from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.schemas.task import TaskLite
 from app.services.adapters.task_kinds.helpers import (
+    _add_group_chat_info,
     _batch_query_teams,
     _get_team_display_name,
     _get_team_icon,
@@ -47,6 +48,7 @@ def _task_json(title: str) -> dict:
 def _build_task(task_id: int, title: str, project_id: int = 0) -> Mock:
     task = Mock(spec=TaskResource)
     task.id = task_id
+    task.is_group_chat = False
     task.project_id = project_id
     task.json = _task_json(title)
     now = datetime.now()
@@ -527,3 +529,33 @@ def test_batch_query_teams_requires_reporter_for_child_namespace_grants(test_db)
     )
 
     assert "restricted-parent-team:restricted-parent" not in teams
+
+
+@pytest.mark.unit
+def test_add_group_chat_info_uses_loaded_tasks_without_per_task_lookup():
+    db = Mock(spec=Session)
+    query = Mock()
+    query.filter.return_value = query
+    query.group_by.return_value = query
+    query.all.return_value = [(2, 1)]
+    db.query.return_value = query
+
+    normal_task = _build_task(1, "Normal")
+    member_task = _build_task(2, "Member")
+    column_task = _build_task(3, "Column")
+    column_task.is_group_chat = True
+    json_task = _build_task(4, "JSON")
+    json_task.json["spec"]["is_group_chat"] = True
+    tasks = [normal_task, member_task, column_task, json_task]
+    result = {str(task.id): {} for task in tasks}
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.task_stores.task_access_store.is_group_chat",
+        side_effect=AssertionError("per-task lookup should not run"),
+    ):
+        _add_group_chat_info(db, tasks, result)
+
+    assert result["1"]["is_group_chat"] is False
+    assert result["2"]["is_group_chat"] is True
+    assert result["3"]["is_group_chat"] is True
+    assert result["4"]["is_group_chat"] is True
