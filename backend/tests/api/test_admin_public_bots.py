@@ -157,7 +157,7 @@ def test_public_bot_default_kb_rejects_personal_knowledge_base(test_db):
         )
 
     assert exc_info.value.status_code == 400
-    assert "Public bots can only bind organization knowledge bases" in str(
+    assert "Public resources can only bind organization knowledge bases" in str(
         exc_info.value.detail
     )
 

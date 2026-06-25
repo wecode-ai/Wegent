@@ -630,9 +630,15 @@ class TestKBPriorityLogic:
             _prepare_kb_tools_from_contexts,
         )
 
-        with patch(
-            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
-        ) as mock_get_bound:
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+            ) as mock_get_bound,
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], None),
+            ),
+        ):
             mock_get_bound.return_value = []  # No task-level KBs
 
             kb_result = _prepare_kb_tools_from_contexts(
@@ -653,6 +659,36 @@ class TestKBPriorityLogic:
             assert kb_result.is_user_selected_kb is False
             assert kb_result.document_ids == []
             assert kb_result.kb_tool_access_mode == "full"
+
+    def test_default_kb_resolution_failure_is_observable(self, mock_db):
+        """Unexpected default KB resolver failures should not be silent."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], "default_knowledge_base_load_failed"),
+            ),
+        ):
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
+
+        assert kb_result.extra_tools == []
+        assert "default knowledge bases could not be loaded" in (
+            kb_result.enhanced_system_prompt
+        )
 
 
 @pytest.mark.unit

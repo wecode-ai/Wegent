@@ -23,7 +23,9 @@ from app.schemas.admin import (
 )
 from app.schemas.kind import Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
-from app.services.knowledge.namespace_utils import is_organization_namespace
+from app.services.public_resource_validation import (
+    validate_public_default_knowledge_base_refs as _validate_public_default_knowledge_base_refs,
+)
 from app.services.public_resource_validation import (
     validate_public_ghost_default_knowledge_bases,
 )
@@ -163,41 +165,6 @@ def _validate_bot_resource_references(
                 )
 
     return (True, None)
-
-
-def _validate_public_default_knowledge_base_refs(
-    db: Session, refs: Optional[list[dict]]
-) -> None:
-    """Ensure public bots only bind organization knowledge bases."""
-    if not refs:
-        return
-
-    invalid_names: list[str] = []
-    for ref in refs:
-        kb_id = ref.get("id") if isinstance(ref, dict) else None
-        kb_name = ref.get("name") if isinstance(ref, dict) else str(ref)
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-            if kb_id
-            else None
-        )
-        if not kb or not is_organization_namespace(db, kb.namespace):
-            invalid_names.append(kb_name or str(kb_id))
-
-    if invalid_names:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Public bots can only bind organization knowledge bases: "
-                + ", ".join(invalid_names)
-            ),
-        )
 
 
 def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:

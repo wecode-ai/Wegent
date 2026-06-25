@@ -71,6 +71,15 @@ The user explicitly selected these table(s) - prioritize table operations over a
 </table_context>
 """
 
+DEFAULT_KB_LOAD_FAILURE_PROMPT = """
+
+<knowledge_base_status>
+The task's default knowledge bases could not be loaded for this turn. Continue with
+any explicitly selected knowledge bases, and mention the default knowledge base
+loading failure if the answer depends on task default knowledge.
+</knowledge_base_status>
+"""
+
 
 def build_table_prompt(table_contexts: List[dict]) -> str:
     """
@@ -1279,6 +1288,8 @@ def _prepare_kb_tools_from_contexts(
 
     knowledge_base_scopes: List[KnowledgeBaseScope] = []
     default_knowledge_base_ids: List[int] = []
+    default_kb_load_error: Optional[str] = None
+    default_kb_status_prompt = ""
 
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
@@ -1304,7 +1315,9 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids = []
 
     if task_id:
-        default_scopes = _get_task_default_knowledge_base_scopes(db, task_id, user_id)
+        default_scopes, default_kb_load_error = _get_task_default_knowledge_base_scopes(
+            db, task_id, user_id
+        )
         if default_scopes:
             requested_knowledge_base_ids = set(knowledge_base_ids)
             default_knowledge_base_ids = _get_effective_default_knowledge_base_ids(
@@ -1322,6 +1335,10 @@ def _prepare_kb_tools_from_contexts(
                 len(default_scopes),
                 task_id,
             )
+
+    if default_kb_load_error:
+        default_kb_status_prompt = DEFAULT_KB_LOAD_FAILURE_PROMPT
+        enhanced_system_prompt = f"{enhanced_system_prompt}{default_kb_status_prompt}"
 
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
     # Normalize to int, skip invalid values, and deduplicate while preserving order.
@@ -1436,7 +1453,9 @@ def _prepare_kb_tools_from_contexts(
                 "(KB inherited from task)"
             )
 
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+    enhanced_system_prompt = (
+        f"{base_system_prompt}{kb_instruction}{default_kb_status_prompt}"
+    )
 
     return KnowledgeBaseToolsResult(
         extra_tools=extra_tools,
@@ -1611,22 +1630,27 @@ def _get_task_default_knowledge_base_scopes(
     db: Session,
     task_id: int,
     user_id: int,
-) -> List[KnowledgeBaseScope]:
+) -> Tuple[List[KnowledgeBaseScope], Optional[str]]:
     """Resolve runtime default knowledge base scopes for a task."""
     from app.services.chat.task_default_knowledge_bases import (
         get_task_default_knowledge_base_scopes,
     )
 
     try:
-        return get_task_default_knowledge_base_scopes(db, task_id, user_id)
+        return get_task_default_knowledge_base_scopes(db, task_id, user_id), None
     except Exception as exc:
-        logger.warning(
-            "Failed to get runtime default KB scopes for task %s: %s",
-            task_id,
-            exc,
-            exc_info=True,
+        logger.exception(
+            "runtime_default_kb_scope_resolution_failed",
+            extra={
+                "task_id": task_id,
+                "user_id": user_id,
+                "error_type": type(exc).__name__,
+            },
         )
-        return []
+        return (
+            [],
+            "default_knowledge_base_load_failed",
+        )
 
 
 def _build_kb_meta_prompt(
