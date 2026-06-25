@@ -60,24 +60,30 @@ _HEADER_PATH = re.compile(r"File Path[^:]*: ([^\]]+)")
 def _full_content_hint(header: str, attachment_id: str) -> str:
     """Type-aware pointer to the full content when a segment is truncated.
 
-    Text files: the complete original is readable in the sandbox (beyond the
-    preview, and beyond read_attachment's parse cap). Binary docs (pdf/office/
-    xmind/...): the sandbox file is not text, so the parsed text is fetched via
-    read_attachment. The text/binary split uses the shared MIME classification
-    so it stays consistent with the backend parser as file types are added.
+    Both branches point at the full content without locking the model into a
+    single action. Text files: the original sits in the sandbox and can be read
+    or grep/searched with file tools. Binary docs (pdf/office/xmind/...): the
+    bytes aren't plain text, so the model can page the parsed text via
+    read_attachment OR open the sandbox file with a suitable tool. The
+    text/binary split uses the shared MIME classification so it stays consistent
+    with the backend parser as file types are added.
     """
     type_match = _HEADER_TYPE.search(header)
     mime = type_match.group(1).strip().lower() if type_match else ""
     if is_text_readable_mime(mime):
         path_match = _HEADER_PATH.search(header)
         if path_match:
+            # Encourage targeted access (grep/search), not just reading the whole
+            # file — the full text may be large, and it's a normal sandbox file.
             return (
-                f"\n[Preview truncated. Full file readable in sandbox: "
-                f"{path_match.group(1).strip()}]"
+                f"\n[Preview truncated. Full file in the sandbox at "
+                f"{path_match.group(1).strip()} — read or grep/search it with "
+                f"your file tools to get the rest.]"
             )
     return (
-        f"\n[Preview truncated. Use read_attachment(attachment_id={attachment_id}) "
-        f"to read the full extracted text (parsed from the binary).]"
+        f"\n[Preview truncated. Get the rest via "
+        f"read_attachment(attachment_id={attachment_id}) for the parsed text, or "
+        f"open the sandbox file (path in the header above) with a suitable tool.]"
     )
 
 

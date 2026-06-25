@@ -191,9 +191,9 @@ def test_truncated_binary_attachment_hints_read_attachment():
     out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
     new = out[0]["content"]
     assert "read_attachment(attachment_id=9)" in new
-    assert "Full file readable in sandbox" not in new
-    # Binary hint makes clear this is parsed/extracted text, not the raw file.
-    assert "extracted text (parsed from the binary)" in new
+    assert "parsed text" in new
+    # Not locked to read_attachment: also offers the sandbox file as an option.
+    assert "sandbox file" in new
 
 
 def test_truncated_xmind_attachment_hints_read_attachment():
@@ -209,7 +209,7 @@ def test_truncated_xmind_attachment_hints_read_attachment():
     out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
     new = out[0]["content"]
     assert "read_attachment(attachment_id=4)" in new
-    assert "Full file readable in sandbox" not in new
+    assert "parsed text" in new
 
 
 def test_truncated_text_attachment_hints_sandbox_path():
@@ -222,7 +222,9 @@ def test_truncated_text_attachment_hints_sandbox_path():
     messages = [{"role": "user", "content": text}]
     out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
     new = out[0]["content"]
-    assert f"Full file readable in sandbox: {path}" in new
+    assert f"Full file in the sandbox at {path}" in new
+    # Encourages targeted access (grep/search), not just reading the whole file.
+    assert "grep/search" in new
     assert "read_attachment" not in new
 
 
