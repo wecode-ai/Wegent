@@ -105,5 +105,6 @@ coverage/
 *.spec
 executor/build/
 executor/dist/
+wework/src-tauri/binaries/
 docs/superpowers/
 .worktrees/

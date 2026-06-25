@@ -42,6 +42,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/wegent-executor"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -1,3 +1,4 @@
+mod local_executor;
 mod local_terminal;
 
 fn normalized_non_empty(value: String) -> Option<String> {
@@ -259,6 +260,8 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .setup(|app| {
             #[cfg(desktop)]
@@ -285,6 +288,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
+            local_executor::local_executor_ensure_started,
+            local_executor::local_executor_request,
+            local_executor::local_executor_restart,
+            local_executor::local_executor_status,
             local_path_exists,
             read_dropped_files,
             local_terminal::resize_local_terminal,
