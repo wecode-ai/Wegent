@@ -1496,6 +1496,68 @@ class TestContextServiceOverwrite:
         assert saved_data == new_binary_data
         assert saved_metadata["file_size"] == len(new_binary_data)
 
+    def test_overwrite_clears_stale_is_truncated_flag(self):
+        """Overwriting a truncated attachment with a non-truncated file clears
+        the persisted is_truncated flag (so prefixes/readback stop warning)."""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import ParseResult
+        from app.services.context.context_service import context_service as cs_instance
+
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        mock_db = Mock()
+        storage_key = "attachments/test_trunc"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="big.txt",
+            status=ContextStatus.READY.value,
+            binary_data=b"old big data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "original_filename": "big.txt",
+                "file_extension": ".txt",
+                "file_size": 12,
+                "mime_type": "text/plain",
+                "is_encrypted": False,
+                "is_truncated": True,  # previously truncated
+            },
+        )
+        context.id = 101
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        # New parse does NOT truncate (no truncation_info).
+        parse_result = ParseResult(text="small", text_length=5)
+
+        with patch.object(cs_module, "_should_encrypt", return_value=False):
+            with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+                mock_get_backend.return_value = Mock()
+                with patch.object(
+                    cs_instance.parser, "parse", return_value=parse_result
+                ):
+                    updated_context, truncation_info = cs_instance.overwrite_attachment(
+                        db=mock_db,
+                        context_id=context.id,
+                        user_id=context.user_id,
+                        filename="small.txt",
+                        binary_data=b"small",
+                    )
+
+        assert truncation_info is None
+        assert updated_context.is_truncated is False
+
 
 class TestContextServiceCreateKnowledgeBaseContextWithResult:
     """Test create_knowledge_base_context_with_result functionality."""

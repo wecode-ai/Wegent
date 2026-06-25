@@ -167,7 +167,7 @@ def _preview_attachment_body(
     before_tokens = 0
     after_tokens = 0
     for (header, seg_body), alloc, attachment_id, orig_tokens in zip(
-        headers_and_bodies, allocations, ids, body_sizes
+        headers_and_bodies, allocations, ids, body_sizes, strict=True
     ):
         if not seg_body:
             rebuilt.append(header)  # image header etc. — no body to bound

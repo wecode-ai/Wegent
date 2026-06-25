@@ -7,7 +7,10 @@ import json
 import pytest
 
 from chat_shell.compression.token_counter import TokenCounter
-from chat_shell.history.attachment_text import AttachmentNotAvailable
+from chat_shell.history.attachment_text import (
+    AttachmentNotAvailable,
+    fetch_attachment_text,
+)
 from chat_shell.tools.builtin import ReadAttachmentTool
 from chat_shell.tools.builtin.read_attachment import _CHARS_PER_TOKEN
 
@@ -143,6 +146,16 @@ async def test_not_available_returns_error(monkeypatch):
     tool = _make_tool(monkeypatch, exc=AttachmentNotAvailable("nope"))
     result = json.loads(await tool._arun(attachment_id=5))
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_invalid_pagination():
+    # Validation happens before HTTP/package branching, matching the endpoint
+    # contract in both modes.
+    with pytest.raises(AttachmentNotAvailable):
+        await fetch_attachment_text(task_id=1, attachment_id=1, offset=-1, limit=10)
+    with pytest.raises(AttachmentNotAvailable):
+        await fetch_attachment_text(task_id=1, attachment_id=1, offset=0, limit=0)
 
 
 @pytest.mark.asyncio

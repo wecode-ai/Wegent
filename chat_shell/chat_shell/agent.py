@@ -434,15 +434,24 @@ class ChatAgent:
         from chat_shell.core.config import settings
         from chat_shell.messages.attachment_preview import apply_attachment_preview
 
+        # Fall back to the AgentConfig's model_config (the canonical CRD source)
+        # so the CRD-provided context_window is honored even if the explicit
+        # model_config arg is omitted.
+        effective_model_config = model_config or (
+            config.model_config if config else None
+        )
+        effective_model_id = model_id or (
+            effective_model_config.get("model_id", "") if effective_model_config else ""
+        )
         context_window = get_model_context_config(
-            model_id or "", model_config=model_config
+            effective_model_id, model_config=effective_model_config
         ).context_window
         preview_limit = min(
             context_window // 2, settings.ATTACHMENT_PREVIEW_TOKEN_LIMIT
         )
         messages = apply_attachment_preview(
             messages,
-            token_counter=TokenCounter(model_name=model_id),
+            token_counter=TokenCounter(model_name=effective_model_id),
             limit=preview_limit,
         )
 

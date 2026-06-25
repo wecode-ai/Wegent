@@ -981,9 +981,9 @@ async def get_attachment_text(
     is_in_task = context.subtask_id in task_subtask_ids
     is_unlinked_same_user = context.subtask_id == 0 and context.user_id == task.user_id
     if not (is_in_task or is_unlinked_same_user):
-        raise HTTPException(
-            status_code=403, detail="Attachment does not belong to this conversation"
-        )
+        # Return 404 (not 403) so callers cannot distinguish "exists but
+        # forbidden" from "missing" and probe valid ids across conversations.
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
     full_text = context.extracted_text or ""
     total_chars = len(full_text)

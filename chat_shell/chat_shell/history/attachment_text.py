@@ -35,6 +35,10 @@ async def fetch_attachment_text(
     limit: int,
 ) -> dict[str, Any]:
     """Return a character slice of *attachment_id*'s extracted text."""
+    # Match the endpoint contract in both modes (HTTP validates via Query; this
+    # guards package mode, where raw slicing would otherwise accept bad values).
+    if offset < 0 or limit <= 0:
+        raise AttachmentNotAvailable("Invalid attachment text pagination")
     session_id = f"task-{task_id}"
     if _is_http_mode():
         store = _get_remote_history_store()

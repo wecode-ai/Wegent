@@ -90,8 +90,11 @@ def build_attachment_header(
     label = "Image Attachment" if is_image else "Attachment"
     formatted_size = format_file_size(file_size or 0)
     url = build_attachment_download_url(attachment_id)
+    # Strip control chars so a crafted filename can't break the single-line
+    # header or inject extra prompt content (mirrors build_sandbox_path).
+    safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
     parts = [
-        f"[{label}: {filename} | ID: {attachment_id} | "
+        f"[{label}: {safe_filename} | ID: {attachment_id} | "
         f"Type: {mime_type or 'unknown'} | Size: {formatted_size} | URL: {url}"
     ]
     if sandbox_path:

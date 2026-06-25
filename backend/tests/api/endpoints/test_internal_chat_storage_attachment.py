@@ -130,7 +130,8 @@ def test_cross_task_attachment_is_denied(
         f"/api/internal/chat/attachments/{ctx.id}/text",
         params={"session_id": f"task-{task_a}", "offset": 0, "limit": 10},
     )
-    assert resp.status_code == 403
+    # 404 (not 403): don't leak existence of attachments in other conversations.
+    assert resp.status_code == 404
 
 
 def test_unlinked_attachment_same_user_allowed(
@@ -164,7 +165,8 @@ def test_unlinked_attachment_other_user_denied(
         f"/api/internal/chat/attachments/{ctx.id}/text",
         params={"session_id": f"task-{task_id}", "offset": 0, "limit": 10},
     )
-    assert resp.status_code == 403
+    # 404 (not 403): don't leak existence across users.
+    assert resp.status_code == 404
 
 
 def test_source_truncated_flag_propagates(

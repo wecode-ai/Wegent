@@ -276,19 +276,24 @@ class ContextService:
                 }
             context.status = ContextStatus.READY.value
 
+            # Persist the parse-time truncation flag so the injected attachment
+            # block can render a partial-content notice for modes without the
+            # chat_shell preview (executor / device). Always write it (even when
+            # False) so overwriting a previously-truncated attachment with a
+            # smaller, non-truncated file clears the stale True.
+            context.type_data = {
+                **context.type_data,
+                "is_truncated": bool(
+                    parse_result.truncation_info
+                    and parse_result.truncation_info.is_truncated
+                ),
+            }
             if parse_result.truncation_info:
                 truncation_info = TruncationInfo(
                     is_truncated=parse_result.truncation_info.is_truncated,
                     original_length=parse_result.truncation_info.original_length,
                     truncated_length=parse_result.truncation_info.truncated_length,
                 )
-                # Persist the parse-time truncation flag so the injected
-                # attachment block can render a partial-content notice for modes
-                # without the chat_shell preview (executor / device).
-                context.type_data = {
-                    **context.type_data,
-                    "is_truncated": parse_result.truncation_info.is_truncated,
-                }
         except DocumentParseError as e:
             logger.exception(f"Document parsing failed for context {context.id}: {e}")
             context.status = ContextStatus.FAILED.value
