@@ -68,6 +68,10 @@ DEFERRED_INTERACTIVE_FORM_STOP_REASONS = {
 API_ERROR_PATTERNS = [
     "API Error: Cannot read properties of undefined",
     "API Error: undefined is not an object",
+    "API Error: 502",
+    "API Error: 503",
+    "API Error: 504",
+    "API Error: 529",
 ]
 
 

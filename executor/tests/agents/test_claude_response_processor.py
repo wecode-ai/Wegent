@@ -595,3 +595,36 @@ async def test_claude_failure_does_not_finalize_turn_file_changes():
 
     assert result == TaskStatus.FAILED
     completion_fields.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_claude_transient_gateway_error_retries_session():
+    client = MagicMock()
+    client.query = AsyncMock()
+    state_manager = DummyStateManager()
+    message = ResultMessage(
+        subtype="error_during_execution",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=True,
+        num_turns=1,
+        session_id="session-1",
+        result=(
+            "API Error: 502 Bad Gateway. This is a server-side issue, "
+            "usually temporary — try again in a moment."
+        ),
+    )
+
+    result = await _process_result_message(
+        msg=message,
+        emitter=MagicMock(),
+        state_manager=state_manager,
+        client=client,
+        session_id="session-1",
+        api_error_retry_count=0,
+        max_retries=3,
+    )
+
+    assert result == "RETRY"
+    client.query.assert_awaited_once_with("Retry to proceed", session_id="session-1")
+    assert state_manager.statuses == []

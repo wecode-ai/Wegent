@@ -478,7 +478,9 @@ class ProgressStateManager:
             try:
                 repo = Repo(repo_path)
             except InvalidGitRepositoryError:
-                logger.warning(f"Not a valid git repository: {repo_path}")
+                logger.debug(
+                    "Skipping git file changes for non-git path: %s", repo_path
+                )
                 return file_changes
 
             # Get current branch name (for logging)
@@ -577,7 +579,7 @@ class ProgressStateManager:
                 file_changes.append(file_change)
 
         except GitCommandError as e:
-            logger.warning(f"Git command failed: {str(e)}")
+            logger.debug("Skipping git file changes after git command failure: %s", e)
         except Exception as e:
             logger.warning(f"Failed to get git file changes: {str(e)}", exc_info=True)
 
