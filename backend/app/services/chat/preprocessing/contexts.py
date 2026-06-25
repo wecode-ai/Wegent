@@ -1309,9 +1309,13 @@ def _prepare_kb_tools_from_contexts(
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
         knowledge_base_scopes = _get_bound_knowledge_base_scopes(db, task_id, user_id)
-        knowledge_base_ids = [
+        scoped_knowledge_base_ids = [
             scope.knowledge_base_id for scope in knowledge_base_scopes
-        ] or _get_bound_knowledge_base_ids(db, task_id)
+        ]
+        legacy_knowledge_base_ids = _get_bound_knowledge_base_ids(db, task_id)
+        knowledge_base_ids = list(
+            dict.fromkeys(scoped_knowledge_base_ids + legacy_knowledge_base_ids)
+        )
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
@@ -1340,9 +1344,12 @@ def _prepare_kb_tools_from_contexts(
             knowledge_base_scopes = _merge_knowledge_base_scopes(
                 default_scopes, knowledge_base_scopes
             )
-            knowledge_base_ids = [
+            scoped_knowledge_base_ids = [
                 scope.knowledge_base_id for scope in knowledge_base_scopes
             ]
+            knowledge_base_ids = list(
+                dict.fromkeys(scoped_knowledge_base_ids + knowledge_base_ids)
+            )
             logger.info(
                 "[_prepare_kb_tools_from_contexts] Added %d runtime default KB scopes for task_id=%d",
                 len(default_scopes),

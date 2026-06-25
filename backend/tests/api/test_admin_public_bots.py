@@ -9,6 +9,7 @@ from app.api.endpoints.admin.public_bots import (
     _bot_to_response,
     _validate_bot_resource_references,
     _validate_public_default_knowledge_base_refs,
+    update_public_bot,
 )
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -224,6 +225,67 @@ def test_public_bot_raw_json_rejects_existing_ghost_with_personal_default_kb(tes
         _validate_bot_resource_references(
             test_db,
             {"spec": {"ghostRef": {"name": "public-ghost", "namespace": "default"}}},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Public resources can only bind organization knowledge bases" in str(
+        exc_info.value.detail
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_bot_update_raw_json_rejects_embedded_personal_default_kb(
+    test_db,
+):
+    bot = Kind(
+        user_id=0,
+        kind="Bot",
+        name="public-bot",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "public-bot", "namespace": "default"},
+            "spec": {},
+        },
+        is_active=True,
+    )
+    kb = Kind(
+        user_id=7,
+        kind="KnowledgeBase",
+        name="private-kb",
+        namespace="default",
+        json={"spec": {"name": "Private Docs"}},
+        is_active=True,
+    )
+    test_db.add_all([bot, kb])
+    test_db.commit()
+    test_db.refresh(bot)
+    test_db.refresh(kb)
+
+    payload = PublicBotUpdate.model_validate(
+        {
+            "bot_json": {
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Bot",
+                "metadata": {"name": "public-bot", "namespace": "default"},
+                "spec": {
+                    "ghost": {
+                        "defaultKnowledgeBaseRefs": [
+                            {"id": kb.id, "name": "Private Docs"}
+                        ]
+                    }
+                },
+            }
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await update_public_bot(
+            bot_data=payload,
+            bot_id=bot.id,
+            db=test_db,
+            current_user=object(),
         )
 
     assert exc_info.value.status_code == 400

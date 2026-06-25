@@ -722,6 +722,11 @@ async def update_public_bot(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_message,
             )
+        ghost_spec = (bot_data.bot_json.get("spec", {}) or {}).get("ghost", {})
+        if isinstance(ghost_spec, dict):
+            _validate_public_default_knowledge_base_refs(
+                db, ghost_spec.get("defaultKnowledgeBaseRefs")
+            )
         bot.json = bot_data.bot_json
     elif (
         bot_data.shell_name is not None

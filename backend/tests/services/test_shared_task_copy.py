@@ -27,7 +27,7 @@ def _task_json() -> dict:
     }
 
 
-def test_copy_shared_task_keeps_original_team_ref_and_subtask_team_id():
+def test_copy_shared_task_keeps_original_team_ref_and_subtask_team_id() -> None:
     service = SharedTaskService()
     db = Mock()
     query = Mock()

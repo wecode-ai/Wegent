@@ -104,7 +104,7 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
         patch(
             "app.services.task_team_resolver.can_user_use_team",
             return_value=True,
-        ),
+        ) as can_user_use_team,
         patch(
             "app.services.execution.dispatcher.execution_dispatcher.dispatch",
             AsyncMock(),
@@ -117,5 +117,74 @@ async def test_dispatch_uses_team_ref_owner_when_same_name_team_exists() -> None
     assert resolve_task_team_ref.call_args.kwargs["fallback_user_id"] == 10
     resolved_team_ref = resolve_task_team_ref.call_args.kwargs["team_ref"]
     assert resolved_team_ref.user_id == 20
+    can_user_use_team.assert_called_once_with(db, 10, owner_b_team)
     assert builder.build.call_args.kwargs["team"] is owner_b_team
     dispatch.assert_awaited_once_with(built_request, device_id=None)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_marks_pending_subtask_failed_when_team_is_unauthorized() -> (
+    None
+):
+    db = MagicMock()
+    task = SimpleNamespace(
+        id=100,
+        user_id=10,
+        kind="Task",
+        json={
+            "kind": "Task",
+            "apiVersion": "agent.wecode.io/v1",
+            "metadata": {"name": "task", "namespace": "default"},
+            "spec": {
+                "title": "Task",
+                "prompt": "hello",
+                "teamRef": {
+                    "name": "team",
+                    "namespace": "default",
+                    "user_id": 20,
+                },
+                "workspaceRef": {"name": "workspace", "namespace": "default"},
+            },
+            "status": {"phase": "pending"},
+        },
+    )
+    subtask = SimpleNamespace(id=200, task_id=100)
+    team = Kind(
+        id=2,
+        user_id=20,
+        kind="Team",
+        name="team",
+        namespace="default",
+        json={"kind": "Team", "metadata": {"name": "team"}},
+        is_active=True,
+    )
+
+    with (
+        patch("app.api.dependencies.get_db", return_value=iter([db])),
+        patch("app.stores.tasks.task_store.get_by_id", return_value=task),
+        patch(
+            "app.stores.tasks.subtask_store.list_by_task_status",
+            return_value=[subtask],
+        ),
+        patch(
+            "app.services.task_team_resolver.resolve_task_team_ref",
+            return_value=team,
+        ),
+        patch(
+            "app.services.task_team_resolver.can_user_use_team",
+            return_value=False,
+        ),
+        patch("app.stores.tasks.subtask_store.update_fields") as update_fields,
+        patch(
+            "app.services.execution.dispatcher.execution_dispatcher.dispatch",
+            AsyncMock(),
+        ) as dispatch,
+    ):
+        await _dispatch_task_async(100)
+
+    update_fields.assert_called_once()
+    assert update_fields.call_args.kwargs["subtask"] is subtask
+    assert update_fields.call_args.kwargs["status"] == SubtaskStatus.FAILED
+    assert "cannot use Team" in update_fields.call_args.kwargs["error_message"]
+    db.commit.assert_called_once()
+    dispatch.assert_not_awaited()

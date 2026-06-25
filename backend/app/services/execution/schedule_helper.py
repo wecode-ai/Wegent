@@ -117,6 +117,25 @@ def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
     return extract_display_prompt(user_subtask.prompt) or ""
 
 
+def _fail_pending_subtasks(
+    db: Session,
+    subtasks: list["Subtask"],
+    error_message: str,
+) -> None:
+    """Mark pending subtasks as failed when dispatch cannot start."""
+    from app.models.subtask import SubtaskStatus
+    from app.stores.tasks import subtask_store
+
+    for subtask in subtasks:
+        subtask_store.update_fields(
+            db,
+            subtask=subtask,
+            status=SubtaskStatus.FAILED,
+            error_message=error_message,
+        )
+    db.commit()
+
+
 def _get_thread_pool() -> ThreadPoolExecutor:
     """Get or create the shared thread pool."""
     global _thread_pool
@@ -172,7 +191,9 @@ async def _dispatch_task_async(task_id: int) -> None:
         team_ref = task_crd.spec.teamRef
 
         if not team_ref:
-            logger.error(f"[schedule_dispatch] Task {task_id} has no teamRef")
+            error_message = f"Task {task_id} has no teamRef"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
         team = resolve_task_team_ref(
@@ -182,18 +203,17 @@ async def _dispatch_task_async(task_id: int) -> None:
         )
 
         if not team:
-            logger.error(
-                f"[schedule_dispatch] Team not found: {team_ref.namespace}/{team_ref.name}"
-            )
+            error_message = f"Team not found: {team_ref.namespace}/{team_ref.name}"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
         if not can_user_use_team(db, task.user_id, team):
-            logger.error(
-                "[schedule_dispatch] User %s cannot use Team %s/%s owned by %s",
-                task.user_id,
-                team_ref.namespace,
-                team_ref.name,
-                team.user_id,
+            error_message = (
+                f"User {task.user_id} cannot use Team "
+                f"{team_ref.namespace}/{team_ref.name} owned by {team.user_id}"
             )
+            logger.error("[schedule_dispatch] %s", error_message)
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
         # Query user

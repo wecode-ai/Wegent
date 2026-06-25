@@ -68,7 +68,7 @@ def _get_default_knowledge_base(db: Session, knowledge_base_id: int) -> Kind | N
         .filter(
             Kind.id == knowledge_base_id,
             Kind.kind == "KnowledgeBase",
-            Kind.is_active == True,
+            Kind.is_active.is_(True),
         )
         .first()
     )

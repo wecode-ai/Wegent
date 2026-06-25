@@ -40,7 +40,7 @@ def resolve_task_team_ref(
             Kind.name == team_ref.name,
             Kind.namespace == (team_ref.namespace or "default"),
             Kind.user_id == team_owner_id,
-            Kind.is_active == True,
+            Kind.is_active.is_(True),
         )
         .first()
     )

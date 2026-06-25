@@ -29,7 +29,7 @@ def validate_public_default_knowledge_base_refs(
             .filter(
                 Kind.id == kb_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
             if kb_id

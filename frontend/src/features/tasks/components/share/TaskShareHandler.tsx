@@ -46,6 +46,11 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   const isCodeTask = shareInfo?.task_type === 'code'
   const isRepoSelectionRequired = isCodeTask && (!selectedRepo || !selectedBranch)
 
+  const handleRepoChange = React.useCallback((repo: GitRepoInfo | null) => {
+    setSelectedRepo(repo)
+    setSelectedBranch(null)
+  }, [])
+
   const cleanupUrlParams = React.useCallback(() => {
     const url = new URL(window.location.href)
     url.searchParams.delete('taskShare')
@@ -304,7 +309,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     </label>
                     <RepositorySelector
                       selectedRepo={selectedRepo}
-                      handleRepoChange={setSelectedRepo}
+                      handleRepoChange={handleRepoChange}
                       disabled={isCopying}
                       selectedTaskDetail={null}
                     />
@@ -341,6 +346,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           onClick={handleCloseModal}
           variant="outline"
           size="sm"
+          data-testid="shared-task-cancel-button"
           style={{ flex: 1 }}
           disabled={isCopying}
         >
@@ -350,6 +356,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           onClick={handleConfirmCopy}
           variant="default"
           size="sm"
+          data-testid="shared-task-confirm-copy-button"
           disabled={!!isSelfShare || isCopying || isRepoSelectionRequired}
           style={{ flex: 1 }}
         >

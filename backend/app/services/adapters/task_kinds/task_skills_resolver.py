@@ -68,7 +68,7 @@ def _batch_load_kinds_by_refs(
                     Kind.kind == kind_type.value,
                     Kind.namespace == "default",
                     Kind.name.in_(default_names),
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .all()
             )
@@ -87,7 +87,7 @@ def _batch_load_kinds_by_refs(
                     Kind.kind == kind_type.value,
                     Kind.namespace == "default",
                     Kind.name.in_(missing_names),
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .all()
             )
@@ -105,7 +105,7 @@ def _batch_load_kinds_by_refs(
                 Kind.kind == kind_type.value,
                 Kind.namespace.in_(group_namespaces),
                 Kind.name.in_(group_names),
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .all()
         )
@@ -144,7 +144,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
             Kind.kind == KindType.TEAM.value,
             Kind.namespace == team_namespace,
             Kind.name == team_name,
-            Kind.is_active == True,
+            Kind.is_active.is_(True),
         )
         .first()
     )
@@ -455,7 +455,7 @@ def _get_subscription_skill_refs_for_task(db: Session, *, task_id: int) -> List[
         .filter(
             Kind.id == execution.subscription_id,
             Kind.kind == "Subscription",
-            Kind.is_active == True,  # noqa: E712
+            Kind.is_active.is_(True),
         )
         .first()
     )

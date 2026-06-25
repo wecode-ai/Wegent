@@ -202,10 +202,7 @@ class KnowledgeBaseTool(BaseTool):
             self._get_effective_input_budget() - self._get_used_context_tokens(),
         )
 
-    def _is_restricted_search_only(
-        self,
-        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
-    ) -> bool:
+    def _is_restricted_search_only(self) -> bool:
         """Whether the tool should expose only redacted search results."""
         return (
             self.tool_access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
@@ -217,10 +214,7 @@ class KnowledgeBaseTool(BaseTool):
             return f"Source {source_index}"
         return source_title
 
-    def _build_mediation_context(
-        self,
-        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
-    ) -> Optional[Dict[str, Any]]:
+    def _build_mediation_context(self) -> Optional[Dict[str, Any]]:
         """Build the model identity sent to Backend restricted mediation."""
         if not self.current_model_name:
             return None
@@ -1059,7 +1053,7 @@ class KnowledgeBaseTool(BaseTool):
                     reserved_output_tokens=self._get_reserved_output_tokens(),
                     context_buffer_ratio=self.context_buffer_ratio,
                     max_direct_chunks=self.max_direct_chunks,
-                    restricted_mode=self._is_restricted_search_only(active_scopes),
+                    restricted_mode=self._is_restricted_search_only(),
                 )
 
                 if self.user_subtask_id:
@@ -1074,10 +1068,10 @@ class KnowledgeBaseTool(BaseTool):
                         query=query,
                         mode=result.get("mode", InjectionMode.RAG_ONLY),
                         records=result.get("records", []),
-                        restricted_mode=self._is_restricted_search_only(active_scopes),
+                        restricted_mode=self._is_restricted_search_only(),
                     )
 
-                if self._is_restricted_search_only(active_scopes):
+                if self._is_restricted_search_only():
                     from app.services.knowledge.protected_mediation import (
                         protected_knowledge_mediator,
                     )
@@ -1087,7 +1081,7 @@ class KnowledgeBaseTool(BaseTool):
                         query=query,
                         retrieval_mode=result.get("mode", InjectionMode.RAG_ONLY),
                         records=result.get("records", []),
-                        mediation_context=self._build_mediation_context(active_scopes),
+                        mediation_context=self._build_mediation_context(),
                         knowledge_base_ids=active_kb_ids,
                         total_estimated_tokens=result.get("total_estimated_tokens", 0),
                         user_id=self.user_id,

@@ -28,6 +28,7 @@ from app.models.subtask import SubtaskStatus
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.kind import Task as TaskCRD
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
@@ -290,7 +291,9 @@ class SharedTaskService:
 
         return share_info
 
-    def _resolve_task_team(self, db: Session, task: TaskResource, task_crd) -> Kind:
+    def _resolve_task_team(
+        self, db: Session, task: TaskResource, task_crd: TaskCRD
+    ) -> Kind:
         """Resolve a task's Team using teamRef.user_id before task owner fallback."""
         team = resolve_task_team_ref(
             db,
