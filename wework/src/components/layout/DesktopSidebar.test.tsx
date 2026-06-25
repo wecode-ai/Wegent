@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
@@ -35,33 +35,13 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     devices: [localDevice()],
     onCollapse: vi.fn(),
     onNewChat: vi.fn(),
+    onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenPlugins: vi.fn(),
-    onCreateProject: vi.fn(),
-    onCreateGitWorkspaceProject: vi.fn(),
-    onPrepareDeviceWorkspace: vi.fn().mockResolvedValue({
-      preparedAction: 'selected',
-      mapping: {
-        id: 19,
-        userId: 1,
-        projectId: 7,
-        deviceId: 'local-device',
-        workspacePath: '/Users/alice',
-        repoUrl: null,
-        repoRootFingerprint: null,
-        label: null,
-        createdAt: '2026-06-21T00:00:00',
-        updatedAt: '2026-06-21T00:00:00',
-        lastSeenAt: null,
-      },
-    }),
-    onListGitRepositories: vi.fn().mockResolvedValue([]),
-    onListGitBranches: vi.fn().mockResolvedValue([]),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
-    onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/Users/alice/dev'),
     onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     onCreateDeviceDirectory: vi.fn(),
     onOpenSettings: vi.fn(),
@@ -78,24 +58,23 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
   })
 
-  test('opens add device settings from the sidebar device section', async () => {
-    const props = renderSidebar()
+  test('keeps section header actions out of the flex layout while hidden', () => {
+    renderSidebar()
 
-    await userEvent.click(screen.getByTestId('sidebar-add-device-button'))
+    const actions = screen.getByTestId('projects-section-toggle-actions')
 
-    expect(props.onOpenSettings).toHaveBeenCalledWith({
-      autoOpenAddCloudDeviceDialog: true,
-    })
+    expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
+    expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
-  test('renders unmapped device runtime tasks without local Codex import UI', async () => {
+  test('does not render non-chat runtime workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 
     renderSidebar({
       projects: [],
       runtimeWork: {
         projects: [],
-        unmappedDeviceWorkspaces: [
+        chats: [
           {
             deviceId: 'local-device',
             deviceName: 'Local Mac',
@@ -117,22 +96,44 @@ describe('DesktopSidebar', () => {
       onOpenRuntimeLocalTask,
     })
 
-    expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent(
-      'Local Mac /tmp/spike'
+    expect(screen.queryByTestId('non-chat-runtime-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-claude-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
     )
-    expect(screen.getByTestId('runtime-local-task-row-claude-1')).toHaveTextContent(
-      'Spike runtime task'
+    expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
+
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
+
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
     )
-
-    await userEvent.click(screen.getByTestId('runtime-local-task-row-claude-1'))
-
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      localTaskId: 'claude-1',
-    })
+    expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
+    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
   })
 
-  test('renders unmapped chat runtime tasks as conversations instead of workspace groups', async () => {
+  test('opens runtime search from the sidebar', async () => {
+    const onOpenSearch = vi.fn()
+    renderSidebar({ onOpenSearch })
+
+    await userEvent.click(screen.getByTestId('runtime-search-button'))
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides plugins navigation while the feature is not released', () => {
+    const onOpenPlugins = vi.fn()
+    renderSidebar({ onOpenPlugins })
+
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(onOpenPlugins).not.toHaveBeenCalled()
+  })
+
+  test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
@@ -140,7 +141,7 @@ describe('DesktopSidebar', () => {
       projects: [],
       runtimeWork: {
         projects: [],
-        unmappedDeviceWorkspaces: [
+        chats: [
           {
             deviceId: 'local-device',
             deviceName: 'Local Mac',
@@ -180,19 +181,83 @@ describe('DesktopSidebar', () => {
     })
 
     expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.queryByTestId(`runtime-workspace-row-${chatPath}`)).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).toHaveTextContent('hi')
     expect(screen.queryByTestId('runtime-local-task-device-marker-chat-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-device-icon-chat-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent(
-      'Local Mac /tmp/spike'
-    )
+    expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-workspace-1')).not.toBeInTheDocument()
 
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
+
+    expect(screen.queryByTestId('runtime-local-task-row-chat-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
     await userEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       localTaskId: 'chat-1',
+    })
+  })
+
+  test('renames a runtime conversation from double click dialog', async () => {
+    const user = userEvent.setup()
+    const onOpenRuntimeLocalTask = vi.fn()
+    const onRenameRuntimeLocalTask = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: '/workspace/chats/chat-rename',
+            workspaceKind: 'chat',
+            localTasks: [
+              {
+                localTaskId: 'codex-rename',
+                workspacePath: '/workspace/chats/chat-rename',
+                workspaceKind: 'chat',
+                title: '对齐需求核心点',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 1,
+      },
+      onOpenRuntimeLocalTask,
+      onRenameRuntimeLocalTask,
+    })
+
+    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-rename'))
+
+    expect(screen.getByTestId('rename-runtime-local-task-input-codex-rename')).toHaveValue(
+      '对齐需求核心点'
+    )
+    expect(screen.getByText('保持简短且易于识别')).toBeInTheDocument()
+
+    await user.clear(screen.getByTestId('rename-runtime-local-task-input-codex-rename'))
+    await user.type(screen.getByTestId('rename-runtime-local-task-input-codex-rename'), '对齐方案')
+    await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
+
+    await waitFor(() => {
+      expect(onRenameRuntimeLocalTask).toHaveBeenCalledWith(
+        {
+          deviceId: 'local-device',
+          localTaskId: 'codex-rename',
+        },
+        '对齐方案'
+      )
     })
   })
 
@@ -227,7 +292,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 1,
       },
       onOpenRuntimeLocalTask,
@@ -248,6 +313,36 @@ describe('DesktopSidebar', () => {
       deviceId: 'local-device',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('marks remote runtime projects separately from local projects', () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: '10.201.3.200',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/home/ubuntu/workspace/Wegent',
+                workspaceSource: 'remote',
+                remoteHostId: 'remote-ssh-discovered:10.201.3.200',
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 0,
+      },
+    })
+
+    expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-folder-icon-7')).not.toBeInTheDocument()
   })
 
   test('shows running status on running runtime tasks only', async () => {
@@ -287,7 +382,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 2,
       },
     })
@@ -301,7 +396,7 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
-  test('shows online device colors and marks runtime tasks by device', async () => {
+  test('does not render online devices section and keeps all runtime tasks visible', async () => {
     renderSidebar({
       devices: [
         localDevice(),
@@ -361,93 +456,242 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 2,
       },
     })
 
-    expect(screen.getByTestId('sidebar-online-devices')).toHaveTextContent('在线设备2')
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle').parentElement).toBe(
-      screen.getByTestId('sidebar-devices-header')
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('离线 1')
-    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('sidebar-online-device-offline-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-online-devices')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
+    expect(screen.getByTestId('runtime-local-task-row-local-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-cloud-task')).toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-device-marker-local-task')
     ).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-device-marker-cloud-task')
     ).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
-
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
-    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveTextContent('Local Mac')
-    expect(screen.getByTestId('sidebar-online-device-cloud-device')).toHaveTextContent('Cloud Box')
-
-    const localLegendColor = screen.getByTestId('sidebar-online-device-color-local-device')
-    const cloudLegendColor = screen.getByTestId('sidebar-online-device-color-cloud-device')
-    const localTaskMarker = screen.getByTestId('runtime-local-task-device-marker-local-task')
-    const cloudTaskMarker = screen.getByTestId('runtime-local-task-device-marker-cloud-task')
-
-    expect(localTaskMarker).toHaveAttribute('title', 'Local Mac /repo/Wegent')
-    expect(cloudTaskMarker).toHaveAttribute('title', 'Cloud Box /repo/Wegent')
-    expect(localTaskMarker.style.backgroundColor).toBe(localLegendColor.style.backgroundColor)
-    expect(cloudTaskMarker.style.backgroundColor).toBe(cloudLegendColor.style.backgroundColor)
-
-    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
-
-    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(screen.getByTestId('runtime-local-task-row-local-task')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-row-cloud-task')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
-
-    expect(screen.getByTestId('runtime-local-task-row-cloud-task')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-offline-devices-toggle'))
-
-    expect(screen.getByTestId('sidebar-online-device-offline-device')).toHaveTextContent(
-      'Offline Box'
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('收起离线')
-
-    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
-
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('runtime-local-task-device-marker-local-task')
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toBeInTheDocument()
   })
 
-  test('shows hover actions to mark and archive project runtime tasks', async () => {
+  test('shows hover actions and an undo notice before archiving project runtime tasks', async () => {
     const user = userEvent.setup()
     const onArchiveRuntimeLocalTask = vi.fn().mockResolvedValue(undefined)
+    const originalSetTimeout = window.setTimeout
+    const originalClearTimeout = window.clearTimeout
+    const archiveTimerId = 2200
+    let archiveTimerCallback: (() => void) | null = null
+    const setTimeoutSpy = vi
+      .spyOn(window, 'setTimeout')
+      .mockImplementation((handler: TimerHandler, timeout?: number) => {
+        if (timeout === archiveTimerId && typeof handler === 'function') {
+          archiveTimerCallback = handler
+          return archiveTimerId
+        }
+        return originalSetTimeout(handler, timeout)
+      })
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation((id?: number) => {
+      if (id === archiveTimerId) {
+        archiveTimerCallback = null
+        return
+      }
+      originalClearTimeout(id)
+    })
+
+    try {
+      renderSidebar({
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              totalLocalTasks: 1,
+              deviceWorkspaces: [
+                {
+                  id: 91,
+                  deviceId: 'local-device',
+                  deviceName: 'Local Mac',
+                  deviceStatus: 'online',
+                  available: true,
+                  workspacePath: '/repo/Wegent',
+                  localTasks: [
+                    {
+                      localTaskId: 'codex-1',
+                      workspacePath: '/repo/Wegent',
+                      title: 'Fix reconnect',
+                      runtime: 'codex',
+                      updatedAt: '2026-06-20T02:00:00Z',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalLocalTasks: 1,
+        },
+        onArchiveRuntimeLocalTask,
+      })
+
+      await user.click(screen.getByTestId('project-item-button'))
+      const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+      const rowChildren = Array.from(taskRow.children)
+
+      expect(screen.queryByTestId('runtime-local-task-mark-codex-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-local-task-archive-codex-1')).toBeInTheDocument()
+      expect(rowChildren).toHaveLength(2)
+      expect(rowChildren[1]).toHaveAttribute('data-testid', 'runtime-local-task-trailing-codex-1')
+      expect(screen.getByTestId('runtime-local-task-time-codex-1').parentElement).toBe(
+        rowChildren[1]
+      )
+      expect(
+        screen.queryByTestId('runtime-local-task-device-marker-codex-1')
+      ).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
+        rowChildren[1]
+      )
+      expect(screen.queryByTestId('runtime-local-task-pin-icon-codex-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
+      expect(
+        screen.getByTestId('runtime-local-task-hover-actions-codex-1').className
+      ).not.toContain('focus-within')
+      expect(screen.getByTestId('runtime-local-task-time-codex-1').className).not.toContain(
+        'focus-within'
+      )
+
+      expect(taskRow).not.toHaveAttribute('data-marked')
+      expect(taskRow.className).not.toContain('color-sidebar-marked')
+
+      await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+
+      expect(onArchiveRuntimeLocalTask).not.toHaveBeenCalled()
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
+        '撤销'
+      )
+
+      await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
+
+      expect(onArchiveRuntimeLocalTask).not.toHaveBeenCalled()
+      expect(archiveTimerCallback).toBeNull()
+      expect(
+        screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
+      ).not.toBeInTheDocument()
+
+      await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
+      expect(archiveTimerCallback).toBeTypeOf('function')
+
+      const runArchiveTimer = archiveTimerCallback
+      await act(async () => {
+        runArchiveTimer?.()
+        await Promise.resolve()
+      })
+
+      await waitFor(() =>
+        expect(onArchiveRuntimeLocalTask).toHaveBeenCalledWith({
+          deviceId: 'local-device',
+          localTaskId: 'codex-1',
+        })
+      )
+      expect(
+        screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
+      ).not.toBeInTheDocument()
+    } finally {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
+    }
+  })
+
+  test('opens centered archive confirmation dialog for project archive', async () => {
+    const user = userEvent.setup()
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const onArchiveProjectConversations = vi.fn().mockResolvedValue(undefined)
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
-            project: { id: 7, name: 'Wegent' },
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalLocalTasks: 2,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                  },
+                  {
+                    localTaskId: 'codex-2',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Follow up',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 2,
+      },
+      onArchiveProjectConversations,
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('archive-project-conversations-7'))
+
+    const dialog = screen.getByTestId('archive-project-conversations-dialog-7')
+    expect(dialog).toHaveTextContent('归档 2 个对话?')
+    expect(dialog).toHaveTextContent('这会将 Wegent 中的对话归档')
+    expect(confirmSpy).not.toHaveBeenCalled()
+
+    await user.click(screen.getByTestId('archive-project-conversations-dialog-7-confirm-button'))
+
+    await waitFor(() => {
+      expect(onArchiveProjectConversations).toHaveBeenCalledWith('project:7')
+    })
+    expect(confirmSpy).not.toHaveBeenCalled()
+
+    confirmSpy.mockRestore()
+  })
+
+  test('renames a project from the project row menu', async () => {
+    const user = userEvent.setup()
+    const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({ onUpdateProjectName })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('rename-project-7'))
+    await user.clear(screen.getByTestId('rename-project-input'))
+    await user.type(screen.getByTestId('rename-project-input'), 'weekly-mail')
+    await user.click(screen.getByTestId('confirm-rename-project-button'))
+
+    await waitFor(() => {
+      expect(onUpdateProjectName).toHaveBeenCalledWith(7, 'weekly-mail')
+    })
+  })
+
+  test('keeps runtime project rename and remove actions enabled without move project action', async () => {
+    const user = userEvent.setup()
+    const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
+    const onRemoveProject = vi.fn().mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
             totalLocalTasks: 1,
             deviceWorkspaces: [
               {
@@ -463,53 +707,43 @@ describe('DesktopSidebar', () => {
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
-                    updatedAt: '2026-06-20T02:00:00Z',
                   },
                 ],
               },
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 1,
       },
-      onArchiveRuntimeLocalTask,
+      onUpdateProjectName,
+      onRemoveProject,
     })
 
-    await user.click(screen.getByTestId('project-item-button'))
-    const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
-    const rowChildren = Array.from(taskRow.children)
+    await user.click(screen.getByTestId('project-menu-7'))
 
-    expect(screen.getByTestId('runtime-local-task-mark-codex-1')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-archive-codex-1')).toBeInTheDocument()
-    expect(rowChildren).toHaveLength(2)
-    expect(rowChildren[1]).toHaveAttribute('data-testid', 'runtime-local-task-trailing-codex-1')
-    expect(screen.getByTestId('runtime-local-task-time-codex-1').parentElement).toBe(rowChildren[1])
-    expect(screen.queryByTestId('runtime-local-task-device-marker-codex-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
-      rowChildren[1]
-    )
-    expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').className).not.toContain(
-      'focus-within'
-    )
-    expect(screen.getByTestId('runtime-local-task-time-codex-1').className).not.toContain(
-      'focus-within'
-    )
+    expect(screen.getByTestId('rename-project-7')).not.toBeDisabled()
+    expect(screen.getByTestId('remove-project-7')).not.toBeDisabled()
+    expect(screen.queryByTestId('move-project-7')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('runtime-local-task-mark-codex-1'))
+    await user.click(screen.getByTestId('rename-project-7'))
+    await user.clear(screen.getByTestId('rename-project-input'))
+    await user.type(screen.getByTestId('rename-project-input'), 'weekly-mail')
+    await user.click(screen.getByTestId('confirm-rename-project-button'))
 
-    expect(taskRow).toHaveAttribute('data-marked', 'true')
-    expect(taskRow.className).toContain('color-sidebar-marked')
-    expect(taskRow.className).toContain('color-sidebar-marked-hover')
-
-    await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
-
-    expect(onArchiveRuntimeLocalTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      localTaskId: 'codex-1',
+    await waitFor(() => {
+      expect(onUpdateProjectName).toHaveBeenCalledWith(7, 'weekly-mail')
     })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('remove-project-7'))
+
+    expect(confirmSpy).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onRemoveProject).toHaveBeenCalledWith(7)
+    })
+
+    confirmSpy.mockRestore()
   })
 
   test('shows a global IM notification quick toggle near settings', async () => {
@@ -579,62 +813,110 @@ describe('DesktopSidebar', () => {
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
   })
 
-  test('edits an existing project by associating another device workspace', async () => {
+  test('shows archive all menus on project and chat headers with chat create action', async () => {
     const user = userEvent.setup()
-    const onCreateProject = vi.fn()
-    const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
-      preparedAction: 'selected',
-      mapping: {
-        id: 20,
-        userId: 1,
-        projectId: 7,
-        deviceId: 'second-device',
-        workspacePath: '/Users/alice',
-        repoUrl: null,
-        repoRootFingerprint: null,
-        label: null,
-        createdAt: '2026-06-21T00:00:00',
-        updatedAt: '2026-06-21T00:00:00',
-        lastSeenAt: null,
+    const onArchiveProjectsConversations = vi.fn().mockResolvedValue(undefined)
+    const onArchiveChatConversations = vi.fn().mockResolvedValue(undefined)
+    const onNewChat = vi.fn()
+
+    renderSidebar({
+      onNewChat,
+      onArchiveProjectsConversations,
+      onArchiveChatConversations,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [
+          {
+            id: null,
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: '/workspace/chats/chat-1',
+            workspaceKind: 'chat',
+            localTasks: [
+              {
+                localTaskId: 'chat-1',
+                workspacePath: '/workspace/chats/chat-1',
+                workspaceKind: 'chat',
+                title: 'Hello',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 2,
       },
     })
 
-    renderSidebar({
-      devices: [
-        localDevice(),
-        localDevice({
-          id: 2,
-          device_id: 'second-device',
-          name: 'Second Mac',
-          is_default: false,
-        }),
-      ],
-      onCreateProject,
-      onPrepareDeviceWorkspace,
-      onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
-      onListDeviceDirectories: vi.fn().mockResolvedValue([]),
+    await user.click(screen.getByTestId('projects-section-menu'))
+    expect(screen.getByTestId('projects-section-archive-all-chats')).toHaveTextContent(
+      '归档所有聊天'
+    )
+    await user.click(screen.getByTestId('projects-section-archive-all-chats'))
+
+    expect(screen.getByTestId('projects-section-archive-conversations-dialog')).toHaveTextContent(
+      '归档 1 个对话?'
+    )
+    expect(screen.getByTestId('projects-section-archive-conversations-dialog')).toHaveTextContent(
+      '项目中的对话'
+    )
+    await user.click(
+      screen.getByTestId('projects-section-archive-conversations-dialog-confirm-button')
+    )
+    await waitFor(() => {
+      expect(onArchiveProjectsConversations).toHaveBeenCalledWith(['project:7'])
     })
 
-    await user.click(screen.getByTestId('project-menu-7'))
-    await user.click(screen.getByTestId('edit-project-7'))
+    await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
+    expect(onNewChat).toHaveBeenCalledTimes(1)
 
-    await user.click(await screen.findByTestId('project-device-tab-second-device'))
-    await user.click(screen.getByTestId('project-folder-select-button'))
-    await waitFor(() =>
-      expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/Users/alice')
+    await user.click(screen.getByTestId('runtime-chat-section-menu'))
+    expect(screen.getByTestId('runtime-chat-section-archive-all-chats')).toHaveTextContent(
+      '归档所有聊天'
     )
-    await user.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    await user.click(screen.getByTestId('create-project-button'))
+    await user.click(screen.getByTestId('runtime-chat-section-archive-all-chats'))
+    expect(
+      screen.getByTestId('runtime-chat-section-archive-conversations-dialog')
+    ).toHaveTextContent('归档 1 个对话?')
+    expect(
+      screen.getByTestId('runtime-chat-section-archive-conversations-dialog')
+    ).toHaveTextContent('对话列表中的对话')
+    await user.click(
+      screen.getByTestId('runtime-chat-section-archive-conversations-dialog-confirm-button')
+    )
 
-    await waitFor(() =>
-      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
-        projectId: 7,
-        deviceId: 'second-device',
-        workspacePath: '/Users/alice',
-        action: 'select',
-      })
-    )
-    expect(onCreateProject).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onArchiveChatConversations).toHaveBeenCalledWith([
+        {
+          deviceId: 'local-device',
+          localTaskId: 'chat-1',
+        },
+      ])
+    })
   })
 
   test('shows a subscribed runtime task notification toggle outside hover actions', async () => {
@@ -669,7 +951,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 1,
       },
       imNotificationSettings: {
@@ -734,7 +1016,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 0,
       },
     })
@@ -776,7 +1058,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 1,
       },
       onOpenRuntimeLocalTask,
@@ -872,7 +1154,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 6,
       },
     })
@@ -904,13 +1186,13 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
-  test('selects a project when its sidebar row is clicked', async () => {
-    const onSelectProject = vi.fn()
+  test('toggles a project when its sidebar row is clicked', async () => {
+    renderSidebar()
 
-    renderSidebar({ onSelectProject })
-
+    const button = screen.getByTestId('project-item-button')
+    expect(button).toHaveAttribute('aria-expanded', 'false')
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(onSelectProject).toHaveBeenCalledWith(7)
+    expect(button).toHaveAttribute('aria-expanded', 'true')
   })
 })

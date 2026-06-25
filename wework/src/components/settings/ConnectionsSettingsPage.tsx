@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowLeft,
   Palette,
   BookOpen,
@@ -56,13 +57,14 @@ import { ProxySettingsPage } from './ProxySettingsPage'
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
 }
 
-type SettingsCategory = 'personal' | 'coding'
+type SettingsCategory = 'personal' | 'coding' | 'archived'
 
 interface SettingsNavItem {
   key: string
@@ -113,6 +115,13 @@ const settingsNavItems: SettingsNavItem[] = [
     fallback: '工作树',
     category: 'coding',
   },
+  {
+    key: 'archived-conversations',
+    icon: Archive,
+    label: 'settings_nav_archived_conversations',
+    fallback: '已归档对话',
+    category: 'archived',
+  },
 ]
 
 const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback: string }> = {
@@ -123,6 +132,10 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
   coding: {
     label: 'settings_category_coding',
     fallback: '编码',
+  },
+  archived: {
+    label: 'settings_category_archived',
+    fallback: '已归档',
   },
 }
 
@@ -1120,6 +1133,8 @@ export function ConnectionsSettingsPage({
           <SkillSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
+        ) : activeNav === 'archived-conversations' ? (
+          <ArchivedConversationsSettingsPage />
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}

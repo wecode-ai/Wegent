@@ -5,6 +5,7 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import { isWeWorkExecutorVersionCompatible } from './device-capabilities'
+import { runtimeProjectUiId } from './runtime-project'
 
 export type ProjectWorkspaceOptionKind = 'empty' | 'single' | 'multi'
 
@@ -27,14 +28,19 @@ function deviceById(devices: DeviceInfo[]) {
 }
 
 function runtimeWorkspacesByProjectId(runtimeWork: RuntimeWorkListResponse | null | undefined) {
-  return new Map((runtimeWork?.projects ?? []).map(item => [item.project.id, item.deviceWorkspaces]))
+  return new Map(
+    (runtimeWork?.projects ?? []).map(item => [
+      runtimeProjectUiId(item.project),
+      item.deviceWorkspaces,
+    ])
+  )
 }
 
 export function isSelectableProjectWorkspace(
   workspace: RuntimeDeviceWorkspace | null | undefined,
   devices: DeviceInfo[] = []
 ): workspace is RuntimeDeviceWorkspace {
-  if (!workspace || !workspace.id) return false
+  if (!workspace) return false
   if (!workspace.available) return false
 
   const device = deviceById(devices).get(workspace.deviceId)

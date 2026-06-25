@@ -52,6 +52,7 @@ class TaskTokenInfo:
     subtask_id: int
     user_id: int
     user_name: str
+    expire_at: Optional[int] = None
 
 
 def create_task_token(
@@ -112,6 +113,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             subtask_id=payload["subtask_id"],
             user_id=payload["user_id"],
             user_name=payload["user_name"],
+            expire_at=payload.get("exp"),
         )
     except jwt.ExpiredSignatureError:
         logger.warning("Task token has expired")

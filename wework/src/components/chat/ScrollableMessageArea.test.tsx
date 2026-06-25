@@ -10,13 +10,11 @@ describe('ScrollableMessageArea', () => {
     vi.useFakeTimers()
     requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
-      .mockImplementation((callback) => {
+      .mockImplementation(callback => {
         callback(0)
         return 1
       })
-    cancelAnimationFrameSpy = vi
-      .spyOn(window, 'cancelAnimationFrame')
-      .mockImplementation(() => {})
+    cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
   })
 
   afterEach(() => {
@@ -40,6 +38,51 @@ describe('ScrollableMessageArea', () => {
     expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
   })
 
+  test('top-aligns short conversations below the workspace header', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '执行pwd',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
+  })
+
+  test('keeps older transcript loading controls at the top of the message flow', () => {
+    render(
+      <ScrollableMessageArea
+        hasMoreBefore
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '历史消息',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
+  })
+
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
     render(
       <ScrollableMessageArea
@@ -52,7 +95,7 @@ describe('ScrollableMessageArea', () => {
             createdAt: '2026-05-29T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -98,7 +141,7 @@ describe('ScrollableMessageArea', () => {
             createdAt: '2026-05-29T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -136,7 +179,7 @@ describe('ScrollableMessageArea', () => {
       createdAt: '2026-05-29T00:00:00.000Z',
     }
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey={1} messages={[initialMessage]} />,
+      <ScrollableMessageArea conversationKey={1} messages={[initialMessage]} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -169,7 +212,7 @@ describe('ScrollableMessageArea', () => {
             createdAt: '2026-05-29T00:00:01.000Z',
           },
         ]}
-      />,
+      />
     )
 
     act(() => {
@@ -188,7 +231,7 @@ describe('ScrollableMessageArea', () => {
       createdAt: '2026-05-29T00:00:00.000Z',
     }
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey={1} messages={[streamingMessage]} />,
+      <ScrollableMessageArea conversationKey={1} messages={[streamingMessage]} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -222,7 +265,7 @@ describe('ScrollableMessageArea', () => {
             content: '正在处理\n\n核心逻辑\n\n更多流式内容',
           },
         ]}
-      />,
+      />
     )
 
     act(() => {

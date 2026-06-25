@@ -16,6 +16,8 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  client_ip?: string | null
+  runtime_transfer_host?: string | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string

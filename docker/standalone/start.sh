@@ -14,6 +14,8 @@ echo ""
 
 # Create persistent data and workspace directories.
 mkdir -p /app/data
+export CODEX_HOME="${CODEX_HOME:-/app/data/codex}"
+mkdir -p "$CODEX_HOME"
 mkdir -p /app/data/redis
 mkdir -p /workspace/projects
 mkdir -p /workspace/chats

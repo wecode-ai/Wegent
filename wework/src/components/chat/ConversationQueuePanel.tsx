@@ -1,9 +1,6 @@
 import { CornerDownRight, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-} from '@/types/workbench'
+import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 
 interface ConversationQueuePanelProps {
   queuedMessages: QueuedWorkbenchMessage[]
@@ -29,9 +26,9 @@ export function ConversationQueuePanel({
   return (
     <div
       data-testid="conversation-queue-panel"
-      className="mb-2 rounded-[18px] border border-border bg-base px-3 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.06)]"
+      className="mb-1 rounded-[18px] border border-border bg-base px-2 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
     >
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col">
         {queuedMessages.map(message => (
           <QueueRow
             key={message.id}
@@ -39,6 +36,7 @@ export function ConversationQueuePanel({
             content={message.content}
             status={message.status}
             error={message.error}
+            notice={message.notice}
             mode="queue"
             onGuide={onSendQueuedAsGuidance}
             onEdit={onEditQueuedMessage}
@@ -66,6 +64,7 @@ interface QueueRowProps {
   content: string
   status: QueuedWorkbenchMessage['status'] | GuidanceWorkbenchMessage['status']
   error?: string
+  notice?: string
   mode: 'queue' | 'guidance'
   onGuide?: (id: string) => void
   onEdit?: (id: string) => void
@@ -77,6 +76,7 @@ function QueueRow({
   content,
   status,
   error,
+  notice,
   mode,
   onGuide,
   onEdit,
@@ -85,24 +85,26 @@ function QueueRow({
   const isBusy = status === 'sending'
   const statusText =
     status === 'failed'
-      ? error ?? '发送失败'
+      ? (error ?? '发送失败')
       : status === 'expired'
-        ? error ?? '已过期'
-        : null
+        ? (error ?? '已过期')
+        : status === 'sending'
+          ? (notice ?? '正在发送')
+          : null
 
   return (
     <div
       data-testid={`conversation-queue-row-${id}`}
-      className="flex min-h-9 items-center gap-2 rounded-xl px-1.5 text-[13px] text-[#777] hover:bg-surface"
+      className="flex min-h-8 items-center gap-2 rounded-xl px-2 text-[13px] text-text-secondary hover:bg-surface"
     >
       <span className="flex min-w-0 flex-1 items-center gap-2">
-        <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-[#aaa]" />
-        <span className="truncate text-[#666]">{content}</span>
+        <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+        <span className="truncate text-text-secondary">{content}</span>
         {statusText && (
           <span
             className={[
               'max-w-[14rem] shrink-0 truncate text-xs',
-              status === 'failed' ? 'text-red-500' : 'text-[#999]',
+              status === 'failed' ? 'text-red-500' : 'text-text-muted',
             ].join(' ')}
           >
             {statusText}
@@ -116,7 +118,7 @@ function QueueRow({
             data-testid={`queue-guidance-button-${id}`}
             onClick={() => onGuide?.(id)}
             disabled={isBusy}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-[#888] hover:bg-[#f1f1f1] hover:text-[#555] disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
             aria-label="作为引导发送"
           >
             <CornerDownRight className="h-3.5 w-3.5" />
@@ -128,7 +130,7 @@ function QueueRow({
           data-testid={`queue-cancel-button-${id}`}
           onClick={() => onCancel?.(id)}
           disabled={isBusy}
-          className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-[#999] hover:bg-[#f1f1f1] hover:text-[#666] disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0 sm:px-2"
+          className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0 sm:px-2"
           aria-label="移除队列消息"
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -138,7 +140,7 @@ function QueueRow({
             ariaLabel="更多队列操作"
             testId={`queue-more-button-${id}`}
             icon={MoreHorizontal}
-            triggerClassName="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-[#999] hover:bg-[#f1f1f1] hover:text-[#666] sm:h-8 sm:min-w-0 sm:px-2"
+            triggerClassName="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary sm:h-8 sm:min-w-0 sm:px-2"
             items={[
               {
                 label: '编辑',

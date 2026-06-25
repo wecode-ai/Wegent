@@ -31,6 +31,8 @@ describe('ToolBlockItem', () => {
     const preview = screen.getByTestId('thinking-live-preview')
 
     expect(preview).toHaveTextContent('正在思考')
+    expect(preview.firstElementChild).toHaveTextContent('正在思考')
+    expect(preview.firstElementChild?.tagName).toBe('SPAN')
     expect(preview).toHaveTextContent('Latest visible thought')
     expect(screen.queryByText('First step. Latest visible thought')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
@@ -52,6 +54,8 @@ describe('ToolBlockItem', () => {
     const toggle = screen.getByTestId('thinking-toggle-button')
 
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.firstElementChild).toHaveTextContent('思考过程')
+    expect(toggle.firstElementChild?.tagName).toBe('SPAN')
     expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
 
     await user.click(toggle)
@@ -69,6 +73,7 @@ describe('ToolBlockItem', () => {
 
     expect(block).toHaveAccessibleName('正在处理')
     expect(block).toHaveTextContent('Let me explore the repository structure.')
+    expect(block.querySelector('svg')).not.toBeInTheDocument()
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
   })
 

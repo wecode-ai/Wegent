@@ -37,6 +37,27 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert "http://localhost:7681" not in dockerfile
 
 
+def test_standalone_image_installs_codex_runtime_dependencies() -> None:
+    """Container executor needs both the Codex CLI and Python SDK in Linux."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "@openai/codex@0.137.0" in dockerfile
+    assert (
+        "uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3"
+        in dockerfile
+    )
+
+
+def test_standalone_runtime_prepares_persistent_codex_home() -> None:
+    """Codex SDK startup requires CODEX_HOME to point at an existing directory."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+
+    assert "ENV CODEX_HOME=/app/data/codex" in dockerfile
+    assert 'export CODEX_HOME="${CODEX_HOME:-/app/data/codex}"' in start_script
+    assert 'mkdir -p "$CODEX_HOME"' in start_script
+
+
 def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     """Startup should launch a real executor registered through the device WebSocket."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")

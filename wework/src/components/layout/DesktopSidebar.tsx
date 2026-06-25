@@ -3,36 +3,36 @@ import {
   Bell,
   ChevronRight,
   Edit3,
-  Folder,
   FolderPlus,
+  Globe2,
   GitCompareArrows,
   Loader2,
   MessageSquarePlus,
-  Pin,
   Plus,
   RotateCw,
+  Search,
   Settings,
   Sparkles,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
-import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import {
+  StandaloneBlankProjectDialog,
+  StandaloneFolderProjectDialog,
+  type StandaloneWorkspaceDialogMode,
+} from '@/components/projects/StandaloneProjectDialogs'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
-  CreateGitWorkspaceProjectRequest,
-  CreateProjectRequest,
-  DeleteDeviceWorkspaceRequest,
-  DeviceWorkspacePrepareRequest,
-  DeviceWorkspacePrepareResponse,
-  DeviceWorkspaceResponse,
   DeviceInfo,
-  GitBranch,
-  GitRepoInfo,
   LocalTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -42,23 +42,19 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
-import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
   getRuntimeChatSidebarTaskItems,
-  getRuntimeDirectoryWorkspaces,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
-  getRuntimeWorkspaceLabel,
   getVisibleRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
-  sortRuntimeTasks,
 } from './runtimeTaskSidebarHelpers'
 import { useResizableSidebar } from './useResizableSidebar'
 
@@ -68,38 +64,38 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null
   currentRuntimeTask?: RuntimeTaskAddress | null
+  standaloneDeviceId?: string | null
+  standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   preferredDeviceId?: string | null
-  upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
-  onSelectProject: (projectId: number) => void
+  onOpenSearch?: () => void
+  onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
+  onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void> | void
+  onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
   ) => Promise<void> | void
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
-  onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
-  onUpgradeDevice?: (deviceId: string) => Promise<void>
-  onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
-  onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
-  onPrepareDeviceWorkspace: (
-    data: DeviceWorkspacePrepareRequest
-  ) => Promise<DeviceWorkspacePrepareResponse>
-  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
-  onListGitRepositories: () => Promise<GitRepoInfo[]>
-  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
-  onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
@@ -107,7 +103,167 @@ interface DesktopSidebarProps {
   onLogout: () => void
 }
 
-type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+type ProjectCreateMenuPosition = {
+  top: number
+  left: number
+}
+
+interface ArchiveConversationsConfirmDialogProps {
+  open: boolean
+  title: string
+  description: string
+  confirmLabel: string
+  cancelLabel: string
+  submitting: boolean
+  testId: string
+  onClose: () => void
+  onConfirm: () => Promise<void> | void
+}
+
+const PROJECT_CREATE_MENU_WIDTH = 248
+const PROJECT_CREATE_MENU_MARGIN = 8
+const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 2200
+
+function getStandaloneDeviceLabel(device: DeviceInfo): string {
+  return device.name || device.device_id
+}
+
+function normalizeSidebarWorkspacePath(path: string): string {
+  const trimmedPath = path.trim()
+  if (trimmedPath === '/') return trimmedPath
+  return trimmedPath.replace(/\/+$/, '')
+}
+
+function getSidebarPathBasename(path: string): string {
+  const normalizedPath = normalizeSidebarWorkspacePath(path)
+  const parts = normalizedPath.split('/').filter(Boolean)
+  return parts.at(-1) ?? normalizedPath
+}
+
+function runtimeWorkHasWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  deviceId: string,
+  workspacePath: string
+): boolean {
+  const normalizedPath = normalizeSidebarWorkspacePath(workspacePath)
+  return (runtimeWork?.projects ?? []).some(projectWork =>
+    projectWork.deviceWorkspaces.some(
+      workspace =>
+        workspace.deviceId === deviceId &&
+        normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedPath
+    )
+  )
+}
+
+function standaloneRuntimeProjectWork(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined,
+  workspacePath: string | null | undefined,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): RuntimeProjectWork | null {
+  const normalizedDeviceId = deviceId?.trim()
+  const normalizedWorkspacePath = workspacePath ? normalizeSidebarWorkspacePath(workspacePath) : ''
+  if (!normalizedDeviceId || !normalizedWorkspacePath) return null
+  if (runtimeWorkHasWorkspace(runtimeWork, normalizedDeviceId, normalizedWorkspacePath)) {
+    return null
+  }
+
+  const device = devices.find(item => item.device_id === normalizedDeviceId)
+  const deviceStatus = device?.status ?? 'unavailable'
+  return {
+    project: {
+      key: `${normalizedDeviceId}:${normalizedWorkspacePath}`,
+      name: getSidebarPathBasename(normalizedWorkspacePath),
+      description: normalizedWorkspacePath,
+      color: null,
+    },
+    deviceWorkspaces: [
+      {
+        id: null,
+        projectId: null,
+        deviceId: normalizedDeviceId,
+        deviceName: device ? getStandaloneDeviceLabel(device) : normalizedDeviceId,
+        deviceStatus,
+        available: deviceStatus === 'online' || deviceStatus === 'busy',
+        workspacePath: normalizedWorkspacePath,
+        workspaceKind: 'workspace',
+        worktreeId: null,
+        mapped: true,
+        localTasks: [],
+      },
+    ],
+  }
+}
+
+function ArchiveConversationsConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel,
+  cancelLabel,
+  submitting,
+  testId,
+  onClose,
+  onConfirm,
+}: ArchiveConversationsConfirmDialogProps) {
+  useEscapeKey(onClose, open && !submitting)
+
+  if (!open) return null
+
+  return createPortal(
+    <div
+      data-testid={`${testId}-overlay`}
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${testId}-title`}
+        data-testid={testId}
+        className="w-full max-w-[460px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-[0_20px_56px_rgba(0,0,0,0.28)]"
+      >
+        <div className="flex items-start justify-between gap-5">
+          <h2 id={`${testId}-title`} className="text-xl font-semibold tracking-normal">
+            {title}
+          </h2>
+          <button
+            type="button"
+            data-testid={`${testId}-close-button`}
+            onClick={onClose}
+            disabled={submitting}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label={cancelLabel}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-text-secondary">{description}</p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid={`${testId}-cancel-button`}
+            onClick={onClose}
+            disabled={submitting}
+            className="h-9 min-w-[76px] rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            data-testid={`${testId}-confirm-button`}
+            onClick={() => void onConfirm()}
+            disabled={submitting}
+            className="inline-flex h-9 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-red-500/15 px-4 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
@@ -255,13 +411,13 @@ function SidebarSectionHeader({
     hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section mb-2 flex h-7 items-center justify-between px-2.5">
+    <div className="group/section relative mb-2 flex h-7 items-center px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pr-8 text-left"
       >
         <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
           {title}
@@ -275,7 +431,10 @@ function SidebarSectionHeader({
           )}
         />
       </button>
-      <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
+      <div
+        data-testid={`${toggleTestId}-actions`}
+        className="pointer-events-none invisible absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:visible group-hover/section:opacity-100 focus-within:pointer-events-auto focus-within:visible focus-within:opacity-100"
+      >
         {children}
       </div>
     </div>
@@ -307,6 +466,16 @@ interface SidebarDeviceState {
   status: SidebarDeviceStatus
 }
 
+function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
+  return {
+    id: runtimeProjectUiId(projectWork.project),
+    name: projectWork.project.name,
+    description: projectWork.project.description,
+    color: projectWork.project.color,
+    tasks: [],
+  }
+}
+
 function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
@@ -333,209 +502,64 @@ function getSidebarDeviceName(deviceState: SidebarDeviceState): string {
   return deviceState.device?.name || deviceState.deviceId
 }
 
-function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
-  return getSidebarDeviceColor(getSidebarDeviceColorKey(workspace.deviceName, workspace.deviceId))
+function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
+  const runtimeTransferHost = getDisplayableNetworkHost(device?.runtime_transfer_host)
+  if (runtimeTransferHost) return runtimeTransferHost
+  return getDisplayableNetworkHost(device?.client_ip)
 }
 
-function getRuntimeWorkspaceTaskCount(workspaces: RuntimeDeviceWorkspace[]): number {
-  return workspaces.reduce((count, workspace) => count + workspace.localTasks.length, 0)
+function getDisplayableNetworkHost(value?: string | null): string | null {
+  if (!value) return null
+  const host = extractNetworkHost(value.trim())
+  if (!host || isLoopbackNetworkHost(host)) return null
+  return host
 }
 
-function getProjectDeviceWorkspaces(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  projectId: number | undefined
-): DeviceWorkspaceResponse[] {
-  if (!runtimeWork || projectId === undefined) return []
-  const projectWork = runtimeWork.projects.find(item => item.project.id === projectId)
-  return (
-    projectWork?.deviceWorkspaces.map((workspace, index) => ({
-      id: workspace.id ?? -(index + 1),
-      userId: 0,
-      projectId,
-      deviceId: workspace.deviceId,
-      workspacePath: workspace.workspacePath,
-      repoUrl: workspace.repoUrl ?? null,
-      repoRootFingerprint: workspace.repoRootFingerprint ?? null,
-      label: workspace.label ?? null,
-      lastSeenAt: null,
-      createdAt: '',
-      updatedAt: '',
-    })) ?? []
-  )
+function extractNetworkHost(value: string): string {
+  const bracketMatch = value.match(/^\[([^\]]+)\](?::\d+)?$/)
+  if (bracketMatch?.[1]) return bracketMatch[1]
+  const colonParts = value.split(':')
+  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
+    return colonParts[0]
+  }
+  return value
 }
 
-function filterRuntimeWorkspacesByDevice(
-  workspaces: RuntimeDeviceWorkspace[],
-  deviceId: string | null
-): RuntimeDeviceWorkspace[] {
-  if (!deviceId) return workspaces
-  return workspaces.filter(workspace => workspace.deviceId === deviceId)
+function isLoopbackNetworkHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
 }
 
-function filterRuntimeProjectWorkByDevice(
-  projectWork: RuntimeProjectWork,
-  deviceId: string | null
-): RuntimeProjectWork {
-  if (!deviceId) return projectWork
-
-  const deviceWorkspaces = filterRuntimeWorkspacesByDevice(projectWork.deviceWorkspaces, deviceId)
+function getRuntimeProjectDeviceState(
+  runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[]
+): SidebarDeviceState | null {
+  const workspace = runtimeProjectWork?.deviceWorkspaces[0]
+  if (!workspace) return null
+  const device = devices.find(item => item.device_id === workspace.deviceId)
   return {
-    ...projectWork,
-    deviceWorkspaces,
-    totalLocalTasks: getRuntimeWorkspaceTaskCount(deviceWorkspaces),
+    deviceId: workspace.deviceId,
+    device,
+    status: (device?.status ?? workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
   }
 }
 
-function SidebarOnlineDevices({
-  devices,
-  expanded,
-  offlineExpanded,
-  selectedDeviceId,
-  onToggleExpanded,
-  onToggleOfflineExpanded,
-  onSelectDevice,
-  onAddDevice,
-}: {
+function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
+  return Boolean(
+    runtimeProjectWork?.deviceWorkspaces.some(workspace => workspace.workspaceSource === 'remote')
+  )
+}
+
+function shouldShowProjectDeviceStatus(
+  deviceState: SidebarDeviceState | null,
   devices: DeviceInfo[]
-  expanded: boolean
-  offlineExpanded: boolean
-  selectedDeviceId: string | null
-  onToggleExpanded: () => void
-  onToggleOfflineExpanded: () => void
-  onSelectDevice: (deviceId: string) => void
-  onAddDevice: () => void
-}) {
-  const { t } = useTranslation('common')
-  const onlineDevices = useMemo(
-    () => devices.filter(device => device.status === 'online'),
-    [devices]
-  )
-  const offlineDevices = useMemo(
-    () => devices.filter(device => device.status !== 'online'),
-    [devices]
-  )
-  const selectedDevice = devices.find(device => device.device_id === selectedDeviceId) ?? null
-  const selectedOfflineDevice =
-    selectedDevice && selectedDevice.status !== 'online' ? selectedDevice : null
-  const visibleOfflineDevices = offlineExpanded
-    ? offlineDevices
-    : selectedOfflineDevice
-      ? [selectedOfflineDevice]
-      : []
-  const visibleDevices = [...onlineDevices, ...visibleOfflineDevices]
+): deviceState is SidebarDeviceState {
+  if (!deviceState || devices.length <= 1) return false
+  return deviceState.device?.device_type !== 'local'
+}
 
-  return (
-    <section data-testid="sidebar-online-devices" className="mb-6 px-2.5">
-      <div
-        data-testid="sidebar-devices-header"
-        className="mb-1.5 flex h-5 items-center justify-between gap-2"
-      >
-        <button
-          type="button"
-          data-testid="sidebar-devices-section-toggle"
-          aria-expanded={expanded}
-          onClick={onToggleExpanded}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-[12px] font-semibold leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-        >
-          <ChevronRight
-            className={cn(
-              'h-3.5 w-3.5 shrink-0 transition-transform',
-              expanded ? 'rotate-90' : 'rotate-0'
-            )}
-          />
-          <span className="shrink-0">{t('workbench.online_devices', '在线设备')}</span>
-          <span className="shrink-0 text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
-            {onlineDevices.length}
-          </span>
-          {selectedDevice && (
-            <span className="min-w-0 truncate text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
-              {selectedDevice.name || selectedDevice.device_id}
-            </span>
-          )}
-        </button>
-        {offlineDevices.length > 0 && (
-          <button
-            type="button"
-            data-testid="sidebar-offline-devices-toggle"
-            onClick={() => {
-              if (!offlineExpanded && !expanded) {
-                onToggleExpanded()
-              }
-              onToggleOfflineExpanded()
-            }}
-            className="h-5 shrink-0 rounded-sm px-1 text-[11px] font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-          >
-            {offlineExpanded
-              ? t('workbench.hide_offline_devices', '收起离线')
-              : t('workbench.show_offline_devices', {
-                  count: offlineDevices.length,
-                  defaultValue: '离线 {{count}}',
-                })}
-          </button>
-        )}
-        <button
-          type="button"
-          data-testid="sidebar-add-device-button"
-          aria-label={t('workbench.add_device')}
-          title={t('workbench.add_device')}
-          onClick={onAddDevice}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      {expanded && (
-        <div data-testid="sidebar-device-list" className="space-y-0.5">
-          {visibleDevices.map(device => {
-            const deviceName = device.name || device.device_id
-            const color = getSidebarDeviceColor(
-              getSidebarDeviceColorKey(device.name, device.device_id)
-            )
-            const selected = selectedDeviceId === device.device_id
-            const deviceState: SidebarDeviceState = {
-              deviceId: device.device_id,
-              device,
-              status: device.status,
-            }
-
-            return (
-              <button
-                type="button"
-                key={device.device_id}
-                data-testid={`sidebar-online-device-${device.device_id}`}
-                aria-pressed={selected}
-                onClick={() => onSelectDevice(device.device_id)}
-                title={deviceName}
-                className={cn(
-                  'flex h-5 w-full min-w-0 items-center gap-2 rounded-sm text-left text-[12px] leading-4 hover:text-[rgb(var(--color-sidebar-text-primary))]',
-                  selected
-                    ? 'font-semibold text-[rgb(var(--color-sidebar-text-primary))]'
-                    : 'font-medium text-[rgb(var(--color-sidebar-text-secondary))]',
-                  device.status !== 'online' && 'opacity-70'
-                )}
-              >
-                <span
-                  data-testid={`sidebar-online-device-color-${device.device_id}`}
-                  aria-hidden="true"
-                  className={cn(
-                    'h-2 w-2 shrink-0 rounded-full opacity-90',
-                    selected && 'h-2.5 w-2.5'
-                  )}
-                  style={{ backgroundColor: color }}
-                />
-                <span className="min-w-0 truncate">{deviceName}</span>
-                <SidebarDeviceStatusIndicator
-                  deviceState={deviceState}
-                  testId={`sidebar-device-status-${device.device_id}`}
-                  className="ml-auto"
-                />
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </section>
-  )
+function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
+  return getSidebarDeviceColor(getSidebarDeviceColorKey(workspace.deviceName, workspace.deviceId))
 }
 
 function getSidebarDeviceStatusLabel(
@@ -601,7 +625,7 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
   )
 }
 
-function SidebarDeviceStatusIndicator({
+function ProjectDeviceInlineStatus({
   deviceState,
   testId,
   className,
@@ -610,27 +634,29 @@ function SidebarDeviceStatusIndicator({
   testId: string
   className?: string
 }) {
-  const { t } = useTranslation('common')
-  if (deviceState.status === 'online') return null
-
-  const label = getSidebarDeviceStatusLabel(t, deviceState.status)
-  const deviceName = getSidebarDeviceName(deviceState)
-  const title = formatSidebarTemplate(
-    t('workbench.project_device_status_title', '{{device}} · {{status}}'),
-    { device: deviceName, status: label }
-  )
+  const label = getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  const online = deviceState.status === 'online'
 
   return (
     <span
       data-testid={testId}
-      title={title}
-      aria-label={title}
+      title={label}
+      aria-label={label}
       className={cn(
-        'inline-flex h-5 shrink-0 items-center rounded-full text-[11px] leading-4 text-[rgb(var(--color-sidebar-text-muted))]',
+        'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
         className
       )}
     >
-      <span className="shrink-0">{label}</span>
+      <span className="max-w-[96px] truncate">{label}</span>
+      <span
+        data-testid={`${testId}-dot`}
+        aria-hidden="true"
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full',
+          !online && 'bg-[rgb(var(--color-sidebar-text-muted))] opacity-55'
+        )}
+        style={online ? { backgroundColor: '#1FD660' } : undefined}
+      />
     </span>
   )
 }
@@ -654,6 +680,7 @@ function RuntimeLocalTaskRow({
   imNotificationSettings,
   showDeviceMarker,
   onOpenRuntimeLocalTask,
+  onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
   onToggleRuntimeTaskNotification,
 }: {
@@ -664,6 +691,7 @@ function RuntimeLocalTaskRow({
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
@@ -671,13 +699,17 @@ function RuntimeLocalTaskRow({
   ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
-  const [marked, setMarked] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [archivePending, setArchivePending] = useState(false)
+  const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const archiveDelayRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
   const disabled = !workspace.available || !onOpenRuntimeLocalTask
-  const archiveDisabled = !workspace.available || !onArchiveRuntimeLocalTask || archiving
+  const archiveDisabled =
+    !workspace.available || !onArchiveRuntimeLocalTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
@@ -688,19 +720,39 @@ function RuntimeLocalTaskRow({
     if (disabled) return
     void onOpenRuntimeLocalTask?.(taskAddress)
   }
-  const handleToggleMark = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-    event.currentTarget.blur()
-    setMarked(value => !value)
-  }
+  useEffect(() => {
+    return () => {
+      if (archiveDelayRef.current !== null) {
+        window.clearTimeout(archiveDelayRef.current)
+      }
+    }
+  }, [])
   const handleArchive = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     event.currentTarget.blur()
     if (archiveDisabled) return
-    setArchiving(true)
-    void Promise.resolve(onArchiveRuntimeLocalTask?.(taskAddress)).finally(() => {
-      setArchiving(false)
-    })
+    setArchivePending(true)
+    setArchiveNoticeOpen(true)
+    archiveDelayRef.current = window.setTimeout(() => {
+      archiveDelayRef.current = null
+      setArchivePending(false)
+      setArchiveNoticeOpen(false)
+      setArchiving(true)
+      void Promise.resolve(onArchiveRuntimeLocalTask?.(taskAddress)).finally(() => {
+        setArchiving(false)
+      })
+    }, RUNTIME_ARCHIVE_UNDO_DELAY_MS)
+  }
+  const handleUndoArchive = () => {
+    if (archiveDelayRef.current !== null) {
+      window.clearTimeout(archiveDelayRef.current)
+      archiveDelayRef.current = null
+    }
+    setArchivePending(false)
+    setArchiveNoticeOpen(false)
+  }
+  const handleDismissArchiveNotice = () => {
+    setArchiveNoticeOpen(false)
   }
   const handleToggleNotification = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -733,209 +785,154 @@ function RuntimeLocalTaskRow({
   )
 
   return (
-    <div
-      data-testid={`runtime-local-task-row-${task.localTaskId}`}
-      data-marked={marked ? 'true' : 'false'}
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled}
-      onClick={handleOpen}
-      onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
-      className={cn(
-        'group/task relative flex h-8 min-w-0 items-center rounded-md pr-2 text-[13px] leading-[18px]',
-        indentClassName,
-        disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
-        selected
-          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-          : marked
-            ? 'bg-[rgb(var(--color-sidebar-marked))] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-marked-hover))]'
+    <>
+      <div
+        data-testid={`runtime-local-task-row-${task.localTaskId}`}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
+        onClick={handleOpen}
+        onDoubleClick={event => {
+          event.stopPropagation()
+          if (!disabled && onRenameRuntimeLocalTask) {
+            setRenameOpen(true)
+          }
+        }}
+        onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
+        className={cn(
+          'group/task relative flex h-8 min-w-0 items-center rounded-md pr-2 text-[13px] leading-[18px]',
+          indentClassName,
+          disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
+          selected
+            ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
             : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
-      )}
-    >
-      <span title={task.title} className="min-w-0 flex-1 truncate group-hover/task:pr-20">
-        {task.title}
-      </span>
-      <span
-        data-testid={`runtime-local-task-trailing-${task.localTaskId}`}
-        className="relative ml-1 flex h-7 shrink-0 items-center justify-end"
+        )}
       >
-        <span
-          data-testid={`runtime-local-task-time-${task.localTaskId}`}
-          className={SIDEBAR_ROW_METADATA_CLASS}
-        >
-          {worktreeTask && (
-            <GitCompareArrows
-              data-testid={`runtime-local-task-worktree-icon-${task.localTaskId}`}
-              className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-              aria-label="Worktree"
-            />
-          )}
-          {notificationsSubscribed &&
-            renderNotificationButton(
-              `runtime-local-task-notify-${task.localTaskId}`,
-              `runtime-local-task-notify-icon-${task.localTaskId}`
-            )}
-          <span className="flex h-7 w-7 items-center justify-center">
-            {task.running ? (
-              <span
-                data-testid={`runtime-local-task-running-${task.localTaskId}`}
-                role="status"
-                title={t('workbench.runtime_task_running')}
-                aria-label={t('workbench.runtime_task_running')}
-                className="flex h-7 w-7 items-center justify-center"
-              >
-                <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
-              </span>
-            ) : (
-              formatRelativeSidebarTime(getRuntimeTaskTime(task))
-            )}
-          </span>
-          {showDeviceMarker && (
-            <span
-              data-testid={`runtime-local-task-device-marker-${task.localTaskId}`}
-              title={workspaceTitle}
-              aria-label={workspaceTitle}
-              className="h-3.5 w-0.5 shrink-0 rounded-full"
-              style={{ backgroundColor: deviceColor }}
-            />
-          )}
+        <span title={task.title} className="min-w-0 flex-1 truncate group-hover/task:pr-14">
+          {task.title}
         </span>
         <span
-          data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
-          className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
+          data-testid={`runtime-local-task-trailing-${task.localTaskId}`}
+          className="relative ml-1 flex h-7 shrink-0 items-center justify-end"
         >
-          {renderNotificationButton(
-            notificationsSubscribed
-              ? `runtime-local-task-notify-hover-${task.localTaskId}`
-              : `runtime-local-task-notify-${task.localTaskId}`,
-            notificationsSubscribed
-              ? `runtime-local-task-notify-hover-icon-${task.localTaskId}`
-              : `runtime-local-task-notify-icon-${task.localTaskId}`
-          )}
-          <button
-            type="button"
-            data-testid={`runtime-local-task-mark-${task.localTaskId}`}
-            onClick={handleToggleMark}
-            className={cn(
-              'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
-              marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
-            )}
-            title={
-              marked
-                ? t('workbench.unmark_runtime_task', '取消标记')
-                : t('workbench.mark_runtime_task', '标记')
-            }
-            aria-label={
-              marked
-                ? t('workbench.unmark_runtime_task', '取消标记')
-                : t('workbench.mark_runtime_task', '标记')
-            }
+          <span
+            data-testid={`runtime-local-task-time-${task.localTaskId}`}
+            className={SIDEBAR_ROW_METADATA_CLASS}
           >
-            <Pin
-              data-testid={`runtime-local-task-pin-icon-${task.localTaskId}`}
-              className={cn('h-4 w-4', marked && 'fill-current')}
-            />
-          </button>
-          <button
-            type="button"
-            data-testid={`runtime-local-task-archive-${task.localTaskId}`}
-            disabled={archiveDisabled}
-            onClick={handleArchive}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
-            title={t('workbench.archive_runtime_task', '归档')}
-            aria-label={t('workbench.archive_runtime_task', '归档')}
-          >
-            {archiving ? (
-              <RotateCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Archive
-                data-testid={`runtime-local-task-archive-icon-${task.localTaskId}`}
-                className="h-4 w-4"
+            {worktreeTask && (
+              <GitCompareArrows
+                data-testid={`runtime-local-task-worktree-icon-${task.localTaskId}`}
+                className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
+                aria-label="Worktree"
               />
             )}
-          </button>
+            {notificationsSubscribed &&
+              renderNotificationButton(
+                `runtime-local-task-notify-${task.localTaskId}`,
+                `runtime-local-task-notify-icon-${task.localTaskId}`
+              )}
+            <span className="flex h-7 w-7 items-center justify-center">
+              {task.running ? (
+                <span
+                  data-testid={`runtime-local-task-running-${task.localTaskId}`}
+                  role="status"
+                  title={t('workbench.runtime_task_running')}
+                  aria-label={t('workbench.runtime_task_running')}
+                  className="flex h-7 w-7 items-center justify-center"
+                >
+                  <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+                </span>
+              ) : (
+                formatRelativeSidebarTime(getRuntimeTaskTime(task))
+              )}
+            </span>
+            {showDeviceMarker && (
+              <span
+                data-testid={`runtime-local-task-device-marker-${task.localTaskId}`}
+                title={workspaceTitle}
+                aria-label={workspaceTitle}
+                className="h-3.5 w-0.5 shrink-0 rounded-full"
+                style={{ backgroundColor: deviceColor }}
+              />
+            )}
+          </span>
+          <span
+            data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
+            className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[52px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
+          >
+            {renderNotificationButton(
+              notificationsSubscribed
+                ? `runtime-local-task-notify-hover-${task.localTaskId}`
+                : `runtime-local-task-notify-${task.localTaskId}`,
+              notificationsSubscribed
+                ? `runtime-local-task-notify-hover-icon-${task.localTaskId}`
+                : `runtime-local-task-notify-icon-${task.localTaskId}`
+            )}
+            <button
+              type="button"
+              data-testid={`runtime-local-task-archive-${task.localTaskId}`}
+              disabled={archiveDisabled}
+              onClick={handleArchive}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+              title={t('workbench.archive_runtime_task', '归档')}
+              aria-label={t('workbench.archive_runtime_task', '归档')}
+            >
+              {archiving ? (
+                <RotateCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Archive
+                  data-testid={`runtime-local-task-archive-icon-${task.localTaskId}`}
+                  className="h-4 w-4"
+                />
+              )}
+            </button>
+          </span>
         </span>
-      </span>
-    </div>
-  )
-}
-
-function RuntimeWorkspaceGroup({
-  workspace,
-  currentRuntimeTask,
-  imNotificationSettings,
-  showDeviceMarker,
-  onOpenRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
-  onToggleRuntimeTaskNotification,
-}: {
-  workspace: RuntimeDeviceWorkspace
-  currentRuntimeTask?: RuntimeTaskAddress | null
-  imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
-  showDeviceMarker: boolean
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onToggleRuntimeTaskNotification?: (
-    address: RuntimeTaskAddress,
-    subscribed: boolean
-  ) => Promise<void> | void
-}) {
-  const { t } = useTranslation('common')
-  const sortedTasks = useMemo(() => sortRuntimeTasks(workspace.localTasks), [workspace.localTasks])
-  const deviceState: SidebarDeviceState = {
-    deviceId: workspace.deviceId,
-    status: workspace.available
-      ? (workspace.deviceStatus as SidebarDeviceStatus) || 'online'
-      : 'unavailable',
-  }
-  const title = `${workspace.deviceName || workspace.deviceId} · ${workspace.workspacePath}`
-
-  return (
-    <div
-      data-testid={`runtime-workspace-row-${workspace.id ?? workspace.workspacePath}`}
-      className="space-y-0.5"
-    >
-      <div
-        className={cn(
-          'flex h-8 min-w-0 items-center rounded-md pl-9 pr-2 text-[13px] leading-[18px]',
-          workspace.available
-            ? 'text-[rgb(var(--color-sidebar-text-secondary))]'
-            : 'text-[rgb(var(--color-sidebar-text-muted))] opacity-70'
-        )}
-        title={title}
-      >
-        <Folder className="mr-2 h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
-        <span className="min-w-0 flex-1 truncate">{getRuntimeWorkspaceLabel(workspace)}</span>
-        {!workspace.available && (
-          <SidebarDeviceStatusIndicator
-            deviceState={deviceState}
-            testId={`runtime-workspace-device-status-${workspace.id ?? workspace.deviceId}`}
-          />
-        )}
       </div>
-      {sortedTasks.length === 0 ? (
-        <div
-          data-testid={`runtime-workspace-empty-${workspace.id ?? workspace.workspacePath}`}
-          className="ml-14 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-        >
-          {t('workbench.no_chats', '暂无会话')}
-        </div>
-      ) : (
-        sortedTasks.map(task => (
-          <RuntimeLocalTaskRow
-            key={task.localTaskId}
-            workspace={workspace}
-            task={task}
-            selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-            imNotificationSettings={imNotificationSettings}
-            showDeviceMarker={showDeviceMarker}
-            onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-            onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-            onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-          />
-        ))
-      )}
-    </div>
+      <TextInputDialog
+        open={renameOpen}
+        title={t('workbench.rename_chat', '重命名会话')}
+        label={t('workbench.chat_name', '会话名称')}
+        description={t('workbench.rename_chat_description', '保持简短且易于识别')}
+        initialValue={task.title}
+        confirmLabel={t('workbench.save', '保存')}
+        cancelLabel={t('workbench.cancel', '取消')}
+        inputTestId={`rename-runtime-local-task-input-${task.localTaskId}`}
+        confirmTestId={`confirm-rename-runtime-local-task-${task.localTaskId}`}
+        onClose={() => setRenameOpen(false)}
+        onSubmit={title => onRenameRuntimeLocalTask?.(taskAddress, title)}
+      />
+      {archiveNoticeOpen &&
+        createPortal(
+          <div
+            data-testid={`runtime-local-task-archive-toast-${task.localTaskId}`}
+            role="status"
+            aria-live="polite"
+            className="fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
+          >
+            <button
+              type="button"
+              data-testid={`runtime-local-task-archive-undo-${task.localTaskId}`}
+              onClick={handleUndoArchive}
+              className="font-medium text-primary hover:underline"
+            >
+              {t('workbench.archive_runtime_task_undo', '撤销')}
+            </button>
+            <span>{t('workbench.archive_runtime_task_pending', '，稍后将归档')}</span>
+            <button
+              type="button"
+              data-testid={`runtime-local-task-archive-toast-close-${task.localTaskId}`}
+              onClick={handleDismissArchiveNotice}
+              className="ml-2 flex h-5 w-5 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
+              title={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
+              aria-label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>,
+          document.body
+        )}
+    </>
   )
 }
 
@@ -943,7 +940,6 @@ function ProjectItem({
   project,
   expanded,
   onToggleProject,
-  onSelectProject,
   devices,
   runtimeProjectWork,
   currentRuntimeTask,
@@ -951,16 +947,16 @@ function ProjectItem({
   showDeviceMarker,
   onStartNewProjectChat,
   onRemoveProject,
-  onEditProject,
   onRenameProject,
   onOpenRuntimeLocalTask,
+  onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
+  onArchiveProjectConversations,
   onToggleRuntimeTaskNotification,
 }: {
   project: ProjectWithTasks
   expanded: boolean
   onToggleProject: (projectId: number) => void
-  onSelectProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
   currentRuntimeTask?: RuntimeTaskAddress | null
@@ -968,10 +964,11 @@ function ProjectItem({
   showDeviceMarker: boolean
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
-  onEditProject: (project: ProjectWithTasks) => void
   onRenameProject: (project: ProjectWithTasks) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
@@ -984,17 +981,45 @@ function ProjectItem({
     [runtimeWorkspaces]
   )
   const [runtimeTasksExpanded, setRuntimeTasksExpanded] = useState(false)
+  const [projectArchiving, setProjectArchiving] = useState(false)
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
   const visibleRuntimeTaskItems = useMemo(
     () => getVisibleRuntimeSidebarTaskItems(runtimeTaskItems, runtimeTasksExpanded),
     [runtimeTaskItems, runtimeTasksExpanded]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(runtimeTaskItems)
-  const projectDeviceState = getSidebarDeviceState(getProjectDeviceId(project), devices)
+  const projectDeviceState =
+    getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
+    getSidebarDeviceState(getProjectDeviceId(project), devices)
+  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(projectDeviceState, devices)
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
+  const canArchiveProjectConversations =
+    Boolean(runtimeProjectWork?.project.key) &&
+    runtimeTaskItems.length > 0 &&
+    Boolean(onArchiveProjectConversations) &&
+    !projectArchiving
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
       : t('workbench.new_project_chat', '新建项目对话')
+  const archiveConversationCount = runtimeTaskItems.length
+  const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
+  const closeArchiveConfirm = () => {
+    if (!projectArchiving) {
+      setArchiveConfirmOpen(false)
+    }
+  }
+  const confirmArchiveProjectConversations = async () => {
+    const runtimeProjectKey = runtimeProjectWork?.project.key
+    if (!runtimeProjectKey || !onArchiveProjectConversations) return
+    setProjectArchiving(true)
+    try {
+      await onArchiveProjectConversations(runtimeProjectKey)
+      setArchiveConfirmOpen(false)
+    } finally {
+      setProjectArchiving(false)
+    }
+  }
 
   return (
     <div data-testid="project-item" className="space-y-0.5">
@@ -1006,21 +1031,21 @@ function ProjectItem({
           type="button"
           data-testid="project-item-button"
           onClick={() => {
-            onSelectProject(project.id)
             onToggleProject(project.id)
           }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 pr-16 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 pr-1 text-left"
         >
           <ProjectFolderIcon
             project={project}
+            remote={isRuntimeRemoteProject(runtimeProjectWork)}
             className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
           />
           <span className="min-w-0 flex-1 truncate" title={project.name}>
             {project.name}
           </span>
-          {projectDeviceState && (
-            <SidebarDeviceStatusIndicator
+          {showProjectDeviceStatus && (
+            <ProjectDeviceInlineStatus
               deviceState={projectDeviceState}
               testId={`project-device-status-${project.id}`}
               className="ml-auto justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
@@ -1033,23 +1058,30 @@ function ProjectItem({
             testId={`project-menu-${project.id}`}
             items={[
               {
-                label: t('workbench.edit_project', '编辑项目'),
-                icon: Settings,
-                testId: `edit-project-${project.id}`,
-                onSelect: () => onEditProject(project),
-              },
-              {
                 label: t('workbench.rename_project', '重命名项目'),
                 icon: Edit3,
                 testId: `rename-project-${project.id}`,
                 onSelect: () => onRenameProject(project),
               },
               {
+                label: projectArchiving
+                  ? t('workbench.archiving_conversations', '归档中...')
+                  : t('workbench.archive_project_conversations', '归档对话'),
+                icon: Archive,
+                testId: `archive-project-conversations-${project.id}`,
+                disabled: !canArchiveProjectConversations,
+                onSelect: () => setArchiveConfirmOpen(true),
+              },
+              {
                 label: t('workbench.remove_project', '移除'),
                 icon: X,
                 testId: `remove-project-${project.id}`,
                 danger: true,
-                onSelect: () => onRemoveProject(project.id),
+                onSelect: () => {
+                  if (window.confirm(t('workbench.remove_project_confirm', '确定移除该项目吗？'))) {
+                    void onRemoveProject(project.id)
+                  }
+                },
               },
             ]}
           />
@@ -1091,6 +1123,7 @@ function ProjectItem({
                   imNotificationSettings={imNotificationSettings}
                   showDeviceMarker={showDeviceMarker}
                   onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                  onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
                   onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                   onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                 />
@@ -1115,6 +1148,23 @@ function ProjectItem({
           )}
         </div>
       )}
+      <ArchiveConversationsConfirmDialog
+        open={archiveConfirmOpen}
+        title={t('workbench.archive_project_dialog_title', {
+          defaultValue: '归档 {{count}} 个对话?',
+          count: archiveConversationCount,
+        })}
+        description={t('workbench.archive_project_dialog_desc', {
+          defaultValue: '这会将 {{projectName}} 中的对话归档。之后你可以在已归档对话中找到它们',
+          projectName: archiveProjectName,
+        })}
+        confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+        cancelLabel={t('workbench.cancel', '取消')}
+        submitting={projectArchiving}
+        testId={`archive-project-conversations-dialog-${project.id}`}
+        onClose={closeArchiveConfirm}
+        onConfirm={confirmArchiveProjectConversations}
+      />
     </div>
   )
 }
@@ -1125,33 +1175,30 @@ export function DesktopSidebar({
   devices,
   runtimeWork,
   currentRuntimeTask,
+  standaloneDeviceId,
+  standaloneWorkspacePath,
   imNotificationSettings,
   preferredDeviceId,
-  upgradingDevices = {},
   activeItem = 'chat',
   onCollapse,
   onNewChat,
-  onSelectProject,
+  onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
+  onArchiveProjectConversations,
+  onArchiveProjectsConversations,
+  onArchiveChatConversations,
   onToggleRuntimeTaskNotification,
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
-  onRememberExecutionDevice,
   onOpenPlugins,
   onRefreshDevices,
-  onUpgradeDevice,
-  onCreateProject,
-  onCreateGitWorkspaceProject,
-  onPrepareDeviceWorkspace,
-  onDeleteDeviceWorkspace,
-  onListGitRepositories,
-  onListGitBranches,
+  onOpenStandaloneWorkspace,
   onUpdateProjectName,
   onRemoveProject,
   onGetDeviceHomeDirectory,
-  onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onOpenSettings,
@@ -1163,10 +1210,7 @@ export function DesktopSidebar({
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
-  const unmappedExpandedStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'unmappedRuntimeExpanded'
-  )
+  const chatsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'chatsExpanded')
   const expandedProjectIdsStorageKey = getDesktopSidebarStorageKey(
     storageScope,
     'expandedProjectIds'
@@ -1174,53 +1218,81 @@ export function DesktopSidebar({
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
+  const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
+  const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
-  const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
-  const [editingProject, setEditingProject] = useState<ProjectWithTasks | null>(null)
+  const projectCreateMenuRef = useRef<HTMLDivElement>(null)
+  const projectCreateMenuFloatingRef = useRef<HTMLDivElement>(null)
+  const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
+  const [projectCreateMenuPosition, setProjectCreateMenuPosition] =
+    useState<ProjectCreateMenuPosition | null>(null)
+  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
+  const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
+    useState<StandaloneWorkspaceDialogMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [projectsExpanded, setProjectsExpanded] = useState(() =>
     readStoredBoolean(projectsExpandedStorageKey, true)
   )
-  const [unmappedExpanded, setUnmappedExpanded] = useState(() =>
-    readStoredBoolean(unmappedExpandedStorageKey, true)
+  const [chatsExpanded, setChatsExpanded] = useState(() =>
+    readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
-  const [devicesExpanded, setDevicesExpanded] = useState(false)
-  const [offlineDevicesExpanded, setOfflineDevicesExpanded] = useState(false)
-  const [selectedDeviceFilterId, setSelectedDeviceFilterId] = useState<string | null>(null)
-  const activeDeviceFilterId =
-    selectedDeviceFilterId && devices.some(device => device.device_id === selectedDeviceFilterId)
-      ? selectedDeviceFilterId
-      : null
-  const visibleExpandedProjectIds = useMemo(
-    () => pruneProjectIdSet(expandedProjectIds, projects),
-    [expandedProjectIds, projects]
+  const standaloneProjectWork = useMemo(
+    () =>
+      standaloneRuntimeProjectWork(
+        devices,
+        standaloneDeviceId,
+        standaloneWorkspacePath,
+        runtimeWork
+      ),
+    [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
   )
   const filteredRuntimeProjects = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return items.map(item => filterRuntimeProjectWorkByDevice(item, activeDeviceFilterId))
-  }, [runtimeWork?.projects, activeDeviceFilterId])
+    return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
+  }, [runtimeWork?.projects, standaloneProjectWork])
+  const sidebarProjects = useMemo(() => {
+    if (runtimeWork || standaloneProjectWork) {
+      return filteredRuntimeProjects.map(runtimeProjectToProject)
+    }
+    return projects
+  }, [filteredRuntimeProjects, projects, runtimeWork, standaloneProjectWork])
+  const visibleExpandedProjectIds = useMemo(
+    () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
+    [expandedProjectIds, sidebarProjects]
+  )
   const runtimeWorkByProjectId = useMemo(() => {
-    return new Map(filteredRuntimeProjects.map(item => [item.project.id, item]))
+    return new Map(filteredRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
   }, [filteredRuntimeProjects])
-  const unmappedWorkspaces = useMemo(
-    () =>
-      filterRuntimeWorkspacesByDevice(
-        runtimeWork?.unmappedDeviceWorkspaces ?? [],
-        activeDeviceFilterId
-      ),
-    [runtimeWork?.unmappedDeviceWorkspaces, activeDeviceFilterId]
+  const chatWorkspaces = useMemo(() => runtimeWork?.chats ?? [], [runtimeWork?.chats])
+  const chatTaskItems = useMemo(
+    () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
+    [chatWorkspaces]
   )
-  const unmappedDirectoryWorkspaces = useMemo(
-    () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
-    [unmappedWorkspaces]
+  const projectSectionArchiveItems = useMemo(() => {
+    return filteredRuntimeProjects
+      .map(projectWork => ({
+        key: projectWork.project.key,
+        count: getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).length,
+      }))
+      .filter(item => item.count > 0)
+  }, [filteredRuntimeProjects])
+  const projectSectionArchiveKeys = useMemo(
+    () => projectSectionArchiveItems.map(item => item.key),
+    [projectSectionArchiveItems]
   )
-  const unmappedChatTaskItems = useMemo(
-    () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
-    [unmappedWorkspaces]
+  const projectSectionArchiveCount = useMemo(
+    () => projectSectionArchiveItems.reduce((total, item) => total + item.count, 0),
+    [projectSectionArchiveItems]
   )
+  const chatSectionArchiveAddresses = useMemo(
+    () => chatTaskItems.map(({ workspace, task }) => getRuntimeTaskAddress(workspace, task)),
+    [chatTaskItems]
+  )
+  const chatSectionArchiveCount = chatSectionArchiveAddresses.length
   const selectedRuntimeProjectId = useMemo(() => {
     if (!currentRuntimeTask) return null
     const projectWork = runtimeWork?.projects.find(item =>
@@ -1232,14 +1304,51 @@ export function DesktopSidebar({
     )
     return projectWork?.project.id ?? null
   }, [currentRuntimeTask, runtimeWork?.projects])
-  const selectedRuntimeInUnmapped = useMemo(() => {
+  const selectedRuntimeChatVisible = useMemo(() => {
     if (!currentRuntimeTask) return false
-    return unmappedDirectoryWorkspaces.some(workspace =>
-      workspace.localTasks.some(task => isRuntimeTaskSelected(currentRuntimeTask, workspace, task))
+    return chatTaskItems.some(({ workspace, task }) =>
+      isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
     )
-  }, [currentRuntimeTask, unmappedDirectoryWorkspaces])
+  }, [currentRuntimeTask, chatTaskItems])
   const displayedProjectsExpanded = projectsExpanded || selectedRuntimeProjectId !== null
-  const displayedUnmappedExpanded = unmappedExpanded || selectedRuntimeInUnmapped
+  const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
+  const isArchiveSectionSubmitting =
+    archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
+  const archiveSectionDialogTestId =
+    archiveSectionMode === 'chats'
+      ? 'runtime-chat-section-archive-conversations-dialog'
+      : 'projects-section-archive-conversations-dialog'
+  const archiveSectionDialogCount =
+    archiveSectionMode === 'chats' ? chatSectionArchiveCount : projectSectionArchiveCount
+  const closeArchiveSectionDialog = () => {
+    if (!isArchiveSectionSubmitting) {
+      setArchiveSectionMode(null)
+    }
+  }
+  const confirmArchiveSectionConversations = async () => {
+    if (archiveSectionMode === 'projects') {
+      if (!onArchiveProjectsConversations || projectSectionArchiveKeys.length === 0) return
+      setIsArchivingProjectSection(true)
+      try {
+        await onArchiveProjectsConversations(projectSectionArchiveKeys)
+        setArchiveSectionMode(null)
+      } finally {
+        setIsArchivingProjectSection(false)
+      }
+      return
+    }
+
+    if (archiveSectionMode === 'chats') {
+      if (!onArchiveChatConversations || chatSectionArchiveAddresses.length === 0) return
+      setIsArchivingChatSection(true)
+      try {
+        await onArchiveChatConversations(chatSectionArchiveAddresses)
+        setArchiveSectionMode(null)
+      } finally {
+        setIsArchivingChatSection(false)
+      }
+    }
+  }
   const displayedExpandedProjectIds = useMemo(() => {
     if (selectedRuntimeProjectId === null) return visibleExpandedProjectIds
     if (visibleExpandedProjectIds.has(selectedRuntimeProjectId)) return visibleExpandedProjectIds
@@ -1258,19 +1367,21 @@ export function DesktopSidebar({
     })
   }
 
-  const handleSelectDeviceFilter = (deviceId: string) => {
-    setSelectedDeviceFilterId(previous => (previous === deviceId ? null : deviceId))
-  }
+  const openProjectCreateMenu = (anchor: HTMLElement) => {
+    setProjectCreateMenuOpen(open => {
+      if (open) return false
 
-  const openProjectCreateDialog = () => {
-    setProjectCreateMode('scratch')
-    setEditingProject(null)
-    void onRefreshDevices?.().catch(() => undefined)
-  }
-
-  const openProjectEditDialog = (project: ProjectWithTasks) => {
-    setEditingProject(project)
-    setProjectCreateMode(null)
+      const anchorRect = anchor.getBoundingClientRect()
+      const maxLeft = Math.max(
+        PROJECT_CREATE_MENU_MARGIN,
+        window.innerWidth - PROJECT_CREATE_MENU_WIDTH - PROJECT_CREATE_MENU_MARGIN
+      )
+      setProjectCreateMenuPosition({
+        top: Math.max(PROJECT_CREATE_MENU_MARGIN, anchorRect.bottom + PROJECT_CREATE_MENU_MARGIN),
+        left: Math.min(anchorRect.right + PROJECT_CREATE_MENU_MARGIN, maxLeft),
+      })
+      return true
+    })
     void onRefreshDevices?.().catch(() => undefined)
   }
 
@@ -1281,8 +1392,8 @@ export function DesktopSidebar({
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
-    writeStoredBoolean(unmappedExpandedStorageKey, unmappedExpanded)
-  }, [unmappedExpanded, unmappedExpandedStorageKey, storageScope])
+    writeStoredBoolean(chatsExpandedStorageKey, chatsExpanded)
+  }, [chatsExpanded, chatsExpandedStorageKey, storageScope])
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -1294,13 +1405,13 @@ export function DesktopSidebar({
 
     storageScopeRef.current = storageScope
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
-    setUnmappedExpanded(readStoredBoolean(unmappedExpandedStorageKey, true))
+    setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
   }, [
+    chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,
     projectsExpandedStorageKey,
     storageScope,
-    unmappedExpandedStorageKey,
   ])
 
   useEffect(() => {
@@ -1324,6 +1435,36 @@ export function DesktopSidebar({
   }, [settingsMenuOpen])
 
   useEffect(() => {
+    if (!projectCreateMenuOpen) return
+
+    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+      const target = event.target as Node
+      if (
+        !projectCreateMenuRef.current?.contains(target) &&
+        !projectCreateMenuFloatingRef.current?.contains(target)
+      ) {
+        setProjectCreateMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setProjectCreateMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer)
+    document.addEventListener('mousedown', handleOutsidePointer)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointer)
+      document.removeEventListener('mousedown', handleOutsidePointer)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [projectCreateMenuOpen])
+
+  useEffect(() => {
     if (!currentRuntimeTask) return
 
     const taskRow = document.querySelector(
@@ -1333,9 +1474,9 @@ export function DesktopSidebar({
     taskRow?.scrollIntoView({ block: 'nearest' })
   }, [
     currentRuntimeTask,
+    displayedChatsExpanded,
     displayedExpandedProjectIds,
     displayedProjectsExpanded,
-    displayedUnmappedExpanded,
   ])
 
   return (
@@ -1356,55 +1497,134 @@ export function DesktopSidebar({
           testId="new-chat-button"
           onClick={onNewChat}
         />
-        <SidebarButton
-          icon={Sparkles}
-          label={t('workbench.plugins', '插件')}
-          testId="plugins-button"
-          selected={activeItem === 'plugins'}
-          onClick={onOpenPlugins}
-        />
+        {onOpenSearch && (
+          <SidebarButton
+            icon={Search}
+            label={t('workbench.search')}
+            testId="runtime-search-button"
+            onClick={onOpenSearch}
+          />
+        )}
+        {SHOW_PLUGINS_NAVIGATION && (
+          <SidebarButton
+            icon={Sparkles}
+            label={t('workbench.plugins', '插件')}
+            testId="plugins-button"
+            selected={activeItem === 'plugins'}
+            onClick={onOpenPlugins}
+          />
+        )}
       </nav>
 
       <div
         data-testid="sidebar-worklists-scroll"
-        className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
+        className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
       >
-        <SidebarOnlineDevices
-          devices={devices}
-          expanded={devicesExpanded}
-          offlineExpanded={offlineDevicesExpanded}
-          selectedDeviceId={activeDeviceFilterId}
-          onToggleExpanded={() => setDevicesExpanded(expanded => !expanded)}
-          onToggleOfflineExpanded={() => setOfflineDevicesExpanded(expanded => !expanded)}
-          onSelectDevice={handleSelectDeviceFilter}
-          onAddDevice={() => onOpenSettings({ autoOpenAddCloudDeviceDialog: true })}
-        />
-
         <section>
-          <SidebarSectionHeader
-            title={t('workbench.projects', '项目')}
-            expanded={displayedProjectsExpanded}
-            hasContent={projects.length > 0}
-            toggleTestId="projects-section-toggle"
-            iconTestId="projects-section-chevron-right"
-            onToggle={() => setProjectsExpanded(expanded => !expanded)}
-          >
-            <button
-              type="button"
-              aria-label={t('workbench.new_project', '新建项目')}
-              data-testid="projects-create-button"
-              onClick={event => {
-                event.stopPropagation()
-                openProjectCreateDialog()
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+          <div ref={projectCreateMenuRef}>
+            <SidebarSectionHeader
+              title={t('workbench.projects', '项目')}
+              expanded={displayedProjectsExpanded}
+              hasContent={sidebarProjects.length > 0}
+              toggleTestId="projects-section-toggle"
+              iconTestId="projects-section-chevron-right"
+              onToggle={() => setProjectsExpanded(expanded => !expanded)}
             >
-              <FolderPlus className="h-4 w-4" />
-            </button>
-          </SidebarSectionHeader>
+              <div className="flex items-center">
+                <ActionMenu
+                  ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
+                  testId="projects-section-menu"
+                  items={[
+                    {
+                      label: t('workbench.archive_all_chats', '归档所有聊天'),
+                      icon: Archive,
+                      testId: 'projects-section-archive-all-chats',
+                      disabled:
+                        !onArchiveProjectsConversations ||
+                        projectSectionArchiveCount === 0 ||
+                        isArchivingProjectSection,
+                      onSelect: () => setArchiveSectionMode('projects'),
+                    },
+                  ]}
+                  triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                />
+                <button
+                  type="button"
+                  aria-label={t('workbench.new_project', '新建项目')}
+                  data-testid="projects-create-button"
+                  onClick={event => {
+                    event.stopPropagation()
+                    openProjectCreateMenu(event.currentTarget)
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                  aria-expanded={projectCreateMenuOpen}
+                >
+                  <FolderPlus className="h-4 w-4" />
+                </button>
+              </div>
+            </SidebarSectionHeader>
+          </div>
+          {projectCreateMenuOpen &&
+            projectCreateMenuPosition &&
+            createPortal(
+              <div
+                ref={projectCreateMenuFloatingRef}
+                data-testid="projects-create-button-menu"
+                className="fixed z-modal rounded-xl border border-border bg-surface p-1.5 text-[13px] text-text-primary shadow-lg"
+                style={{
+                  top: projectCreateMenuPosition.top,
+                  left: projectCreateMenuPosition.left,
+                  width: PROJECT_CREATE_MENU_WIDTH,
+                }}
+                onClick={event => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  data-testid="project-create-blank-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setBlankProjectDialogOpen(true)
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">
+                    {t('workbench.new_blank_project', '新建空白项目')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="project-create-existing-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setStandaloneWorkspaceDialogMode('existing')
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">
+                    {t('workbench.use_existing_folder', '使用现有文件夹')}
+                  </span>
+                </button>
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  data-testid="project-create-remote-option"
+                  onClick={() => {
+                    setProjectCreateMenuOpen(false)
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }}
+                  className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                >
+                  <Globe2 className="h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="truncate">{t('workbench.remote_project', '远程项目')}</span>
+                </button>
+              </div>,
+              document.body
+            )}
           {displayedProjectsExpanded && (
             <div className="space-y-1">
-              {projects.map(project => (
+              {sidebarProjects.map(project => (
                 <ProjectItem
                   key={project.id}
                   project={project}
@@ -1413,15 +1633,15 @@ export function DesktopSidebar({
                   runtimeProjectWork={runtimeWorkByProjectId.get(project.id)}
                   currentRuntimeTask={currentRuntimeTask}
                   imNotificationSettings={imNotificationSettings}
-                  showDeviceMarker={devicesExpanded}
+                  showDeviceMarker={false}
                   onToggleProject={handleToggleProject}
-                  onSelectProject={onSelectProject}
                   onStartNewProjectChat={onStartNewProjectChat}
                   onRemoveProject={onRemoveProject}
-                  onEditProject={openProjectEditDialog}
                   onRenameProject={setRenamingProject}
                   onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                  onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
                   onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+                  onArchiveProjectConversations={onArchiveProjectConversations}
                   onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                 />
               ))}
@@ -1429,58 +1649,68 @@ export function DesktopSidebar({
           )}
         </section>
 
-        {unmappedChatTaskItems.length > 0 && (
-          <section data-testid="runtime-chat-section" className="mt-8">
-            <div className="mb-2 flex h-7 items-center px-2.5">
-              <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
-                {t('workbench.chats', '对话')}
-              </span>
-            </div>
-            <div className="space-y-0.5 pb-2">
-              {unmappedChatTaskItems.map(({ workspace, task }) => (
-                <RuntimeLocalTaskRow
-                  key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
-                  workspace={workspace}
-                  task={task}
-                  selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                  indentClassName="pl-2.5"
-                  imNotificationSettings={imNotificationSettings}
-                  showDeviceMarker={devicesExpanded}
-                  onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-                  onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-                  onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section data-testid="unmapped-runtime-section" className="mt-8">
+        <section data-testid="runtime-chat-section" className="mt-8">
           <SidebarSectionHeader
-            title={t('workbench.unmapped_device_workspaces', '未映射工作区')}
-            expanded={displayedUnmappedExpanded}
-            hasContent={unmappedDirectoryWorkspaces.length > 0}
-            toggleTestId="unmapped-runtime-section-toggle"
-            iconTestId="unmapped-runtime-section-chevron-right"
-            onToggle={() => setUnmappedExpanded(expanded => !expanded)}
+            title={t('workbench.chats', '对话')}
+            expanded={displayedChatsExpanded}
+            hasContent={chatTaskItems.length > 0}
+            toggleTestId="runtime-chat-section-toggle"
+            iconTestId="runtime-chat-section-chevron-right"
+            onToggle={() => setChatsExpanded(expanded => !expanded)}
           >
-            <span />
+            <div className="flex items-center">
+              <ActionMenu
+                ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
+                testId="runtime-chat-section-menu"
+                items={[
+                  {
+                    label: t('workbench.archive_all_chats', '归档所有聊天'),
+                    icon: Archive,
+                    testId: 'runtime-chat-section-archive-all-chats',
+                    disabled:
+                      !onArchiveChatConversations ||
+                      chatSectionArchiveCount === 0 ||
+                      isArchivingChatSection,
+                    onSelect: () => setArchiveSectionMode('chats'),
+                  },
+                ]}
+                triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+              />
+              <button
+                type="button"
+                aria-label={t('workbench.new_chat', '新对话')}
+                data-testid="runtime-chat-section-new-chat-button"
+                onClick={event => {
+                  event.stopPropagation()
+                  onNewChat()
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+              </button>
+            </div>
           </SidebarSectionHeader>
-          {displayedUnmappedExpanded && (
-            <div className="space-y-1 pb-2">
-              {unmappedDirectoryWorkspaces.length === 0 ? (
-                <div className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
-                  {t('workbench.no_unmapped_device_workspaces', '暂无未映射工作区')}
+          {displayedChatsExpanded && (
+            <div className="space-y-0.5 pb-2">
+              {chatTaskItems.length === 0 ? (
+                <div
+                  data-testid="runtime-chat-empty"
+                  className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+                >
+                  {t('workbench.no_chats', '暂无会话')}
                 </div>
               ) : (
-                unmappedDirectoryWorkspaces.map(workspace => (
-                  <RuntimeWorkspaceGroup
-                    key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                chatTaskItems.map(({ workspace, task }) => (
+                  <RuntimeLocalTaskRow
+                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
                     workspace={workspace}
-                    currentRuntimeTask={currentRuntimeTask}
+                    task={task}
+                    selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                    indentClassName="pl-2.5"
                     imNotificationSettings={imNotificationSettings}
-                    showDeviceMarker={devicesExpanded}
+                    showDeviceMarker={false}
                     onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                    onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
                     onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                     onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                   />
@@ -1585,36 +1815,56 @@ export function DesktopSidebar({
         aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
       />
 
-      <ProjectCreateDialog
-        open={projectCreateMode !== null || editingProject !== null}
-        mode={editingProject ? 'existing' : (projectCreateMode ?? 'scratch')}
-        project={editingProject}
-        deviceWorkspaces={getProjectDeviceWorkspaces(runtimeWork, editingProject?.id)}
+      <StandaloneBlankProjectDialog
+        open={blankProjectDialogOpen}
         devices={devices}
-        onClose={() => {
-          setProjectCreateMode(null)
-          setEditingProject(null)
-        }}
-        onOpenCloudDeviceSettings={() => {
-          setProjectCreateMode(null)
-          setEditingProject(null)
-          onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
-        }}
-        onCreateProject={onCreateProject}
-        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
-        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-        onUpdateProjectName={onUpdateProjectName}
         preferredDeviceId={preferredDeviceId}
-        onSelectDevicePreference={onRememberExecutionDevice}
-        upgradingDevices={upgradingDevices}
-        onUpgradeDevice={onUpgradeDevice}
+        onClose={() => setBlankProjectDialogOpen(false)}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onListGitRepositories={onListGitRepositories}
-        onListGitBranches={onListGitBranches}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
+      <StandaloneFolderProjectDialog
+        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+        open={standaloneWorkspaceDialogMode !== null}
+        mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        devices={devices}
+        preferredDeviceId={preferredDeviceId}
+        onClose={() => setStandaloneWorkspaceDialogMode(null)}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      />
+      <ArchiveConversationsConfirmDialog
+        open={archiveSectionMode !== null}
+        title={t(
+          archiveSectionMode === 'chats'
+            ? 'workbench.archive_chats_dialog_title'
+            : 'workbench.archive_projects_dialog_title',
+          {
+            defaultValue: '归档 {{count}} 个对话?',
+            count: archiveSectionDialogCount,
+          }
+        )}
+        description={t(
+          archiveSectionMode === 'chats'
+            ? 'workbench.archive_chats_dialog_desc'
+            : 'workbench.archive_projects_dialog_desc',
+          {
+            defaultValue:
+              archiveSectionMode === 'chats'
+                ? '这会将对话列表中的对话归档。之后你可以在已归档对话中找到它们'
+                : '这会将项目中的对话归档。之后你可以在已归档对话中找到它们',
+          }
+        )}
+        confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+        cancelLabel={t('workbench.cancel', '取消')}
+        submitting={isArchiveSectionSubmitting}
+        testId={archiveSectionDialogTestId}
+        onClose={closeArchiveSectionDialog}
+        onConfirm={confirmArchiveSectionConversations}
       />
       <TextInputDialog
         open={renamingProject !== null}
