@@ -40,7 +40,7 @@ import type {
   TaskType,
   InteractiveFormAnswerPayload,
 } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -312,6 +312,8 @@ export function useChatStreamHandlers({
       : undefined
 
   // Refs
+  const selectedContextsRef = useRef(selectedContexts)
+  selectedContextsRef.current = selectedContexts
   const lastFailedMessageRef = useRef<string | null>(null)
   const handleSendMessageRef = useRef<
     | ((
@@ -432,7 +434,7 @@ export function useChatStreamHandlers({
       sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
     ): PreparedChatSend => {
       const snapshotAttachments = [...attachments]
-      const snapshotContexts = [...selectedContexts]
+      const snapshotContexts = [...selectedContextsRef.current]
       const snapshotAdditionalSkills = additionalSkills ? [...additionalSkills] : undefined
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
 
@@ -443,10 +445,15 @@ export function useChatStreamHandlers({
       }
 
       const contextItems: Array<{
-        type: 'knowledge_base' | 'table' | 'selected_documents'
+        type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_knowledge'
         data: Record<string, unknown>
       }> = snapshotContexts
-        .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
+        .filter(
+          ctx =>
+            ctx.type !== 'queue_message' &&
+            ctx.type !== 'dingtalk_doc' &&
+            ctx.type !== 'external_knowledge'
+        )
         .map(ctx => {
           if (ctx.type === 'knowledge_base') {
             return {
@@ -455,6 +462,8 @@ export function useChatStreamHandlers({
                 knowledge_id: ctx.id,
                 name: ctx.name,
                 document_count: ctx.document_count,
+                document_ids: ctx.document_ids,
+                scope_restricted: ctx.scope_restricted,
               },
             }
           }
@@ -466,6 +475,26 @@ export function useChatStreamHandlers({
               source_config: (ctx as { source_config?: { url?: string } }).source_config,
             },
           }
+        })
+
+      snapshotContexts
+        .filter(ctx => ctx.type === 'external_knowledge')
+        .map(ctx => (ctx as ExternalKnowledgeContext).ref)
+        .forEach(ref => {
+          contextItems.push({
+            type: 'external_knowledge',
+            data: {
+              provider: ref.provider,
+              mode: ref.mode,
+              id: ref.id,
+              name: ref.name,
+              scope: ref.scope,
+              target_type: ref.target_type,
+              node_id: ref.node_id,
+              document_id: ref.document_id,
+              parent_id: ref.parent_id,
+            },
+          })
         })
 
       let messageWithQueueContent = finalMessage
@@ -514,18 +543,32 @@ export function useChatStreamHandlers({
 
       const pendingContexts: Array<{
         id: number
-        context_type: 'attachment' | 'knowledge_base' | 'table'
+        context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
         name: string
         status: 'pending' | 'ready'
         file_extension?: string
         file_size?: number
         mime_type?: string
         document_count?: number
+        document_ids?: number[]
+        scope_restricted?: boolean
         knowledge_id?: number
         document_id?: number
         source_config?: {
           url?: string
         }
+        external_provider?: string
+        external_mode?: string
+        external_id?: string
+        external_scope?: string
+        external_target_type?: string
+        external_node_id?: string
+        external_document_id?: string
+        external_parent_id?: string
+        video_count?: number
+        site?: string | null
+        source_url?: string
+        cover_url?: string | null
       }> = []
 
       for (const attachment of snapshotAttachments) {
@@ -554,7 +597,11 @@ export function useChatStreamHandlers({
 
       for (const ctx of snapshotContexts) {
         if (ctx.type === 'knowledge_base') {
-          const kbContext = ctx as typeof ctx & { document_count?: number }
+          const kbContext = ctx as typeof ctx & {
+            document_count?: number
+            document_ids?: number[]
+            scope_restricted?: boolean
+          }
           pendingContexts.push({
             id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
             context_type: 'knowledge_base',
@@ -562,6 +609,8 @@ export function useChatStreamHandlers({
             status: 'ready',
             knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
             document_count: kbContext.document_count,
+            document_ids: kbContext.document_ids,
+            scope_restricted: kbContext.scope_restricted,
           })
         } else if (ctx.type === 'table') {
           const tableContext = ctx as typeof ctx & {
@@ -575,6 +624,22 @@ export function useChatStreamHandlers({
             status: 'ready',
             document_id: tableContext.document_id,
             source_config: tableContext.source_config,
+          })
+        } else if (ctx.type === 'external_knowledge') {
+          const externalContext = ctx as ExternalKnowledgeContext
+          pendingContexts.push({
+            id: -(pendingContexts.length + 1),
+            context_type: 'external_knowledge',
+            name: ctx.name,
+            status: 'ready',
+            external_provider: externalContext.ref.provider,
+            external_mode: externalContext.ref.mode,
+            external_id: externalContext.ref.id,
+            external_scope: externalContext.ref.scope,
+            external_target_type: externalContext.ref.target_type,
+            external_node_id: externalContext.ref.node_id,
+            external_document_id: externalContext.ref.document_id,
+            external_parent_id: externalContext.ref.parent_id,
           })
         }
       }
@@ -674,7 +739,6 @@ export function useChatStreamHandlers({
     },
     [
       attachments,
-      selectedContexts,
       additionalSkills,
       selectedModel?.name,
       selectedModel?.type,
@@ -1230,7 +1294,7 @@ export function useChatStreamHandlers({
 
         // Build context items for backend from existing contexts (knowledge bases, tables)
         const contextItems: Array<{
-          type: 'knowledge_base' | 'table' | 'selected_documents'
+          type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_knowledge'
           data: Record<string, unknown>
         }> = []
 
@@ -1243,6 +1307,8 @@ export function useChatStreamHandlers({
                   knowledge_id: ctx.knowledge_id,
                   name: ctx.name,
                   document_count: ctx.document_count,
+                  document_ids: ctx.document_ids,
+                  scope_restricted: ctx.scope_restricted,
                 },
               })
             } else if (ctx.context_type === 'table' && ctx.document_id) {
@@ -1254,6 +1320,21 @@ export function useChatStreamHandlers({
                   source_config: ctx.source_config,
                 },
               })
+            } else if (ctx.context_type === 'external_knowledge' && ctx.external_provider) {
+              contextItems.push({
+                type: 'external_knowledge' as const,
+                data: {
+                  provider: ctx.external_provider,
+                  mode: ctx.external_mode,
+                  id: ctx.external_id,
+                  name: ctx.name,
+                  scope: ctx.external_scope,
+                  target_type: ctx.external_target_type,
+                  node_id: ctx.external_node_id,
+                  document_id: ctx.external_document_id,
+                  parent_id: ctx.external_parent_id,
+                },
+              })
             }
           }
         }
@@ -1261,18 +1342,32 @@ export function useChatStreamHandlers({
         // Build pending contexts for immediate display from existing contexts
         const pendingContexts: Array<{
           id: number
-          context_type: 'attachment' | 'knowledge_base' | 'table'
+          context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
           name: string
           status: 'pending' | 'ready'
           file_extension?: string
           file_size?: number
           mime_type?: string
           document_count?: number
+          document_ids?: number[] | null
+          scope_restricted?: boolean | null
           knowledge_id?: number
           document_id?: number
           source_config?: {
             url?: string
           }
+          external_provider?: string | null
+          external_mode?: string | null
+          external_id?: string | null
+          external_scope?: string | null
+          external_target_type?: string | null
+          external_node_id?: string | null
+          external_document_id?: string | null
+          external_parent_id?: string | null
+          video_count?: number | null
+          site?: string | null
+          source_url?: string | null
+          cover_url?: string | null
         }> =
           existingContexts?.map(ctx => ({
             id: ctx.id,
@@ -1283,9 +1378,23 @@ export function useChatStreamHandlers({
             file_size: ctx.file_size ?? undefined,
             mime_type: ctx.mime_type ?? undefined,
             document_count: ctx.document_count ?? undefined,
+            document_ids: ctx.document_ids ?? undefined,
+            scope_restricted: ctx.scope_restricted ?? undefined,
             knowledge_id: ctx.knowledge_id ?? undefined,
             document_id: ctx.document_id ?? undefined,
             source_config: ctx.source_config ?? undefined,
+            external_provider: ctx.external_provider ?? undefined,
+            external_mode: ctx.external_mode ?? undefined,
+            external_id: ctx.external_id ?? undefined,
+            external_scope: ctx.external_scope ?? undefined,
+            external_target_type: ctx.external_target_type ?? undefined,
+            external_node_id: ctx.external_node_id ?? undefined,
+            external_document_id: ctx.external_document_id ?? undefined,
+            external_parent_id: ctx.external_parent_id ?? undefined,
+            video_count: ctx.video_count ?? undefined,
+            site: ctx.site ?? undefined,
+            source_url: ctx.source_url ?? undefined,
+            cover_url: ctx.cover_url ?? undefined,
           })) || []
 
         const tempTaskId = await contextSendMessage(
@@ -1389,6 +1498,7 @@ export function useChatStreamHandlers({
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
+      selectedContexts,
       taskType,
       knowledgeBaseId,
       markTaskAsViewed,

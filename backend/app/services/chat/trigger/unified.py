@@ -27,6 +27,10 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.external_knowledge_refs import (
+    extract_task_external_knowledge_refs,
+    validate_external_knowledge_refs,
+)
 from app.services.context import context_service
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
@@ -476,6 +480,15 @@ async def build_execution_request(
             runtime_model_config=runtime_model_config,
         )
         request.device_id = device_id or request.device_id
+        # Task spec is the runtime source of truth. Message-level external
+        # contexts are materialized into Task.spec before execution is built.
+        task_refs = extract_task_external_knowledge_refs(task)
+        if task_refs:
+            validate_external_knowledge_refs(
+                task_refs,
+                binding_level="conversation",
+            )
+            request.external_knowledge_refs = task_refs
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.

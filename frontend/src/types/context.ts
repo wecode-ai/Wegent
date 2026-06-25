@@ -8,7 +8,31 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base' | 'table' | 'queue_message' | 'dingtalk_doc'
+export type ContextType =
+  | 'knowledge_base'
+  | 'table'
+  | 'queue_message'
+  | 'dingtalk_doc'
+  | 'external_knowledge'
+
+/**
+ * Canonical external knowledge reference shape.
+ * Provider-neutral; reused verbatim across the entire chain (conversation
+ * context, CHAT_SEND payload, Bot defaults). `mode`/`scope` must never be
+ * dropped. Mirrors the backend ExternalKnowledgeRef
+ * (backend/app/services/rag/sources/models.py).
+ */
+export interface ExternalKnowledgeRef {
+  provider: string
+  mode: string
+  id?: string
+  name?: string
+  scope?: string
+  target_type?: 'knowledge_base' | 'folder' | 'document'
+  node_id?: string
+  document_id?: string
+  parent_id?: string
+}
 
 /**
  * Base interface for all context items
@@ -30,6 +54,9 @@ export interface KnowledgeBaseContext extends BaseContextItem {
   retriever_name?: string
   retriever_namespace?: string
   document_count?: number
+  document_ids?: number[]
+  document_names?: string[]
+  scope_restricted?: boolean
 }
 
 /**
@@ -100,6 +127,18 @@ export interface DingTalkDocContext extends BaseContextItem {
 }
 
 /**
+ * External knowledge context item (conversation-level temporary mount).
+ * Embeds the full canonical ref; the context `id` is namespaced
+ * (external:{provider}:{mode}:{id ?? 'all'}) to avoid collision with internal
+ * KB/table numeric ids. The send-assembly split reads `ref` verbatim.
+ */
+export interface ExternalKnowledgeContext extends BaseContextItem {
+  type: 'external_knowledge'
+  id: string
+  ref: ExternalKnowledgeRef
+}
+
+/**
  * Union type for all context items
  * 所有上下文项的联合类型
  *
@@ -113,3 +152,4 @@ export type ContextItem =
   | TableContext
   | QueueMessageContext
   | DingTalkDocContext
+  | ExternalKnowledgeContext
