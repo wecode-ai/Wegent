@@ -160,11 +160,10 @@ WORKDIR /app
 
 # Copy all Python modules to /app directory for consistent structure
 # All modules will be under /app: /app/shared, /app/chat_shell,
-# /app/knowledge_engine, /app/executor, /app/backend
+# /app/knowledge_engine, /app/backend
 COPY shared /app/shared
 COPY chat_shell /app/chat_shell
 COPY knowledge_engine /app/knowledge_engine
-COPY executor /app/executor
 COPY --from=executor-builder /app/executor/target/release/wegent-executor /app/wegent-executor
 
 # Install shared module first
@@ -176,8 +175,6 @@ RUN cd /app/knowledge_engine && uv pip install --system --no-cache -r pyproject.
 # Install chat_shell (depends on shared via ../shared -> /app/shared)
 RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
 
-# Install executor (depends on shared via ../shared -> /app/shared)
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
 
 # Copy and install backend
@@ -213,12 +210,13 @@ RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
 # Environment variables for standalone mode
 ENV STANDALONE_MODE=true
+ENV STANDALONE_EXECUTOR_DEVICE_ID=standalone-admin-device
 ENV ENVIRONMENT=development
 # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
 ENV DATABASE_URL=sqlite:////app/data/wegent.db
 ENV CHAT_SHELL_MODE=package
 ENV CODEX_HOME=/app/data/codex
-ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor
+ENV PYTHONPATH=/app:/app/backend:/app/chat_shell
 ENV NODE_PATH=/usr/lib/node_modules
 ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 

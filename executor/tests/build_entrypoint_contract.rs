@@ -5,6 +5,16 @@
 use std::{fs, path::Path};
 
 #[test]
+fn executor_tree_contains_no_python_runtime_files() {
+    let forbidden_files = collect_forbidden_python_runtime_files(Path::new("."));
+
+    assert!(
+        forbidden_files.is_empty(),
+        "executor still contains Python runtime files: {forbidden_files:?}"
+    );
+}
+
+#[test]
 fn executor_build_entrypoints_use_rust_binary_build() {
     let files = [
         "../docker/device/Dockerfile",
@@ -15,6 +25,8 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/standalone/start.sh",
         "../docker/standalone/Dockerfile",
         "../frontend/e2e/fixtures/claudecode-executor/Dockerfile",
+        "../wework/scripts/dev-executor-sidecar.sh",
+        "../wework/src-tauri/build.rs",
         "local.sh",
         "build.sh",
     ];
@@ -33,11 +45,28 @@ fn executor_build_entrypoints_use_rust_binary_build() {
             !content.contains("executor.spec"),
             "{file} still references the Python executor spec"
         );
+        assert!(
+            !content.contains("uv run python main.py"),
+            "{file} still invokes the Python executor entrypoint"
+        );
+        assert!(
+            !content.contains("scripts/dev_sidecar.py"),
+            "{file} still invokes the Python WeWork executor sidecar"
+        );
+        assert!(
+            !content.contains("executor/pyproject.toml"),
+            "{file} still references Python executor package metadata"
+        );
     }
 
     let local_sh = fs::read_to_string("local.sh").unwrap();
     assert!(local_sh.contains("cargo build --release --locked"));
     assert!(local_sh.contains("target/release/wegent-executor"));
+
+    let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
+    assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
+    assert!(dev_sidecar.contains("--features dev-reload"));
+    assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));
@@ -71,4 +100,46 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(standalone_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(standalone_dockerfile.contains("cargo build --release --locked"));
     assert!(standalone_dockerfile.contains("/app/wegent-executor"));
+    assert!(!standalone_dockerfile.contains("cd /app/executor && uv pip install"));
+}
+
+fn collect_forbidden_python_runtime_files(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    collect_forbidden_python_runtime_files_inner(root, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_forbidden_python_runtime_files_inner(path: &Path, files: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path
+            .components()
+            .any(|component| component.as_os_str() == "target")
+        {
+            continue;
+        }
+
+        if entry_path.is_dir() {
+            collect_forbidden_python_runtime_files_inner(&entry_path, files);
+            continue;
+        }
+
+        let Some(file_name) = entry_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let is_forbidden = file_name.ends_with(".py")
+            || file_name.ends_with(".pyi")
+            || matches!(
+                file_name,
+                "pyproject.toml" | "uv.lock" | "requirements.txt" | "executor.spec"
+            );
+        if is_forbidden {
+            files.push(entry_path.display().to_string());
+        }
+    }
 }

@@ -16,10 +16,12 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::UnixListener,
+    sync::broadcast,
 };
 
 use crate::{
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
 };
 
@@ -67,14 +69,17 @@ pub struct AppIpcServer {
     device_id: String,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
+    event_tx: broadcast::Sender<Value>,
 }
 
 impl Default for AppIpcServer {
     fn default() -> Self {
+        let (event_tx, _) = broadcast::channel(512);
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_work_handler: None,
             command_handler: Arc::new(CommandHandler),
+            event_tx,
         }
     }
 }
@@ -99,6 +104,15 @@ impl AppIpcServer {
         H: RuntimeWorkHandler + 'static,
     {
         self.runtime_work_handler = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn with_local_runtime_work_handler(mut self, codex_binary: impl Into<String>) -> Self {
+        self.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+            self.device_id.clone(),
+            codex_binary.into(),
+            self.event_tx.clone(),
+        )));
         self
     }
 
@@ -188,6 +202,12 @@ impl AppIpcServer {
         })
     }
 
+    pub fn emit_event(&self, event: &str, payload: Value) -> Result<usize, String> {
+        self.event_tx
+            .send(self.event_message(event, payload))
+            .map_err(|error| error.to_string())
+    }
+
     pub fn ready_event(&self) -> Value {
         self.event_message(
             "executor.ready",
@@ -237,20 +257,34 @@ impl AppIpcServer {
             .map_err(|error| format!("failed to write app IPC ready event: {error}"))?;
 
         let mut reader = BufReader::new(reader);
+        let mut events = self.event_tx.subscribe();
         let mut line = String::new();
         loop {
             line.clear();
-            let bytes_read = reader
-                .read_line(&mut line)
-                .await
-                .map_err(|error| format!("failed to read app IPC request: {error}"))?;
-            if bytes_read == 0 {
-                return Ok(());
-            }
-            if let Some(response) = self.handle_line(&line).await {
-                write_message(&mut writer, &response)
-                    .await
-                    .map_err(|error| format!("failed to write app IPC response: {error}"))?;
+            tokio::select! {
+                read = reader.read_line(&mut line) => {
+                    let bytes_read = read
+                        .map_err(|error| format!("failed to read app IPC request: {error}"))?;
+                    if bytes_read == 0 {
+                        return Ok(());
+                    }
+                    if let Some(response) = self.handle_line(&line).await {
+                        write_message(&mut writer, &response)
+                            .await
+                            .map_err(|error| format!("failed to write app IPC response: {error}"))?;
+                    }
+                }
+                event = events.recv() => {
+                    match event {
+                        Ok(message) => {
+                            write_message(&mut writer, &message)
+                                .await
+                                .map_err(|error| format!("failed to write app IPC event: {error}"))?;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                    }
+                }
             }
         }
     }
@@ -310,7 +344,15 @@ pub fn app_ipc_socket_path() -> PathBuf {
 }
 
 pub async fn serve_app_ipc_sidecar(device_id: String) -> Result<(), String> {
-    let server = AppIpcServer::new().with_device_id(normalize_device_id(device_id));
+    let codex_binary = env::var("CODEX_BINARY_PATH")
+        .ok()
+        .or_else(|| env::var("CODEX_BIN").ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "codex".to_owned());
+    let server = AppIpcServer::new()
+        .with_device_id(normalize_device_id(device_id))
+        .with_local_runtime_work_handler(codex_binary);
     server.serve_forever(app_ipc_socket_path()).await
 }
 

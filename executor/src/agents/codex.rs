@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, ChildStdout, Command},
+    sync::mpsc,
     time::timeout,
 };
 
@@ -19,6 +20,14 @@ use crate::{
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
+
+pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexAppServerTurn {
+    pub thread_id: String,
+    pub outcome: ExecutionOutcome,
+}
 
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
@@ -39,26 +48,66 @@ impl AgentEngine for CodexAppServerEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let binary = self.binary.clone();
         Box::pin(async move {
-            match run_codex_turn(&binary, request).await {
-                Ok(outcome) => outcome,
+            match run_codex_app_server_turn(&binary, request, None, None).await {
+                Ok(turn) => turn.outcome,
                 Err(message) => ExecutionOutcome::Failed { message },
             }
         })
     }
 }
 
-async fn run_codex_turn(
+pub async fn request_codex_app_server(
+    binary: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let mut child = spawn_codex_app_server(binary)?;
+
+    let result = async {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "codex app-server stdin was not captured".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
+        let mut rpc = JsonRpcConnection::new(stdin, stdout);
+
+        with_rpc_timeout(
+            "initialize",
+            timeout_seconds,
+            rpc.request_ignoring_notifications("initialize", initialize_params()),
+        )
+        .await?;
+        with_rpc_timeout(
+            "initialized",
+            timeout_seconds,
+            rpc.notify("initialized", json!({})),
+        )
+        .await?;
+        with_rpc_timeout(
+            method,
+            timeout_seconds,
+            rpc.request_ignoring_notifications(method, params),
+        )
+        .await
+    }
+    .await;
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    result
+}
+
+pub async fn run_codex_app_server_turn(
     binary: &str,
     request: ExecutionRequest,
-) -> Result<ExecutionOutcome, String> {
-    let mut child = Command::new(binary)
-        .arg("app-server")
-        .arg("--stdio")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("failed to start codex app-server: {error}"))?;
+    resume_thread_id: Option<String>,
+    notifications: Option<CodexNotificationSender>,
+) -> Result<CodexAppServerTurn, String> {
+    let mut child = spawn_codex_app_server(binary)?;
 
     let result = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
@@ -86,36 +135,54 @@ async fn run_codex_turn(
         )
         .await?;
 
+        let (thread_operation, thread_params) = if let Some(thread_id) = resume_thread_id {
+            ("thread/resume", thread_resume_params(&thread_id, &request))
+        } else {
+            ("thread/start", thread_start_params(&request))
+        };
         let thread = with_rpc_timeout(
-            "thread/start",
+            thread_operation,
             timeout_seconds,
-            rpc.request("thread/start", thread_start_params(&request), &mut state),
+            rpc.request(thread_operation, thread_params, &mut state),
         )
         .await?;
         let thread_id = thread
             .get("thread")
             .and_then(|thread| thread.get("id"))
             .and_then(Value::as_str)
-            .ok_or_else(|| "codex app-server thread/start did not return thread.id".to_owned())?;
+            .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
+            .to_owned();
 
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
-            rpc.send_request("turn/start", turn_start_params(thread_id, &request)),
+            rpc.send_request("turn/start", turn_start_params(&thread_id, &request)),
         )
         .await?;
-        with_rpc_timeout(
+        let outcome = with_rpc_timeout(
             "turn",
             timeout_seconds,
-            rpc.read_turn(turn_request_id, &mut state),
+            rpc.read_turn(turn_request_id, &mut state, notifications),
         )
-        .await
+        .await?;
+        Ok(CodexAppServerTurn { thread_id, outcome })
     }
     .await;
 
     let _ = child.start_kill();
     let _ = child.wait().await;
     result
+}
+
+fn spawn_codex_app_server(binary: &str) -> Result<tokio::process::Child, String> {
+    Command::new(binary)
+        .arg("app-server")
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
 async fn with_rpc_timeout<T>(
@@ -157,10 +224,10 @@ impl JsonRpcConnection {
     async fn request(
         &mut self,
         method: &str,
-        params: Value,
+        request_params: Value,
         state: &mut CodexRunState,
     ) -> Result<Value, String> {
-        let request_id = self.send_request(method, params).await?;
+        let request_id = self.send_request(method, request_params).await?;
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
@@ -170,6 +237,27 @@ impl JsonRpcConnection {
                 return Err(format!(
                     "codex app-server completed before {method} response: {outcome:?}"
                 ));
+            }
+        }
+    }
+
+    async fn request_ignoring_notifications(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let request_id = self.send_request(method, params).await?;
+        loop {
+            let message = self.read_message().await?;
+            if response_id(&message) == Some(request_id) {
+                return response_result(message);
+            }
+            if message.get("method").and_then(Value::as_str) == Some("error") {
+                return Err(message_params(&message)
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("codex app-server error")
+                    .to_owned());
             }
         }
     }
@@ -198,6 +286,7 @@ impl JsonRpcConnection {
         &mut self,
         turn_request_id: u64,
         state: &mut CodexRunState,
+        notifications: Option<CodexNotificationSender>,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
         loop {
@@ -206,6 +295,9 @@ impl JsonRpcConnection {
                 response_result(message)?;
                 saw_turn_response = true;
                 continue;
+            }
+            if let Some(sender) = &notifications {
+                let _ = sender.send(message.clone());
             }
             if let Some(outcome) = state.handle_message(&message) {
                 return Ok(outcome);
@@ -255,16 +347,16 @@ impl CodexRunState {
     fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
         match message.get("method").and_then(Value::as_str) {
             Some("item/agentMessage/delta") => {
-                self.append_delta(params(message));
+                self.append_delta(message_params(message));
                 None
             }
             Some("item/completed") => {
-                self.append_completed_message(params(message));
+                self.append_completed_message(message_params(message));
                 None
             }
-            Some("turn/completed") => Some(self.completed(params(message))),
+            Some("turn/completed") => Some(self.completed(message_params(message))),
             Some("error") => Some(ExecutionOutcome::Failed {
-                message: params(message)
+                message: message_params(message)
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or("codex app-server error")
@@ -364,14 +456,28 @@ fn thread_start_params(request: &ExecutionRequest) -> Value {
     Value::Object(params)
 }
 
+fn thread_resume_params(thread_id: &str, request: &ExecutionRequest) -> Value {
+    let mut params = serde_json::Map::new();
+    params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    if let Some(model) = model_id(request) {
+        params.insert("model".to_owned(), Value::String(model));
+    }
+    if let Some(cwd) = request.cwd() {
+        params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
+    }
+    params.insert(
+        "approvalPolicy".to_owned(),
+        Value::String("never".to_owned()),
+    );
+    Value::Object(params)
+}
+
 fn turn_start_params(thread_id: &str, request: &ExecutionRequest) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert(
         "input".to_owned(),
-        Value::Array(vec![
-            json!({"type": "text", "text": prompt_text(&request.prompt)}),
-        ]),
+        Value::Array(turn_input(&request.prompt)),
     );
     params.insert(
         "approvalPolicy".to_owned(),
@@ -400,6 +506,62 @@ fn turn_start_params(thread_id: &str, request: &ExecutionRequest) -> Value {
     Value::Object(params)
 }
 
+fn turn_input(prompt: &Value) -> Vec<Value> {
+    let Value::Array(items) = prompt else {
+        return vec![text_input(prompt_text(prompt))];
+    };
+
+    let mut input = items.iter().filter_map(turn_input_item).collect::<Vec<_>>();
+    if input.is_empty() {
+        input.push(text_input(prompt_text(prompt)));
+    }
+    input
+}
+
+fn turn_input_item(item: &Value) -> Option<Value> {
+    let kind = item.get("type").and_then(Value::as_str)?;
+    match kind {
+        "input_text" | "text" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| text_input(text.to_owned())),
+        "input_image" => item
+            .get("image_url")
+            .or_else(|| item.get("url"))
+            .and_then(Value::as_str)
+            .map(|url| json!({"type": "image", "url": url})),
+        "image" => image_input(item),
+        "localImage" | "local_image" => item
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| json!({"type": "localImage", "path": path})),
+        _ => item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| text_input(text.to_owned())),
+    }
+}
+
+fn image_input(item: &Value) -> Option<Value> {
+    if let Some(url) = item.get("url").and_then(Value::as_str) {
+        return Some(json!({"type": "image", "url": url}));
+    }
+    let source = item.get("source")?;
+    let data = source.get("data").and_then(Value::as_str)?;
+    let media_type = source
+        .get("media_type")
+        .and_then(Value::as_str)
+        .unwrap_or("image/png");
+    Some(json!({
+        "type": "image",
+        "url": format!("data:{media_type};base64,{data}"),
+    }))
+}
+
+fn text_input(text: String) -> Value {
+    json!({"type": "text", "text": text, "text_elements": []})
+}
+
 fn response_id(message: &Value) -> Option<u64> {
     message.get("id").and_then(Value::as_u64)
 }
@@ -415,7 +577,7 @@ fn response_result(message: Value) -> Result<Value, String> {
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }
 
-fn params(message: &Value) -> &Value {
+fn message_params(message: &Value) -> &Value {
     message.get("params").unwrap_or(message)
 }
 

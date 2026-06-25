@@ -13,11 +13,22 @@ doctest = false
 name = "wegent-executor"
 path = "src/bin/wegent-executor.rs"
 
+[[bin]]
+name = "wegent-executor-dev"
+path = "src/bin/wegent-executor-dev.rs"
+required-features = ["dev-reload"]
+
+[features]
+default = []
+dev-reload = ["dep:ctrlc", "dep:notify"]
+
 [dependencies]
 axum = "0.8"
+ctrlc = { version = "3.4", features = ["termination"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures-util = "0.3"
 flate2 = "1.0"
+notify = { version = "6.1", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

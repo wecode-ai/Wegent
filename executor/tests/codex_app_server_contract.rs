@@ -5,12 +5,15 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use serde_json::{json, Value};
+use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{
     agents::CodexAppServerEngine,
     protocol::ExecutionRequest,
@@ -19,6 +22,7 @@ use wegent_executor::{
 
 #[tokio::test]
 async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
+    let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-rpc-{}.jsonl",
         std::process::id()
@@ -64,13 +68,66 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert_eq!(messages[3]["params"]["effort"], "high");
     assert_eq!(messages[3]["params"]["summary"], "concise");
     assert_eq!(
+        messages[3]["params"]["input"][0],
+        json!({"type": "text", "text": "implement feature", "text_elements": []})
+    );
+    assert_eq!(
         messages[3]["params"]["sandboxPolicy"]["type"],
         "dangerFullAccess"
     );
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
+    let _lock = env_lock().await;
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-vision-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex(&log_path);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!([
+            {"type": "input_text", "text": "Analyze this image"},
+            {"type": "input_image", "image_url": "data:image/png;base64,abc"},
+            {"type": "localImage", "path": "/tmp/wegent/image.png"}
+        ]),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+
+    let messages = fs::read_to_string(log_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages[3]["params"]["input"],
+        json!([
+            {"type": "text", "text": "Analyze this image", "text_elements": []},
+            {"type": "image", "url": "data:image/png;base64,abc"},
+            {"type": "localImage", "path": "/tmp/wegent/image.png"}
+        ])
+    );
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_times_out_unresponsive_rpc() {
+    let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
     let fake_codex = write_fake_codex_hang();
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
@@ -95,8 +152,18 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
     );
 }
 
+async fn env_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("fake-codex-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
@@ -133,7 +200,11 @@ done
 }
 
 fn write_fake_codex_hang() -> PathBuf {
-    let path = std::env::temp_dir().join(format!("fake-codex-hang-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-hang-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
     fs::write(
         &path,
         r#"#!/bin/sh
@@ -150,6 +221,13 @@ done
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+fn unique_suffix() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default()
 }
 
 struct EnvGuard {

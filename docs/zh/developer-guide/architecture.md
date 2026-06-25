@@ -106,7 +106,7 @@ graph TB
 |------|------|----------|
 | **管理平台层** | 用户交互、资源管理、API 服务、对话处理 | Next.js 15, FastAPI, React 19, Chat Shell |
 | **数据层** | 数据持久化、缓存管理、异步任务调度 | MySQL 9.4, Redis 7, Celery |
-| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Python, WebSocket |
+| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Rust Executor, WebSocket, App IPC |
 | **智能体层** | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify |
 | **知识层** | 知识库管理、RAG 检索、向量化服务、文档格式转换 | KnowledgeOrchestrator, Embedding, Doc Converter |
 
@@ -351,6 +351,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 
 **技术栈**：
 - **容器**: Docker
+- **执行器**: Rust (`executor/`)
 - **运行时**: Claude Code, Agno, Dify
 - **版本控制**: Git
 
@@ -362,6 +363,8 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 | **Agno** | local_engine | 多代理协作，SQLite 会话管理 |
 | **Dify** | external_api | 代理到 Dify 平台 |
 | **ImageValidator** | validator | 自定义基础镜像验证 |
+
+Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Tauri app IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
 
 **核心特性**：
 - 🔒 完全隔离的执行环境

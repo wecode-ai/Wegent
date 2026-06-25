@@ -35,6 +35,11 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert "EXPOSE 3000 3001 8000" not in dockerfile
     assert 'VOLUME ["/app/data", "/workspace"]' in dockerfile
     assert "http://localhost:7681" not in dockerfile
+    assert "COPY executor /app/executor" not in dockerfile
+    assert "cd /app/executor && uv pip install" not in dockerfile
+    assert (
+        "PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor" not in dockerfile
+    )
 
 
 def test_standalone_image_installs_codex_runtime_dependencies() -> None:
@@ -66,7 +71,11 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "app.scripts.ensure_standalone_executor_token" in start_script
     assert "start_executor" in start_script
     assert "DEVICE_TYPE=cloud" in start_script
-    assert "DEVICE_ID=standalone-admin-device" in start_script
+    assert (
+        'STANDALONE_EXECUTOR_DEVICE_ID="${STANDALONE_EXECUTOR_DEVICE_ID:-standalone-admin-device}"'
+        in start_script
+    )
+    assert 'DEVICE_ID="$STANDALONE_EXECUTOR_DEVICE_ID"' in start_script
     assert "WEGENT_AUTH_TOKEN" in start_script
     assert "WEGENT_BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}" in start_script
     assert "WORKSPACE_ROOT=/workspace" in start_script

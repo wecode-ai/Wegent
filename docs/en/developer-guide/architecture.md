@@ -106,7 +106,7 @@ graph TB
 |-------|-----------------|-------------------|
 | **Management Platform Layer** | User interaction, resource management, API services, chat processing | Next.js 15, FastAPI, React 19, Chat Shell |
 | **Data Layer** | Data persistence, cache management, async task scheduling | MySQL 9.4, Redis 7, Celery |
-| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Python, WebSocket |
+| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC |
 | **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
 | **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization, document format conversion | KnowledgeOrchestrator, Embedding, Doc Converter |
 
@@ -351,6 +351,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 
 **Technology Stack**:
 - **Container**: Docker
+- **Executor**: Rust (`executor/`)
 - **Runtime**: Claude Code, Agno, Dify
 - **Version Control**: Git
 
@@ -362,6 +363,8 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 | **Agno** | local_engine | Multi-agent collaboration, SQLite session management |
 | **Dify** | external_api | Proxy to Dify platform |
 | **ImageValidator** | validator | Custom base image validation |
+
+Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Tauri app IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
 
 **Core Features**:
 - 🔒 Fully isolated execution environment
