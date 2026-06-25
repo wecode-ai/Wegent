@@ -15,7 +15,10 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
+import { ArrowLeft } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { useTranslation } from '@/hooks/useTranslation'
+import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
@@ -24,6 +27,8 @@ import { canManageNamespace } from '@/utils/namespace-permissions'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
+import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -43,14 +48,74 @@ interface KnowledgeDocumentPageMobileProps {
 }
 
 export function KnowledgeDocumentPageMobile({
-  initialKbNamespace: _initialKbNamespace,
-  initialKbName: _initialKbName,
-  initialDocPath: _initialDocPath,
+  initialKbNamespace,
+  initialKbName,
+  initialDocPath,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
 
   // Knowledge tree hook
   const tree = useKnowledgeTree()
+
+  const { t } = useTranslation('knowledge')
+
+  const isDetailMode = !!initialKbName
+  const isTeamNamespace = !!initialKbNamespace && initialKbNamespace !== 'default'
+
+  const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
+  const [detailKbLoading, setDetailKbLoading] = useState(false)
+
+  const allLoadedKbs = useMemo((): KnowledgeBase[] => {
+    const kbs: KnowledgeBase[] = []
+    if (tree.personalData) {
+      kbs.push(...tree.personalData.created_by_me, ...tree.personalData.shared_with_me)
+    }
+    kbs.push(...tree.orgKbs)
+    for (const groupKbs of Object.values(tree.groupKbMap)) {
+      kbs.push(...groupKbs)
+    }
+    return kbs
+  }, [tree.personalData, tree.orgKbs, tree.groupKbMap])
+
+  const targetKb = useMemo(() => {
+    if (!initialKbName) return undefined
+    // When namespace is not provided (organization KB deep-link),
+    // constrain the name-only lookup to the organization namespace so
+    // same-name personal/team KBs don't shadow the org KB.
+    const effectiveNamespace = initialKbNamespace || tree.orgNamespace
+    return findKbByVirtualPath(allLoadedKbs, effectiveNamespace, initialKbName)
+  }, [allLoadedKbs, initialKbNamespace, initialKbName, tree.orgNamespace])
+
+  useEffect(() => {
+    if (!isDetailMode) return
+
+    if (
+      isTeamNamespace &&
+      initialKbNamespace &&
+      !tree.groupKbMap[initialKbNamespace] &&
+      !tree.groupKbLoading[initialKbNamespace]
+    ) {
+      void tree.loadGroupKbs(initialKbNamespace)
+    }
+
+    if (!targetKb) return
+
+    if (tree.selectedKbId !== targetKb.id) {
+      tree.selectKb(targetKb as KnowledgeBase)
+    }
+
+    if (!detailKbLoading && (!detailKb || detailKb.id !== targetKb.id)) {
+      setDetailKbLoading(true)
+      void getKnowledgeBase(targetKb.id)
+        .then(setDetailKb)
+        .catch(() => setDetailKb(targetKb as KnowledgeBase))
+        .finally(() => setDetailKbLoading(false))
+    }
+  }, [detailKb, detailKbLoading, initialKbNamespace, isDetailMode, isTeamNamespace, targetKb, tree])
+
+  const handleBack = useCallback(() => {
+    router.push('/knowledge?type=document')
+  }, [router])
 
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -77,7 +142,7 @@ export function KnowledgeDocumentPageMobile({
         console.error('Failed to load default teams config:', error)
       }
     }
-    loadDefaultTeamsAndTeams()
+    void loadDefaultTeamsAndTeams()
   }, [])
 
   // Find knowledge mode default team and its bind_model
@@ -221,6 +286,53 @@ export function KnowledgeDocumentPageMobile({
       }),
     []
   )
+
+  if (isDetailMode) {
+    const matched = !!detailKb && !!targetKb && detailKb.id === targetKb.id
+
+    if (matched) {
+      return (
+        <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
+          <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
+            <button
+              type="button"
+              onClick={handleBack}
+              aria-label={t('document.backToList')}
+              data-testid="knowledge-detail-back-button"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-secondary hover:bg-surface"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <span className="truncate text-sm font-medium text-text-primary">{detailKb!.name}</span>
+          </div>
+          <KnowledgeDetailPanel
+            key={`${detailKb!.id}-${initialDocPath ?? ''}`}
+            selectedKb={detailKb}
+            onSyncKnowledgeBase={setDetailKb}
+            initialDocPath={initialDocPath}
+          />
+        </div>
+      )
+    }
+
+    const resolving =
+      tree.loading ||
+      detailKbLoading ||
+      (isTeamNamespace &&
+        initialKbNamespace &&
+        (!tree.groupKbMap[initialKbNamespace] || tree.groupKbLoading[initialKbNamespace]))
+
+    if (resolving) {
+      return (
+        <div
+          className="flex items-center justify-center h-full"
+          data-testid="knowledge-document-page-mobile"
+        >
+          <Spinner size="lg" />
+        </div>
+      )
+    }
+  }
 
   return (
     <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
