@@ -63,6 +63,7 @@ interface MobileWorkbenchLayoutProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
   currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -162,6 +163,7 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -524,7 +526,7 @@ export function MobileWorkbenchLayout({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
-              isWaitingForAssistant={state.isSending}
+              isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={state.currentRuntimeTask?.localTaskId ?? null}

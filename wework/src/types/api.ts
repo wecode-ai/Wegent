@@ -506,6 +506,7 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  localTaskId?: string
   teamId: number
   runtime: RuntimeName
   message: string

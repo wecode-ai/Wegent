@@ -466,6 +466,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
     team_id: int = Field(..., alias="teamId", ge=1)
     runtime: RuntimeName
     message: str = Field(..., min_length=1)

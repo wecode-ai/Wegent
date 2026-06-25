@@ -92,6 +92,8 @@ Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。executor
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
+executor 从原生 Codex session 发现用户消息时，会把 `local_images`、`localImages` 或 `images` 中的本机图片路径写入用户可见文本，保持刷新后仍能看到“用户提到了哪些文件”。如果这些路径在当前设备上可读、是图片 MIME 类型且不超过 5 MB，executor 会额外生成只用于 transcript 渲染的 ready 附件，并把 `local_preview_url` 写成 data URL。这个预览附件不代表 Backend 持久化附件，也不会上传或同步到中心库。
+
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。原生 Codex 创建和继续任务时，executor 会把 `NativeTurnFileChangeTracker` 接到 Codex SDK 的 `turn/diff/updated` 事件上，记录最新的本轮累计 diff；回复完成时 tracker 通过 Responses completion fields 返回 `file_changes`，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 都必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
@@ -116,6 +118,8 @@ POST /api/runtime-work/create
 ```
 
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+
+Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
 运行时创建的持久化位置由具体 runtime 决定：
 
