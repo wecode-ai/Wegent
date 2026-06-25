@@ -100,3 +100,46 @@ def test_get_user_personal_task_groups_lite_uses_personal_query_without_group_id
     )
     mock_filter.assert_called_once_with(paged_tasks, set(), ["online"])
     mock_build.assert_called_once_with(db, paged_tasks, 7)
+
+
+@pytest.mark.unit
+def test_get_user_personal_tasks_lite_uses_small_default_candidate_buffer():
+    task_service = TaskKindsService(TaskResource)
+    db = Mock(spec=Session)
+    paged_tasks = [Mock(spec=TaskResource), Mock(spec=TaskResource)]
+    paged_tasks[0].id = 11
+    paged_tasks[1].id = 22
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.queries.get_personal_task_ids_and_total",
+            return_value=([11, 22], 9),
+            create=True,
+        ) as mock_personal_query,
+        patch(
+            "app.services.adapters.task_kinds.queries.load_tasks_by_ids",
+            return_value=paged_tasks,
+        ),
+        patch.object(
+            task_service,
+            "_filter_personal_tasks",
+            return_value=paged_tasks,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.queries.build_lite_task_list",
+            return_value=[{"id": 11}, {"id": 22}],
+        ),
+    ):
+        items, total = task_service.get_user_personal_tasks_lite(
+            db, user_id=7, skip=0, limit=50, types=["online", "offline"]
+        )
+
+    assert total == 9
+    assert items == [{"id": 11}, {"id": 22}]
+    mock_personal_query.assert_called_once_with(
+        db,
+        user_id=7,
+        skip=0,
+        limit=50,
+        extra_limit=50,
+    )

@@ -41,6 +41,8 @@ from .task_skills_resolver import resolve_task_skills
 
 logger = logging.getLogger(__name__)
 
+PERSONAL_TASK_CANDIDATE_EXTRA_LIMIT = 50
+
 
 class TaskQueryMixin:
     """Mixin class providing task query methods."""
@@ -152,7 +154,7 @@ class TaskQueryMixin:
             "user_id": user_id,
             "skip": skip,
             "limit": limit,
-            "extra_limit": 200,
+            "extra_limit": PERSONAL_TASK_CANDIDATE_EXTRA_LIMIT,
         }
         if client_origin:
             query_kwargs["client_origin"] = client_origin
@@ -167,7 +169,8 @@ class TaskQueryMixin:
         ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
 
         result = build_lite_task_list(db, ordered_tasks, user_id)
-        return result, max(total_personal, len(ordered_tasks))
+        total = max(total_personal, len(ordered_tasks))
+        return result, total
 
     def get_user_personal_task_groups_lite(
         self,

@@ -827,17 +827,14 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
     def list_owned_task_ids(
         self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
     ) -> tuple[list[int], int]:
-        tasks = self._owned_active_task_rows(
+        tasks, total = self._owned_active_task_page_and_total(
             db,
             user_id=user_id,
+            skip=skip,
+            limit=limit + extra_limit,
             exclude_system_namespace=True,
         )
-        ordered_tasks = self._order_tasks_by_created_at_desc(tasks)
-        total = len(ordered_tasks)
-        return (
-            self._page_task_ids(ordered_tasks, skip=skip, limit=limit + extra_limit),
-            total,
-        )
+        return ([task.id for task in tasks], total)
 
     def list_personal_task_ids(
         self,
@@ -849,19 +846,18 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         extra_limit: int,
         client_origin: str | None = None,
     ) -> tuple[list[int], int]:
-        tasks = self._owned_active_task_rows(
+        query_limit = limit + extra_limit
+        tasks, total = self._owned_active_task_page_and_total(
             db,
             user_id=user_id,
+            skip=skip,
+            limit=query_limit,
             exclude_system_namespace=True,
             is_group_chat=False,
             client_origin=client_origin,
+            project_id=0,
         )
-        ordered_tasks = self._order_tasks_by_created_at_desc(tasks)
-        total = len(ordered_tasks)
-        return (
-            self._page_task_ids(ordered_tasks, skip=skip, limit=limit + extra_limit),
-            total,
-        )
+        return ([task.id for task in tasks], total)
 
     def list_accessible_task_ids(
         self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
@@ -1380,6 +1376,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         exclude_system_namespace: bool = False,
         is_group_chat: bool | None = None,
         client_origin: str | None = None,
+        project_id: int | None = None,
     ) -> list[TaskResource]:
         tasks = self._owned_active_task_query(
             db,
@@ -1388,6 +1385,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             exclude_system_namespace=exclude_system_namespace,
             is_group_chat=is_group_chat,
             client_origin=client_origin,
+            project_id=project_id,
         ).all()
         model = task_model_for_user(user_id)
         tasks.extend(
@@ -1398,9 +1396,65 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
                 exclude_system_namespace=exclude_system_namespace,
                 is_group_chat=is_group_chat,
                 client_origin=client_origin,
+                project_id=project_id,
             ).all()
         )
         return tasks
+
+    def _owned_active_task_page_and_total(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int,
+        limit: int,
+        exclude_system_namespace: bool = False,
+        is_group_chat: bool | None = None,
+        client_origin: str | None = None,
+        project_id: int | None = None,
+    ) -> tuple[list[TaskResource], int]:
+        page_limit = skip + limit
+        shard_model = task_model_for_user(user_id)
+        legacy_query = self._owned_active_task_query(
+            db,
+            TaskResource,
+            user_id=user_id,
+            exclude_system_namespace=exclude_system_namespace,
+            is_group_chat=is_group_chat,
+            client_origin=client_origin,
+            project_id=project_id,
+        )
+        shard_query = self._owned_active_task_query(
+            db,
+            shard_model,
+            user_id=user_id,
+            exclude_system_namespace=exclude_system_namespace,
+            is_group_chat=is_group_chat,
+            client_origin=client_origin,
+            project_id=project_id,
+        )
+
+        legacy_total = self._count_query_rows(legacy_query)
+        shard_total = self._count_query_rows(shard_query)
+
+        legacy_rows = self._ordered_limited_rows(
+            legacy_query, TaskResource, limit=page_limit
+        )
+        shard_rows = self._ordered_limited_rows(
+            shard_query, shard_model, limit=page_limit
+        )
+
+        ordered_rows = self._order_tasks_by_created_at_desc([*legacy_rows, *shard_rows])
+        page_rows = ordered_rows[skip : skip + limit]
+        return page_rows, legacy_total + shard_total
+
+    def _count_query_rows(self, query) -> int:
+        return int(query.order_by(None).with_entities(func.count()).scalar() or 0)
+
+    def _ordered_limited_rows(self, query, model: type, *, limit: int) -> list:
+        return (
+            query.order_by(model.created_at.desc(), model.id.desc()).limit(limit).all()
+        )
 
     def _owned_active_task_query(
         self,
@@ -1411,6 +1465,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         exclude_system_namespace: bool,
         is_group_chat: bool | None,
         client_origin: str | None,
+        project_id: int | None = None,
     ):
         query = db.query(model).filter(
             model.user_id == user_id,
@@ -1423,6 +1478,8 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             query = query.filter(model.is_group_chat == is_group_chat)
         if client_origin:
             query = query.filter(model.client_origin == client_origin)
+        if project_id is not None:
+            query = query.filter(model.project_id == project_id)
         return query
 
     def _member_task_rows(self, db: Session, *, user_id: int) -> list[TaskResource]:
