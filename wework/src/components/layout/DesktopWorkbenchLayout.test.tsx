@@ -70,6 +70,112 @@ vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
 }))
 
+vi.mock('@pierre/diffs/react', async () => {
+  const actual = await vi.importActual<typeof import('@pierre/diffs/react')>('@pierre/diffs/react')
+
+  return {
+    ...actual,
+    PatchDiff: ({ patch }: { patch: string }) => <pre data-testid="pierre-patch-diff">{patch}</pre>,
+  }
+})
+
+vi.mock('@pierre/trees/react', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+
+  interface MockTreeModel {
+    paths: string[]
+    search: string | null
+    selectedPaths: string[]
+    onSelectionChange?: (paths: string[]) => void
+    getItem: (path: string) => {
+      expand: () => void
+      select: () => void
+    }
+    scrollToPath: () => void
+    selectPath: (path: string) => void
+    setSearch: (query: string | null) => void
+  }
+
+  function selectModelPath(model: MockTreeModel, path: string) {
+    if (model.selectedPaths[0] === path) return
+
+    model.selectedPaths = [path]
+    model.onSelectionChange?.([path])
+  }
+
+  return {
+    FileTree: ({ model, ...props }: { model: MockTreeModel; [key: string]: unknown }) => {
+      const visiblePaths = model.search
+        ? model.paths.filter(path => path.toLowerCase().includes(model.search!.toLowerCase()))
+        : model.paths
+
+      return (
+        <div {...props}>
+          {visiblePaths.map(path => {
+            const isDirectory = path.endsWith('/')
+            const label = path.replace(/\/+$/, '').split('/').pop() || path
+            const depth = path.replace(/\/+$/, '').split('/').length - 1
+            const selected = model.selectedPaths.includes(path)
+            const testId = isDirectory ? 'workspace-directory-row' : 'workspace-file-row'
+
+            return (
+              <button
+                key={path}
+                type="button"
+                data-testid={testId}
+                data-depth={depth.toString()}
+                aria-expanded={isDirectory ? 'true' : undefined}
+                className={selected ? 'ring-1 ring-primary' : undefined}
+                onClick={() => model.selectPath(path)}
+              >
+                {Array.from({ length: depth }, (_, index) => (
+                  <span key={index} data-testid="workspace-tree-indent-guide" />
+                ))}
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )
+    },
+    useFileTree: ({
+      initialSelectedPaths,
+      onSelectionChange,
+      paths,
+    }: {
+      initialSelectedPaths?: string[]
+      onSelectionChange?: (paths: string[]) => void
+      paths: string[]
+    }) => {
+      const modelRef = React.useRef<MockTreeModel | null>(null)
+
+      if (!modelRef.current) {
+        modelRef.current = {
+          paths,
+          search: null,
+          selectedPaths: initialSelectedPaths ?? [],
+          onSelectionChange,
+          getItem: (path: string) => ({
+            expand: vi.fn(),
+            select: () => selectModelPath(modelRef.current!, path),
+          }),
+          scrollToPath: vi.fn(),
+          selectPath: (path: string) => selectModelPath(modelRef.current!, path),
+          setSearch(query: string | null) {
+            this.search = query
+          },
+        }
+      }
+
+      modelRef.current.paths = paths
+      modelRef.current.onSelectionChange = onSelectionChange
+      modelRef.current.selectedPaths = initialSelectedPaths ?? modelRef.current.selectedPaths
+
+      return { model: modelRef.current }
+    },
+  }
+})
+
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
     <div
