@@ -24,7 +24,7 @@ def _run_git(repo, *args):
     ).stdout
 
 
-def _create_turn_file_changes_artifact(tmp_path):
+def _create_turn_file_changes_artifact(tmp_path, task_id=10, subtask_id=20):
     repo = tmp_path / "repo"
     repo.mkdir()
     _run_git(repo, "init", "-q")
@@ -37,15 +37,21 @@ def _create_turn_file_changes_artifact(tmp_path):
     changed_file.write_text("after\n", encoding="utf-8")
     patch = _run_git(repo, "diff", "--binary", "HEAD")
     executor_home = tmp_path / "executor-home"
-    artifact_dir = executor_home / "artifacts" / "turn-file-changes" / "10" / "20"
+    artifact_dir = (
+        executor_home
+        / "artifacts"
+        / "turn-file-changes"
+        / str(task_id)
+        / str(subtask_id)
+    )
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "changes.patch.gz").write_bytes(gzip.compress(patch))
     (artifact_dir / "metadata.json").write_text(
         json.dumps(
             {
                 "version": 1,
-                "task_id": 10,
-                "subtask_id": 20,
+                "task_id": task_id,
+                "subtask_id": subtask_id,
                 "workspace_path": str(repo.resolve()),
                 "checksum": hashlib.sha256(patch).hexdigest(),
             }
@@ -53,6 +59,101 @@ def _create_turn_file_changes_artifact(tmp_path):
         encoding="utf-8",
     )
     return repo, executor_home
+
+
+def _create_turn_file_changes_sequence_artifact(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    changed_file = repo / "changed.txt"
+    changed_file.write_text("before\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    changed_file.write_text("final\n", encoding="utf-8")
+    patches = [
+        "\n".join(
+            [
+                "diff --git a/changed.txt b/changed.txt",
+                "--- a/changed.txt",
+                "+++ b/changed.txt",
+                "@@ -1 +1 @@",
+                "-before",
+                "+middle",
+            ]
+        )
+        + "\n",
+        "\n".join(
+            [
+                "diff --git a/changed.txt b/changed.txt",
+                "--- a/changed.txt",
+                "+++ b/changed.txt",
+                "@@ -1 +1 @@",
+                "-middle",
+                "+final",
+            ]
+        )
+        + "\n",
+    ]
+    patch = json.dumps(patches).encode("utf-8")
+    executor_home = tmp_path / "executor-home"
+    artifact_dir = executor_home / "artifacts" / "turn-file-changes" / "10" / "21"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "changes.patch.gz").write_bytes(gzip.compress(patch))
+    (artifact_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "task_id": 10,
+                "subtask_id": 21,
+                "workspace_path": str(repo.resolve()),
+                "checksum": hashlib.sha256(patch).hexdigest(),
+                "patch_sequence": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return repo, executor_home
+
+
+def _create_plain_workspace_add_sequence_artifact(tmp_path):
+    workspace = tmp_path / "plain-workspace"
+    workspace.mkdir()
+    changed_file = workspace / "note.txt"
+    changed_file.write_text("hello\n", encoding="utf-8")
+    patches = [
+        "\n".join(
+            [
+                "diff --git a/note.txt b/note.txt",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/note.txt",
+                "@@ -0,0 +1,1 @@",
+                "+hello",
+            ]
+        )
+        + "\n"
+    ]
+    patch = json.dumps(patches).encode("utf-8")
+    executor_home = tmp_path / "executor-home"
+    artifact_dir = executor_home / "artifacts" / "turn-file-changes" / "10" / "22"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "changes.patch.gz").write_bytes(gzip.compress(patch))
+    (artifact_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "task_id": 10,
+                "subtask_id": 22,
+                "workspace_path": str(workspace.resolve()),
+                "checksum": hashlib.sha256(patch).hexdigest(),
+                "patch_sequence": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workspace, executor_home
 
 
 def test_turn_file_changes_commands_are_registered():
@@ -116,6 +217,33 @@ def test_turn_file_changes_review_returns_validated_diff(tmp_path):
     assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
 
 
+def test_runtime_local_turn_file_changes_review_accepts_zero_task_id(tmp_path):
+    """Native Codex runtime turns persist artifacts with task_id=0 (no DB task)."""
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(
+        tmp_path, task_id=0, subtask_id=1700000000000
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "review",
+            "turn-file-changes/0/1700000000000",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
+
+
 def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
     from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
 
@@ -161,6 +289,52 @@ def test_turn_file_changes_revert_applies_reverse_patch(tmp_path):
 
     assert json.loads(result.stdout) == {"success": True, "status": "reverted"}
     assert (repo / "changed.txt").read_text(encoding="utf-8") == "before\n"
+
+
+def test_turn_file_changes_revert_applies_patch_sequence(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_sequence_artifact(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "revert",
+            "turn-file-changes/10/21",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {"success": True, "status": "reverted"}
+    assert (repo / "changed.txt").read_text(encoding="utf-8") == "before\n"
+
+
+def test_turn_file_changes_revert_applies_plain_workspace_add_sequence(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    workspace, executor_home = _create_plain_workspace_add_sequence_artifact(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "revert",
+            "turn-file-changes/10/22",
+        ],
+        cwd=workspace,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {"success": True, "status": "reverted"}
+    assert not (workspace / "note.txt").exists()
 
 
 def test_local_device_command_registry_default_includes_diagnostic_commands():
@@ -2020,6 +2194,60 @@ async def test_execute_device_command_endpoint_allows_explicit_root_project_work
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["env"] == {"EXISTING": "1", "WEGENT_WORKSPACE_ROOTS": "/"}
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
+    monkeypatch,
+    test_db,
+):
+    """Workspace file commands should allow paths under runtime device workspaces."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services.runtime_work_kind_store import upsert_device_workspace_kind
+
+    workspace_path = "/Users/test/runtime/repo"
+    upsert_device_workspace_kind(
+        db=test_db,
+        user_id=7,
+        project_id=11,
+        payload=DeviceWorkspaceUpsert(
+            projectId=11,
+            deviceId="device-abc",
+            workspacePath=workspace_path,
+        ),
+        workspace_path=workspace_path,
+        workspace_path_hash="hash-runtime-repo",
+    )
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": {"path": f"{workspace_path}/src", "entries": []},
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(
+            command_key="workspace_tree",
+            path=f"{workspace_path}/src",
+            env={"EXISTING": "1"},
+        ),
+        db=test_db,
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    service_mock.assert_awaited_once()
+    _, kwargs = service_mock.await_args
+    assert kwargs["env"]["EXISTING"] == "1"
+    assert kwargs["env"]["WEGENT_WORKSPACE_ROOTS"] == workspace_path
 
 
 @pytest.mark.asyncio

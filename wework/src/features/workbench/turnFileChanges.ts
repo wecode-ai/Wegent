@@ -103,5 +103,7 @@ export function normalizeTurnFileChanges(
     deletions: value.deletions,
     files: files as TurnFileChangeItem[],
     reverted_at: value.reverted_at as string | null | undefined,
+    diff: typeof value.diff === 'string' ? value.diff : undefined,
+    revertible: typeof value.revertible === 'boolean' ? value.revertible : undefined,
   }
 }

@@ -11,6 +11,7 @@ import {
   Pin,
   Plus,
   RotateCw,
+  Search,
   Settings,
   Sparkles,
   X,
@@ -22,6 +23,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
@@ -80,6 +82,7 @@ interface DesktopSidebarProps {
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
+  onOpenSearch?: () => void
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -339,13 +342,13 @@ function SidebarSectionHeader({
     hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section mb-2 flex h-7 items-center justify-between px-2.5">
+    <div className="group/section relative mb-2 flex h-7 items-center px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pr-8 text-left"
       >
         <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
           {title}
@@ -359,7 +362,10 @@ function SidebarSectionHeader({
           )}
         />
       </button>
-      <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
+      <div
+        data-testid={`${toggleTestId}-actions`}
+        className="pointer-events-none invisible absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:visible group-hover/section:opacity-100 focus-within:pointer-events-auto focus-within:visible focus-within:opacity-100"
+      >
         {children}
       </div>
     </div>
@@ -1031,6 +1037,7 @@ export function DesktopSidebar({
   activeItem = 'chat',
   onCollapse,
   onNewChat,
+  onOpenSearch,
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
@@ -1304,13 +1311,23 @@ export function DesktopSidebar({
           testId="new-chat-button"
           onClick={onNewChat}
         />
-        <SidebarButton
-          icon={Sparkles}
-          label={t('workbench.plugins', '插件')}
-          testId="plugins-button"
-          selected={activeItem === 'plugins'}
-          onClick={onOpenPlugins}
-        />
+        {onOpenSearch && (
+          <SidebarButton
+            icon={Search}
+            label={t('workbench.search')}
+            testId="runtime-search-button"
+            onClick={onOpenSearch}
+          />
+        )}
+        {SHOW_PLUGINS_NAVIGATION && (
+          <SidebarButton
+            icon={Sparkles}
+            label={t('workbench.plugins', '插件')}
+            testId="plugins-button"
+            selected={activeItem === 'plugins'}
+            onClick={onOpenPlugins}
+          />
+        )}
       </nav>
 
       <div

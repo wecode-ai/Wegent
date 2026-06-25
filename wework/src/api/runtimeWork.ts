@@ -8,11 +8,14 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeFileChangesRevertRequest,
+  RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
+  RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
@@ -21,6 +24,8 @@ import type {
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkListResponse,
@@ -53,6 +58,14 @@ export function createRuntimeWorkApi(client: HttpClient) {
     getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return client.post('/runtime-work/transcript', request)
     },
+    searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
+      return client.post('/runtime-work/search', data)
+    },
+    revertRuntimeFileChanges(
+      request: RuntimeFileChangesRevertRequest
+    ): Promise<RuntimeFileChangesRevertResponse> {
+      return client.post('/runtime-work/file-changes/revert', request)
+    },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
     },
@@ -84,6 +97,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     archiveRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archive', address)
+    },
+    cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return client.post('/runtime-work/cancel', address)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)

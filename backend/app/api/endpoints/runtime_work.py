@@ -17,12 +17,15 @@ from app.schemas.runtime_work import (
     DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
+    RuntimeFileChangesRevertRequest,
+    RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
+    RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
@@ -32,6 +35,8 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
+    RuntimeWorkSearchRequest,
+    RuntimeWorkSearchResponse,
     RuntimeWorkspaceOpenRequest,
     RuntimeWorkspaceOpenResponse,
 )
@@ -136,6 +141,25 @@ def delete_device_workspace_endpoint(
 
 
 @router.post(
+    "/search",
+    response_model=RuntimeWorkSearchResponse,
+    response_model_by_alias=True,
+)
+async def search_runtime_work_endpoint(
+    request: RuntimeWorkSearchRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search online runtime transcripts owned by the current user."""
+
+    return await runtime_work_service.search_runtime_work(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
     "/transcript",
     response_model=RuntimeTranscriptResponse,
     response_model_by_alias=True,
@@ -151,6 +175,25 @@ async def get_runtime_transcript_endpoint(
         db=db,
         user_id=current_user.id,
         address=address,
+    )
+
+
+@router.post(
+    "/file-changes/revert",
+    response_model=RuntimeFileChangesRevertResponse,
+    response_model_by_alias=True,
+)
+async def revert_runtime_file_changes_endpoint(
+    request: RuntimeFileChangesRevertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Revert a native runtime file-change artifact on the owning device."""
+
+    return await runtime_work_service.revert_runtime_file_changes(
+        db=db,
+        user_id=current_user.id,
+        request=request,
     )
 
 
@@ -321,6 +364,25 @@ async def archive_runtime_task_endpoint(
         },
     )
     return await runtime_work_service.archive_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/cancel",
+    response_model=RuntimeTaskCancelResponse,
+    response_model_by_alias=True,
+)
+async def cancel_runtime_task_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel a native runtime LocalTask through the owning local executor."""
+
+    return await runtime_work_service.cancel_runtime_task(
         db=db,
         user_id=current_user.id,
         address=address,

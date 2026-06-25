@@ -46,6 +46,20 @@ The executor does not poll or push task lists to Backend by itself. Offline devi
 
 When there is only one device, Wework does not show an IP next to Project names. When there are multiple devices, the local device still omits the IP, while online remote devices show a usable non-loopback runtime transfer host or client IP with a green online dot. Remote project and remote host pickers also use that IP/host as the primary display label; the device id is only a technical fallback when no network address is available.
 
+## Search
+
+Wework searches device-local work with:
+
+```text
+POST /api/runtime-work/search
+```
+
+Backend fans out `runtime.tasks.search` only to the current user's online or busy devices. It does not read central `TaskResource`, `Subtask`, or cached history rows. The executor searches local task titles and transcripts, then returns snippets, message metadata, update time, device name, workspace path, and the transient task address.
+
+Search results are merged by `updatedAt` descending and capped by the request `limit`. `includeArchived` is passed to the executor so it can decide whether archived LocalTasks are included. When the request includes `projectId`, Backend derives the Project from each workspace path and only returns results under that Project; `workspaceKind: chat` Conversation results have no Project owner.
+
+The frontend search dialog opens only the `deviceId + localTaskId` address from the result, then restores workspace context from the latest runtime work list.
+
 ## Open And Continue
 
 When a user opens a LocalTask, Wework calls Backend:
@@ -64,7 +78,25 @@ POST /api/runtime-work/send
 
 Backend forwards `runtime.tasks.send`. The executor resumes the runtime session from the local LocalTask's opaque runtime handle. Claude Code tasks write the local transcript back to the JSON LocalTask index. Native Codex tasks only continue the Codex SDK thread; messages and status come from Codex's own session records and are not written back to the executor JSON index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
 
+If the current LocalTask is still replying, Wework queues new user input locally instead of sending concurrent `runtime.tasks.send` calls. Users can remove queued messages, or choose to stop the current reply and send the queued message from the queue panel. That first calls:
+
+```text
+POST /api/runtime-work/cancel
+```
+
+Backend forwards `deviceId + localTaskId` as `runtime.tasks.cancel`. For native Codex tasks, the executor cancels the in-process SDK task, clears the running marker, and lets the Responses stream emit an incomplete state. Non-Codex runtimes are cancelled through their adapter's `cancel` capability. After cancellation is accepted, the frontend sends the next queued message. This flow still identifies the task only by `deviceId + localTaskId`; `workspacePath` remains device-directory context.
+
+Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
+
+After an image attachment uploads successfully, Wework keeps a frontend-local `local_preview_url` on the current page's `Attachment` object. The sent message can display the image immediately without fetching the same attachment through the download API again. This field belongs only to frontend render state; it is not written to Backend and is not sent through `attachment_ids` or executor requests. After a page refresh, persisted attachment ids remain the source of truth.
+
+When rendering a message that already has persisted image attachments, Wework prefers those attachment previews and ignores local image file mentions embedded in the Codex prompt. This avoids showing both the uploaded attachment and a temporary local path. Codex local image mentions are used only as a same-device preview fallback when no attachment record exists. If the current environment cannot convert the local path through Tauri `convertFileSrc`, or the converted image fails to load, the frontend does not display that local path.
+
 Native Codex tasks have one additional rule: transcript refreshes trust only Codex's own session transcript. `runtimeHandle.messages` from a fork package or the executor JSON index is only an import-time snapshot and must not be used as a fallback for native Codex transcripts; otherwise Wework can show stale messages or lose follow-up turns after refresh. Non-SDK native tasks may still use the executor JSON index as their local transcript source.
+
+Assistant messages in a runtime transcript may include a `fileChanges` summary. During native Codex creation and continuation, the executor attaches a `NativeTurnFileChangeTracker` to the Codex SDK `turn/diff/updated` events and records the latest cumulative diff for the current turn. When the response completes, the tracker returns `file_changes` through Responses completion fields, and `runtime.tasks.create`, `runtime.tasks.send`, and `runtime.tasks.transcript` must normalize it onto the message as `fileChanges`. This lets the frontend show the file changes card under the current assistant message without waiting for the next list refresh.
+
+When Wework renders a file changes card for a runtime LocalTask, it does not call the central Task API. It uses the current task's `deviceId + workspacePath` to execute device commands `turn_file_changes_review` or `turn_file_changes_revert`, so review and revert run in the actual device directory that produced the LocalTask. Runtime LocalTasks may not have central `TaskResource`/`Subtask` rows, so artifact ids may use digit-only paths such as `turn-file-changes/0/<subtaskId>`. The device command must still full-match the artifact id and verify workspace and patch checksum from metadata; it must not accept arbitrary paths. If the local artifact is missing or the revert conflicts, the frontend writes that status back into the current transcript message instead of leaving a stale actionable state on screen.
 
 ## Workspace Tool Context
 
@@ -92,6 +124,7 @@ The runtime owns persistence for newly created tasks:
 - Codex creation and continuation do not cache the task in the executor JSON index. The current executor process keeps a temporary in-memory record to cover the short window before Codex discovery can see the new thread; after an executor restart, native Codex discovery/session data is authoritative again.
 - Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
 - Attachments still go through the executor Codex attachment pipeline: Backend sends attachment ids only, and the executor downloads and converts them on the target device for the Codex SDK. The frontend does not send local attachment paths.
+- If Codex response completion includes `file_changes` or `fileChanges`, the executor stores it on the current assistant message's `fileChanges` field, and later transcript refreshes continue to show the same file changes card.
 
 Project-backed creation uses a runtime workspace reference:
 

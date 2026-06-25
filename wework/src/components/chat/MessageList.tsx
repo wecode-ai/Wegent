@@ -1,12 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, CopyCheck, Package } from 'lucide-react'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  CopyCheck,
+  Link2,
+  Package,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
-import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import { getAttachmentImageUrl, getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
@@ -16,6 +25,7 @@ import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  isWaitingForAssistant?: boolean
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -24,15 +34,30 @@ interface MessageListProps {
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
+const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
+const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
+const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
+const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
+const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
+const ASSISTANT_MARKDOWN_LINK_CLASS = [
+  'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
+  'text-[13px] font-medium leading-5 text-blue-600 no-underline',
+  'transition-colors hover:text-blue-700',
+  'dark:text-blue-300 dark:hover:text-blue-200',
+].join(' ')
 
 export function MessageList({
   messages,
+  isWaitingForAssistant = false,
   devices = [],
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -41,13 +66,18 @@ export function MessageList({
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
 }: MessageListProps) {
-  if (messages.length === 0) {
+  const visibleMessages = messages.filter(shouldRenderMessage)
+  const shouldShowWaitingIndicator =
+    isWaitingForAssistant &&
+    !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+
+  if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-2">
-      {messages.map(message => (
+      {visibleMessages.map(message => (
         <article
           key={message.id}
           className={[
@@ -72,6 +102,32 @@ export function MessageList({
           )}
         </article>
       ))}
+      {shouldShowWaitingIndicator && (
+        <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
+          <WaitingAssistantIndicator />
+        </article>
+      )}
+    </div>
+  )
+}
+
+function shouldRenderMessage(message: WorkbenchMessage): boolean {
+  if (message.role !== 'assistant') return true
+  if (message.status === 'streaming' || message.status === 'failed') return true
+  if (message.fileChanges) return true
+
+  const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
+  if (visibleContent.trim()) return true
+
+  return getDisplayProcessingBlocks(message.blocks, visibleContent).length > 0
+}
+
+function WaitingAssistantIndicator() {
+  const { t } = useTranslation('chat')
+
+  return (
+    <div className="inline-flex items-center text-[13px]" data-testid="thinking-indicator">
+      <span className="waiting-thinking-text">{t('thinking.running')}</span>
     </div>
   )
 }
@@ -79,6 +135,36 @@ export function MessageList({
 function getTurnStartMs(createdAt: string): number | undefined {
   const ms = new Date(createdAt).getTime()
   return Number.isFinite(ms) ? ms : undefined
+}
+
+function formatCompactDuration(durationMs: number): string {
+  const seconds = Math.max(0, Math.floor(durationMs / 1000))
+  if (seconds < 60) return `${seconds}s`
+
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+}
+
+function getStoppedElapsedDuration(message: WorkbenchMessage): string {
+  const startedAt = getTurnStartMs(message.createdAt)
+  if (startedAt === undefined) return '0s'
+
+  const blockEndTimes =
+    message.blocks
+      ?.map(block => block.createdAt)
+      .filter((createdAt): createdAt is number => Number.isFinite(createdAt)) ?? []
+  const endedAt = blockEndTimes.length > 0 ? Math.max(...blockEndTimes) : startedAt
+
+  return formatCompactDuration(endedAt - startedAt)
+}
+
+function isCancelledAssistantMessage(message: WorkbenchMessage): boolean {
+  return message.runtimeStatus === 'cancelled'
 }
 
 function formatMessageTime(createdAt: string) {
@@ -116,26 +202,35 @@ async function copyText(text: string) {
 
 function UserMessage({ message }: { message: WorkbenchMessage }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const codexLocalFileMentions = parseCodexLocalFileMentions(message.content)
+  const displayContent = codexLocalFileMentions?.requestText ?? message.content
   const imageAttachments = (message.attachments ?? []).filter(isImageAttachment)
   const documentAttachments = (message.attachments ?? []).filter(
     attachment => !isImageAttachment(attachment)
   )
+  const localImageMentions =
+    imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? [])
   const shouldCollapse =
-    message.content.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-    message.content.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+    displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
 
   return (
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
-      {(imageAttachments.length > 0 || documentAttachments.length > 0) && (
+      {(imageAttachments.length > 0 ||
+        localImageMentions.length > 0 ||
+        documentAttachments.length > 0) && (
         <div className="flex max-w-full flex-col items-end gap-2">
-          {imageAttachments.length > 0 && (
+          {(imageAttachments.length > 0 || localImageMentions.length > 0) && (
             <div
               data-testid="message-image-attachments"
               className="flex max-w-full flex-row flex-wrap justify-end gap-2"
             >
               {imageAttachments.map(attachment => (
                 <MessageImageAttachmentPreview key={attachment.id} attachment={attachment} />
+              ))}
+              {localImageMentions.map(image => (
+                <MessageLocalImagePreview key={image.path} image={image} />
               ))}
             </div>
           )}
@@ -144,7 +239,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
           ))}
         </div>
       )}
-      {message.content && (
+      {displayContent && (
         <div className="max-w-full overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary">
           <div
             data-testid="user-message-content"
@@ -153,7 +248,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
               shouldCollapse && !isExpanded ? 'max-h-44' : '',
             ].join(' ')}
           >
-            {renderUserContent(message.content)}
+            {renderUserContent(displayContent)}
             {shouldCollapse && !isExpanded && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
             )}
@@ -187,6 +282,52 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
       <MessageHoverActions message={message} align="right" />
     </div>
   )
+}
+
+function MessageLocalImagePreview({ image }: { image: { filename: string; path: string } }) {
+  const [hasLoadError, setHasLoadError] = useState(false)
+  const imageSrc = resolveDirectMarkdownImageSrc(image.path)
+  if (!imageSrc || hasLoadError) return null
+
+  return (
+    <img
+      data-testid="message-local-image-preview"
+      src={imageSrc}
+      alt={image.filename}
+      className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
+      loading="lazy"
+      onError={() => setHasLoadError(true)}
+    />
+  )
+}
+
+function parseCodexLocalFileMentions(
+  content: string
+): { requestText: string; images: Array<{ filename: string; path: string }> } | null {
+  if (!CODEX_FILE_MENTIONS_HEADER_PATTERN.test(content)) return null
+
+  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
+  const requestText =
+    requestMarker?.index === undefined
+      ? ''
+      : content.slice(requestMarker.index + requestMarker[0].length).trim()
+  if (!requestText) return null
+
+  const filesText =
+    requestMarker?.index === undefined ? content : content.slice(0, requestMarker.index)
+  const images: Array<{ filename: string; path: string }> = []
+  for (const match of filesText.matchAll(CODEX_FILE_MENTION_LINE_PATTERN)) {
+    const filename = match[1]?.trim()
+    const path = match[2]?.trim()
+    if (!filename || !path || !isLocalImageMention(filename, path)) continue
+    images.push({ filename, path })
+  }
+
+  return { requestText, images }
+}
+
+function isLocalImageMention(filename: string, path: string): boolean {
+  return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
 }
 
 function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
@@ -360,6 +501,227 @@ function getDisplayProcessingBlocks(
   })
 }
 
+function getAttachmentDownloadId(src: string): number | null {
+  try {
+    const url = new URL(src)
+    const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
+  } catch {
+    const match = src.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
+    return match ? Number(match[1]) : null
+  }
+}
+
+function isAuthenticatedAttachmentImageSrc(src: string): boolean {
+  return getAttachmentDownloadId(src) !== null
+}
+
+function getAuthenticatedImageFetchUrl(src: string): string {
+  if (src.startsWith('/api/')) return src
+  if (/^https?:\/\//i.test(src)) return src
+
+  const attachmentId = getAttachmentDownloadId(src)
+  return attachmentId === null ? src : getAttachmentImageUrl(attachmentId)
+}
+
+function isLocalImagePath(src: string): boolean {
+  if (src.startsWith('file://')) return true
+  if (/^[a-zA-Z]:[\\/]/.test(src)) return true
+
+  return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
+}
+
+type MarkdownLinkTarget =
+  | { kind: 'external' }
+  | { kind: 'none' }
+  | { kind: 'file'; path: string }
+
+// Assistant responses frequently reference repository files with relative or
+// absolute filesystem paths. Rendering those as plain anchors makes the browser
+// navigate the SPA to a broken `http://localhost/...` URL, so file links are
+// routed to the caller (the previous-turn diff review when available, otherwise
+// the workspace file panel) instead.
+function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
+  const value = href?.trim()
+  if (!value) return { kind: 'none' }
+  if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
+  if (value.startsWith('#')) return { kind: 'none' }
+  if (value.startsWith('file://')) {
+    return { kind: 'file', path: localPathFromMarkdownImageSrc(value) }
+  }
+  return { kind: 'file', path: value }
+}
+
+function AssistantMarkdownLink({
+  href,
+  onOpenFile,
+  children,
+}: {
+  href?: string
+  onOpenFile?: (path: string) => void
+  children?: ReactNode
+}) {
+  const target = classifyMarkdownLink(href)
+  const icon = (
+    <Link2
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0"
+      data-testid="assistant-markdown-link-icon"
+    />
+  )
+
+  if (target.kind === 'file') {
+    const filePath = target.path
+    return (
+      <button
+        type="button"
+        className={ASSISTANT_MARKDOWN_LINK_CLASS}
+        data-testid="assistant-markdown-link"
+        onClick={() => onOpenFile?.(filePath)}
+      >
+        {icon}
+        {children}
+      </button>
+    )
+  }
+
+  return (
+    <a
+      href={href}
+      className={ASSISTANT_MARKDOWN_LINK_CLASS}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="assistant-markdown-link"
+    >
+      {icon}
+      {children}
+    </a>
+  )
+}
+
+function localPathFromMarkdownImageSrc(src: string): string {
+  if (!src.startsWith('file://')) return src
+
+  try {
+    const pathname = decodeURIComponent(new URL(src).pathname)
+    return pathname.match(/^\/[a-zA-Z]:\//) ? pathname.slice(1) : pathname
+  } catch {
+    return src
+  }
+}
+
+function resolveDirectMarkdownImageSrc(src: string): string | null {
+  if (!isLocalImagePath(src)) return src
+
+  const localPath = localPathFromMarkdownImageSrc(src)
+  if (typeof convertFileSrc !== 'function') return null
+
+  try {
+    return convertFileSrc(localPath)
+  } catch {
+    return null
+  }
+}
+
+function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const rawSrc = typeof src === 'string' ? src.trim() : ''
+  const [authenticatedPreview, setAuthenticatedPreview] = useState<{
+    rawSrc: string
+    url: string
+  } | null>(null)
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const isAuthenticatedSrc = rawSrc ? isAuthenticatedAttachmentImageSrc(rawSrc) : false
+  const resolvedSrc = isAuthenticatedSrc
+    ? authenticatedPreview?.rawSrc === rawSrc
+      ? authenticatedPreview.url
+      : null
+    : rawSrc
+      ? resolveDirectMarkdownImageSrc(rawSrc)
+      : null
+  const hasError = failedSrc === rawSrc
+
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let isMounted = true
+
+    if (!rawSrc || !isAuthenticatedSrc) {
+      return () => {
+        isMounted = false
+      }
+    }
+
+    async function loadAuthenticatedImage() {
+      try {
+        const token = localStorage.getItem('auth_token')
+        const response = await fetch(getAuthenticatedImageFetchUrl(rawSrc), {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to load markdown image: ${response.status}`)
+        }
+
+        const blob = await response.blob()
+        if (!blob.type.startsWith('image/')) {
+          throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
+        }
+
+        objectUrl = URL.createObjectURL(blob)
+        if (isMounted) {
+          setAuthenticatedPreview({ rawSrc, url: objectUrl })
+        } else {
+          URL.revokeObjectURL(objectUrl)
+        }
+      } catch {
+        if (isMounted) {
+          setFailedSrc(rawSrc)
+        }
+      }
+    }
+
+    void loadAuthenticatedImage()
+
+    return () => {
+      isMounted = false
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [isAuthenticatedSrc, rawSrc])
+
+  if (hasError) {
+    return (
+      <span
+        data-testid="assistant-markdown-image-error"
+        className="my-2 inline-flex max-w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-text-muted"
+      >
+        {alt || rawSrc}
+      </span>
+    )
+  }
+
+  if (!resolvedSrc) {
+    return (
+      <span
+        data-testid="assistant-markdown-image-loading"
+        className="my-2 inline-flex h-20 w-32 max-w-full items-center justify-center rounded-xl border border-border bg-surface text-xs text-text-muted"
+      >
+        {alt || 'Image'}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      data-testid="assistant-markdown-image"
+      src={resolvedSrc}
+      alt={alt || ''}
+      className="my-2 block max-h-[360px] max-w-full rounded-xl border border-border bg-base object-contain"
+      loading="lazy"
+    />
+  )
+}
+
 function AssistantMessage({
   message,
   devices,
@@ -379,16 +741,40 @@ function AssistantMessage({
   onOpenFileChangesReview?: (request: {
     subtaskId: number
     loadDiff: () => Promise<string>
+    reviewTitle?: string
+    defaultFileTreeVisible?: boolean
+    focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const shouldHideContent = shouldHideFailedAssistantContent(message)
+  const { t } = useTranslation('chat')
+  const isCancelled = isCancelledAssistantMessage(message)
+  const shouldHideContent = isCancelled || shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
-  const hiddenErrorContent = shouldHideContent ? message.content.trim() : undefined
+  const hiddenErrorContent = shouldHideContent && !isCancelled ? message.content.trim() : undefined
   const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
+  const shouldShowCompactThinking = isStreaming && !hasBlocks && !hasVisibleContent
+
+  // A file referenced in the response usually belongs to this turn's changes, so
+  // route the link into the previous-turn diff review focused on that file. When
+  // the turn has no recorded changes, fall back to the workspace file panel.
+  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
+  const openFileFromLink = (path: string) => {
+    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
+      onOpenFileChangesReview({
+        subtaskId: fileChangesSubtaskId,
+        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
+        reviewTitle: t('file_changes.previous_turn_label'),
+        defaultFileTreeVisible: false,
+        focusFilePath: path,
+      })
+      return
+    }
+    onOpenWorkspaceFile?.(path)
+  }
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
@@ -397,6 +783,8 @@ function AssistantMessage({
           blocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
+          forceExpanded={isCancelled}
+          showSummary={!isCancelled}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       )}
@@ -454,29 +842,18 @@ function AssistantMessage({
                 <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a
-                  href={href}
-                  className="break-words text-primary underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <AssistantMarkdownLink href={href} onOpenFile={openFileFromLink}>
                   {children}
-                </a>
+                </AssistantMarkdownLink>
               ),
+              img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
             }}
           >
             {visibleContent}
           </ReactMarkdown>
         </div>
       )}
-      {isStreaming && !hasBlocks && (
-        <ToolBlocksDisplay
-          blocks={[]}
-          isStreaming={true}
-          startedAt={getTurnStartMs(message.createdAt)}
-          onOpenWorkspaceFile={onOpenWorkspaceFile}
-        />
-      )}
+      {shouldShowCompactThinking && <WaitingAssistantIndicator />}
       {message.status === 'failed' && (
         <AssistantErrorCard
           error={message.error}
@@ -500,9 +877,21 @@ function AssistantMessage({
           onOpenReview={onOpenFileChangesReview}
         />
       ) : null}
-      {message.status !== 'streaming' && (hasVisibleContent || message.status === 'failed') && (
-        <MessageHoverActions message={message} align="left" />
-      )}
+      {isCancelled ? (
+        <div
+          data-testid="assistant-stopped-notice"
+          className="mt-4 flex justify-end border-b border-border pb-2 text-sm font-medium text-text-muted"
+        >
+          {t('assistant_status.stopped_after', {
+            duration: getStoppedElapsedDuration(message),
+          })}
+        </div>
+      ) : null}
+      {message.status !== 'streaming' &&
+        !isCancelled &&
+        (hasVisibleContent || message.status === 'failed') && (
+          <MessageHoverActions message={message} align="left" />
+        )}
     </div>
   )
 }

@@ -622,11 +622,11 @@ class WebSocketClient:
             logger.error(f"Device registration error: {e}")
             return False
 
-    async def send_heartbeat(self, timeout: float = 5.0) -> bool:
+    async def send_heartbeat(self, timeout: Optional[float] = None) -> bool:
         """Send heartbeat to Backend using call (request-response).
 
         Args:
-            timeout: Timeout for heartbeat response.
+            timeout: Timeout for heartbeat response. Defaults to config value.
 
         Returns:
             True if heartbeat acknowledged, False otherwise.
@@ -635,6 +635,11 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
+            call_timeout = (
+                float(timeout)
+                if timeout is not None
+                else float(config.LOCAL_HEARTBEAT_CALL_TIMEOUT)
+            )
             # Get active task IDs from all local code agents.
             from executor.agents.factory import AgentFactory
 
@@ -655,7 +660,7 @@ class WebSocketClient:
                 "device:heartbeat",
                 heartbeat_data,
                 namespace="/local-executor",
-                timeout=timeout,
+                timeout=call_timeout,
             )
             logger.debug(f"device:heartbeat response: {response}")
 
@@ -671,7 +676,7 @@ class WebSocketClient:
                 logger.warning(f"Heartbeat failed: {error}")
                 return False
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, socketio.exceptions.TimeoutError):
             logger.warning("Heartbeat timeout")
             return False
         except Exception as e:

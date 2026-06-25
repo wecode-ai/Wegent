@@ -84,6 +84,53 @@ async def _drain_runtime_adapter(adapter):
         await asyncio.gather(*adapter._running_tasks)
 
 
+def _turn_file_changes():
+    return {
+        "version": 1,
+        "status": "active",
+        "artifact_id": "artifact-1",
+        "device_id": "device-1",
+        "workspace_path": "/repo/Wegent",
+        "file_count": 1,
+        "additions": 6,
+        "deletions": 4,
+        "files": [
+            {
+                "old_path": None,
+                "path": "wework/src/features/workbench/WorkbenchProvider.tsx",
+                "change_type": "modified",
+                "additions": 6,
+                "deletions": 4,
+                "binary": False,
+            }
+        ],
+        "reverted_at": None,
+    }
+
+
+def _raw_image_attachment():
+    return {
+        "id": 45,
+        "original_filename": "image.png",
+        "file_size": 1024,
+        "mime_type": "image/png",
+        "subtask_id": 2001,
+        "file_extension": ".png",
+    }
+
+
+def _runtime_image_attachment():
+    return {
+        "id": 45,
+        "filename": "image.png",
+        "file_size": 1024,
+        "mime_type": "image/png",
+        "status": "ready",
+        "subtask_id": 2001,
+        "file_extension": ".png",
+    }
+
+
 def _sdk_codex_record(
     thread_id,
     *,
@@ -109,6 +156,97 @@ def _sdk_codex_record(
         running=running,
         status="active",
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_transcript_transport_persists_assistant_file_changes(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeTranscriptTransport
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from shared.models import EmitterBuilder
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="runtime-1",
+            workspace_path="/repo/Wegent",
+            title="Edit files",
+            runtime="codex",
+            runtime_handle={"messages": []},
+        )
+    )
+    transport = RuntimeTranscriptTransport(store, "runtime-1", runtime="codex")
+    emitter = EmitterBuilder().with_task(0, 10).with_transport(transport).build()
+
+    await emitter.done("done", file_changes=_turn_file_changes())
+
+    task = store.get_task("runtime-1")
+    assistant_message = task.runtime_handle["messages"][0]
+    assert assistant_message["fileChanges"] == _turn_file_changes()
+
+
+@pytest.mark.asyncio
+async def test_local_task_responses_transport_persists_native_codex_file_changes(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class NativeCreateDiscovery(EmptyDiscovery):
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            assert cwd == "/repo/Wegent"
+            emitter = emitter_factory("codex-thread-1")
+            await emitter.start(shell_type="Codex")
+            await emitter.done(
+                content="Edited files", file_changes=_turn_file_changes()
+            )
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=NativeCreateDiscovery(),
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "edit files",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "edit files",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+    await asyncio.gather(*handler._running_sdk_tasks)
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": create["localTaskId"],
+            },
+        }
+    )
+
+    assert transcript["messages"][1]["content"] == "Edited files"
+    assert transcript["messages"][1]["fileChanges"] == _turn_file_changes()
 
 
 def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
@@ -603,6 +741,223 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_keeps_codex_followup_attachments_in_transcript(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class FakeCodexStreamDiscovery:
+        def __init__(self):
+            self.started = asyncio.Event()
+
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        async def stream_message(self, _thread_id, _message, *, cwd=None, emitter):
+            self.started.set()
+            await emitter.start(shell_type="Codex")
+            await asyncio.Event().wait()
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = FakeCodexStreamDiscovery()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "message": "发出去图片",
+                "attachments": [_raw_image_attachment()],
+            },
+        }
+    )
+    assert result["accepted"] is True
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    user = transcript["messages"][0]
+    assert user["content"] == "发出去图片"
+    assert len(user["attachments"]) == 1
+    attachment = user["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert isinstance(attachment["created_at"], str)
+    for running_task in list(handler._running_sdk_tasks):
+        running_task.cancel()
+    await asyncio.gather(*handler._running_sdk_tasks, return_exceptions=True)
+
+
+def test_runtime_work_handler_prefers_cached_attachment_message_over_codex_file_mention(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=EmptyDiscovery(),
+    )
+    cached_user = {
+        "id": "thread:user:2001",
+        "role": "user",
+        "content": "发出去图片",
+        "attachments": [_runtime_image_attachment()],
+        "status": "done",
+    }
+    codex_user = {
+        "id": "thread:user:o10",
+        "role": "user",
+        "content": "\n".join(
+            [
+                "# Files mentioned by the user:",
+                "",
+                "## image.png: /Users/me/.wegent-executor/workspace/attachments/1/0/image.png",
+                "",
+                "## My request for Codex:",
+                "发出去图片",
+            ]
+        ),
+        "status": "done",
+    }
+
+    merged = handler._merge_recent_transcript_messages([codex_user], [cached_user])
+
+    assert merged == [cached_user]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_merges_sdk_cached_attachments_for_discovered_codex_thread(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+
+    class TranscriptOnlyCodexDiscovery:
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        def read_transcript_page(
+            self, requested_thread_id, session_path=None, **_kwargs
+        ):
+            from executor.runtime_work.codex_discovery import CodexTranscriptPage
+
+            assert requested_thread_id == thread_id
+            assert session_path is None
+            return CodexTranscriptPage(
+                messages=[
+                    {
+                        "id": f"{thread_id}:user:o10",
+                        "role": "user",
+                        "content": "\n".join(
+                            [
+                                "# Files mentioned by the user:",
+                                "",
+                                "## image.png: /private/var/folders/tmp/image.png",
+                                "",
+                                "## My request for Codex:",
+                                "发出去图片",
+                            ]
+                        ),
+                        "createdAt": "2026-06-21T02:15:37Z",
+                        "status": "done",
+                    },
+                    {
+                        "id": f"{thread_id}:assistant:o11",
+                        "role": "assistant",
+                        "content": "我看到了图片",
+                        "createdAt": "2026-06-21T02:15:58Z",
+                        "status": "done",
+                    },
+                ],
+                has_more_before=False,
+                before_cursor=None,
+            )
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=TranscriptOnlyCodexDiscovery(),
+    )
+    handler._remember_sdk_codex_task(
+        LocalTaskRecord(
+            local_task_id="codex-local-1",
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={
+                "threadId": thread_id,
+                "messages": [
+                    {
+                        "id": "codex-local-1:user:2001",
+                        "role": "user",
+                        "content": "发出去图片",
+                        "attachments": [_runtime_image_attachment()],
+                        "createdAt": "2026-06-21T02:15:37Z",
+                        "status": "done",
+                        "subtaskId": 2001,
+                    }
+                ],
+            },
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    user = result["messages"][0]
+    assert user["content"] == "发出去图片"
+    assert len(user["attachments"]) == 1
+    attachment = user["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert result["messages"][1]["content"] == "我看到了图片"
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_rejects_concurrent_sdk_codex_send_atomically(
     tmp_path,
 ):
@@ -836,6 +1191,130 @@ async def test_runtime_work_handler_includes_im_source_on_sdk_stream_events(
     await asyncio.gather(*handler._running_sdk_tasks)
     assert events
     assert all(payload["source"] == source for _event, payload in events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_keeps_sdk_partial_turn_in_transcript(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class PartialCodexStreamDiscovery:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        def discover(self):
+            return [_sdk_codex_record(thread_id)]
+
+        def read_transcript(self, _thread_id, _session_path=None):
+            return []
+
+        def read_transcript_page(
+            self,
+            _thread_id,
+            _session_path=None,
+            *,
+            limit,
+            before_cursor,
+        ):
+            return SimpleNamespace(
+                messages=[
+                    {
+                        "id": f"{thread_id}:user:1",
+                        "role": "user",
+                        "content": "执行pwd",
+                        "createdAt": "2026-06-24T11:00:00Z",
+                        "status": "done",
+                    }
+                ],
+                has_more_before=False,
+                before_cursor=None,
+            )
+
+        async def stream_message(self, thread_id, message, *, cwd=None, emitter):
+            await emitter.start(shell_type="Codex")
+            await emitter.text_delta("半截输出")
+            self.started.set()
+            await self.release.wait()
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = PartialCodexStreamDiscovery()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+            running=False,
+            status="active",
+        )
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    send_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+                "message": "执行pwd",
+            },
+        }
+    )
+
+    assert send_result["accepted"] is True
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+
+    streaming_transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    streaming_messages = streaming_transcript["messages"]
+    assert [message["content"] for message in streaming_messages] == [
+        "执行pwd",
+        "半截输出",
+    ]
+    assert streaming_messages[1]["status"] == "streaming"
+
+    cancel_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    assert cancel_result["accepted"] is True
+    await asyncio.gather(*handler._running_sdk_tasks, return_exceptions=True)
+
+    cancelled_transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": thread_id,
+            },
+        }
+    )
+    cancelled_messages = cancelled_transcript["messages"]
+    assert [message["content"] for message in cancelled_messages] == [
+        "执行pwd",
+        "半截输出",
+    ]
+    assert cancelled_messages[1]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -1225,6 +1704,296 @@ def test_codex_discovery_passes_resolved_codex_binary_to_sdk(tmp_path, monkeypat
     assert (tmp_path / "codex-home").is_dir()
 
 
+@pytest.mark.asyncio
+async def test_codex_discovery_reuses_created_thread_provider_config(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import codex_agent
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            if False:
+                yield None
+
+    class FakeThread:
+        async def turn(self, message, **kwargs):
+            self.turn_args = (message, kwargs)
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, config):
+            self.config = config
+            captured_configs.append(config)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_resume(self, thread_id, cwd=None):
+            resume_calls.append((thread_id, cwd))
+            return FakeThread()
+
+    class FakeEmitter:
+        async def start(self, **_kwargs):
+            return None
+
+        async def error(self, *_args):
+            return None
+
+    captured_configs = []
+    resume_calls = []
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    discovery._remember_thread_resume_config(
+        "thread-1",
+        SimpleNamespace(
+            codex_bin="/custom/codex",
+            config_overrides=(
+                "model_provider=wecode-openai",
+                "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+            ),
+            env={"HTTPS_PROXY": "http://127.0.0.1:7890"},
+        ),
+    )
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client",
+        lambda: pytest.fail("default Codex client should not be used"),
+    )
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+
+    await discovery.stream_message(
+        "thread-1",
+        "continue",
+        cwd="/repo/Wegent",
+        emitter=FakeEmitter(),
+    )
+
+    assert resume_calls == [("thread-1", "/repo/Wegent")]
+    assert captured_configs[0].kwargs["codex_bin"] == "/custom/codex"
+    assert captured_configs[0].kwargs["cwd"] == "/repo/Wegent"
+    assert captured_configs[0].kwargs["config_overrides"] == (
+        "model_provider=wecode-openai",
+        "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1",
+    )
+    assert captured_configs[0].kwargs["env"]["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+
+
+@pytest.mark.asyncio
+async def test_codex_discovery_stream_message_tracks_native_turn_diff(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import codex_agent
+    from executor.runtime_work import codex_discovery
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeTracker:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.recorded = []
+            self.finalized = False
+            FakeTracker.instances.append(self)
+
+        def record_diff(self, diff):
+            self.recorded.append(diff)
+
+        async def finalize(self):
+            self.finalized = True
+            return {"file_changes": _turn_file_changes()}
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            yield SimpleNamespace(
+                method="turn/diff/updated",
+                payload=SimpleNamespace(diff="diff --git a/a.txt b/a.txt\n"),
+            )
+            yield SimpleNamespace(
+                method="turn/completed",
+                payload=SimpleNamespace(
+                    turn=SimpleNamespace(status=SimpleNamespace(value="completed"))
+                ),
+            )
+
+    class FakeThread:
+        async def turn(self, _message, **_kwargs):
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, _config):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_resume(self, _thread_id, cwd=None):
+            assert cwd == "/repo/Wegent"
+            return FakeThread()
+
+    class FakeEmitter:
+        def __init__(self):
+            self.subtask_id = 2001
+            self.completion_fields_provider = None
+
+        def set_completion_fields_provider(self, provider):
+            self.completion_fields_provider = provider
+
+        async def start(self, **_kwargs):
+            return None
+
+        async def done(self, **_kwargs):
+            assert self.completion_fields_provider is not None
+            await self.completion_fields_provider()
+
+        async def error(self, *_args):
+            return None
+
+    monkeypatch.setattr(codex_discovery, "NativeTurnFileChangeTracker", FakeTracker)
+
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client",
+        lambda: FakeAsyncCodex(FakeCodexConfig()),
+    )
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+
+    await discovery.stream_message(
+        "thread-1",
+        "continue",
+        cwd="/repo/Wegent",
+        emitter=FakeEmitter(),
+    )
+
+    assert FakeTracker.instances[0].kwargs["workspace"].as_posix() == "/repo/Wegent"
+    assert FakeTracker.instances[0].kwargs["task_id"] == 0
+    assert FakeTracker.instances[0].kwargs["subtask_id"] == 2001
+    assert FakeTracker.instances[0].recorded == ["diff --git a/a.txt b/a.txt\n"]
+    assert FakeTracker.instances[0].finalized is True
+
+
+@pytest.mark.asyncio
+async def test_codex_discovery_remembers_provider_config_for_created_thread(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.agents.codex import attachment_handler, codex_agent
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    class FakeCodexConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeTurn:
+        async def stream(self):
+            if False:
+                yield None
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _message, **_kwargs):
+            return FakeTurn()
+
+    class FakeAsyncCodex:
+        def __init__(self, _config):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return None
+
+        async def thread_start(self, **_kwargs):
+            return FakeThread()
+
+    class FakeEmitter:
+        async def start(self, **_kwargs):
+            return None
+
+        async def error(self, *_args):
+            return None
+
+    discovery = CodexSessionDiscovery(codex_home=tmp_path / "codex-home")
+    monkeypatch.setattr(discovery, "_codex_config_type", lambda: FakeCodexConfig)
+    monkeypatch.setattr(
+        discovery,
+        "_create_async_codex_client_with_config",
+        lambda config: FakeAsyncCodex(config),
+    )
+    monkeypatch.setattr(codex_agent, "_deny_all_approval_mode", lambda: "deny")
+    monkeypatch.setattr(codex_agent, "_full_access_sandbox", lambda: "sandbox")
+    monkeypatch.setattr(
+        attachment_handler,
+        "process_codex_attachments",
+        lambda **kwargs: SimpleNamespace(
+            prompt=kwargs["prompt"],
+            local_image_paths=[],
+            model_input_files=[],
+        ),
+    )
+
+    await discovery.stream_new_thread(
+        SimpleNamespace(
+            model_config={
+                "model": "openai",
+                "model_id": "gpt-5.5",
+                "base_url": "http://127.0.0.1:3456/v1",
+                "api_key": "wecode-proxy-placeholder",
+                "api_format": "responses",
+            },
+            task_id=1001,
+            subtask_id=2001,
+            system_prompt="",
+            kb_meta_prompt="",
+        ),
+        "start",
+        cwd="/repo/Wegent",
+        emitter_factory=lambda _thread_id: FakeEmitter(),
+    )
+
+    resume_config = discovery._thread_resume_configs["thread-1"]
+    assert resume_config.codex_bin
+    assert "model_provider=wecode-openai" in resume_config.config_overrides
+    assert (
+        "model_providers.wecode-openai.base_url=http://127.0.0.1:3456/v1"
+        in resume_config.config_overrides
+    )
+    assert (
+        "model_providers.wecode-openai.experimental_bearer_token=wecode-proxy-placeholder"
+        in resume_config.config_overrides
+    )
+
+
 def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 
@@ -1315,6 +2084,341 @@ def test_codex_discovery_reads_user_visible_transcript(tmp_path):
         "Implemented",
     ]
     assert transcript[1]["status"] == "done"
+
+
+def test_codex_discovery_keeps_commentary_when_task_complete_is_empty(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ae"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Check the page",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "I refreshed the page and checked the DOM.",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:23Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in page.messages] == ["user", "assistant"]
+    assert page.messages[1]["content"] == "I refreshed the page and checked the DOM."
+    assert page.messages[1]["status"] == "done"
+
+
+def test_codex_discovery_keeps_commentary_before_next_user_message(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "First request",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "I checked the current page.",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:23Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Second request",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:24Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in page.messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert [message["content"] for message in page.messages] == [
+        "First request",
+        "I checked the current page.",
+        "Second request",
+    ]
+
+
+def test_codex_discovery_adds_file_changes_from_patch_apply_end(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    changed_file = workspace / "src" / "app.ts"
+    changed_file.parent.mkdir()
+    changed_file.write_text("const label = 'new'\n", encoding="utf-8")
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789df"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Edit the app",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'old'\n+const label = 'new'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'new'\n+const label = 'final'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "Done",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["subtaskId"] > 0
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0]["path"] == "src/app.ts"
+    assert assistant["fileChanges"]["additions"] == 2
+    assert assistant["fileChanges"]["deletions"] == 2
+    assert assistant["fileChanges"]["revertible"] is True
+    assert assistant["fileChanges"]["artifact_id"].startswith("turn-file-changes/")
+    assert "diff --git a/src/app.ts b/src/app.ts" in assistant["fileChanges"]["diff"]
+
+
+def test_codex_discovery_adds_file_changes_to_aborted_turn(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    changed_file = workspace / "src" / "app.ts"
+    changed_file.parent.mkdir()
+    changed_file.write_text("const label = 'new'\n", encoding="utf-8")
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ab"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Edit the app",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "update",
+                        "unified_diff": "@@ -1 +1 @@\n-const label = 'old'\n+const label = 'new'",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "turn_aborted",
+                "reason": "interrupted",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["status"] == "cancelled"
+    assert assistant["content"] == "interrupted"
+    assert assistant["subtaskId"] > 0
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0]["path"] == "src/app.ts"
+    assert assistant["fileChanges"]["additions"] == 1
+    assert assistant["fileChanges"]["deletions"] == 1
+
+
+def test_codex_discovery_adds_file_changes_from_patch_content(tmp_path, monkeypatch):
+    from executor.config import config
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    monkeypatch.setattr(config, "WEGENT_EXECUTOR_HOME", str(tmp_path / "executor-home"))
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    workspace = tmp_path / "plain-project"
+    workspace.mkdir()
+    changed_file = workspace / "note.txt"
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789e0"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:19Z",
+            "type": "turn_context",
+            "payload": {"cwd": str(workspace)},
+        },
+        {
+            "timestamp": "2026-06-20T05:52:20Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Create a note",
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "changes": {
+                    str(changed_file): {
+                        "type": "add",
+                        "content": "hello\n",
+                    }
+                },
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:22Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "Done",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assistant = page.messages[1]
+    assert assistant["fileChanges"]["file_count"] == 1
+    assert assistant["fileChanges"]["files"][0] == {
+        "old_path": None,
+        "path": "note.txt",
+        "change_type": "created",
+        "additions": 1,
+        "deletions": 0,
+        "binary": False,
+    }
+    assert assistant["fileChanges"]["revertible"] is True
+    assert "--- /dev/null" in assistant["fileChanges"]["diff"]
+    assert "+++ b/note.txt" in assistant["fileChanges"]["diff"]
+    assert "+hello" in assistant["fileChanges"]["diff"]
 
 
 def test_codex_discovery_reads_transcript_pages(tmp_path):
@@ -2230,6 +3334,279 @@ async def test_runtime_work_handler_prefers_codex_transcript_over_imported_cache
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_searches_runtime_transcripts(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="task-1",
+            workspace_path="/repo/Wegent",
+            title="Debug shell command",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "please run pwd and show the workspace",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                        "status": "done",
+                    },
+                    {
+                        "id": "m2",
+                        "role": "assistant",
+                        "content": "The current directory is /repo/Wegent.",
+                        "createdAt": "2026-06-21T12:00:01Z",
+                        "status": "done",
+                    },
+                ]
+            },
+            created_at="2026-06-21T11:59:00Z",
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {
+                "query": "PWD",
+                "limit": 10,
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["items"] == [
+        {
+            "localTaskId": "task-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+            "title": "Debug shell command",
+            "updatedAt": "2026-06-21T12:00:01Z",
+            "messageId": "m1",
+            "messageRole": "user",
+            "messageCreatedAt": "2026-06-21T12:00:00Z",
+            "snippet": "please run pwd and show the workspace",
+            "matchStart": 11,
+            "matchEnd": 14,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_searches_task_titles(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="task-title-1",
+            workspace_path="/repo/Wegent",
+            title="查找 WEGENT_EXECUTOR_HOME 默认值",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "hello",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                    }
+                ]
+            },
+            created_at="2026-06-21T11:59:00Z",
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "wegent"},
+        }
+    )
+
+    assert result["success"] is True
+    assert result["items"] == [
+        {
+            "localTaskId": "task-title-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+            "title": "查找 WEGENT_EXECUTOR_HOME 默认值",
+            "updatedAt": "2026-06-21T12:00:01Z",
+            "messageId": "",
+            "messageRole": "title",
+            "messageCreatedAt": "2026-06-21T12:00:01Z",
+            "snippet": "查找 WEGENT_EXECUTOR_HOME 默认值",
+            "matchStart": 3,
+            "matchEnd": 9,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_skips_transcripts_when_metadata_fills_limit(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class TranscriptCountingHandler(RuntimeWorkRpcHandler):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.transcript_reads = 0
+
+        async def _task_transcript_messages(self, task):
+            self.transcript_reads += 1
+            return task.runtime_handle.get("messages", [])
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    for index in range(3):
+        store.upsert_task(
+            LocalTaskRecord(
+                local_task_id=f"title-match-{index}",
+                workspace_path="/repo/Wegent",
+                title=f"排查沙箱启动 {index}",
+                runtime="claude_code",
+                runtime_handle={
+                    "messages": [
+                        {
+                            "id": f"m{index}",
+                            "role": "user",
+                            "content": "unrelated transcript content",
+                            "createdAt": "2026-06-21T12:00:00Z",
+                        }
+                    ]
+                },
+                updated_at=f"2026-06-21T12:00:0{index}Z",
+                status="active",
+            )
+        )
+
+    handler = TranscriptCountingHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    )
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "沙箱", "limit": 2},
+        }
+    )
+
+    assert result["success"] is True
+    assert [item["localTaskId"] for item in result["items"]] == [
+        "title-match-2",
+        "title-match-1",
+    ]
+    assert handler.transcript_reads == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_returns_one_result_per_task_preferring_title(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="duplicate-match",
+            workspace_path="/repo/Wegent",
+            title="排查沙箱启动",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "沙箱启动失败",
+                        "createdAt": "2026-06-21T12:00:00Z",
+                    },
+                    {
+                        "id": "m2",
+                        "role": "assistant",
+                        "content": "已检查沙箱日志",
+                        "createdAt": "2026-06-21T12:00:01Z",
+                    },
+                ]
+            },
+            updated_at="2026-06-21T12:00:01Z",
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "沙箱", "limit": 20},
+        }
+    )
+
+    assert result["success"] is True
+    assert [item["messageRole"] for item in result["items"]] == ["title"]
+    assert [item["localTaskId"] for item in result["items"]] == ["duplicate-match"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_search_excludes_archived_tasks_by_default(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="archived-1",
+            workspace_path="/repo/Wegent",
+            title="Old command",
+            runtime="claude_code",
+            runtime_handle={
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "pwd",
+                        "createdAt": "2026-06-20T12:00:00Z",
+                    }
+                ]
+            },
+            status="archived",
+        )
+    )
+
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+    default_result = await handler.handle_runtime_rpc(
+        {"method": "runtime.tasks.search", "payload": {"query": "pwd"}}
+    )
+    archived_result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.search",
+            "payload": {"query": "pwd", "includeArchived": True},
+        }
+    )
+
+    assert default_result["success"] is True
+    assert default_result["items"] == []
+    assert [item["localTaskId"] for item in archived_result["items"]] == ["archived-1"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_does_not_fallback_to_imported_cache_for_sdk_codex(
     tmp_path,
 ):
@@ -2370,7 +3747,29 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         executed_requests.append(request)
         await emitter.start(shell_type="ClaudeCode")
         await emitter.text_delta("Created")
-        await emitter.done(content="Created")
+        await emitter.done(
+            content="Created",
+            file_changes={
+                "version": 1,
+                "status": "active",
+                "artifact_id": "turn-2001",
+                "device_id": "device-1",
+                "workspace_path": "/repo/Wegent",
+                "file_count": 1,
+                "additions": 3,
+                "deletions": 1,
+                "files": [
+                    {
+                        "path": "src/app.ts",
+                        "change_type": "modified",
+                        "additions": 3,
+                        "deletions": 1,
+                        "binary": False,
+                    }
+                ],
+                "reverted_at": None,
+            },
+        )
 
     store = LocalTaskStore(tmp_path / "index.json")
     adapter = RuntimeAgentAdapter(
@@ -2426,6 +3825,8 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         "assistant",
     ]
     assert transcript["messages"][0]["content"] == "create the task"
+    assert transcript["messages"][1]["fileChanges"]["artifact_id"] == "turn-2001"
+    assert transcript["messages"][1]["fileChanges"]["files"][0]["path"] == "src/app.ts"
 
 
 @pytest.mark.asyncio
@@ -2650,6 +4051,7 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
                     "project_workspace_path": "/repo/Wegent",
                     "model_config": {},
                     "bot": [],
+                    "attachments": [_raw_image_attachment()],
                 },
             },
         }
@@ -2696,6 +4098,11 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
         "create a Codex task",
         "Created",
     ]
+    assert len(transcript["messages"][0]["attachments"]) == 1
+    attachment = transcript["messages"][0]["attachments"][0]
+    for key, value in _runtime_image_attachment().items():
+        assert attachment[key] == value
+    assert isinstance(attachment["created_at"], str)
 
 
 @pytest.mark.asyncio
@@ -2773,6 +4180,67 @@ async def test_runtime_work_handler_returns_before_codex_thread_start_finishes(
         create["localTaskId"]
     }
     assert handler.store.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_handles_codex_create_cancel_before_thread_id(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class WaitingThreadStartDiscovery(EmptyDiscovery):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            self.started.set()
+            await self.release.wait()
+
+    discovery = WaitingThreadStartDiscovery()
+    events = []
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+        responses_event_emitter=lambda event, payload: events.append((event, payload)),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "create a Codex task",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "create a Codex task",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+    sdk_task = handler._running_sdk_tasks_by_local_task_id[create["localTaskId"]]
+    sdk_task.cancel()
+
+    await asyncio.gather(sdk_task)
+
+    assert create["localTaskId"] not in handler._running_sdk_task_ids
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -3232,6 +4700,196 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
         "reply:first",
         "second",
         "reply:second",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_cancels_running_task_before_followup(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyDiscovery:
+        def discover(self):
+            return []
+
+    first_started = asyncio.Event()
+    executed_prompts = []
+
+    async def execute_agent(request, emitter):
+        executed_prompts.append(request.prompt)
+        if request.prompt == "first":
+            first_started.set()
+            await asyncio.Event().wait()
+        await emitter.done(content=f"reply:{request.prompt}")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "first",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "team_id": 1,
+                    "prompt": "first",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {"model": "openai", "api_format": "responses"},
+                    "bot": [{"id": 7}],
+                },
+            },
+        }
+    )
+    local_task_id = create["localTaskId"]
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+
+    cancel = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+            },
+        }
+    )
+    await asyncio.sleep(0)
+
+    send = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+                "message": "guide",
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    assert cancel["success"] is True
+    assert cancel["accepted"] is True
+    assert send["success"] is True
+    assert send["accepted"] is True
+    assert executed_prompts == ["first", "guide"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_sends_followup_with_attachments(tmp_path):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyDiscovery:
+        def discover(self):
+            return []
+
+    executed_requests = []
+
+    async def execute_agent(request, emitter):
+        executed_requests.append(request)
+        await emitter.done(content=f"reply:{request.prompt}")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "first",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "team_id": 1,
+                    "prompt": "first",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {"model": "openai", "api_format": "responses"},
+                    "bot": [{"id": 7}],
+                },
+            },
+        }
+    )
+    local_task_id = create["localTaskId"]
+    await _drain_runtime_adapter(adapter)
+
+    send = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+                "message": "second",
+                "attachments": [
+                    {
+                        "id": 45,
+                        "original_filename": "photo.png",
+                        "mime_type": "image/png",
+                        "file_size": 1200,
+                        "subtask_id": 0,
+                        "file_extension": ".png",
+                    }
+                ],
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    assert send["success"] is True
+    assert executed_requests[1].attachments == [
+        {
+            "id": 45,
+            "original_filename": "photo.png",
+            "mime_type": "image/png",
+            "file_size": 1200,
+            "subtask_id": 0,
+            "file_extension": ".png",
+        }
+    ]
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": local_task_id,
+            },
+        }
+    )
+    assert transcript["messages"][2]["attachments"] == [
+        {
+            "id": 45,
+            "filename": "photo.png",
+            "file_size": 1200,
+            "mime_type": "image/png",
+            "status": "ready",
+            "subtask_id": 0,
+            "file_extension": ".png",
+            "created_at": transcript["messages"][2]["attachments"][0]["created_at"],
+        }
     ]
 
 

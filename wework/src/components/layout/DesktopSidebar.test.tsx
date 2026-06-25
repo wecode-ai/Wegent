@@ -35,6 +35,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     devices: [localDevice()],
     onCollapse: vi.fn(),
     onNewChat: vi.fn(),
+    onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenPlugins: vi.fn(),
@@ -76,6 +77,15 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
 describe('DesktopSidebar', () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+
+  test('keeps section header actions out of the flex layout while hidden', () => {
+    renderSidebar()
+
+    const actions = screen.getByTestId('projects-section-toggle-actions')
+
+    expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
+    expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
   test('does not render unmapped runtime workspace groups', async () => {
@@ -125,6 +135,23 @@ describe('DesktopSidebar', () => {
     )
     expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
     expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+  })
+
+  test('opens runtime search from the sidebar', async () => {
+    const onOpenSearch = vi.fn()
+    renderSidebar({ onOpenSearch })
+
+    await userEvent.click(screen.getByTestId('runtime-search-button'))
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides plugins navigation while the feature is not released', () => {
+    const onOpenPlugins = vi.fn()
+    renderSidebar({ onOpenPlugins })
+
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

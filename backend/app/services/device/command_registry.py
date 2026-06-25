@@ -928,14 +928,17 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 MAX_PATCH_BYTES = 20 * 1024 * 1024
+# task_id is 0 for runtime-local work (no DB task row); subtask_id is always
+# positive. Both segments are pure digits, so fullmatch still blocks traversal.
 ARTIFACT_PATTERN = re.compile(
-    r"turn-file-changes/([1-9][0-9]*)/([1-9][0-9]*)"
+    r"turn-file-changes/([0-9]+)/([0-9]+)"
 )
 
 
@@ -949,6 +952,70 @@ def fail(message, code=64, status=None):
     if status:
         payload["status"] = status
     finish(payload, code)
+
+
+def sequence_patches(raw_patch):
+    try:
+        patches = json.loads(raw_patch.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"invalid patch sequence: {exc}", code=65)
+    if not isinstance(patches, list) or not all(isinstance(item, str) for item in patches):
+        fail("invalid patch sequence", code=65)
+    return patches
+
+
+def patch_paths(patch_text):
+    paths = set()
+    for line in patch_text.splitlines():
+        match = re.match(r"diff --git a/(.+?) b/(.+)$", line)
+        if not match:
+            continue
+        for value in match.groups():
+            if value != "/dev/null":
+                paths.add(value)
+    return paths
+
+
+def copy_patch_paths(workspace, temp_workspace, patches):
+    for patch_text in patches:
+        for path in patch_paths(patch_text):
+            source = (workspace / path).resolve()
+            target = temp_workspace / path
+            if workspace not in source.parents and source != workspace:
+                fail("patch path escapes workspace", code=65)
+            if source.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+
+def run_reverse_patch_sequence(workspace, patches, check_only=False):
+    with tempfile.TemporaryDirectory(prefix="wegent-turn-sequence-") as temp_dir:
+        temp_workspace = Path(temp_dir)
+        if check_only:
+            copy_patch_paths(workspace, temp_workspace, patches)
+            target_workspace = temp_workspace
+        else:
+            target_workspace = workspace
+        for patch_text in reversed(patches):
+            with tempfile.NamedTemporaryFile(
+                prefix="wegent-sequence-",
+                suffix=".patch",
+                delete=False,
+            ) as temp_file:
+                temp_file.write(patch_text.encode("utf-8"))
+                temp_path = Path(temp_file.name)
+            try:
+                result = subprocess.run(
+                    ["git", "apply", "--reverse", "--binary", str(temp_path)],
+                    cwd=target_workspace,
+                    capture_output=True,
+                    text=True,
+                )
+            finally:
+                temp_path.unlink(missing_ok=True)
+            if result.returncode != 0:
+                return False
+    return True
 
 
 if len(sys.argv) != 3:
@@ -1012,13 +1079,39 @@ if len(patch) > MAX_PATCH_BYTES:
 if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
     fail("artifact patch checksum mismatch", code=65)
 
+patch_sequence = metadata.get("patch_sequence") is True
+patches = sequence_patches(patch) if patch_sequence else None
+
 if mode == "review":
     finish(
         {
             "success": True,
-            "diff": patch.decode("utf-8", errors="replace"),
+            "diff": (
+                "\\n".join(patches)
+                if patches is not None
+                else patch.decode("utf-8", errors="replace")
+            ),
         }
     )
+
+if patches is not None:
+    if not run_reverse_patch_sequence(workspace, patches, check_only=True):
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+    if not run_reverse_patch_sequence(workspace, patches, check_only=False):
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+    finish({"success": True, "status": "reverted"})
 
 temp_path = None
 try:
@@ -1182,6 +1275,13 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_diff": LocalDeviceCommandDefinition(command=GIT_WORKSPACE_DIFF_COMMAND),
+    "git_diff_unstaged": LocalDeviceCommandDefinition(command="git diff --binary --"),
+    "git_diff_staged": LocalDeviceCommandDefinition(
+        command="git diff --binary --cached --"
+    ),
+    "git_diff_last_commit": LocalDeviceCommandDefinition(
+        command="git diff --binary HEAD~1..HEAD --"
+    ),
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
     ),
