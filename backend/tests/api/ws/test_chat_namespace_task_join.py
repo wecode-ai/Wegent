@@ -75,6 +75,38 @@ async def test_task_join_replays_cached_context_metrics_for_active_stream() -> N
 
 
 @pytest.mark.asyncio
+async def test_wework_task_join_joins_wework_task_room() -> None:
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(
+        return_value={"user_id": 1, "client_origin": "wework"}
+    )
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+    namespace.enter_room = AsyncMock()
+    namespace.emit = AsyncMock()
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace.run_sync_in_executor",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.api.ws.chat_namespace.get_active_streaming",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        result = await namespace.on_task_join(
+            "sid-1",
+            {"task_id": 101, "after_message_id": None},
+        )
+
+    assert result["subtasks"] == []
+    namespace.enter_room.assert_awaited_once_with("sid-1", "wework:task:101")
+
+
+@pytest.mark.asyncio
 async def test_chat_cancel_cleans_cached_streaming_state() -> None:
     """Cancelling a stream should remove refresh recovery cache immediately."""
 

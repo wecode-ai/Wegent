@@ -16,6 +16,7 @@ import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
+import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -91,18 +92,20 @@ function AppShell() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface">
-      {isTauri && (
-        <ChromeTitlebar
-          tabs={tabs}
-          activeKey={activeAppKey}
-          onNavigate={navigateToApp}
-          afterTabs={<AppUpdateTitlebarButton />}
-        />
-      )}
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <AppRoutes />
+    <LocalRuntimeInitializer>
+      <div className="flex h-screen flex-col overflow-hidden bg-surface">
+        {isTauri && (
+          <ChromeTitlebar
+            tabs={tabs}
+            activeKey={activeAppKey}
+            onNavigate={navigateToApp}
+            afterTabs={<AppUpdateTitlebarButton />}
+          />
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <AppRoutes />
+        </div>
       </div>
-    </div>
+    </LocalRuntimeInitializer>
   )
 }

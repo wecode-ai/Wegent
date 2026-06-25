@@ -128,6 +128,50 @@ function updateRuntimeWorkDeviceStatus(
   }
 }
 
+function findRuntimeTaskAddressByLocalTaskId(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  localTaskId: string
+): RuntimeTaskAddress | null {
+  if (!runtimeWork) return null
+
+  let match: RuntimeTaskAddress | null = null
+  const workspaces = [
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ...runtimeWork.chats,
+  ]
+
+  for (const workspace of workspaces) {
+    if (!workspace.localTasks.some(task => task.localTaskId === localTaskId)) continue
+
+    const address = {
+      deviceId: workspace.deviceId,
+      localTaskId,
+    }
+    if (match && match.deviceId !== address.deviceId) {
+      return null
+    }
+    match = address
+  }
+
+  return match
+}
+
+function reconcileCurrentRuntimeTaskAddress(
+  currentRuntimeTask: RuntimeTaskAddress | null,
+  devices: DeviceInfo[],
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): RuntimeTaskAddress | null {
+  if (!currentRuntimeTask) return null
+  if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
+    return currentRuntimeTask
+  }
+
+  return (
+    findRuntimeTaskAddressByLocalTaskId(runtimeWork, currentRuntimeTask.localTaskId) ??
+    currentRuntimeTask
+  )
+}
+
 function runtimeWorkspaceFromMapping(
   mapping: DeviceWorkspaceResponse,
   devices: DeviceInfo[]
@@ -215,14 +259,21 @@ function upsertPreparedRuntimeWorkspace(
 
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
-    case 'bootstrapped':
+    case 'bootstrapped': {
+      const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
+      const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
       return {
         ...state,
         user: action.user,
         defaultTeam: action.defaultTeam,
         projects: action.projects,
-        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
+        devices,
+        runtimeWork,
+        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
+          state.currentRuntimeTask,
+          devices,
+          runtimeWork
+        ),
         currentProject:
           action.currentProject === undefined ? state.currentProject : action.currentProject,
         standaloneDeviceId:
@@ -236,12 +287,20 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         isBootstrapping: false,
         error: null,
       }
+    }
     case 'lists_refreshed': {
+      const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
+      const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
       const refreshedState = {
         ...state,
         projects: action.projects,
-        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
+        devices,
+        runtimeWork,
+        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
+          state.currentRuntimeTask,
+          devices,
+          runtimeWork
+        ),
         currentProject: state.currentProject
           ? (action.projects.find(project => project.id === state.currentProject?.id) ?? null)
           : null,
@@ -256,10 +315,16 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
       return refreshedState
     }
-    case 'devices_refreshed':
+    case 'devices_refreshed': {
+      const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       return {
         ...state,
-        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
+        devices,
+        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
+          state.currentRuntimeTask,
+          devices,
+          state.runtimeWork
+        ),
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
@@ -269,6 +334,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
       }
+    }
     case 'device_status_changed':
       return {
         ...state,

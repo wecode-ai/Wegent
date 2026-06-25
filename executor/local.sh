@@ -12,7 +12,6 @@ PID_FILE="$PID_DIR/wegent-executor.pid"
 RUN_LOG="$PID_DIR/wegent-executor.log"
 BUILD_LOG="$PID_DIR/wegent-executor-build.log"
 BINARY_PATH="${WEGENT_EXECUTOR_BINARY:-$ROOT_DIR/dist/wegent-executor}"
-DEVICE_CONFIG_PATH="${WEGENT_EXECUTOR_HOME:-$HOME/.wegent-executor}/device-config.json"
 
 DEFAULT_FILE_EDIT_HOOK_COMMAND='tee -a /tmp/hook-debug.log | curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log -H "Content-Type: application/json" -H "wecode-source: wegent-device" --data-binary @-'
 
@@ -96,9 +95,6 @@ start_executor() {
     echo "Starting local executor. Log: $RUN_LOG"
     (
         cd "$ROOT_DIR"
-        if [[ ! -f "$DEVICE_CONFIG_PATH" && -z "${EXECUTOR_MODE:-}" ]]; then
-            export EXECUTOR_MODE=local
-        fi
         export WEGENT_FILE_EDIT_HOOK_COMMAND="${WEGENT_FILE_EDIT_HOOK_COMMAND:-$DEFAULT_FILE_EDIT_HOOK_COMMAND}"
         nohup "$BINARY_PATH" >> "$RUN_LOG" 2>&1 &
         echo $! > "$PID_FILE"

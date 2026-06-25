@@ -41,8 +41,12 @@ from sqlalchemy.orm import Session
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import ServerEvents
-from app.api.ws.local_task_responses import LocalTaskResponsesHandler
+from app.api.ws.local_task_responses import (
+    LocalTaskResponsesHandler,
+    emit_response_api_event,
+)
 from app.core.auth_utils import is_api_key, verify_api_key
+from app.core.constants import get_wework_task_room, get_wework_user_room
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
@@ -537,6 +541,25 @@ def _normalize_runtime_task_status(status: Any) -> str:
     return status.strip().replace("_", "").replace("-", "").lower()
 
 
+def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, Any]:
+    payload = dict(data)
+    payload["device_id"] = device_id
+    return payload
+
+
+async def emit_chat_user_event(
+    *, event_name: str, payload: dict[str, Any], user_id: int
+) -> None:
+    sio = get_sio()
+    for room in (f"user:{user_id}", get_wework_user_room(user_id)):
+        await sio.emit(
+            event_name,
+            payload,
+            room=room,
+            namespace="/chat",
+        )
+
+
 class DeviceNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for local executor connections.
@@ -567,8 +590,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         self._event_parser = ResponsesAPIEventParser()
         self._local_task_responses = LocalTaskResponsesHandler(self._event_parser)
 
-        # Known OpenAI Responses API event prefixes
-        self._responses_api_prefixes = ("response.", "error")
+        # Known Responses API event prefixes. Payload shape detection below keeps
+        # Wework pass-through from depending on a closed event-name list.
+        self._responses_api_prefixes = ("response.", "error", "image_generation.")
 
         # Per-subtask locks to ensure events are processed in order
         # This prevents race conditions when multiple response.output_text.delta
@@ -689,10 +713,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 return await handler(sid, *args)
 
         # Handle OpenAI Responses API events (e.g., response.output_text.delta)
-        if event.startswith(self._responses_api_prefixes):
+        if self._is_responses_api_event(event, args):
             return await self._handle_responses_api_event(sid, event, *args)
 
         return await super().trigger_event(event, sid, *args)
+
+    def _is_responses_api_event(self, event: str, args: tuple[Any, ...]) -> bool:
+        if event.startswith(self._responses_api_prefixes):
+            return True
+        if not args or not isinstance(args[0], dict):
+            return False
+
+        data = args[0]
+        if not isinstance(data.get("data"), dict):
+            return False
+        return any(key in data for key in ("task_id", "subtask_id", "local_task_id"))
 
     def _get_client_ip(self, environ: dict) -> Optional[str]:
         """Extract the TCP peer IP from WSGI environ."""
@@ -1544,6 +1579,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # Acquire lock to ensure sequential processing of events for this subtask
             async with lock:
                 # Parse using shared ResponsesAPIEventParser
+                await emit_response_api_event(
+                    event_name=event_type,
+                    payload=response_api_payload(data=data, device_id=device_id),
+                    room=get_wework_task_room(task_id),
+                )
                 event = self._event_parser.parse(
                     task_id=task_id,
                     subtask_id=subtask_id,
@@ -1772,61 +1812,47 @@ class DeviceNamespace(socketio.AsyncNamespace):
         self, user_id: int, device_id: str, name: str
     ) -> None:
         """Broadcast device:online event to user room via chat namespace."""
-        from app.core.socketio import get_sio
         from app.schemas.device import DeviceStatusEnum
 
-        sio = get_sio()
         event_data = DeviceOnlineEvent(
             device_id=device_id,
             name=name,
             status=DeviceStatusEnum.ONLINE,
         ).model_dump()
 
-        await sio.emit(
-            "device:online",
-            event_data,
-            room=f"user:{user_id}",
-            namespace="/chat",
+        await emit_chat_user_event(
+            event_name="device:online", payload=event_data, user_id=user_id
         )
-        logger.debug(f"[Device WS] Broadcast device:online to user:{user_id}")
+        logger.debug(f"[Device WS] Broadcast device:online to user rooms for {user_id}")
 
     async def _broadcast_device_offline(self, user_id: int, device_id: str) -> None:
         """Broadcast device:offline event to user room via chat namespace."""
-        from app.core.socketio import get_sio
-
-        sio = get_sio()
         event_data = DeviceOfflineEvent(device_id=device_id).model_dump()
 
-        await sio.emit(
-            "device:offline",
-            event_data,
-            room=f"user:{user_id}",
-            namespace="/chat",
+        await emit_chat_user_event(
+            event_name="device:offline", payload=event_data, user_id=user_id
         )
-        logger.debug(f"[Device WS] Broadcast device:offline to user:{user_id}")
+        logger.debug(
+            f"[Device WS] Broadcast device:offline to user rooms for {user_id}"
+        )
 
     async def _broadcast_device_status(
         self, user_id: int, device_id: str, status: str
     ) -> None:
         """Broadcast device:status event to user room via chat namespace."""
-        from app.core.socketio import get_sio
         from app.schemas.device import DeviceStatusEnum
 
-        sio = get_sio()
         # Convert string status to enum
         status_enum = DeviceStatusEnum(status)
         event_data = DeviceStatusEvent(
             device_id=device_id, status=status_enum
         ).model_dump()
 
-        await sio.emit(
-            "device:status",
-            event_data,
-            room=f"user:{user_id}",
-            namespace="/chat",
+        await emit_chat_user_event(
+            event_name="device:status", payload=event_data, user_id=user_id
         )
         logger.debug(
-            f"[Device WS] Broadcast device:status to user:{user_id}, status={status}"
+            f"[Device WS] Broadcast device:status to user rooms for {user_id}, status={status}"
         )
 
     async def _broadcast_device_slot_update(self, user_id: int, device_id: str) -> None:
@@ -1836,7 +1862,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Queries current slot usage and emits the update.
         Uses run_sync_in_executor to avoid blocking the event loop.
         """
-        from app.core.socketio import get_sio
         from app.schemas.device import DeviceRunningTask
 
         try:
@@ -1845,7 +1870,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 _get_device_slot_usage_sync, user_id, device_id
             )
 
-            sio = get_sio()
             event_data = DeviceSlotUpdateEvent(
                 device_id=device_id,
                 slot_used=slot_info["used"],
@@ -1855,14 +1879,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 ],
             ).model_dump()
 
-            await sio.emit(
-                "device:slot_update",
-                event_data,
-                room=f"user:{user_id}",
-                namespace="/chat",
+            await emit_chat_user_event(
+                event_name="device:slot_update", payload=event_data, user_id=user_id
             )
             logger.debug(
-                f"[Device WS] Broadcast device:slot_update to user:{user_id}, "
+                f"[Device WS] Broadcast device:slot_update to user rooms for {user_id}, "
                 f"slot_used={slot_info['used']}"
             )
         except Exception as e:
@@ -1903,10 +1924,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             user_id: Device owner's user ID
             payload: DeviceUpgradeStatusEvent payload
         """
-        from app.core.socketio import get_sio
-
         try:
-            sio = get_sio()
             event_data = payload.model_dump()
             target_user_ids = {user_id}
 
@@ -1919,11 +1937,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 target_user_ids.update(admin_id for (admin_id,) in admin_user_ids)
 
             for target_user_id in target_user_ids:
-                await sio.emit(
-                    "device:upgrade_status",
-                    event_data,
-                    room=f"user:{target_user_id}",
-                    namespace="/chat",
+                await emit_chat_user_event(
+                    event_name="device:upgrade_status",
+                    payload=event_data,
+                    user_id=target_user_id,
                 )
             logger.debug(
                 f"[Device WS] Broadcast device:upgrade_status to users={sorted(target_user_ids)}, "

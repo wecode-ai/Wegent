@@ -1,0 +1,9 @@
+{
+  "starting_title": "正在启动本地执行器",
+  "starting_description": "正在连接本机 daemon。首次启动可能需要几秒。",
+  "failed_title": "本地执行器启动失败",
+  "failed_description": "请检查 executor 是否能正常启动，或查看日志后重试。",
+  "log_label": "日志位置",
+  "retry": "重试",
+  "fallback_error": "本地执行器不可用"
+}

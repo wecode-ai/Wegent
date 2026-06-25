@@ -39,6 +39,7 @@ from shared.prompts import (
     KB_PROMPT_RESTRICTED_ANALYST,
     KB_PROMPT_STRICT,
 )
+from shared.utils.attachment_block import build_attachment_header
 
 logger = logging.getLogger(__name__)
 
@@ -291,26 +292,20 @@ def _process_attachment_context(
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
 
         # Build sandbox path if task_id and subtask_id are provided
         sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
 
-        # Build image metadata header with optional sandbox path
-        if sandbox_path:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]"
-            )
-        else:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
-            )
+        # Build image metadata header (shared with chat_shell loader)
+        image_header = build_attachment_header(
+            attachment_id=attachment_id,
+            filename=filename,
+            mime_type=context.mime_type or "unknown",
+            file_size=context.file_size or 0,
+            sandbox_path=sandbox_path,
+            is_image=True,
+        )
 
         image_contents.append(
             {

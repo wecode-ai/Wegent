@@ -32,6 +32,7 @@ from executor.runtime_work.codex_global_state import (
 from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     LocalTaskStore,
+    infer_runtime_workspace_kind,
     normalize_workspace_path,
     utc_now_iso,
 )
@@ -323,9 +324,9 @@ class RuntimeWorkRpcHandler:
                 "workspaceSource": project.source,
             }
             if project.host_id:
-                workspace_metadata[project.workspace_path]["remoteHostId"] = (
-                    project.host_id
-                )
+                workspace_metadata[project.workspace_path][
+                    "remoteHostId"
+                ] = project.host_id
         for task in tasks:
             group_workspace = self._task_group_workspace(task, codex_project_index)
             if group_workspace is None:
@@ -1493,7 +1494,9 @@ class RuntimeWorkRpcHandler:
             runtime_handle = current.runtime_handle
             if self._is_codex_runtime(current.runtime):
                 runtime_handle = {**current.runtime_handle, "titleOverride": True}
-            return replace(current, title=normalized_title, runtime_handle=runtime_handle)
+            return replace(
+                current, title=normalized_title, runtime_handle=runtime_handle
+            )
 
         codex_rename: Optional[dict[str, Any]] = None
         if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
@@ -2079,6 +2082,7 @@ class RuntimeWorkRpcHandler:
             workspace_path=workspace_path,
             title=title,
             runtime="codex",
+            workspace_kind=infer_runtime_workspace_kind(workspace_path),
             runtime_handle={
                 "pendingNativeCodexThread": True,
                 "activeSubtaskId": subtask_id,
@@ -2121,19 +2125,40 @@ class RuntimeWorkRpcHandler:
         self._remember_sdk_codex_task(updated)
         return updated
 
+    def _payload_address(self, payload: dict[str, Any]) -> dict[str, Any]:
+        address = payload.get("address")
+        if isinstance(address, dict):
+            return address
+        return {}
+
+    def _payload_local_task_id(self, payload: dict[str, Any]) -> str:
+        local_task_id = payload.get("localTaskId")
+        if not isinstance(local_task_id, str) or not local_task_id.strip():
+            address = self._payload_address(payload)
+            local_task_id = address.get("localTaskId") or address.get("local_task_id")
+        if not isinstance(local_task_id, str) or not local_task_id.strip():
+            raise ValueError("localTaskId is required")
+        return local_task_id.strip()
+
+    def _payload_workspace_path(self, payload: dict[str, Any]) -> Optional[str]:
+        workspace_path = payload.get("workspacePath")
+        if workspace_path is None:
+            address = self._payload_address(payload)
+            workspace_path = address.get("workspacePath") or address.get(
+                "workspace_path"
+            )
+        if workspace_path is not None and not isinstance(workspace_path, str):
+            raise ValueError("workspacePath must be a string")
+        return workspace_path
+
     def _load_payload_task(
         self,
         payload: dict[str, Any],
         *,
         discovered_tasks: Optional[list[LocalTaskRecord]] = None,
     ) -> LocalTaskRecord:
-        local_task_id = payload.get("localTaskId")
-        if not isinstance(local_task_id, str) or not local_task_id.strip():
-            raise ValueError("localTaskId is required")
-
-        workspace_path = payload.get("workspacePath")
-        if workspace_path is not None and not isinstance(workspace_path, str):
-            raise ValueError("workspacePath must be a string")
+        local_task_id = self._payload_local_task_id(payload)
+        workspace_path = self._payload_workspace_path(payload)
 
         try:
             task = self.store.get_task(local_task_id, workspace_path=workspace_path)
@@ -2160,13 +2185,8 @@ class RuntimeWorkRpcHandler:
         raise KeyError(f"Local task not found: {local_task_id}")
 
     def _load_payload_transcript_task(self, payload: dict[str, Any]) -> LocalTaskRecord:
-        local_task_id = payload.get("localTaskId")
-        if not isinstance(local_task_id, str) or not local_task_id.strip():
-            raise ValueError("localTaskId is required")
-
-        workspace_path = payload.get("workspacePath")
-        if workspace_path is not None and not isinstance(workspace_path, str):
-            raise ValueError("workspacePath must be a string")
+        local_task_id = self._payload_local_task_id(payload)
+        workspace_path = self._payload_workspace_path(payload)
 
         sdk_task = self._find_sdk_codex_task(
             local_task_id,
@@ -2541,13 +2561,8 @@ class RuntimeWorkRpcHandler:
         return None
 
     def _load_archived_payload_task(self, payload: dict[str, Any]) -> LocalTaskRecord:
-        local_task_id = payload.get("localTaskId")
-        if not isinstance(local_task_id, str) or not local_task_id.strip():
-            raise ValueError("localTaskId is required")
-
-        workspace_path = payload.get("workspacePath")
-        if workspace_path is not None and not isinstance(workspace_path, str):
-            raise ValueError("workspacePath must be a string")
+        local_task_id = self._payload_local_task_id(payload)
+        workspace_path = self._payload_workspace_path(payload)
 
         codex_project_index = self._codex_project_index()
 

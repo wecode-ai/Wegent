@@ -13,6 +13,7 @@ import {
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
+import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -37,6 +38,7 @@ import { getModelCompatibilityFamily } from '@/lib/model-ui'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import type { RuntimeTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
@@ -48,7 +50,6 @@ import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
   ChatBlock,
-  ChatMessagePayload,
   ChatSendPayload,
   CreateProjectRequest,
   CreateGitWorkspaceProjectRequest,
@@ -120,6 +121,8 @@ const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
+const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
+const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
 const RUNTIME_BLOCK_SUBTASK_ID_OFFSET = 1_000_000_000
 
 type ProjectMutationOptions = {
@@ -259,6 +262,57 @@ export interface WorkbenchServices {
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   chatStream: ReturnType<typeof createChatStream>
+}
+
+async function createConversationWorkspace(
+  deviceApi: WorkbenchServices['deviceApi'],
+  deviceId: string,
+  message: string
+): Promise<string> {
+  const homeDirectory = await deviceApi.getHomeDirectory(deviceId)
+  const workspacePath = buildConversationWorkspacePath(homeDirectory, message)
+  await deviceApi.createDirectory(deviceId, workspacePath)
+  return workspacePath
+}
+
+function buildConversationWorkspacePath(homeDirectory: string, message: string): string {
+  return joinDevicePath(
+    homeDirectory,
+    'Documents',
+    'Codex',
+    formatConversationWorkspaceDate(new Date()),
+    slugifyConversationWorkspaceName(message)
+  )
+}
+
+function formatConversationWorkspaceDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function slugifyConversationWorkspaceName(message: string): string {
+  const words = message.match(/[A-Za-z0-9]+/g) ?? []
+  const name = words.length > 0 ? words.map(word => word.toLowerCase()).join('-') : ''
+  return trimConversationWorkspaceName(name || DEFAULT_CONVERSATION_WORKSPACE_NAME)
+}
+
+function trimConversationWorkspaceName(name: string): string {
+  const trimmed = name.slice(0, MAX_CONVERSATION_WORKSPACE_NAME_LENGTH).replace(/-+$/g, '')
+  return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
+}
+
+function joinDevicePath(root: string, ...segments: string[]): string {
+  const trimmedRoot = root.trim()
+  const normalizedRoot = trimmedRoot === '/' ? '' : trimmedRoot.replace(/\/+$/g, '')
+  const joined = [
+    normalizedRoot,
+    ...segments.map(segment => segment.replace(/^\/+|\/+$/g, '')),
+  ]
+    .filter(Boolean)
+    .join('/')
+  return trimmedRoot.startsWith('/') ? `/${joined.replace(/^\/+/g, '')}` : joined
 }
 
 export interface WorkbenchContextValue {
@@ -407,7 +461,7 @@ interface WorkbenchProviderProps {
   services?: WorkbenchServices
 }
 
-function createDefaultServices(): WorkbenchServices {
+function createBackendServices(): WorkbenchServices {
   const { apiBaseUrl, socketBaseUrl, socketPath } = getRuntimeConfig()
   const client = createHttpClient({ baseUrl: apiBaseUrl })
   const socketClient = createSocketClient({
@@ -415,6 +469,7 @@ function createDefaultServices(): WorkbenchServices {
     path: socketPath,
     namespace: '/chat',
     getToken,
+    auth: { client_origin: WEWORK_CLIENT_ORIGIN },
     logger: console,
   })
 
@@ -432,6 +487,15 @@ function createDefaultServices(): WorkbenchServices {
     socketClient,
     chatStream: createChatStream(socketClient.socket),
   }
+}
+
+function createDefaultServices(): WorkbenchServices {
+  const { runtimeMode } = getRuntimeConfig()
+  if (runtimeMode === 'local-first' && isTauriRuntime()) {
+    return createLocalAppServices()
+  }
+
+  return createBackendServices()
 }
 
 function getCurrentAppPath(): string {
@@ -489,12 +553,24 @@ function resolveRuntimeTaskRouteAddress(
     ...runtimeWork.projects.flatMap(projectWork => projectWork.deviceWorkspaces),
     ...runtimeWork.chats,
   ]
+  let fallbackAddress: RuntimeTaskAddress | null = null
+  let hasMultipleFallbacks = false
 
   for (const workspace of workspaces) {
-    if (workspace.deviceId !== route.deviceId) continue
-
     const task = workspace.localTasks.find(item => item.localTaskId === route.localTaskId)
     if (!task) continue
+
+    if (workspace.deviceId !== route.deviceId) {
+      if (fallbackAddress) {
+        hasMultipleFallbacks = true
+      } else {
+        fallbackAddress = {
+          deviceId: workspace.deviceId,
+          localTaskId: task.localTaskId,
+        }
+      }
+      continue
+    }
 
     return {
       deviceId: workspace.deviceId,
@@ -502,7 +578,7 @@ function resolveRuntimeTaskRouteAddress(
     }
   }
 
-  return null
+  return hasMultipleFallbacks ? null : fallbackAddress
 }
 
 function isCurrentLocalTaskEvent(
@@ -717,27 +793,6 @@ function runtimeMessagesToWorkbenchMessages(
   return messages.map(message => runtimeMessageToWorkbenchMessage(address, message))
 }
 
-function chatMessageToWorkbenchMessage(payload: ChatMessagePayload): WorkbenchMessage {
-  const role = payload.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const source =
-    role === 'user' && payload.source?.source === 'im'
-      ? ({ ...payload.source, source: 'im' } as MessageSource)
-      : undefined
-  const messageKey = payload.message_id ?? payload.subtask_id
-  const localPrefix = payload.local_task_id ? `runtime-${payload.local_task_id}-` : ''
-  return {
-    id: `${localPrefix}message-${messageKey}`,
-    taskId: payload.task_id,
-    subtaskId: payload.subtask_id,
-    role,
-    content: payload.content,
-    status: 'done',
-    attachments: payload.attachments,
-    source,
-    createdAt: payload.created_at,
-  }
-}
-
 function findFileChangesBySubtaskId(
   messages: WorkbenchMessage[],
   subtaskId: number
@@ -849,22 +904,6 @@ function getRememberedStandaloneDeviceId(
     devices,
     user.preferences?.default_execution_target ?? fallbackDeviceId
   )
-}
-
-function findRuntimeWorkspaceForDevice(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  deviceId: string | undefined
-): string | null {
-  if (!deviceId) return null
-  const workspaces = [
-    ...(runtimeWork?.chats ?? []),
-    ...(runtimeWork?.projects ?? []).flatMap(project => project.deviceWorkspaces),
-  ]
-  const matches = workspaces.filter(
-    item => item.deviceId === deviceId && item.available && item.workspacePath
-  )
-  const workspacePaths = [...new Set(matches.map(item => item.workspacePath))]
-  return workspacePaths.length === 1 ? workspacePaths[0] : null
 }
 
 function getSelectableProjectDeviceWorkspaces(
@@ -1376,13 +1415,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       onDeviceStatus: handleDeviceStatus,
       onDeviceSlotUpdate: refreshDevicesAfterEvent,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
-      onChatMessage: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
-        dispatchMessages({
-          type: 'user_added',
-          message: chatMessageToWorkbenchMessage(payload),
-        })
-      },
       onChatStart: payload => {
         if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
         setIsAwaitingAssistantStart(false)
@@ -1449,34 +1481,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
-      },
-      onGuidanceQueued: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
-            item.id === payload.guidance_id || item.id === payload.client_guidance_id
-              ? {
-                  ...item,
-                  id: payload.guidance_id,
-                  content: payload.message ?? payload.content ?? item.content,
-                  status: 'queued',
-                }
-              : item
-          )
-        )
-      },
-      onGuidanceApplied: payload => {
-        setGuidanceMessages(items =>
-          items.filter(
-            item => item.id !== payload.guidance_id && item.id !== payload.client_guidance_id
-          )
-        )
-      },
-      onGuidanceExpired: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
-            payload.guidance_ids.includes(item.id) ? { ...item, status: 'expired' } : item
-          )
-        )
       },
     })
   }, [refreshWorkLists, refreshDevices, resolvedServices, setDeviceUpgradeState])
@@ -1913,7 +1917,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const archiveProjectsConversations = useCallback(
     async (runtimeProjectKeys: string[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
       }
@@ -1924,7 +1929,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const archivedAddresses = projectTaskAddresses(state.runtimeWork, uniqueProjectKeys)
       const responses = await Promise.all(
         uniqueProjectKeys.map(runtimeProjectKey =>
-          resolvedServices.runtimeWorkApi.archiveProjectConversations({ runtimeProjectKey })
+          runtimeWorkApi.archiveProjectConversations({ runtimeProjectKey })
         )
       )
       const failedResponse = responses.find(response => !response.accepted)
@@ -1949,7 +1954,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const archiveChatConversations = useCallback(
     async (addresses: RuntimeTaskAddress[]) => {
-      if (!resolvedServices.runtimeWorkApi) {
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
         dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
         return
       }
@@ -1957,7 +1963,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       if (addresses.length === 0) return
 
       const responses = await Promise.all(
-        addresses.map(address => resolvedServices.runtimeWorkApi.archiveConversation(address))
+        addresses.map(address => runtimeWorkApi.archiveConversation(address))
       )
       const failedResponse = responses.find(response => !response.accepted)
       if (failedResponse) {
@@ -2387,7 +2393,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           ? selectedProjectWorkspace.deviceId
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
-              standaloneDeviceId: state.standaloneDeviceId,
+              standaloneDeviceId: getPreferredStandaloneDeviceId(
+                state.devices,
+                state.standaloneDeviceId
+              ),
             })
 
       const payload: ChatSendPayload = {
@@ -2451,6 +2460,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       projectWorktreeBaseBranch,
       projectExecutionMode,
       state.currentProject,
+      state.devices,
       state.defaultTeam,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
@@ -2470,6 +2480,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return false
       }
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
+      const selectedModel =
+        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+      const runtime = inferRuntimeName(selectedModel)
+      const localTaskId = createRuntimeLocalTaskId(runtime)
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
@@ -2497,9 +2511,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
       } else {
-        const workspacePath =
-          state.standaloneWorkspacePath ??
-          findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
+        let workspacePath = state.standaloneWorkspacePath
+        if (!workspacePath && activeDeviceId) {
+          try {
+            workspacePath = await createConversationWorkspace(
+              resolvedServices.deviceApi,
+              activeDeviceId,
+              displayMessage
+            )
+          } catch (error) {
+            reportSendBlocked(error instanceof Error ? error.message : '创建对话工作区失败')
+            return false
+          }
+        }
         if (!activeDeviceId || !workspacePath) {
           reportSendBlocked('请选择项目或打开设备工作区后再发送')
           return false
@@ -2511,10 +2535,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
       }
 
-      const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
-      const runtime = inferRuntimeName(selectedModel)
-      const localTaskId = createRuntimeLocalTaskId(runtime)
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         localTaskId,
@@ -2620,6 +2640,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       refreshWorkLists,
       rememberExecutionDevice,
       reportSendBlocked,
+      resolvedServices.deviceApi,
       resolvedServices.runtimeWorkApi,
       state.currentProject,
       state.projects,
@@ -3066,15 +3087,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const pauseCurrentResponse = useCallback(async () => {
-    if (!activeAssistantMessage?.subtaskId) return
+    if (!activeAssistantMessage?.subtaskId || !state.currentRuntimeTask) return
+    const runtimeWorkApi = resolvedServices.runtimeWorkApi
+    if (!runtimeWorkApi) {
+      dispatch({
+        type: 'error_set',
+        error: 'Runtime API 不可用',
+      })
+      return
+    }
 
-    const ack = await resolvedServices.chatStream.cancelStream({
-      subtask_id: activeAssistantMessage.subtaskId,
-      partial_content: activeAssistantMessage.content,
-      shell_type: activeAssistantMessage.shellType,
-    })
+    const ack = await runtimeWorkApi.cancelRuntimeTask(state.currentRuntimeTask)
 
-    if (ack.error || ack.success === false) {
+    if (!ack.accepted) {
       dispatch({
         type: 'error_set',
         error: normalizeGuidanceError(ack.error ?? '取消当前回复失败'),
@@ -3087,101 +3112,15 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       subtaskId: activeAssistantMessage.subtaskId,
       content: activeAssistantMessage.content,
     })
-  }, [activeAssistantMessage, resolvedServices.chatStream])
+  }, [activeAssistantMessage, resolvedServices.runtimeWorkApi, state.currentRuntimeTask])
 
   const sendQueuedAsGuidance = useCallback(
     async (id: string) => {
       const queuedMessage = queuedSends.find(item => item.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
 
-      const taskId = activeAssistantMessage?.taskId
-      const subtaskId = activeAssistantMessage?.subtaskId
-      const teamId = state.defaultTeam?.id
-      if (!taskId || !subtaskId || !teamId) {
-        const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
-        if (runtimeAddress) {
-          const runtimeWorkApi = resolvedServices.runtimeWorkApi
-          if (!runtimeWorkApi) {
-            setQueuedSends(items =>
-              items.map(item =>
-                item.id === id ? { ...item, status: 'failed', error: 'Runtime API 不可用' } : item
-              )
-            )
-            return
-          }
-
-          setQueuedSends(items =>
-            items.map(item =>
-              item.id === id
-                ? {
-                    ...item,
-                    status: 'sending',
-                    error: undefined,
-                    notice: '正在暂停当前回复并发送',
-                  }
-                : item
-            )
-          )
-
-          try {
-            const cancelResponse = await runtimeWorkApi.cancelRuntimeTask(runtimeAddress)
-            if (!cancelResponse.accepted) {
-              throw new Error(cancelResponse.error || '暂停当前回复失败')
-            }
-
-            if (activeAssistantMessage?.subtaskId) {
-              dispatchMessages({
-                type: 'assistant_done',
-                subtaskId: activeAssistantMessage.subtaskId,
-                content: activeAssistantMessage.content,
-              })
-            }
-
-            const runtimeSendRequest: RuntimeSendRequest = {
-              address: runtimeAddress,
-              message: queuedMessage.content,
-            }
-            if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
-              runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
-                attachment => attachment.id
-              )
-            }
-            setIsAwaitingAssistantStart(true)
-            dispatchMessages({
-              type: 'user_added',
-              message: {
-                id: `runtime-guidance-${Date.now()}`,
-                role: 'user',
-                content: queuedMessage.content,
-                attachments: queuedMessage.attachments,
-                status: 'done',
-                createdAt: new Date().toISOString(),
-              },
-            })
-            const sendResponse = await runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
-            if (!sendResponse.accepted) {
-              throw new Error(sendResponse.error || '发送失败')
-            }
-            setQueuedSends(items => items.filter(item => item.id !== id))
-            await refreshWorkLists()
-          } catch (error) {
-            setIsAwaitingAssistantStart(false)
-            setQueuedSends(items =>
-              items.map(item =>
-                item.id === id
-                  ? {
-                      ...item,
-                      status: 'failed',
-                      notice: undefined,
-                      error: error instanceof Error ? error.message : '引导发送失败',
-                    }
-                  : item
-              )
-            )
-          }
-          return
-        }
-
+      const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
+      if (!runtimeAddress) {
         setQueuedSends(items =>
           items.map(item =>
             item.id === id ? { ...item, status: 'failed', error: '当前回复缺少引导上下文' } : item
@@ -3190,52 +3129,80 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
-      const guidanceId = `guidance-${subtaskId}-${Date.now()}`
-      setQueuedSends(items => items.filter(item => item.id !== id))
-      setGuidanceMessages(items => [
-        ...items,
-        {
-          id: guidanceId,
-          content: queuedMessage.content,
-          status: 'sending',
-          createdAt: new Date().toISOString(),
-        },
-      ])
-
-      try {
-        const ack = await resolvedServices.chatStream.sendGuidance({
-          task_id: taskId,
-          subtask_id: subtaskId,
-          team_id: teamId,
-          message: queuedMessage.content,
-          guidance: queuedMessage.content,
-          client_guidance_id: guidanceId,
-        })
-
-        if (ack.error || ack.success === false) {
-          throw new Error(normalizeGuidanceError(ack.error))
-        }
-
-        setGuidanceMessages(items =>
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
+        setQueuedSends(items =>
           items.map(item =>
-            item.id === guidanceId
-              ? {
-                  ...item,
-                  id: ack.guidance_id ?? item.id,
-                  status: 'queued',
-                }
-              : item
+            item.id === id ? { ...item, status: 'failed', error: 'Runtime API 不可用' } : item
           )
         )
+        return
+      }
+
+      setQueuedSends(items =>
+        items.map(item =>
+          item.id === id
+            ? {
+                ...item,
+                status: 'sending',
+                error: undefined,
+                notice: '正在暂停当前回复并发送',
+              }
+            : item
+        )
+      )
+
+      try {
+        const cancelResponse = await runtimeWorkApi.cancelRuntimeTask(runtimeAddress)
+        if (!cancelResponse.accepted) {
+          throw new Error(cancelResponse.error || '暂停当前回复失败')
+        }
+
+        if (activeAssistantMessage?.subtaskId) {
+          dispatchMessages({
+            type: 'assistant_done',
+            subtaskId: activeAssistantMessage.subtaskId,
+            content: activeAssistantMessage.content,
+          })
+        }
+
+        const runtimeSendRequest: RuntimeSendRequest = {
+          address: runtimeAddress,
+          message: queuedMessage.content,
+        }
+        if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
+          runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
+            attachment => attachment.id
+          )
+        }
+        setIsAwaitingAssistantStart(true)
+        dispatchMessages({
+          type: 'user_added',
+          message: {
+            id: `runtime-guidance-${Date.now()}`,
+            role: 'user',
+            content: queuedMessage.content,
+            attachments: queuedMessage.attachments,
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        })
+        const sendResponse = await runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
+        if (!sendResponse.accepted) {
+          throw new Error(sendResponse.error || '发送失败')
+        }
+        setQueuedSends(items => items.filter(item => item.id !== id))
+        await refreshWorkLists()
       } catch (error) {
-        setGuidanceMessages(items =>
+        setIsAwaitingAssistantStart(false)
+        setQueuedSends(items =>
           items.map(item =>
-            item.id === guidanceId
+            item.id === id
               ? {
                   ...item,
                   status: 'failed',
-                  error:
-                    error instanceof Error ? normalizeGuidanceError(error.message) : '引导发送失败',
+                  notice: undefined,
+                  error: error instanceof Error ? error.message : '引导发送失败',
                 }
               : item
           )
@@ -3246,10 +3213,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       activeAssistantMessage,
       queuedSends,
       refreshWorkLists,
-      resolvedServices.chatStream,
       resolvedServices.runtimeWorkApi,
       state.currentRuntimeTask,
-      state.defaultTeam?.id,
     ]
   )
 

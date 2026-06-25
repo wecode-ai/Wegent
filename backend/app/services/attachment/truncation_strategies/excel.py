@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Excel and CSV truncation strategies using head + uniform sampling + tail approach.
+Excel and CSV truncation strategies using head + tail (contiguous, middle dropped) approach.
 """
 
 from typing import Any, Dict, List, Tuple
@@ -17,7 +17,7 @@ from .base import (
 
 class ExcelTruncationStrategy(BaseTruncationStrategy):
     """
-    Smart truncation for Excel files using head + uniform sampling + tail strategy.
+    Smart truncation for Excel files using head + tail (contiguous, middle dropped) strategy.
 
     This strategy preserves:
     1. Header row(s) - column names
@@ -30,15 +30,15 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
     """
 
     # Distribution ratios for head/middle/tail (should sum to 1.0)
-    HEAD_RATIO = 0.25  # 25% for head data rows
-    MIDDLE_RATIO = 0.50  # 50% for uniformly sampled middle rows
-    TAIL_RATIO = 0.25  # 25% for tail data rows
+    HEAD_RATIO = 0.5  # 50% head data rows (contiguous)
+    MIDDLE_RATIO = 0.0  # middle dropped (single "[N rows skipped]" marker)
+    TAIL_RATIO = 0.5  # 50% tail data rows (contiguous)
 
     def truncate(
         self, sheets_data: List[Dict[str, Any]], max_length: int
     ) -> Tuple[str, SmartTruncationInfo]:
         """
-        Truncate Excel data with head + uniform sampling + tail strategy.
+        Truncate Excel data with head + tail (contiguous, middle dropped) strategy.
 
         Args:
             sheets_data: List of sheet data, each containing:
@@ -111,13 +111,13 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         info.kept_structure = {
             "kept_rows": kept_rows_total,
             "omitted_rows": omitted_rows_total,
-            "sampling_method": "head_uniform_tail",
+            "sampling_method": "head_tail_contiguous",
         }
 
         info.summary_message = (
-            f"[Smart Truncation Applied - Head + Uniform Sampling + Tail]\n"
+            f"[Smart Truncation Applied - Head + Tail (contiguous)]\n"
             f"Total: {total_rows} rows across {total_sheets} sheet(s)\n"
-            f"Kept: {kept_rows_total} rows (head + uniformly sampled middle + tail)\n"
+            f"Kept: {kept_rows_total} rows (contiguous head + tail; middle dropped by default)\n"
             f"Omitted: {omitted_rows_total} rows"
         )
 
@@ -127,7 +127,7 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         self, sheet_name: str, rows: List[List[Any]], max_length: int
     ) -> Tuple[str, int, int]:
         """
-        Truncate a single sheet using head + uniform sampling + tail strategy.
+        Truncate a single sheet using head + tail (contiguous, middle dropped) strategy.
 
         Distribution:
         - Header rows (always kept)
@@ -172,10 +172,17 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
             # No truncation needed for this sheet
             return full_text[:max_length], total_rows, 0
 
-        # Distribute data rows: head (25%), middle (50%), tail (25%)
+        # Distribute data rows. With MIDDLE_RATIO == 0 keep a contiguous head +
+        # tail (fold the rounding remainder into head, no sampled middle);
+        # otherwise uniformly sample the middle.
         head_count = max(1, int(data_rows_to_keep * self.HEAD_RATIO))
         tail_count = max(1, int(data_rows_to_keep * self.TAIL_RATIO))
-        middle_count = max(1, data_rows_to_keep - head_count - tail_count)
+        remainder = max(0, data_rows_to_keep - head_count - tail_count)
+        if self.MIDDLE_RATIO <= 0:
+            head_count += remainder
+            middle_count = 0
+        else:
+            middle_count = max(1, remainder)
 
         # Adjust if we don't have enough middle rows to sample from
         middle_start = header_count + head_count
@@ -194,7 +201,9 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         head_section = rows[header_count : header_count + head_count]
         tail_section = rows[total_rows - tail_count :] if tail_count > 0 else []
 
-        # Sample middle section uniformly
+        # Sample middle section uniformly. Only reached when MIDDLE_RATIO > 0;
+        # with the default MIDDLE_RATIO = 0 the middle folds into head
+        # (contiguous head + tail), so this branch is inactive by default.
         if middle_count > 0 and middle_available > 0:
             if middle_count >= middle_available:
                 # Keep all middle rows

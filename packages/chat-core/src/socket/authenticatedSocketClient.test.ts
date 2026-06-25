@@ -87,6 +87,27 @@ describe('createAuthenticatedSocketClient', () => {
     expect(rawSocket.socket.connect).toHaveBeenCalledTimes(1)
   })
 
+  test('merges custom socket auth metadata with token auth', async () => {
+    const rawSocket = createMockSocket()
+    mockIo.mockReturnValue(rawSocket.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => 'http://socket',
+      path: '/socket.io',
+      namespace: '/chat',
+      getToken: () => 'token',
+      auth: { client_origin: 'wework' },
+    })
+
+    await client.connect()
+
+    expect(mockIo).toHaveBeenCalledWith(
+      'http://socket/chat',
+      expect.objectContaining({
+        auth: { client_origin: 'wework', token: 'token' },
+      })
+    )
+  })
+
   test('recreates a fresh authenticated socket after connect_error', async () => {
     vi.useFakeTimers()
     const firstSocket = createMockSocket()

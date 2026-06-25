@@ -5,14 +5,16 @@ import enCommon from './locales/en/common.json'
 import zhCommon from './locales/zh-CN/common.json'
 import enChat from './locales/en/chat.json'
 import zhChat from './locales/zh-CN/chat.json'
+import enLocalRuntime from './locales/en/localRuntime.json'
+import zhLocalRuntime from './locales/zh-CN/localRuntime.json'
 
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
     resources: {
-      en: { chat: enChat, common: enCommon },
-      'zh-CN': { chat: zhChat, common: zhCommon },
+      en: { chat: enChat, common: enCommon, localRuntime: enLocalRuntime },
+      'zh-CN': { chat: zhChat, common: zhCommon, localRuntime: zhLocalRuntime },
     },
     lng: 'zh-CN',
     fallbackLng: 'zh-CN',

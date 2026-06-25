@@ -76,10 +76,15 @@ class BaseTruncationStrategy(ABC):
     """Base class for truncation strategies."""
 
     # Distribution ratios for head/middle/tail (should sum to 1.0)
-    # These can be overridden by subclasses
-    HEAD_RATIO = 0.25  # 25% for head content
-    MIDDLE_RATIO = 0.50  # 50% for uniformly sampled middle content
-    TAIL_RATIO = 0.25  # 25% for tail content
+    # These can be overridden by subclasses.
+    #
+    # Middle is 0: we keep a CONTIGUOUS head + tail and drop the middle behind a
+    # single omission marker, instead of scattering uniformly-sampled fragments.
+    # Contiguous content reads coherently and lets read_attachment page real
+    # text; the inline preview / read_attachment cover on-demand access to more.
+    HEAD_RATIO = 0.5  # 50% head (contiguous)
+    MIDDLE_RATIO = 0.0  # middle dropped (single omission marker)
+    TAIL_RATIO = 0.5  # 50% tail (contiguous)
 
     def __init__(self, config: SmartTruncationConfig):
         self.config = config
@@ -188,6 +193,12 @@ class BaseTruncationStrategy(ABC):
         head_count = max(1, int(items_to_keep * self.HEAD_RATIO))
         tail_count = max(1, int(items_to_keep * self.TAIL_RATIO))
         middle_count = max(0, items_to_keep - head_count - tail_count)
+
+        # When middle sampling is disabled, keep a contiguous head + tail and
+        # fold any rounding remainder into the head (no scattered middle).
+        if self.MIDDLE_RATIO <= 0:
+            head_count += middle_count
+            middle_count = 0
 
         # Ensure we don't exceed total items
         if head_count + tail_count >= total_items:

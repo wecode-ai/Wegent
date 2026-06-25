@@ -461,6 +461,7 @@ def build_executable(
             "--hidden-import=executor.config",
             "--hidden-import=executor.modes",
             "--hidden-import=executor.modes.local",
+            "--hidden-import=executor.modes.local.app_ipc",
             "--hidden-import=executor.modes.local.runner",
             "--hidden-import=executor.agents",
             "--hidden-import=executor.agents.claude_code",
