@@ -723,7 +723,6 @@ export function DesktopWorkbenchLayout({
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
-          upgradingDevices={upgradingDevices}
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
