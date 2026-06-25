@@ -783,6 +783,10 @@ class LocalRunner:
             max_bytes = config.WEGENT_EXECUTOR_LOG_MAX_SIZE * 1024 * 1024
             backup_count = config.WEGENT_EXECUTOR_LOG_BACKUP_COUNT
 
+            if os.environ.get("WEGENT_LOG_FILE_PATH") == log_file:
+                logger.info("File logging already enabled: %s", log_file)
+                return
+
             file_handler = RotatingFileHandler(
                 log_file,
                 maxBytes=max_bytes,
@@ -811,6 +815,10 @@ class LocalRunner:
                 "websocket_client",
                 "local_heartbeat",
                 "local_handlers",
+                "local_app_ipc",
+                "local_command_handler",
+                "runtime_work_rpc_handler",
+                "codex_session_discovery",
                 "task_executor",
                 "executor.config.config_loader",
                 # Agent and download loggers

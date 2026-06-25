@@ -1,5 +1,3 @@
-import { isTauri } from '@tauri-apps/api/core'
-
 export type RuntimeMode = 'local-first' | 'backend'
 
 export interface RuntimeConfig {
@@ -35,7 +33,7 @@ function runtimeOverrides(): RuntimeConfigOverrides {
 
 function runtimeString(
   overrides: RuntimeConfigOverrides,
-  key: keyof RuntimeConfig,
+  key: keyof RuntimeConfig
 ): string | undefined {
   const value = overrides[key]
   return typeof value === 'string' && value.length > 0 ? value : undefined
@@ -60,11 +58,7 @@ function resolveRuntimeMode(overrides: RuntimeConfigOverrides): RuntimeMode {
     return envValue
   }
 
-  if (isTauri()) {
-    return 'local-first'
-  }
-
-  return 'backend'
+  return 'local-first'
 }
 
 function resolveLoginMode(overrides: RuntimeConfigOverrides): RuntimeConfig['loginMode'] {
@@ -123,7 +117,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   const appBasePath = normalizeBasePath(
     runtimeString(overrides, 'appBasePath') ||
       import.meta.env.VITE_APP_BASE_PATH ||
-      import.meta.env.BASE_URL,
+      import.meta.env.BASE_URL
   )
   const apiBaseUrl =
     runtimeString(overrides, 'apiBaseUrl') ||

@@ -14,6 +14,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  version?: string
   error?: string
 }
 

@@ -39,6 +39,7 @@ describe('createLocalAppServices', () => {
         status: 'online',
         device_type: 'local',
         executor_version: '1.9.0',
+        bind_shell: 'claudecode',
       }),
     ])
     await expect(services.userApi?.updateCurrentUser({ preferences: {} })).resolves.toEqual(
@@ -50,6 +51,26 @@ describe('createLocalAppServices', () => {
       totalLocalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('keeps local device visible when executor startup fails', async () => {
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockRejectedValue(new Error('sidecar missing')),
+      request: vi.fn(),
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toEqual([
+      expect.objectContaining({
+        device_id: 'local-device',
+        name: 'Local Executor',
+        status: 'offline',
+        device_type: 'local',
+        executor_version: '1.8.5',
+        bind_shell: 'claudecode',
+        error: 'sidecar missing',
+      }),
+    ])
   })
 
   test('routes runtime task creation and device commands through app ipc', async () => {
@@ -69,7 +90,7 @@ describe('createLocalAppServices', () => {
       return {}
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
     })
@@ -101,7 +122,7 @@ describe('createLocalAppServices', () => {
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', {
       teamId: 0,
-      deviceId: 'local-device',
+      deviceId: 'device-uuid',
       workspacePath: '/Users/me/project',
       localTaskId: 'task-1',
       runtime: 'codex',
@@ -147,7 +168,7 @@ describe('createLocalAppServices', () => {
             path: '/Users/me/project',
           },
         },
-        device_id: 'local-device',
+        device_id: 'device-uuid',
         execution_target_type: 'local',
         workspace_source: 'local_path',
         project_workspace_path: '/Users/me/project',
@@ -158,7 +179,7 @@ describe('createLocalAppServices', () => {
       }),
     })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'local-device',
+      deviceId: 'device-uuid',
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
@@ -167,7 +188,7 @@ describe('createLocalAppServices', () => {
   test('rejects local runtime task creation without a workspace path', async () => {
     const request = vi.fn()
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
     })
@@ -181,6 +202,25 @@ describe('createLocalAppServices', () => {
       })
     ).rejects.toThrow('workspacePath is required')
     expect(request).not.toHaveBeenCalled()
+  })
+
+  test('normalizes legacy local runtime task addresses to the ready device id', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: { deviceId: 'local-device', localTaskId: 'task-1' },
+      message: 'continue',
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
+      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+      message: 'continue',
+    })
   })
 
   test('adapts executor runtime workspace list to workbench shape', async () => {
@@ -216,7 +256,7 @@ describe('createLocalAppServices', () => {
       ],
     })
     const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
     })
@@ -231,7 +271,7 @@ describe('createLocalAppServices', () => {
           },
           deviceWorkspaces: [
             expect.objectContaining({
-              deviceId: 'local-device',
+              deviceId: 'device-uuid',
               workspacePath: '/Users/me/project',
               workspaceKind: 'workspace',
               workspaceSource: 'local',
@@ -248,7 +288,7 @@ describe('createLocalAppServices', () => {
       ],
       chats: [
         expect.objectContaining({
-          deviceId: 'local-device',
+          deviceId: 'device-uuid',
           workspacePath: '/Users/me/chat',
           workspaceKind: 'chat',
           localTasks: [

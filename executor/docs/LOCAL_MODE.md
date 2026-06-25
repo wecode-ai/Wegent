@@ -91,11 +91,11 @@ sudo cp dist/wegent-executor /usr/local/bin/
 
 ### 连接配置
 
-Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device-config.json`、默认值。`EXECUTOR_MODE`、`WEGENT_BACKEND_URL` 和 `WEGENT_AUTH_TOKEN` 都是可选环境变量；设置后分别覆盖配置文件中的 `mode`、`connection.backend_url` 和 `connection.auth_token`。
+Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device-config.json`、默认值。无参数启动且没有远端地址时，executor 监听 `~/.wegent-executor/app-ipc.sock` 并且不连接 Backend。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。`~/.wegent-executor/app-ipc.lock` 会限制同一用户目录下最多一个 executor 进程，避免网页版看到重复设备连接。日志写入 `~/.wegent-executor/logs/executor.log`。
 
 | 配置 | 说明 | 示例 |
 |------|------|------|
-| `mode` / `EXECUTOR_MODE` | executor 运行模式 | `local` |
+| `mode` / `EXECUTOR_MODE` | executor 运行模式；通常不需要手动设置 | `local` |
 | `connection.backend_url` / `WEGENT_BACKEND_URL` | Backend 服务地址 | `http://localhost:8000` |
 | `connection.auth_token` / `WEGENT_AUTH_TOKEN` | WebSocket 认证 Token 或 API Key | `your-auth-token` |
 

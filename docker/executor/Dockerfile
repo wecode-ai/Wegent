@@ -72,6 +72,7 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
 COPY --from=builder /app/executor/dist/executor /app/executor
 
 ENV PORT=10001
+ENV EXECUTOR_MODE=docker
 ENV PYTHONPATH=/app
 ENV NODE_PATH=/usr/lib/node_modules
 

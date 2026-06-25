@@ -46,7 +46,11 @@ from app.api.ws.events import (
     TaskJoinPayload,
     TaskLeavePayload,
 )
-from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.core.constants import (
+    CLIENT_ORIGIN_WEWORK,
+    get_wework_task_room,
+    get_wework_user_room,
+)
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -351,6 +355,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
+        client_origin = (
+            CLIENT_ORIGIN_WEWORK
+            if auth.get("client_origin") == CLIENT_ORIGIN_WEWORK
+            else None
+        )
 
         await save_connect_session(
             self,
@@ -361,6 +370,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "request_id": request_id,
                 "token_exp": token_exp,
                 "auth_token": token,
+                "client_origin": client_origin,
             },
             logger=logger,
             log_prefix="[WS]",
@@ -369,8 +379,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-        # Join user room
-        user_room = f"user:{user.id}"
+        # Join only the stream room for this client origin. Wework gets raw
+        # Responses API events in a dedicated room and should not receive the
+        # legacy chat:* compatibility stream.
+        user_room = (
+            get_wework_user_room(user.id)
+            if client_origin == CLIENT_ORIGIN_WEWORK
+            else f"user:{user.id}"
+        )
         await enter_connect_room(
             self,
             sid,
@@ -451,8 +467,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        # Join task room
-        task_room = f"task:{payload.task_id}"
+        # Join only the stream room for this client origin. Wework uses the
+        # raw response.* stream; frontend keeps the legacy chat:* stream.
+        task_room = (
+            get_wework_task_room(payload.task_id)
+            if session.get("client_origin") == CLIENT_ORIGIN_WEWORK
+            else f"task:{payload.task_id}"
+        )
         await self.enter_room(sid, task_room)
 
         logger.info(

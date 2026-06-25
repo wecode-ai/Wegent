@@ -49,7 +49,6 @@ import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
   ChatBlock,
-  ChatMessagePayload,
   ChatSendPayload,
   CreateProjectRequest,
   CreateGitWorkspaceProjectRequest,
@@ -416,6 +415,7 @@ function createBackendServices(): WorkbenchServices {
     path: socketPath,
     namespace: '/chat',
     getToken,
+    auth: { client_origin: WEWORK_CLIENT_ORIGIN },
     logger: console,
   })
 
@@ -499,12 +499,24 @@ function resolveRuntimeTaskRouteAddress(
     ...runtimeWork.projects.flatMap(projectWork => projectWork.deviceWorkspaces),
     ...runtimeWork.chats,
   ]
+  let fallbackAddress: RuntimeTaskAddress | null = null
+  let hasMultipleFallbacks = false
 
   for (const workspace of workspaces) {
-    if (workspace.deviceId !== route.deviceId) continue
-
     const task = workspace.localTasks.find(item => item.localTaskId === route.localTaskId)
     if (!task) continue
+
+    if (workspace.deviceId !== route.deviceId) {
+      if (fallbackAddress) {
+        hasMultipleFallbacks = true
+      } else {
+        fallbackAddress = {
+          deviceId: workspace.deviceId,
+          localTaskId: task.localTaskId,
+        }
+      }
+      continue
+    }
 
     return {
       deviceId: workspace.deviceId,
@@ -512,7 +524,7 @@ function resolveRuntimeTaskRouteAddress(
     }
   }
 
-  return null
+  return hasMultipleFallbacks ? null : fallbackAddress
 }
 
 function isCurrentLocalTaskEvent(
@@ -725,27 +737,6 @@ function runtimeMessagesToWorkbenchMessages(
   messages: NormalizedRuntimeMessage[]
 ): WorkbenchMessage[] {
   return messages.map(message => runtimeMessageToWorkbenchMessage(address, message))
-}
-
-function chatMessageToWorkbenchMessage(payload: ChatMessagePayload): WorkbenchMessage {
-  const role = payload.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const source =
-    role === 'user' && payload.source?.source === 'im'
-      ? ({ ...payload.source, source: 'im' } as MessageSource)
-      : undefined
-  const messageKey = payload.message_id ?? payload.subtask_id
-  const localPrefix = payload.local_task_id ? `runtime-${payload.local_task_id}-` : ''
-  return {
-    id: `${localPrefix}message-${messageKey}`,
-    taskId: payload.task_id,
-    subtaskId: payload.subtask_id,
-    role,
-    content: payload.content,
-    status: 'done',
-    attachments: payload.attachments,
-    source,
-    createdAt: payload.created_at,
-  }
 }
 
 function findFileChangesBySubtaskId(
@@ -1386,13 +1377,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       onDeviceStatus: handleDeviceStatus,
       onDeviceSlotUpdate: refreshDevicesAfterEvent,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
-      onChatMessage: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
-        dispatchMessages({
-          type: 'user_added',
-          message: chatMessageToWorkbenchMessage(payload),
-        })
-      },
       onChatStart: payload => {
         if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
         setIsAwaitingAssistantStart(false)
@@ -1459,34 +1443,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
-      },
-      onGuidanceQueued: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
-            item.id === payload.guidance_id || item.id === payload.client_guidance_id
-              ? {
-                  ...item,
-                  id: payload.guidance_id,
-                  content: payload.message ?? payload.content ?? item.content,
-                  status: 'queued',
-                }
-              : item
-          )
-        )
-      },
-      onGuidanceApplied: payload => {
-        setGuidanceMessages(items =>
-          items.filter(
-            item => item.id !== payload.guidance_id && item.id !== payload.client_guidance_id
-          )
-        )
-      },
-      onGuidanceExpired: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
-            payload.guidance_ids.includes(item.id) ? { ...item, status: 'expired' } : item
-          )
-        )
       },
     })
   }, [refreshWorkLists, refreshDevices, resolvedServices, setDeviceUpgradeState])
@@ -1968,7 +1924,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
       if (addresses.length === 0) return
 
-      const responses = await Promise.all(addresses.map(address => runtimeWorkApi.archiveConversation(address)))
+      const responses = await Promise.all(
+        addresses.map(address => runtimeWorkApi.archiveConversation(address))
+      )
       const failedResponse = responses.find(response => !response.accepted)
       if (failedResponse) {
         dispatch({
@@ -3076,15 +3034,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const pauseCurrentResponse = useCallback(async () => {
-    if (!activeAssistantMessage?.subtaskId) return
+    if (!activeAssistantMessage?.subtaskId || !state.currentRuntimeTask) return
+    const runtimeWorkApi = resolvedServices.runtimeWorkApi
+    if (!runtimeWorkApi) {
+      dispatch({
+        type: 'error_set',
+        error: 'Runtime API 不可用',
+      })
+      return
+    }
 
-    const ack = await resolvedServices.chatStream.cancelStream({
-      subtask_id: activeAssistantMessage.subtaskId,
-      partial_content: activeAssistantMessage.content,
-      shell_type: activeAssistantMessage.shellType,
-    })
+    const ack = await runtimeWorkApi.cancelRuntimeTask(state.currentRuntimeTask)
 
-    if (ack.error || ack.success === false) {
+    if (!ack.accepted) {
       dispatch({
         type: 'error_set',
         error: normalizeGuidanceError(ack.error ?? '取消当前回复失败'),
@@ -3097,101 +3059,15 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       subtaskId: activeAssistantMessage.subtaskId,
       content: activeAssistantMessage.content,
     })
-  }, [activeAssistantMessage, resolvedServices.chatStream])
+  }, [activeAssistantMessage, resolvedServices.runtimeWorkApi, state.currentRuntimeTask])
 
   const sendQueuedAsGuidance = useCallback(
     async (id: string) => {
       const queuedMessage = queuedSends.find(item => item.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
 
-      const taskId = activeAssistantMessage?.taskId
-      const subtaskId = activeAssistantMessage?.subtaskId
-      const teamId = state.defaultTeam?.id
-      if (!taskId || !subtaskId || !teamId) {
-        const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
-        if (runtimeAddress) {
-          const runtimeWorkApi = resolvedServices.runtimeWorkApi
-          if (!runtimeWorkApi) {
-            setQueuedSends(items =>
-              items.map(item =>
-                item.id === id ? { ...item, status: 'failed', error: 'Runtime API 不可用' } : item
-              )
-            )
-            return
-          }
-
-          setQueuedSends(items =>
-            items.map(item =>
-              item.id === id
-                ? {
-                    ...item,
-                    status: 'sending',
-                    error: undefined,
-                    notice: '正在暂停当前回复并发送',
-                  }
-                : item
-            )
-          )
-
-          try {
-            const cancelResponse = await runtimeWorkApi.cancelRuntimeTask(runtimeAddress)
-            if (!cancelResponse.accepted) {
-              throw new Error(cancelResponse.error || '暂停当前回复失败')
-            }
-
-            if (activeAssistantMessage?.subtaskId) {
-              dispatchMessages({
-                type: 'assistant_done',
-                subtaskId: activeAssistantMessage.subtaskId,
-                content: activeAssistantMessage.content,
-              })
-            }
-
-            const runtimeSendRequest: RuntimeSendRequest = {
-              address: runtimeAddress,
-              message: queuedMessage.content,
-            }
-            if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
-              runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
-                attachment => attachment.id
-              )
-            }
-            setIsAwaitingAssistantStart(true)
-            dispatchMessages({
-              type: 'user_added',
-              message: {
-                id: `runtime-guidance-${Date.now()}`,
-                role: 'user',
-                content: queuedMessage.content,
-                attachments: queuedMessage.attachments,
-                status: 'done',
-                createdAt: new Date().toISOString(),
-              },
-            })
-            const sendResponse = await runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
-            if (!sendResponse.accepted) {
-              throw new Error(sendResponse.error || '发送失败')
-            }
-            setQueuedSends(items => items.filter(item => item.id !== id))
-            await refreshWorkLists()
-          } catch (error) {
-            setIsAwaitingAssistantStart(false)
-            setQueuedSends(items =>
-              items.map(item =>
-                item.id === id
-                  ? {
-                      ...item,
-                      status: 'failed',
-                      notice: undefined,
-                      error: error instanceof Error ? error.message : '引导发送失败',
-                    }
-                  : item
-              )
-            )
-          }
-          return
-        }
-
+      const runtimeAddress = queuedMessage.runtimeAddress ?? state.currentRuntimeTask
+      if (!runtimeAddress) {
         setQueuedSends(items =>
           items.map(item =>
             item.id === id ? { ...item, status: 'failed', error: '当前回复缺少引导上下文' } : item
@@ -3200,52 +3076,80 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
-      const guidanceId = `guidance-${subtaskId}-${Date.now()}`
-      setQueuedSends(items => items.filter(item => item.id !== id))
-      setGuidanceMessages(items => [
-        ...items,
-        {
-          id: guidanceId,
-          content: queuedMessage.content,
-          status: 'sending',
-          createdAt: new Date().toISOString(),
-        },
-      ])
-
-      try {
-        const ack = await resolvedServices.chatStream.sendGuidance({
-          task_id: taskId,
-          subtask_id: subtaskId,
-          team_id: teamId,
-          message: queuedMessage.content,
-          guidance: queuedMessage.content,
-          client_guidance_id: guidanceId,
-        })
-
-        if (ack.error || ack.success === false) {
-          throw new Error(normalizeGuidanceError(ack.error))
-        }
-
-        setGuidanceMessages(items =>
+      const runtimeWorkApi = resolvedServices.runtimeWorkApi
+      if (!runtimeWorkApi) {
+        setQueuedSends(items =>
           items.map(item =>
-            item.id === guidanceId
-              ? {
-                  ...item,
-                  id: ack.guidance_id ?? item.id,
-                  status: 'queued',
-                }
-              : item
+            item.id === id ? { ...item, status: 'failed', error: 'Runtime API 不可用' } : item
           )
         )
+        return
+      }
+
+      setQueuedSends(items =>
+        items.map(item =>
+          item.id === id
+            ? {
+                ...item,
+                status: 'sending',
+                error: undefined,
+                notice: '正在暂停当前回复并发送',
+              }
+            : item
+        )
+      )
+
+      try {
+        const cancelResponse = await runtimeWorkApi.cancelRuntimeTask(runtimeAddress)
+        if (!cancelResponse.accepted) {
+          throw new Error(cancelResponse.error || '暂停当前回复失败')
+        }
+
+        if (activeAssistantMessage?.subtaskId) {
+          dispatchMessages({
+            type: 'assistant_done',
+            subtaskId: activeAssistantMessage.subtaskId,
+            content: activeAssistantMessage.content,
+          })
+        }
+
+        const runtimeSendRequest: RuntimeSendRequest = {
+          address: runtimeAddress,
+          message: queuedMessage.content,
+        }
+        if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
+          runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
+            attachment => attachment.id
+          )
+        }
+        setIsAwaitingAssistantStart(true)
+        dispatchMessages({
+          type: 'user_added',
+          message: {
+            id: `runtime-guidance-${Date.now()}`,
+            role: 'user',
+            content: queuedMessage.content,
+            attachments: queuedMessage.attachments,
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        })
+        const sendResponse = await runtimeWorkApi.sendRuntimeMessage(runtimeSendRequest)
+        if (!sendResponse.accepted) {
+          throw new Error(sendResponse.error || '发送失败')
+        }
+        setQueuedSends(items => items.filter(item => item.id !== id))
+        await refreshWorkLists()
       } catch (error) {
-        setGuidanceMessages(items =>
+        setIsAwaitingAssistantStart(false)
+        setQueuedSends(items =>
           items.map(item =>
-            item.id === guidanceId
+            item.id === id
               ? {
                   ...item,
                   status: 'failed',
-                  error:
-                    error instanceof Error ? normalizeGuidanceError(error.message) : '引导发送失败',
+                  notice: undefined,
+                  error: error instanceof Error ? error.message : '引导发送失败',
                 }
               : item
           )
@@ -3256,10 +3160,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       activeAssistantMessage,
       queuedSends,
       refreshWorkLists,
-      resolvedServices.chatStream,
       resolvedServices.runtimeWorkApi,
       state.currentRuntimeTask,
-      state.defaultTeam?.id,
     ]
   )
 

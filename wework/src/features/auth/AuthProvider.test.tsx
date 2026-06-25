@@ -21,6 +21,12 @@ function Probe() {
   )
 }
 
+function useBackendRuntime() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    runtimeMode: 'backend',
+  }
+}
+
 describe('AuthProvider', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -30,6 +36,7 @@ describe('AuthProvider', () => {
   })
 
   test('loads current user when token is valid', async () => {
+    useBackendRuntime()
     setToken(createJwt(Math.floor(Date.now() / 1000) + 3600))
     const authApi = {
       getCurrentUser: vi.fn().mockResolvedValue({ id: 1, user_name: 'alice', email: 'a@b.c' }),
@@ -50,6 +57,7 @@ describe('AuthProvider', () => {
   })
 
   test('redirects protected routes to login when admin password setup is required', async () => {
+    useBackendRuntime()
     setToken(createJwt(Math.floor(Date.now() / 1000) + 3600))
     window.history.pushState({}, '', '/')
     const authApi = {
@@ -78,6 +86,7 @@ describe('AuthProvider', () => {
   })
 
   test('redirects protected routes to login when token is missing', async () => {
+    useBackendRuntime()
     render(
       <AuthProvider>
         <Probe />

@@ -1,6 +1,8 @@
 mod local_executor;
 mod local_terminal;
 
+use tauri::Manager;
+
 fn normalized_non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -263,6 +265,17 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                let state = window
+                    .app_handle()
+                    .state::<local_executor::LocalExecutorState>();
+                local_executor::shutdown_local_executor(&state);
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             if app

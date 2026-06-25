@@ -19,6 +19,7 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
+import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
 import { LOCAL_USER } from './localSession'
 
@@ -82,11 +83,27 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
-    executor_version: (status as LocalExecutorStatus & { version?: string }).version ?? null,
+    executor_version:
+      (status as LocalExecutorStatus & { version?: string }).version ?? WEWORK_MIN_EXECUTOR_VERSION,
     latest_version: null,
     update_available: false,
-    bind_shell: 'openclaw',
+    error: status.error ?? null,
+    bind_shell: 'claudecode',
     runtime_transfer_host: null,
+  }
+}
+
+function localDeviceIdFromStatus(status: LocalExecutorStatus | null | undefined): string {
+  return status?.deviceId?.trim() || LOCAL_DEVICE_ID
+}
+
+function localExecutorErrorStatus(error: unknown): LocalExecutorStatus {
+  return {
+    running: false,
+    ready: false,
+    deviceId: LOCAL_DEVICE_ID,
+    error:
+      error instanceof Error ? error.message : String(error || 'Local executor is unavailable'),
   }
 }
 
@@ -204,7 +221,10 @@ function isNonEmptyString(value: string | null): value is string {
   return Boolean(value)
 }
 
-function createLocalExecutionRequest(data: RuntimeTaskCreateRequest): Record<string, unknown> {
+function createLocalExecutionRequest(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string
+): Record<string, unknown> {
   const workspacePath = requiredRuntimeWorkspacePath(data)
   const [taskId, subtaskId] = createRuntimeExecutionIds(data)
   const title = runtimeTaskTitle(data)
@@ -260,7 +280,7 @@ function createLocalExecutionRequest(data: RuntimeTaskCreateRequest): Record<str
     workspace_source: 'local_path',
     project_workspace_path: workspacePath,
     execution_target_type: 'local',
-    device_id: data.deviceId ?? LOCAL_DEVICE_ID,
+    device_id: localDeviceId,
     new_session: true,
     is_group_chat: false,
     collaboration_model: 'single',
@@ -271,21 +291,85 @@ function createLocalExecutionRequest(data: RuntimeTaskCreateRequest): Record<str
   }
 }
 
-function createLocalRuntimeTaskPayload(data: RuntimeTaskCreateRequest): Record<string, unknown> {
+function createLocalRuntimeTaskPayload(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string
+): Record<string, unknown> {
   const workspacePath = requiredRuntimeWorkspacePath(data)
   return {
     ...data,
-    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
+    deviceId: localDeviceId,
     workspacePath,
     title: runtimeTaskTitle(data),
-    executionRequest: createLocalExecutionRequest(data),
+    executionRequest: createLocalExecutionRequest(
+      { ...data, deviceId: localDeviceId },
+      localDeviceId
+    ),
   } as unknown as Record<string, unknown>
 }
 
-function adaptRuntimeWorkListResponse(response: unknown): RuntimeWorkListResponse {
+function normalizeRuntimeWorkDeviceId(
+  runtimeWork: RuntimeWorkListResponse,
+  localDeviceId: string
+): RuntimeWorkListResponse {
+  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    deviceId: localDeviceId,
+    deviceName: workspace.deviceName || 'Local Executor',
+    deviceStatus: workspace.deviceStatus ?? 'online',
+    available: workspace.available !== false,
+  })
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
+    })),
+    chats: runtimeWork.chats.map(normalizeWorkspace),
+  }
+}
+
+function normalizeLocalDeviceRecord<T extends Record<string, unknown>>(
+  data: T,
+  localDeviceId: string
+): T {
+  const next: Record<string, unknown> = { ...data }
+
+  if ('deviceId' in next) next.deviceId = localDeviceId
+  if ('device_id' in next) next.device_id = localDeviceId
+
+  const address = recordValue(next.address)
+  if (Object.keys(address).length > 0) {
+    next.address = {
+      ...address,
+      deviceId: localDeviceId,
+      ...('device_id' in address ? { device_id: localDeviceId } : {}),
+    }
+  }
+
+  if (Array.isArray(next.addresses)) {
+    next.addresses = next.addresses.map(addressItem => {
+      const addressRecord = recordValue(addressItem)
+      if (Object.keys(addressRecord).length === 0) return addressItem
+      return {
+        ...addressRecord,
+        deviceId: localDeviceId,
+        ...('device_id' in addressRecord ? { device_id: localDeviceId } : {}),
+      }
+    })
+  }
+
+  return next as T
+}
+
+function adaptRuntimeWorkListResponse(
+  response: unknown,
+  localDeviceId: string
+): RuntimeWorkListResponse {
   const record = recordValue(response)
   if (Array.isArray(record.projects) && Array.isArray(record.chats)) {
-    return response as RuntimeWorkListResponse
+    return normalizeRuntimeWorkDeviceId(response as RuntimeWorkListResponse, localDeviceId)
   }
 
   const workspaces = Array.isArray(record.workspaces) ? record.workspaces : []
@@ -334,8 +418,7 @@ function adaptRuntimeWorkListResponse(response: unknown): RuntimeWorkListRespons
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
       projectId: null,
-      deviceId:
-        stringValue(workspace.deviceId) ?? stringValue(workspace.device_id) ?? LOCAL_DEVICE_ID,
+      deviceId: localDeviceId,
       deviceName: 'Local Executor',
       deviceStatus: 'online',
       available: true,
@@ -369,41 +452,51 @@ function adaptRuntimeWorkListResponse(response: unknown): RuntimeWorkListRespons
 }
 
 function createRuntimeWorkApi(
-  request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
+  getLocalDeviceId: () => Promise<string>
 ) {
+  const normalizeRequest = async <T extends Record<string, unknown>>(data: T): Promise<T> =>
+    normalizeLocalDeviceRecord(data, await getLocalDeviceId())
+
+  const requestWithLocalDevice = async <T>(
+    method: string,
+    data: Record<string, unknown>
+  ): Promise<T> => request(method, await normalizeRequest(data))
+
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      return adaptRuntimeWorkListResponse(await request('runtime.tasks.list', {}))
+      const localDeviceId = await getLocalDeviceId()
+      return adaptRuntimeWorkListResponse(await request('runtime.tasks.list', {}), localDeviceId)
     },
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')
     },
     prepareDeviceWorkspace(data: Record<string, unknown>) {
-      return request('runtime.workspaces.prepare', data)
+      return requestWithLocalDevice('runtime.workspaces.prepare', data)
     },
     deleteDeviceWorkspace(data: Record<string, unknown>) {
-      return request('runtime.workspaces.delete', data)
+      return requestWithLocalDevice('runtime.workspaces.delete', data)
     },
     getRuntimeTranscript(data: Record<string, unknown>) {
-      return request('runtime.tasks.transcript', data)
+      return requestWithLocalDevice('runtime.tasks.transcript', data)
     },
     searchRuntimeWork(data: Record<string, unknown>) {
-      return request('runtime.tasks.search', data)
+      return requestWithLocalDevice('runtime.tasks.search', data)
     },
     revertRuntimeFileChanges(data: Record<string, unknown>) {
-      return request('runtime.tasks.revert_file_changes', data)
+      return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
     sendRuntimeMessage(data: Record<string, unknown>) {
-      return request('runtime.tasks.send', data)
+      return requestWithLocalDevice('runtime.tasks.send', data)
     },
     openRuntimeWorkspace(data: Record<string, unknown>) {
-      return request('runtime.workspaces.open', data)
+      return requestWithLocalDevice('runtime.workspaces.open', data)
     },
     renameRuntimeWorkspace(data: Record<string, unknown>) {
-      return request('runtime.workspaces.rename', data)
+      return requestWithLocalDevice('runtime.workspaces.rename', data)
     },
     removeRuntimeWorkspace(data: Record<string, unknown>) {
-      return request('runtime.workspaces.remove', data)
+      return requestWithLocalDevice('runtime.workspaces.remove', data)
     },
     bindRuntimeTaskImSessions() {
       return cloudConnectionRequired('bindRuntimeTaskImSessions')
@@ -424,54 +517,61 @@ function createRuntimeWorkApi(
       return Promise.resolve({ address, subscribed: false, sessionKeys: [] })
     },
     archiveRuntimeTask(data: RuntimeTaskAddress) {
-      return request('runtime.tasks.archive', data as unknown as Record<string, unknown>)
+      return requestWithLocalDevice(
+        'runtime.tasks.archive',
+        data as unknown as Record<string, unknown>
+      )
     },
     renameRuntimeTask(data: Record<string, unknown>) {
-      return request('runtime.tasks.rename', data)
+      return requestWithLocalDevice('runtime.tasks.rename', data)
     },
     listArchivedConversations(data: Record<string, unknown> = {}) {
-      return request('runtime.archived_conversations.list', data)
+      return requestWithLocalDevice('runtime.archived_conversations.list', data)
     },
     archiveConversation(data: RuntimeTaskAddress) {
-      return request('runtime.tasks.archive', data as unknown as Record<string, unknown>)
+      return requestWithLocalDevice(
+        'runtime.tasks.archive',
+        data as unknown as Record<string, unknown>
+      )
     },
     archiveProjectConversations(data: Record<string, unknown>) {
-      return request('runtime.archived_conversations.archive_project', data)
+      return requestWithLocalDevice('runtime.archived_conversations.archive_project', data)
     },
     archiveAllConversations() {
       return request('runtime.archived_conversations.archive_all', {})
     },
     unarchiveConversation(data: RuntimeTaskAddress) {
-      return request(
+      return requestWithLocalDevice(
         'runtime.archived_conversations.unarchive',
         data as unknown as Record<string, unknown>
       )
     },
     deleteArchivedConversation(data: RuntimeTaskAddress) {
-      return request(
+      return requestWithLocalDevice(
         'runtime.archived_conversations.delete',
         data as unknown as Record<string, unknown>
       )
     },
     deleteArchivedConversationsBulk(data: Record<string, unknown>) {
-      return request('runtime.archived_conversations.delete_bulk', data)
+      return requestWithLocalDevice('runtime.archived_conversations.delete_bulk', data)
     },
     cancelRuntimeTask(data: RuntimeTaskAddress) {
-      return request('runtime.tasks.cancel', data as unknown as Record<string, unknown>)
+      return requestWithLocalDevice(
+        'runtime.tasks.cancel',
+        data as unknown as Record<string, unknown>
+      )
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
-      const payload = createLocalRuntimeTaskPayload(data)
-      const response = await request<Record<string, unknown>>(
-        'runtime.tasks.create',
-        payload
-      )
+      const localDeviceId = await getLocalDeviceId()
+      const payload = createLocalRuntimeTaskPayload(data, localDeviceId)
+      const response = await request<Record<string, unknown>>('runtime.tasks.create', payload)
       return {
         ...response,
-        deviceId: stringValue(response.deviceId) ?? data.deviceId ?? LOCAL_DEVICE_ID,
+        deviceId: localDeviceId,
       }
     },
     forkRuntimeTask(data: Record<string, unknown>) {
-      return request('runtime.tasks.import_fork', data)
+      return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }
 }
@@ -480,8 +580,26 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
+  let lastStatus: LocalExecutorStatus | null = null
+  let ensurePromise: Promise<LocalExecutorStatus> | null = null
 
-  const executeCommand = (
+  const ensureStatus = async () => {
+    if (!ensurePromise) {
+      ensurePromise = ensure()
+        .then(status => {
+          lastStatus = status
+          return status
+        })
+        .finally(() => {
+          ensurePromise = null
+        })
+    }
+    return ensurePromise
+  }
+
+  const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+
+  const executeCommand = async (
     deviceId: string,
     data: {
       command_key: string
@@ -492,7 +610,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       timeout_seconds?: number
       max_output_bytes?: number
     }
-  ) => request<DeviceCommandResponse>('device.execute_command', { deviceId, ...data })
+  ) =>
+    request<DeviceCommandResponse>(
+      'device.execute_command',
+      normalizeLocalDeviceRecord({ deviceId, ...data }, await getLocalDeviceId())
+    )
 
   return {
     teamApi: {
@@ -518,7 +640,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
     deviceApi: {
-      listDevices: async () => [localDeviceFromStatus(await ensure())],
+      async listDevices() {
+        try {
+          return [localDeviceFromStatus(await ensureStatus())]
+        } catch (error) {
+          const fallback = {
+            ...localExecutorErrorStatus(error),
+            deviceId: localDeviceIdFromStatus(lastStatus),
+          }
+          return [localDeviceFromStatus(fallback)]
+        }
+      },
       async getHomeDirectory(deviceId: string) {
         const response = await executeCommand(deviceId, {
           command_key: 'home_dir',
@@ -568,7 +700,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         return commandSkills(response)
       },
     },
-    runtimeWorkApi: createRuntimeWorkApi(request),
+    runtimeWorkApi: createRuntimeWorkApi(request, getLocalDeviceId),
     userApi: {
       updateCurrentUser: async (data: { preferences?: User['preferences'] }) => ({
         ...LOCAL_USER,

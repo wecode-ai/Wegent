@@ -65,7 +65,6 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "ensure_standalone_executor_token" in start_script
     assert "app.scripts.ensure_standalone_executor_token" in start_script
     assert "start_executor" in start_script
-    assert "EXECUTOR_MODE=local" in start_script
     assert "DEVICE_TYPE=cloud" in start_script
     assert "DEVICE_ID=standalone-admin-device" in start_script
     assert "WEGENT_AUTH_TOKEN" in start_script

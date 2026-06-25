@@ -103,6 +103,10 @@ fi
 export VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}"
 export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"
 
+if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ] && [ -x "$PROJECT_DIR/executor/dist/wegent-executor" ]; then
+  export WEWORK_EXECUTOR_SIDECAR="$PROJECT_DIR/executor/dist/wegent-executor"
+fi
+
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 
@@ -124,6 +128,7 @@ echo "Starting WeWork mac app"
 echo "  WEWORK_PORT=$WEWORK_PORT"
 echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
+echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
   echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"

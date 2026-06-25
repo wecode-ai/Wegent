@@ -51,13 +51,13 @@ flowchart LR
     end
 
     UI --> TAURI
-    TAURI <-->|"stdin/stdout JSON"| EX
+    TAURI <-->|"local socket JSON"| EX
     EX --> FS
 ```
 
-Tauri starts the executor as a sidecar with `--app-ipc --no-backend` by default. stdout is reserved for the newline-delimited JSON protocol, and logs are written to stderr so app IPC is not polluted. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
+Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor sidecar is not running yet, the App starts the executor with no arguments and retries the socket connection. The executor uses `~/.wegent-executor/app-ipc.lock` to keep one local executor process per user home. When no remote Backend address is configured, the executor only starts the local socket and does not connect to Backend. The App and executor only use newline-delimited JSON over the local socket. Executor logs are written to `~/.wegent-executor/logs/executor.log`, not to the protocol channel. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
 
-Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. If app IPC is enabled at the same time, the same executor process reuses one command handler and one runtime work handler while serving Wework App over stdin/stdout and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
+Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
 ### Communication Architecture
 
@@ -321,7 +321,7 @@ flowchart LR
 
 ### Local Executor Connection Configuration
 
-On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. The `mode` field selects the startup mode, while `connection.backend_url` and `connection.auth_token` are used to connect to the Backend and authenticate the device.
+On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. Without a remote address, running `wegent-executor` with no arguments listens on `~/.wegent-executor/app-ipc.sock` and does not connect to Backend. After `connection.backend_url` or `WEGENT_BACKEND_URL` is set, the executor keeps the local socket available and also connects to Backend as a local device, using `connection.auth_token` or `WEGENT_AUTH_TOKEN` for authentication. `~/.wegent-executor/app-ipc.lock` limits each user home to one executor process so the web app does not see duplicate connections for the same local device.
 
 `EXECUTOR_MODE` overrides `mode`, `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require those environment variables; if the device config already contains valid mode and connection settings, the executor can start directly.
 

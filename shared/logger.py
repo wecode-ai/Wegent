@@ -17,7 +17,7 @@ import logging
 import multiprocessing
 import os
 import sys
-from logging.handlers import QueueHandler, QueueListener
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from typing import Optional
 
 
@@ -71,6 +71,96 @@ class NonBlockingStreamHandler(logging.StreamHandler):
         except Exception:
             # Handle other exceptions gracefully
             pass
+
+
+_FILE_HANDLER: Optional[RotatingFileHandler] = None
+_FILE_HANDLER_PATH: Optional[str] = None
+
+
+def _get_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _logger_has_handler(logger: logging.Logger, handler: logging.Handler) -> bool:
+    return any(existing is handler for existing in logger.handlers)
+
+
+def _file_log_handler(
+    *,
+    level: int,
+    format: str,
+    datefmt: str,
+    include_request_id: bool,
+) -> Optional[RotatingFileHandler]:
+    """Return the shared rotating file handler when file logging is configured."""
+    global _FILE_HANDLER, _FILE_HANDLER_PATH
+
+    log_file = os.environ.get("WEGENT_LOG_FILE_PATH", "").strip()
+    if not log_file:
+        return None
+
+    if _FILE_HANDLER is not None and _FILE_HANDLER_PATH != log_file:
+        try:
+            _FILE_HANDLER.close()
+        finally:
+            _FILE_HANDLER = None
+            _FILE_HANDLER_PATH = None
+
+    if _FILE_HANDLER is None:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        max_bytes = _get_int_env("WEGENT_LOG_FILE_MAX_BYTES", 10 * 1024 * 1024)
+        backup_count = _get_int_env("WEGENT_LOG_FILE_BACKUP_COUNT", 5)
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter(format, datefmt))
+        if include_request_id:
+            handler.addFilter(RequestIdFilter())
+        _FILE_HANDLER = handler
+        _FILE_HANDLER_PATH = log_file
+
+    _FILE_HANDLER.setLevel(level)
+    return _FILE_HANDLER
+
+
+def configure_file_logging(
+    log_file: str,
+    *,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
+    level: int = logging.INFO,
+) -> None:
+    """Enable shared rotating file logging for existing and future loggers."""
+    os.environ["WEGENT_LOG_FILE_PATH"] = log_file
+    os.environ["WEGENT_LOG_FILE_MAX_BYTES"] = str(max_bytes)
+    os.environ["WEGENT_LOG_FILE_BACKUP_COUNT"] = str(backup_count)
+
+    handler = _file_log_handler(
+        level=level,
+        format="%(asctime)s - [%(request_id)s] - [%(name)s] - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        include_request_id=True,
+    )
+    if handler is None:
+        return
+
+    loggers = [logging.getLogger()]
+    for candidate in logging.Logger.manager.loggerDict.values():
+        if isinstance(candidate, logging.Logger):
+            loggers.append(candidate)
+
+    for current_logger in loggers:
+        if current_logger.handlers and not _logger_has_handler(current_logger, handler):
+            current_logger.addHandler(handler)
 
 
 def _stop_queue_listener_safely(listener: QueueListener) -> None:
@@ -128,8 +218,15 @@ def setup_logger(
 
     # Prevent adding duplicate handlers
     if logger.handlers:
-        # Logger already configured, just update level and return
         logger.setLevel(level)
+        file_handler = _file_log_handler(
+            level=level,
+            format=format,
+            datefmt=datefmt,
+            include_request_id=include_request_id,
+        )
+        if file_handler is not None and not _logger_has_handler(logger, file_handler):
+            logger.addHandler(file_handler)
         return logger
 
     # Set logger level
@@ -185,5 +282,14 @@ def setup_logger(
             console_handler.addFilter(RequestIdFilter())
 
         logger.addHandler(console_handler)
+
+    file_handler = _file_log_handler(
+        level=level,
+        format=format,
+        datefmt=datefmt,
+        include_request_id=include_request_id,
+    )
+    if file_handler is not None and not _logger_has_handler(logger, file_handler):
+        logger.addHandler(file_handler)
 
     return logger

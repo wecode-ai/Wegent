@@ -16,7 +16,7 @@
         {
           "name": "binaries/wegent-executor",
           "sidecar": true,
-          "args": ["--app-ipc", "--no-backend"]
+          "args": []
         }
       ]
     },

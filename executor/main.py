@@ -9,11 +9,10 @@
 """
 Executor main entry point.
 
-Supports two modes:
-- Local mode: WebSocket-based executor for local deployment
-  - Configured via device-config.json (preferred)
-  - Falls back to EXECUTOR_MODE=local env var (deprecated)
-- Docker mode (default): FastAPI server for container deployment
+Supports three startup paths:
+- Local sidecar mode (default): local app IPC over a sidecar socket, no Backend
+- Local Backend mode: socket IPC plus WebSocket executor when WEGENT_BACKEND_URL is configured
+- Docker mode: FastAPI server when EXECUTOR_MODE=docker is explicit
 
 CLI options:
 - --version, -v: Print version and exit
@@ -24,12 +23,12 @@ CLI options:
 
 import argparse
 import asyncio
-import contextlib
 import logging
 import multiprocessing
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _handle_upgrade_flag(args: argparse.Namespace) -> int:
@@ -102,16 +101,6 @@ def _parse_args() -> argparse.Namespace:
         help="Path to config file (default: ~/.wegent-executor/device-config.json)",
     )
     parser.add_argument(
-        "--app-ipc",
-        action="store_true",
-        help="Serve newline-delimited app IPC on stdin/stdout",
-    )
-    parser.add_argument(
-        "--no-backend",
-        action="store_true",
-        help="Disable the Backend WebSocket channel when app IPC is enabled",
-    )
-    parser.add_argument(
         "-h", "--help", action="store_true", help="Show this help message and exit"
     )
 
@@ -120,57 +109,169 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
-def _configure_app_ipc_stdio() -> None:
-    """Keep stdout reserved for app IPC JSON messages."""
-    os.environ["WEGENT_LOG_TO_STDERR"] = "1"
-
-    loggers = [logging.getLogger()]
-    for candidate in logging.Logger.manager.loggerDict.values():
-        if isinstance(candidate, logging.Logger):
-            loggers.append(candidate)
-
-    for current_logger in loggers:
-        for handler in current_logger.handlers:
-            _redirect_stream_handler(handler)
-        listener = getattr(current_logger, "_queue_listener", None)
-        for handler in getattr(listener, "handlers", []) or []:
-            _redirect_stream_handler(handler)
-
-
-def _redirect_stream_handler(handler: logging.Handler) -> None:
-    if not isinstance(handler, logging.StreamHandler):
-        return
-    try:
-        handler.setStream(sys.stderr)
-    except Exception:
-        handler.stream = sys.stderr
-
-
-def _load_device_config_for_mode(config_path: str | None, *, quiet_stdout: bool):
+def _load_device_config_for_mode(config_path: str | None):
     from executor.config.device_config import load_device_config
 
-    if quiet_stdout:
-        with contextlib.redirect_stdout(sys.stderr):
-            return load_device_config(config_path)
     return load_device_config(config_path)
 
 
-async def _run_local_runner_with_app_ipc(runner, app_ipc_server) -> None:
-    """Run Backend LocalRunner and app IPC in one executor process."""
+def _configure_local_file_logging() -> None:
+    """Write local sidecar executor logs to the standard local executor log file."""
+    import executor.config.config as config
+    from shared.logger import configure_file_logging
+
+    log_dir = Path(config.WEGENT_EXECUTOR_LOG_DIR).expanduser()
+    log_file = log_dir / config.WEGENT_EXECUTOR_LOG_FILE
+    max_bytes = config.WEGENT_EXECUTOR_LOG_MAX_SIZE * 1024 * 1024
+    backup_count = config.WEGENT_EXECUTOR_LOG_BACKUP_COUNT
+    log_level = (
+        logging.DEBUG
+        if os.environ.get("LOG_LEVEL", "").upper() == "DEBUG"
+        else logging.INFO
+    )
+
+    configure_file_logging(
+        str(log_file),
+        max_bytes=max_bytes,
+        backup_count=backup_count,
+        level=log_level,
+    )
+    logger.info("File logging enabled: %s", log_file)
+
+
+def _read_existing_device_config(config_path: str | None) -> dict[str, Any]:
+    from executor.config.device_config import _get_default_config_path
+
+    path = Path(config_path) if config_path else _get_default_config_path()
+    if not path.exists():
+        return {}
+
+    try:
+        import json
+
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except Exception:
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+
+def _configured_backend_url(config_path: str | None) -> str:
+    env_url = os.environ.get("WEGENT_BACKEND_URL", "").strip()
+    if env_url:
+        return env_url
+
+    connection = _read_existing_device_config(config_path).get("connection", {})
+    if not isinstance(connection, dict):
+        return ""
+    backend_url = connection.get("backend_url")
+    return backend_url.strip() if isinstance(backend_url, str) else ""
+
+
+def _configured_executor_mode(config_path: str | None) -> str:
+    env_mode = os.environ.get("EXECUTOR_MODE", "").strip().lower()
+    if env_mode:
+        return env_mode
+
+    mode = _read_existing_device_config(config_path).get("mode")
+    return mode.strip().lower() if isinstance(mode, str) else ""
+
+
+def _should_run_docker_server(config_path: str | None) -> bool:
+    return _configured_executor_mode(config_path) == "docker"
+
+
+def _should_run_local_mode(config_path: str | None) -> bool:
+    return not _should_run_docker_server(config_path)
+
+
+def _has_backend_connection(device_config: Any) -> bool:
+    return bool(getattr(device_config.connection, "backend_url", "").strip())
+
+
+def _should_connect_backend(device_config: Any) -> bool:
+    """Connect Backend when a remote address is configured."""
+    return _has_backend_connection(device_config)
+
+
+async def _run_local_runner_with_app_ipc(
+    runner,
+    app_ipc_server,
+) -> None:
+    """Run Backend LocalRunner and local app IPC socket in one executor process."""
     runtime_work_handler = getattr(runner, "runtime_work_handler", None)
     if runtime_work_handler is not None:
         await runtime_work_handler.start_codex_watcher()
 
     runner_task = asyncio.create_task(runner.start())
+    runner_task.add_done_callback(_log_runner_task_result)
     await asyncio.sleep(0)
     try:
-        await app_ipc_server.serve()
+        await app_ipc_server.serve_forever()
     finally:
         app_ipc_server.stop()
+        await app_ipc_server.wait_closed()
         runner_task.cancel()
         await asyncio.gather(runner_task, return_exceptions=True)
+
         if runtime_work_handler is not None:
             await runtime_work_handler.stop_codex_watcher()
+
+
+def _log_runner_task_result(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Local backend runner stopped unexpectedly")
+
+
+async def _run_backend_runner(device_config: Any, app_event_emitter: Any) -> None:
+    """Start the optional Backend runner without blocking local app IPC."""
+    try:
+        from executor.modes.local.runner import LocalRunner
+
+        runner = LocalRunner(
+            device_config=device_config,
+            app_event_emitter=app_event_emitter,
+        )
+        await runner.start()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Optional Backend runner failed")
+
+
+async def _run_app_ipc_sidecar_with_backend(
+    device_config: Any,
+    app_ipc_server: Any,
+) -> None:
+    """Run app IPC immediately and attach Backend connectivity in the background."""
+    from executor.modes.local.app_ipc import _attach_runtime_work_handler
+
+    if not await app_ipc_server.start():
+        return
+
+    runtime_handler_task = asyncio.create_task(
+        _attach_runtime_work_handler(app_ipc_server)
+    )
+
+    backend_task = asyncio.create_task(
+        _run_backend_runner(device_config, app_ipc_server.emit_event)
+    )
+    backend_task.add_done_callback(_log_runner_task_result)
+
+    try:
+        await app_ipc_server.wait_serving()
+    finally:
+        app_ipc_server.stop()
+        await app_ipc_server.wait_closed()
+        backend_task.cancel()
+        runtime_handler_task.cancel()
+        await asyncio.gather(backend_task, return_exceptions=True)
+        await asyncio.gather(runtime_handler_task, return_exceptions=True)
 
 
 def main() -> None:
@@ -182,14 +283,12 @@ def main() -> None:
     2. ~/.wegent-executor/device-config.json (default path)
     3. EXECUTOR_MODE environment variable (deprecated, for backward compatibility)
 
-    In local mode, starts the WebSocket-based local runner.
-    In Docker mode (default), starts the FastAPI server.
+    Without a Backend URL, starts the local app IPC sidecar socket.
+    With a Backend URL, starts the WebSocket-based local runner.
+    In explicit Docker mode, starts the FastAPI server.
     """
     # Parse arguments first
     args = _parse_args()
-
-    if args.app_ipc:
-        _configure_app_ipc_stdio()
 
     # Handle version flag first (before any heavy initialization)
     if args.version:
@@ -202,42 +301,41 @@ def main() -> None:
     if args.upgrade:
         sys.exit(_handle_upgrade_flag(args))
 
-    from executor.config.device_config import (
-        get_config_path_from_args,
-        should_use_local_mode,
-    )
+    from executor.config.device_config import get_config_path_from_args
 
     # Get config path from command line arguments
     config_path = get_config_path_from_args()
 
     # Determine if we should run in local mode
-    if args.app_ipc or should_use_local_mode(config_path):
+    if _should_run_local_mode(config_path):
         # Local mode: Run WebSocket-based executor
         # Load full configuration for local mode
         try:
-            device_config = _load_device_config_for_mode(
-                config_path,
-                quiet_stdout=args.app_ipc,
-            )
+            device_config = _load_device_config_for_mode(config_path)
 
             # Sync device config values to global config for modules that read
             # from config directly. device_config already has env overrides applied.
             from executor.config.config import sync_device_config
 
             sync_device_config(device_config)
+            _configure_local_file_logging()
 
             import executor.config.config as config
 
-            if args.app_ipc and args.no_backend:
-                from executor.modes.local.app_ipc import run_app_ipc
+            backend_enabled = _should_connect_backend(device_config)
 
-                logger.info("Starting executor in APP IPC mode without Backend")
+            if not backend_enabled:
+                from executor.modes.local.app_ipc import run_app_ipc_sidecar
+
+                logger.info(
+                    "Starting executor in local app IPC sidecar mode without Backend"
+                )
                 asyncio.run(
-                    run_app_ipc(device_id=device_config.device_id or "local-device")
+                    run_app_ipc_sidecar(
+                        device_id=device_config.device_id or "local-device"
+                    )
                 )
                 return
-
-            from executor.modes.local.runner import LocalRunner
 
             logger.info("Starting executor in LOCAL mode")
             logger.info(f"Device ID: {device_config.device_id}")
@@ -247,20 +345,17 @@ def main() -> None:
                 f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}"
             )
 
-            runner = LocalRunner(device_config=device_config)
-            if args.app_ipc:
-                from executor.modes.local.app_ipc import AppIpcServer
+            from executor.modes.local.app_ipc import AppIpcServer
 
-                app_ipc_server = AppIpcServer(
-                    device_id=device_config.device_id or "local-device",
-                    runtime_work_handler=runner.runtime_work_handler,
-                    command_handler=runner.command_handler,
-                )
-                runner.set_app_event_emitter(app_ipc_server.emit_event)
-                logger.info("Starting executor with Backend and APP IPC channels")
-                asyncio.run(_run_local_runner_with_app_ipc(runner, app_ipc_server))
-            else:
-                asyncio.run(runner.start())
+            app_ipc_server = AppIpcServer(
+                device_id=device_config.device_id or "local-device",
+            )
+            logger.info(
+                "Starting app IPC sidecar socket with optional Backend runner in background"
+            )
+            asyncio.run(
+                _run_app_ipc_sidecar_with_backend(device_config, app_ipc_server)
+            )
         except FileNotFoundError as e:
             logger.error(f"Configuration error: {e}")
             sys.exit(1)
@@ -268,7 +363,14 @@ def main() -> None:
             logger.exception(f"Failed to start local mode: {e}")
             sys.exit(1)
     else:
-        # Docker mode (default): Run FastAPI server
+        if not _should_run_docker_server(config_path):
+            logger.error(
+                "Executor mode is not configured for Docker. Set EXECUTOR_MODE=docker "
+                "to start the FastAPI executor server."
+            )
+            sys.exit(1)
+
+        # Docker mode: Run FastAPI server
         # Import FastAPI dependencies only in Docker mode
         import uvicorn
 
