@@ -232,13 +232,13 @@ def test_get_task_default_knowledge_base_scopes_uses_runtime_agent_config():
         return {
             "ghost-one": _make_ghost(
                 "ghost-one",
-                [{"id": 11, "name": "Product Docs", "grantPrincipalUserId": 7}],
+                [{"id": 11, "name": "Product Docs"}],
             ),
             "ghost-two": _make_ghost(
                 "ghost-two",
                 [
-                    {"id": 11, "name": "Product Docs", "grantPrincipalUserId": 7},
-                    {"id": 22, "name": "Runbooks", "grantPrincipalUserId": 7},
+                    {"id": 11, "name": "Product Docs"},
+                    {"id": 22, "name": "Runbooks"},
                 ],
             ),
         }.get(name)
@@ -256,7 +256,7 @@ def test_get_task_default_knowledge_base_scopes_uses_runtime_agent_config():
                 side_effect=lambda _db, kb_id: kb_map.get(kb_id),
             ):
                 with patch(
-                    "app.services.chat.task_default_knowledge_bases._can_grant_principal_read_kb",
+                    "app.services.chat.task_default_knowledge_bases._can_user_read_kb",
                     return_value=True,
                 ):
                     scopes = get_task_default_knowledge_base_scopes(
@@ -265,6 +265,64 @@ def test_get_task_default_knowledge_base_scopes_uses_runtime_agent_config():
 
     assert [scope.knowledge_base_id for scope in scopes] == [11, 22]
     assert all(not scope.scope_restricted for scope in scopes)
+
+
+def test_get_task_default_knowledge_base_resolution_filters_by_team_owner():
+    from app.services.chat.task_default_knowledge_bases import (
+        get_task_default_knowledge_base_resolution,
+    )
+
+    db = Mock()
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = _make_task_resource(user_id=9, team_user_id=7)
+    db.query.return_value = query
+    team = _make_team()
+    team.user_id = 7
+    kb_map = {
+        11: _make_kb(11, "Owner Docs"),
+        22: _make_kb(22, "Other Team Docs"),
+    }
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return _make_bot("bot-one", "ghost-one")
+        return _make_ghost(
+            "ghost-one",
+            [
+                {"id": 11, "name": "Owner Docs"},
+                {"id": 22, "name": "Other Team Docs"},
+            ],
+        )
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases._get_task_team",
+        return_value=team,
+    ):
+        with patch(
+            "app.services.chat.task_default_knowledge_bases._can_user_use_team",
+            return_value=True,
+        ):
+            with patch(
+                "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
+                side_effect=_kind_lookup,
+            ):
+                with patch(
+                    "app.services.chat.task_default_knowledge_bases._get_default_knowledge_base",
+                    side_effect=lambda _db, kb_id: kb_map.get(kb_id),
+                ):
+                    with patch(
+                        "app.services.chat.task_default_knowledge_bases._can_user_read_kb",
+                        side_effect=lambda _db, owner_id, kb_id: owner_id == 7
+                        and kb_id == 11,
+                    ):
+                        resolution = get_task_default_knowledge_base_resolution(
+                            db, task_id=1001, user_id=9
+                        )
+
+    assert [scope.knowledge_base_id for scope in resolution.scopes] == [11]
+    assert [warning.knowledge_base_id for warning in resolution.warnings] == [22]
+    assert resolution.warnings[0].reason == "team_owner_cannot_read_kb"
 
 
 def test_get_task_default_knowledge_base_scopes_rejects_public_private_kb():

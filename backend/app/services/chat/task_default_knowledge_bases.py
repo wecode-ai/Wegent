@@ -4,6 +4,7 @@
 
 """Helpers for initializing task-level knowledge base bindings from Ghost defaults."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -78,16 +79,28 @@ def _can_use_public_default_kb(db: Session, knowledge_base: Kind) -> bool:
     return is_organization_namespace(db, knowledge_base.namespace)
 
 
-def _can_grant_principal_read_kb(
-    db: Session, grant_principal_user_id: int | None, knowledge_base_id: int
-) -> bool:
-    """Return whether the grant principal currently has read access to a KB."""
-    if not grant_principal_user_id:
+@dataclass
+class DefaultKnowledgeBaseWarning:
+    """Diagnostic for a default KB that was not loaded."""
+
+    knowledge_base_id: int
+    knowledge_base_name: str
+    reason: str
+
+
+@dataclass
+class DefaultKnowledgeBaseResolution:
+    """Resolved runtime default KB scopes plus non-sensitive diagnostics."""
+
+    scopes: list[KnowledgeBaseScope] = field(default_factory=list)
+    warnings: list[DefaultKnowledgeBaseWarning] = field(default_factory=list)
+
+
+def _can_user_read_kb(db: Session, user_id: int | None, knowledge_base_id: int) -> bool:
+    """Return whether the given user currently has read access to a KB."""
+    if not user_id:
         return False
-    return (
-        _get_accessible_knowledge_base(db, grant_principal_user_id, knowledge_base_id)
-        is not None
-    )
+    return _get_accessible_knowledge_base(db, user_id, knowledge_base_id) is not None
 
 
 def _can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
@@ -95,11 +108,11 @@ def _can_user_use_team(db: Session, user_id: int, team: Kind) -> bool:
     return can_user_use_team(db, user_id, team)
 
 
-def get_task_default_knowledge_base_scopes(
+def get_task_default_knowledge_base_resolution(
     db: Session,
     task_id: int,
     user_id: int,
-) -> list[KnowledgeBaseScope]:
+) -> DefaultKnowledgeBaseResolution:
     """Resolve runtime default KB scopes for the task's current Team config."""
     task = (
         db.query(TaskResource)
@@ -107,18 +120,20 @@ def get_task_default_knowledge_base_scopes(
         .first()
     )
     if not task or not task.json:
-        return []
+        return DefaultKnowledgeBaseResolution()
 
     task_crd = Task.model_validate(task.json)
     team = _get_task_team(db, task, task_crd)
     if not team or not team.json:
-        return []
+        return DefaultKnowledgeBaseResolution()
     if not _can_user_use_team(db, user_id, team):
-        return []
+        return DefaultKnowledgeBaseResolution()
 
     team_crd = Team.model_validate(team.json)
     is_public_team = team.user_id == 0
     scopes_by_id: dict[int, KnowledgeBaseScope] = {}
+    warnings: list[DefaultKnowledgeBaseWarning] = []
+    warning_ids: set[int] = set()
 
     for member in team_crd.spec.members or []:
         bot = kindReader.get_by_name_and_namespace(
@@ -151,12 +166,27 @@ def get_task_default_knowledge_base_scopes(
                 continue
             if is_public_team:
                 if not _can_use_public_default_kb(db, knowledge_base):
+                    if ref.id not in warning_ids:
+                        warnings.append(
+                            DefaultKnowledgeBaseWarning(
+                                knowledge_base_id=ref.id,
+                                knowledge_base_name=ref.name,
+                                reason="public_team_requires_organization_kb",
+                            )
+                        )
+                        warning_ids.add(ref.id)
                     continue
             else:
-                grant_principal_user_id = ref.grantPrincipalUserId or ghost.user_id
-                if not _can_grant_principal_read_kb(
-                    db, grant_principal_user_id, ref.id
-                ):
+                if not _can_user_read_kb(db, team.user_id, ref.id):
+                    if ref.id not in warning_ids:
+                        warnings.append(
+                            DefaultKnowledgeBaseWarning(
+                                knowledge_base_id=ref.id,
+                                knowledge_base_name=ref.name,
+                                reason="team_owner_cannot_read_kb",
+                            )
+                        )
+                        warning_ids.add(ref.id)
                     continue
             scopes_by_id[ref.id] = KnowledgeBaseScope(
                 knowledge_base_id=ref.id,
@@ -164,7 +194,19 @@ def get_task_default_knowledge_base_scopes(
                 document_ids=[],
             )
 
-    return list(scopes_by_id.values())
+    return DefaultKnowledgeBaseResolution(
+        scopes=list(scopes_by_id.values()),
+        warnings=warnings,
+    )
+
+
+def get_task_default_knowledge_base_scopes(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> list[KnowledgeBaseScope]:
+    """Resolve runtime default KB scopes for callers that only need scopes."""
+    return get_task_default_knowledge_base_resolution(db, task_id, user_id).scopes
 
 
 def build_initial_task_knowledge_base_refs(

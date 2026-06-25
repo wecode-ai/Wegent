@@ -256,6 +256,9 @@
     "default_knowledge_bases_updated_at": "Updated",
     "default_knowledge_bases_selected_badge": "Selected",
     "default_knowledge_bases_select_to_add": "Select a knowledge base to add...",
+    "default_knowledge_bases_unavailable": "Unavailable",
+    "default_knowledge_bases_unavailable_hint": "Some default knowledge bases are unavailable to the current agent owner and will not load at runtime.",
+    "default_knowledge_bases_team_context_required": "Default knowledge bases can only be managed from agent settings.",
     "default_knowledge_bases_selected_count": "{{count}} selected",
     "default_knowledge_bases_selected_count_one": "{{count}} selected",
     "default_knowledge_bases_selected_count_other": "{{count}} selected"

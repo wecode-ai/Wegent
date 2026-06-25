@@ -15,6 +15,8 @@ export interface SkillRefMeta {
 export interface KnowledgeBaseDefaultRef {
   id: number
   name: string
+  available?: boolean
+  unavailableReason?: string | null
 }
 
 // Bot Request/Response Types
@@ -25,6 +27,7 @@ export interface CreateBotRequest {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
+  default_knowledge_base_team_id?: number
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
@@ -39,6 +42,7 @@ export interface UpdateBotRequest {
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
+  default_knowledge_base_team_id?: number
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
@@ -69,8 +73,13 @@ export const botApis = {
     }
     return apiClient.get(`/bots?${queryParams.toString()}`)
   },
-  async getBot(id: number): Promise<Bot> {
-    return apiClient.get(`/bots/${id}`)
+  async getBot(id: number, defaultKnowledgeBaseTeamId?: number): Promise<Bot> {
+    const queryParams = new URLSearchParams()
+    if (defaultKnowledgeBaseTeamId) {
+      queryParams.append('default_knowledge_base_team_id', String(defaultKnowledgeBaseTeamId))
+    }
+    const queryString = queryParams.toString()
+    return apiClient.get(`/bots/${id}${queryString ? `?${queryString}` : ''}`)
   },
 
   async createBot(data: CreateBotRequest): Promise<Bot> {

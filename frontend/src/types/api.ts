@@ -83,6 +83,8 @@ export interface SkillRef {
 export interface KnowledgeBaseDefaultRef {
   id: number
   name: string
+  available?: boolean
+  unavailableReason?: string | null
 }
 
 export interface Bot {

@@ -117,6 +117,8 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Team context used to validate and precheck default knowledge bases */
+  defaultKnowledgeBaseTeamId?: number
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -134,6 +136,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    defaultKnowledgeBaseTeamId,
   },
   ref
 ) => {
@@ -157,8 +160,39 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
+  const [teamScopedBotDetail, setTeamScopedBotDetail] = useState<Bot | null>(null)
+
+  useEffect(() => {
+    if (!defaultKnowledgeBaseTeamId || editingBotId <= 0) {
+      setTeamScopedBotDetail(null)
+      return
+    }
+
+    let cancelled = false
+
+    botApis
+      .getBot(editingBotId, defaultKnowledgeBaseTeamId)
+      .then(bot => {
+        if (!cancelled) {
+          setTeamScopedBotDetail(bot)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.error('Failed to precheck default knowledge bases:', error)
+          setTeamScopedBotDetail(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [defaultKnowledgeBaseTeamId, editingBotId])
 
   const baseBot = useMemo(() => {
+    if (teamScopedBotDetail) {
+      return teamScopedBotDetail
+    }
     if (editingBot) {
       return editingBot
     }
@@ -166,7 +200,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return cloningBot
     }
     return null
-  }, [editingBot, editingBotId, cloningBot])
+  }, [editingBot, editingBotId, cloningBot, teamScopedBotDetail])
 
   const [botName, setBotName] = useState(baseBot?.name || '')
   // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
@@ -189,6 +223,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >(baseBot?.default_knowledge_base_refs || [])
+  const canEditDefaultKnowledgeBases =
+    scope === 'public' || embedded || Boolean(defaultKnowledgeBaseTeamId)
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -721,7 +757,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       agent_config: parsedAgentConfig,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
-      default_knowledge_base_refs: defaultKnowledgeBaseRefs,
+      default_knowledge_base_refs: defaultKnowledgeBaseRefs.map(ref => ({
+        id: ref.id,
+        name: ref.name,
+      })),
       skills: selectedSkills.length > 0 ? selectedSkills : [],
       skill_refs: buildSkillRefsFromSelection(
         selectedSkills,
@@ -814,12 +853,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: botData.agent_config,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
-          default_knowledge_base_refs: botData.default_knowledge_base_refs,
           skills: botData.skills,
           skill_refs: botData.skill_refs,
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+        }
+        if (canEditDefaultKnowledgeBases) {
+          botReq.default_knowledge_base_refs = botData.default_knowledge_base_refs
+          botReq.default_knowledge_base_team_id = defaultKnowledgeBaseTeamId
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -841,7 +883,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    defaultKnowledgeBaseTeamId,
+    canEditDefaultKnowledgeBases,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -962,7 +1015,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: 'default',
-          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
+          default_knowledge_base_refs: defaultKnowledgeBaseRefs.map(ref => ({
+            id: ref.id,
+            name: ref.name,
+          })),
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -980,7 +1036,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: parsedAgentConfig as Record<string, unknown>,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
-          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           skill_refs: buildSkillRefsFromSelection(
             selectedSkills,
@@ -998,6 +1053,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: scope === 'group' && groupName ? groupName : undefined,
+        }
+        if (canEditDefaultKnowledgeBases) {
+          botReq.default_knowledge_base_refs = defaultKnowledgeBaseRefs.map(ref => ({
+            id: ref.id,
+            name: ref.name,
+          }))
+          botReq.default_knowledge_base_team_id = defaultKnowledgeBaseTeamId
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -1510,7 +1572,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <KnowledgeBaseMultiSelector
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
-                      disabled={readOnly}
+                      disabled={readOnly || !canEditDefaultKnowledgeBases}
                       allowedSources={
                         scope === 'public'
                           ? ['organization']
@@ -1522,6 +1584,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       }
                       allowedGroupNamespaces={
                         scope === 'group' && groupName ? [groupName] : undefined
+                      }
+                      helperText={
+                        canEditDefaultKnowledgeBases
+                          ? undefined
+                          : t(
+                              'common:bot.default_knowledge_bases_team_context_required',
+                              '默认知识库只能在智能体配置中维护。'
+                            )
                       }
                     />
                   </div>

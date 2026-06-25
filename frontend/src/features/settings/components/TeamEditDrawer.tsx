@@ -370,6 +370,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               allowedAgents={props.allowedAgents}
               scope={scope}
               groupName={groupName}
+              defaultKnowledgeBaseTeamId={editingTeam?.id}
             />
           )}
           {mode === 'prompt' && (

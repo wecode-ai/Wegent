@@ -22,8 +22,9 @@ def test_bot_create_schema_preserves_default_knowledge_base_refs():
     )
 
     assert payload.model_dump()["default_knowledge_base_refs"] == [
-        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": None}
+        {"id": 101, "name": "Product Docs"}
     ]
+    assert payload.default_knowledge_base_team_id is None
 
 
 def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
@@ -79,7 +80,7 @@ def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
         obj for obj in added_objects if isinstance(obj, Kind) and obj.kind == "Ghost"
     )
     assert ghost.json["spec"]["defaultKnowledgeBaseRefs"] == [
-        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": 7}
+        {"id": 101, "name": "Product Docs"}
     ]
 
 
@@ -135,31 +136,84 @@ def test_update_with_user_writes_default_knowledge_bases_into_ghost_spec():
         ):
             with patch.object(
                 service,
-                "_convert_to_bot_dict",
-                return_value={
-                    "default_knowledge_base_refs": [{"id": 101, "name": "Product Docs"}]
-                },
+                "_resolve_default_kb_team_owner_id",
+                return_value=7,
             ):
-                with patch(
-                    "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
-                    return_value=SimpleNamespace(
-                        id=101, user_id=7, namespace="default"
-                    ),
+                with patch.object(
+                    service,
+                    "_convert_to_bot_dict",
+                    return_value={
+                        "default_knowledge_base_refs": [
+                            {"id": 101, "name": "Product Docs"}
+                        ]
+                    },
                 ):
-                    service.update_with_user(
-                        db,
-                        bot_id=17,
-                        obj_in=BotUpdate(
-                            default_knowledge_base_refs=[
-                                {"id": 101, "name": "Product Docs"}
-                            ]
+                    with patch(
+                        "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
+                        return_value=SimpleNamespace(
+                            id=101, user_id=7, namespace="default"
                         ),
-                        user_id=7,
-                    )
+                    ):
+                        service.update_with_user(
+                            db,
+                            bot_id=17,
+                            obj_in=BotUpdate(
+                                default_knowledge_base_refs=[
+                                    {"id": 101, "name": "Product Docs"}
+                                ],
+                                default_knowledge_base_team_id=88,
+                            ),
+                            user_id=7,
+                        )
 
     assert ghost.json["spec"]["defaultKnowledgeBaseRefs"] == [
-        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": 7}
+        {"id": 101, "name": "Product Docs"}
     ]
+
+
+def test_update_default_knowledge_bases_requires_team_context():
+    service = BotKindsService(Kind)
+    db = Mock()
+
+    bot = Mock(spec=Kind)
+    bot.id = 17
+    bot.user_id = 7
+    bot.name = "kb-bot"
+    bot.namespace = "default"
+    bot.kind = "Bot"
+    bot.is_active = True
+    bot.json = {
+        "kind": "Bot",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {"name": "kb-bot", "namespace": "default"},
+        "spec": {
+            "ghostRef": {"name": "kb-bot-ghost", "namespace": "default"},
+            "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+        },
+        "status": {"state": "Available"},
+    }
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = bot
+    db.query.return_value = query
+
+    with patch.object(service, "_get_bot_components", return_value=(None, None, None)):
+        try:
+            service.update_with_user(
+                db,
+                bot_id=17,
+                obj_in=BotUpdate(
+                    default_knowledge_base_refs=[{"id": 101, "name": "Product Docs"}],
+                ),
+                user_id=7,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 400
+            assert exc.detail == (
+                "Team context is required to update default knowledge bases"
+            )
+        else:
+            raise AssertionError("Expected HTTPException")
 
 
 def test_convert_to_bot_dict_exposes_default_knowledge_base_refs():
@@ -201,7 +255,50 @@ def test_convert_to_bot_dict_exposes_default_knowledge_base_refs():
     result = service._convert_to_bot_dict(bot, ghost, None, None)
 
     assert result["default_knowledge_base_refs"] == [
-        {"id": 101, "name": "Product Docs", "grantPrincipalUserId": None}
+        {"id": 101, "name": "Product Docs"}
+    ]
+
+
+def test_annotate_default_knowledge_base_availability_uses_team_owner():
+    service = BotKindsService(Kind)
+    db = Mock()
+    bot = Mock(spec=Kind)
+    bot_dict = {
+        "default_knowledge_base_refs": [
+            {"id": 101, "name": "Owner Docs"},
+            {"id": 202, "name": "Other Team Docs"},
+        ]
+    }
+
+    def resolve_resource(_db, resource_id, user_id):
+        assert user_id == 42
+        return SimpleNamespace(id=resource_id) if resource_id == 101 else None
+
+    with patch.object(service, "_resolve_default_kb_team_owner_id", return_value=42):
+        with patch(
+            "app.services.adapters.bot_kinds.KnowledgeShareService._get_resource",
+            side_effect=resolve_resource,
+        ):
+            service._annotate_default_kb_availability(
+                db,
+                bot=bot,
+                bot_dict=bot_dict,
+                team_id=88,
+            )
+
+    assert bot_dict["default_knowledge_base_refs"] == [
+        {
+            "id": 101,
+            "name": "Owner Docs",
+            "available": True,
+            "unavailableReason": None,
+        },
+        {
+            "id": 202,
+            "name": "Other Team Docs",
+            "available": False,
+            "unavailableReason": "team_owner_cannot_read_kb",
+        },
     ]
 
 
@@ -268,8 +365,9 @@ def test_create_with_user_rejects_non_group_knowledge_bases_for_group_bots():
                                 assert exc.status_code == 400
                                 assert exc.detail == (
                                     "Bots can only bind knowledge bases readable by the "
-                                    "editor and group bots can only bind knowledge bases "
-                                    "from the current group or the organization"
+                                    "editor and the Team owner and group bots can only "
+                                    "bind knowledge bases from the current group or the "
+                                    "organization"
                                 )
                             else:
                                 raise AssertionError("Expected HTTPException")
@@ -343,26 +441,33 @@ def test_update_with_user_rejects_non_group_knowledge_bases_for_group_bots():
             ):
                 with patch.object(
                     service,
-                    "_convert_to_bot_dict",
-                    return_value={"id": 17},
+                    "_resolve_default_kb_team_owner_id",
+                    return_value=7,
                 ):
-                    try:
-                        service.update_with_user(
-                            db,
-                            bot_id=17,
-                            obj_in=BotUpdate(
-                                default_knowledge_base_refs=[
-                                    {"id": 101, "name": "Personal Docs"}
-                                ]
-                            ),
-                            user_id=7,
-                        )
-                    except HTTPException as exc:
-                        assert exc.status_code == 400
-                        assert exc.detail == (
-                            "Bots can only bind knowledge bases readable by the editor "
-                            "and group bots can only bind knowledge bases from the "
-                            "current group or the organization"
-                        )
-                    else:
-                        raise AssertionError("Expected HTTPException")
+                    with patch.object(
+                        service,
+                        "_convert_to_bot_dict",
+                        return_value={"id": 17},
+                    ):
+                        try:
+                            service.update_with_user(
+                                db,
+                                bot_id=17,
+                                obj_in=BotUpdate(
+                                    default_knowledge_base_refs=[
+                                        {"id": 101, "name": "Personal Docs"}
+                                    ],
+                                    default_knowledge_base_team_id=88,
+                                ),
+                                user_id=7,
+                            )
+                        except HTTPException as exc:
+                            assert exc.status_code == 400
+                            assert exc.detail == (
+                                "Bots can only bind knowledge bases readable by the "
+                                "editor and the Team owner and group bots can only "
+                                "bind knowledge bases from the current group or the "
+                                "organization"
+                            )
+                        else:
+                            raise AssertionError("Expected HTTPException")

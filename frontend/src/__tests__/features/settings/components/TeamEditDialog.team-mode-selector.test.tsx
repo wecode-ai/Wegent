@@ -51,6 +51,7 @@ jest.mock('@/features/settings/components/team-modes', () => ({
 
 jest.mock('@/apis/bots', () => ({
   botApis: {
+    getBot: jest.fn(),
     createBot: jest.fn(),
     updateBot: jest.fn(),
   },

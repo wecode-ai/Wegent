@@ -64,12 +64,19 @@ def create_bot(
 @router.get("/{bot_id}", response_model=BotDetail)
 def get_bot(
     bot_id: int,
+    default_knowledge_base_team_id: int | None = Query(
+        None,
+        description="Team context used to precheck default knowledge base availability",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get specified Bot details with related user"""
     bot_dict = bot_kinds_service.get_bot_detail(
-        db=db, bot_id=bot_id, user_id=current_user.id
+        db=db,
+        bot_id=bot_id,
+        user_id=current_user.id,
+        default_knowledge_base_team_id=default_knowledge_base_team_id,
     )
     return bot_dict
 

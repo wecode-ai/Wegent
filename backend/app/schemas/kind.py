@@ -148,7 +148,6 @@ class KnowledgeBaseDefaultRef(BaseModel):
 
     id: int
     name: str
-    grantPrincipalUserId: Optional[int] = None
 
 
 # Ghost CRD schemas

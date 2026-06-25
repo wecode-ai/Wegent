@@ -636,7 +636,7 @@ class TestKBPriorityLogic:
             ) as mock_get_bound,
             patch(
                 "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
-                return_value=([], None),
+                return_value=([], None, []),
             ),
         ):
             mock_get_bound.return_value = []  # No task-level KBs
@@ -673,7 +673,7 @@ class TestKBPriorityLogic:
             ),
             patch(
                 "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
-                return_value=([], "default_knowledge_base_load_failed"),
+                return_value=([], "default_knowledge_base_load_failed", []),
             ),
         ):
             kb_result = _prepare_kb_tools_from_contexts(
@@ -689,6 +689,42 @@ class TestKBPriorityLogic:
         assert "default knowledge bases could not be loaded" in (
             kb_result.enhanced_system_prompt
         )
+
+    def test_default_kb_partial_load_warning_is_non_sensitive(self, mock_db):
+        """Filtered default KBs should add only aggregate chat prompt status."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        warning = SimpleNamespace(
+            knowledge_base_id=22,
+            knowledge_base_name="Sensitive Docs",
+            reason="team_owner_cannot_read_kb",
+        )
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], None, [warning]),
+            ),
+        ):
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
+
+        assert "Some task default knowledge bases were not loaded" in (
+            kb_result.enhanced_system_prompt
+        )
+        assert "Sensitive Docs" not in kb_result.enhanced_system_prompt
+        assert "22" not in kb_result.enhanced_system_prompt
 
 
 @pytest.mark.unit

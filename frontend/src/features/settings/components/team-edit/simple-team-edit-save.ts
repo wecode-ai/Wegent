@@ -67,7 +67,10 @@ export function buildSimpleBotRequest(
     agent_config: agentConfig,
     system_prompt: form.prompt.trim(),
     mcp_servers: form.mcpServers || {},
-    default_knowledge_base_refs: form.defaultKnowledgeBaseRefs,
+    default_knowledge_base_refs: form.defaultKnowledgeBaseRefs.map(ref => ({
+      id: ref.id,
+      name: ref.name,
+    })),
     skills: form.selectedSkills,
     skill_refs: buildSkillRefsFromSelection(
       form.selectedSkills,

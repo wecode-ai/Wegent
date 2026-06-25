@@ -81,6 +81,16 @@ loading failure if the answer depends on task default knowledge.
 </knowledge_base_status>
 """
 
+DEFAULT_KB_PARTIAL_LOAD_PROMPT = """
+
+<knowledge_base_status>
+Some task default knowledge bases were not loaded for this turn because they are
+not available to the current agent owner. Continue with the loaded and explicitly
+selected knowledge bases, and mention that some default knowledge was unavailable
+if the answer depends on task default knowledge.
+</knowledge_base_status>
+"""
+
 
 def build_table_prompt(table_contexts: List[dict]) -> str:
     """
@@ -1284,6 +1294,7 @@ def _prepare_kb_tools_from_contexts(
     knowledge_base_scopes: List[KnowledgeBaseScope] = []
     default_knowledge_base_ids: List[int] = []
     default_kb_load_error: Optional[str] = None
+    default_kb_warnings: List[Any] = []
     default_kb_status_prompt = ""
 
     # Determine which knowledge bases to use based on priority
@@ -1310,9 +1321,11 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids = []
 
     if task_id:
-        default_scopes, default_kb_load_error = _get_task_default_knowledge_base_scopes(
-            db, task_id, user_id
-        )
+        (
+            default_scopes,
+            default_kb_load_error,
+            default_kb_warnings,
+        ) = _get_task_default_knowledge_base_scopes(db, task_id, user_id)
         if default_scopes:
             requested_knowledge_base_ids = set(knowledge_base_ids)
             default_knowledge_base_ids = _get_effective_default_knowledge_base_ids(
@@ -1333,6 +1346,10 @@ def _prepare_kb_tools_from_contexts(
 
     if default_kb_load_error:
         default_kb_status_prompt = DEFAULT_KB_LOAD_FAILURE_PROMPT
+    elif default_kb_warnings:
+        default_kb_status_prompt = DEFAULT_KB_PARTIAL_LOAD_PROMPT
+
+    if default_kb_status_prompt:
         enhanced_system_prompt = f"{enhanced_system_prompt}{default_kb_status_prompt}"
 
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
@@ -1625,14 +1642,27 @@ def _get_task_default_knowledge_base_scopes(
     db: Session,
     task_id: int,
     user_id: int,
-) -> Tuple[List[KnowledgeBaseScope], Optional[str]]:
+) -> Tuple[List[KnowledgeBaseScope], Optional[str], List[Any]]:
     """Resolve runtime default knowledge base scopes for a task."""
     from app.services.chat.task_default_knowledge_bases import (
-        get_task_default_knowledge_base_scopes,
+        get_task_default_knowledge_base_resolution,
     )
 
     try:
-        return get_task_default_knowledge_base_scopes(db, task_id, user_id), None
+        resolution = get_task_default_knowledge_base_resolution(db, task_id, user_id)
+        if resolution.warnings:
+            logger.info(
+                "runtime_default_kb_scope_resolution_filtered",
+                extra={
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "warning_count": len(resolution.warnings),
+                    "warning_reasons": [
+                        warning.reason for warning in resolution.warnings
+                    ],
+                },
+            )
+        return resolution.scopes, None, resolution.warnings
     except Exception as exc:
         logger.exception(
             "runtime_default_kb_scope_resolution_failed",
@@ -1645,6 +1675,7 @@ def _get_task_default_knowledge_base_scopes(
         return (
             [],
             "default_knowledge_base_load_failed",
+            [],
         )
 
 

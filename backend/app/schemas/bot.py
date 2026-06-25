@@ -20,6 +20,7 @@ class BotCreate(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    default_knowledge_base_team_id: Optional[int] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
@@ -41,12 +42,20 @@ class BotUpdate(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    default_knowledge_base_team_id: Optional[int] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
     preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     namespace: Optional[str] = None  # Namespace for the bot (group name or 'default')
     is_active: Optional[bool] = None
+
+
+class BotKnowledgeBaseDefaultRef(KnowledgeBaseDefaultRef):
+    """Response model for Ghost-level default KB bindings."""
+
+    available: Optional[bool] = None
+    unavailableReason: Optional[str] = None
 
 
 class BotInDB(BaseModel):
@@ -63,7 +72,7 @@ class BotInDB(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
-    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    default_knowledge_base_refs: Optional[List[BotKnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
@@ -89,7 +98,7 @@ class BotDetail(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
-    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    default_knowledge_base_refs: Optional[List[BotKnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt

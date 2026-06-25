@@ -377,6 +377,38 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setUnsavedPrompts({})
   }, [bots, formTeam, open])
 
+  useEffect(() => {
+    if (!open || !formTeam || !editingTeamId || editingTeamId <= 0) {
+      return
+    }
+
+    const leaderBot = formTeam.bots.find(bot => bot.role === 'leader') || formTeam.bots[0]
+    if (!leaderBot?.bot_id) {
+      return
+    }
+
+    let cancelled = false
+
+    botApis
+      .getBot(leaderBot.bot_id, editingTeamId)
+      .then(bot => {
+        if (cancelled) {
+          return
+        }
+        setBots(prev => prev.map(item => (item.id === bot.id ? bot : item)))
+        setSimpleDefaultKnowledgeBaseRefs(bot.default_knowledge_base_refs || [])
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.error('Failed to precheck default knowledge bases:', error)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [editingTeamId, formTeam, open, setBots])
+
   // Update bot selection when bots change
   useEffect(() => {
     if (!open || !formTeam) return
@@ -647,6 +679,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         groupName
       ),
       namespace,
+      ...(editingTeamId && editingTeamId > 0
+        ? { default_knowledge_base_team_id: editingTeamId }
+        : {}),
     }
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
