@@ -176,3 +176,11 @@ def test_append_codex_pyinstaller_options_collects_sdk_modules():
     assert "--hidden-import=openai_codex" in cmd
     assert "--hidden-import=openai_codex.generated.v2_all" in cmd
     assert "--collect-all=openai_codex" in cmd
+
+
+def test_build_script_includes_app_ipc_hidden_import():
+    build_local = load_build_local_module()
+
+    script = Path(build_local.__file__).read_text(encoding="utf-8")
+
+    assert "--hidden-import=executor.modes.local.app_ipc" in script
