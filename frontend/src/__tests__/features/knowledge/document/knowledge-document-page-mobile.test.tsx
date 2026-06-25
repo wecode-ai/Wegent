@@ -6,7 +6,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
-
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface MockKnowledgeTree {
@@ -126,11 +125,19 @@ jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', 
   CreateKnowledgeBaseDialog: () => null,
 }))
 
-jest.mock('@/apis/knowledge', () => ({
-  getKnowledgeBase: jest.fn(async () => baseKb),
-  getOrganizationNamespace: jest.fn().mockResolvedValue({ namespace: 'organization' }),
-  listKnowledgeBases: jest.fn().mockResolvedValue({ items: [] }),
-}))
+import { getKnowledgeBase } from '@/apis/knowledge'
+
+jest.mock('@/apis/knowledge', () => {
+  const actual = jest.requireActual('@/apis/knowledge')
+  const getKnowledgeBase = jest.fn()
+  return {
+    __esModule: true,
+    ...actual,
+    getKnowledgeBase,
+  }
+})
+
+const mockGetKnowledgeBase = jest.mocked(getKnowledgeBase)
 
 jest.mock('@/apis/user', () => ({
   userApis: {
@@ -186,6 +193,8 @@ function resetMockTree() {
   mockTree.refreshPersonal = jest.fn()
   mockTree.refreshOrg = jest.fn()
   mockTree.refreshGroup = jest.fn()
+  mockGetKnowledgeBase.mockReset()
+  mockGetKnowledgeBase.mockResolvedValue(baseKb)
 }
 
 describe('KnowledgeDocumentPageMobile detail view switch', () => {
@@ -231,18 +240,21 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-document-page-mobile')).toBeInTheDocument()
     })
+    expect(mockTree.loadGroupKbs).toHaveBeenCalledWith(teamNamespace)
   })
 
-  it('4) organization KB deep-link matches by name only', async () => {
+  it('4) organization KB deep-link matches by name and renders detail', async () => {
     const orgKb = { ...baseKb, id: 3, name: 'OrgKB', namespace: 'organization' }
 
     mockTree.orgKbs = [orgKb]
+    mockGetKnowledgeBase.mockResolvedValue(orgKb)
 
     render(<KnowledgeDocumentPageMobile initialKbName="OrgKB" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-document-page-mobile')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-detail-panel')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('detail-kb-name')).toHaveTextContent('OrgKB')
   })
 
   it('5) back button navigates to /knowledge?type=document', async () => {

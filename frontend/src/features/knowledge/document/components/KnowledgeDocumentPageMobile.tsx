@@ -79,8 +79,12 @@ export function KnowledgeDocumentPageMobile({
 
   const targetKb = useMemo(() => {
     if (!initialKbName) return undefined
-    return findKbByVirtualPath(allLoadedKbs, initialKbNamespace, initialKbName)
-  }, [allLoadedKbs, initialKbNamespace, initialKbName])
+    // When namespace is not provided (organization KB deep-link),
+    // constrain the name-only lookup to the organization namespace so
+    // same-name personal/team KBs don't shadow the org KB.
+    const effectiveNamespace = initialKbNamespace || tree.orgNamespace
+    return findKbByVirtualPath(allLoadedKbs, effectiveNamespace, initialKbName)
+  }, [allLoadedKbs, initialKbNamespace, initialKbName, tree.orgNamespace])
 
   useEffect(() => {
     if (!isDetailMode) return

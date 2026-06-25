@@ -75,4 +75,19 @@ describe('findKbByVirtualPath', () => {
     const result = findKbByVirtualPath(kbs, 'default', 'dupname')
     expect(result).toEqual({ name: 'dupname', namespace: 'default' })
   })
+
+  it('matches organization KB by namespace when same name exists in personal namespace', () => {
+    const kbs: TestKb[] = [
+      { name: 'shared-kb', namespace: 'default' },
+      { name: 'shared-kb', namespace: 'organization' },
+    ]
+    const result = findKbByVirtualPath(kbs, 'organization', 'shared-kb')
+    expect(result).toEqual({ name: 'shared-kb', namespace: 'organization' })
+  })
+
+  it('returns undefined when no-name match exists in a different namespace', () => {
+    const kbs: TestKb[] = [{ name: 'shared-kb', namespace: 'default' }]
+    const result = findKbByVirtualPath(kbs, 'organization', 'shared-kb')
+    expect(result).toBeUndefined()
+  })
 })
