@@ -32,7 +32,14 @@ jest.mock('@/lib/runtime-config', () => ({
   getSocketUrl: () => 'http://fallback-socket',
 }))
 
-const { SocketProvider, useSocket }: SocketContextModule = require('@/contexts/SocketContext')
+let SocketProvider: SocketContextModule['SocketProvider']
+let useSocket: SocketContextModule['useSocket']
+
+beforeAll(async () => {
+  const socketContext = await import('@/contexts/SocketContext')
+  SocketProvider = socketContext.SocketProvider
+  useSocket = socketContext.useSocket
+})
 
 function createMockSocket() {
   const socketHandlers = new Map<string, (...args: unknown[]) => void>()
