@@ -1,48 +1,38 @@
-# Executor Standalone Binary
+# Executor Rust Binary
 
 ## Overview
 
-This directory contains the configuration to build the executor as a standalone binary using PyInstaller. The binary is self-contained and does not depend on the host machine's Python environment.
+The executor is built as a Rust binary named `wegent-executor`. Docker mode runs
+the HTTP executor server directly from this binary, while local mode starts the
+desktop app IPC sidecar and, when `WEGENT_BACKEND_URL` is configured, the
+Socket.IO local backend runner.
 
-## Build Process
+## Local Build
 
-The build process uses a multi-stage Docker build:
+```bash
+cargo build --release --locked
+```
 
-1. **Builder Stage**: Compiles the Python code into a standalone binary
-   - Installs all dependencies
-   - Runs PyInstaller to create the binary
-   - Binary is located at `/app/executor/dist/executor`
+The binary is produced at:
 
-2. **Runtime Stage**: Creates a minimal image with only the binary
-   - Copies the standalone binary from the builder stage
-   - No Python dependencies needed at runtime
-   - Significantly smaller image size
+```bash
+target/release/wegent-executor
+```
 
-## Files
+## Docker Image
 
-- `executor.spec`: PyInstaller configuration file
-- `build.sh`: Script to build the standalone binary
-- `docker/executor/Dockerfile`: Multi-stage Dockerfile
-
-## Building
-
-To build the Docker image:
+The executor image uses `docker/executor/Dockerfile`.
 
 ```bash
 docker build -f docker/executor/Dockerfile -t executor:latest .
 ```
 
-## Running
-
-The binary runs the FastAPI server on the port specified by the `PORT` environment variable (default: 10001):
+The runtime image copies only the Rust binary to `/app/wegent-executor` and runs
+it as the container entrypoint:
 
 ```bash
-docker run -p 10001:10001 -e PORT=10001 executor:latest
+docker run -p 10001:10001 -e EXECUTOR_MODE=docker -e PORT=10001 executor:latest
 ```
 
-## Benefits
-
-1. **No Runtime Dependencies**: The binary is self-contained
-2. **Faster Startup**: No need to load Python interpreter and modules
-3. **Smaller Image**: Only includes the necessary code
-4. **Better Security**: Reduced attack surface
+The image still installs Claude Code, OpenAI Codex CLI, browser automation, and
+document-generation dependencies used by existing executor skills.

@@ -31,7 +31,7 @@ jobs:
           python-version: '3.11'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('backend/pyproject.toml') }}
@@ -64,45 +64,43 @@ jobs:
     name: Test Executor
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
-          python-version: '3.10'
+          components: rustfmt, clippy
 
-      - name: Cache Python dependencies
-        uses: actions/cache@v3
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-executor-${{ hashFiles('executor/pyproject.toml') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+          key: ${{ runner.os }}-cargo-executor-${{ hashFiles('executor/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-uv-executor-
+            ${{ runner.os }}-cargo-executor-
 
-      - name: Install dependencies
+      - name: Run executor Rust format check
         working-directory: ./executor
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: cargo fmt --check
 
-      - name: Run executor tests
+      - name: Run executor Rust tests
         working-directory: ./executor
-        env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/executor
-        run: |
-          source $HOME/.cargo/env
-          uv run pytest tests/ --cov=agents --cov-report=xml --cov-report=term-missing -v
+        run: cargo test --all-features
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./executor/coverage.xml
-          flags: executor
-          name: executor-coverage
+      - name: Run executor Rust clippy
+        working-directory: ./executor
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   test-executor-manager:
     name: Test Executor Manager
@@ -118,7 +116,7 @@ jobs:
           python-version: '3.11'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-executor-manager-${{ hashFiles('executor_manager/pyproject.toml') }}
@@ -164,7 +162,7 @@ jobs:
           python-version: '3.10'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-shared-${{ hashFiles('shared/pyproject.toml') }}
@@ -222,7 +220,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-knowledge-engine-${{ hashFiles('knowledge_engine/pyproject.toml', 'shared/pyproject.toml') }}
@@ -350,7 +348,7 @@ jobs:
           python-version: '3.10'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-wegent-cli-${{ hashFiles('wegent-cli/requirements.txt') }}

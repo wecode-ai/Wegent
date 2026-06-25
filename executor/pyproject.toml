@@ -30,8 +30,6 @@ dependencies = [
     "pydantic>=2.12,<2.13",
     "pymysql==1.1.0",
     "requests==2.31.0",
-    # Pin charset-normalizer < 3.4.5 and chardet < 7.0.0 to avoid mypyc dynamic module issues with PyInstaller
-    # See: https://github.com/pyinstaller/pyinstaller-hooks-contrib/pull/995
     "charset-normalizer>=3.0.0,<3.4.5",
     "chardet>=5.0.0,<7.0.0",
     "sqlalchemy==2.0.43",
@@ -64,18 +62,6 @@ dependencies = [
     # Windows platform dependencies (ConPTY and Win32 API)
     "pywinpty>=2.0.0; sys_platform == 'win32'",
     "pywin32>=306; sys_platform == 'win32'",
-]
-
-[dependency-groups]
-dev = [
-    "pytest>=9.0.1",
-    "pytest-asyncio>=1.3.0",
-    "pytest-cov>=7.0.0",
-    "pytest-mock>=3.15.1",
-    "pytest-httpx>=0.36.0",
-]
-build = [
-    "pyinstaller>=6.0.0",
 ]
 
 [tool.black]

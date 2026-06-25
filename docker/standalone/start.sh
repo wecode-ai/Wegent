@@ -273,8 +273,7 @@ start_executor() {
 
     mkdir -p "$WEGENT_EXECUTOR_PROJECTS_DIR" "$WEGENT_EXECUTOR_CHATS_DIR" "$WEGENT_EXECUTOR_HOME"
 
-    cd /app
-    python -m executor.main &
+    /app/wegent-executor &
     EXECUTOR_PID=$!
     echo "      Standalone Executor started (PID: ${EXECUTOR_PID})"
 }

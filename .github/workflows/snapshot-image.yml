@@ -200,11 +200,6 @@ jobs:
             output_path: executor/dist/wegent-executor
             artifact_path: executor/dist/wegent-executor-linux-amd64
             artifact_name: wegent-executor-linux-amd64
-          - target: linux-amd64-no-claude
-            runner: ubuntu-22.04
-            output_path: executor/dist/wegent-executor
-            artifact_path: executor/dist/wegent-executor-linux-amd64-no-claude
-            artifact_name: wegent-executor-linux-amd64-no-claude
           - target: linux-arm64
             runner: ubuntu-22.04-arm
             output_path: executor/dist/wegent-executor
@@ -229,66 +224,55 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license || true
           fi
 
-      - name: Set up Python
-        if: matrix.target != 'macos-amd64'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - name: Set up Python x86_64
+      - name: Install executor Rust system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Add Rust target
         if: matrix.target == 'macos-amd64'
-        run: |
-          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
-          sudo installer -pkg python-installer.pkg -target /
-          rm python-installer.pkg
-
-      - name: Install uv
-        if: matrix.target != 'macos-amd64'
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install uv x86_64
-        if: matrix.target == 'macos-amd64'
-        run: |
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+        run: rustup target add x86_64-apple-darwin
 
       - name: Build executor binary
         if: matrix.target != 'macos-amd64' && matrix.target != 'windows-amd64'
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
           APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
-          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          uv sync --group build
-          build_args=("--version" "${APP_VERSION}")
-          if [[ "${TARGET}" == "linux-amd64-no-claude" ]]; then
-            build_args+=("--no-bundle-claude")
-          fi
-          uv run python scripts/build_local.py "${build_args[@]}"
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Build executor binary x86_64
         if: matrix.target == 'macos-amd64'
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
           APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
         run: |
           set -euo pipefail
-          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version "${APP_VERSION}"
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Build executor binary Windows
         if: matrix.target == 'windows-amd64'
         working-directory: executor
         shell: pwsh
         env:
-          GITHUB_REPO: ${{ github.repository }}
           APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version "$env:APP_VERSION"
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/wegent-executor.exe dist/wegent-executor.exe
+          $env:WEGENT_EXECUTOR_VERSION = "$env:APP_VERSION"
+          & "dist/wegent-executor.exe" --version
 
       - name: Rename binary
         if: matrix.target != 'windows-amd64'

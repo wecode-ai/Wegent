@@ -373,6 +373,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Cache Python packages
         id: executor-python-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -380,10 +386,9 @@ jobs:
           path: |
             ~/.cache/uv
             backend/.venv
-            executor/.venv
             executor_manager/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor/pyproject.toml', 'executor/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
+          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-python-3.11-executor-e2e-
             ${{ runner.os }}-python-3.11-
@@ -652,9 +657,12 @@ jobs:
           print(token_response["access_token"])
           PY
           )
-          source executor/.venv/bin/activate
-          PYTHONPATH="$PWD" WEGENT_AUTH_TOKEN="$TOKEN" \
-            nohup python -m executor.main > executor/local-executor.log 2>&1 &
+          (
+            cd executor
+            cargo build --release --locked
+          )
+          WEGENT_AUTH_TOKEN="$TOKEN" \
+            nohup executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
           echo $! > executor/local-executor.pid
 
       - name: Start Executor Manager
@@ -672,8 +680,10 @@ jobs:
           DOCKER_HOST_ADDR: localhost
           NETWORK: bridge
           SERVICE_POOL: e2e-executor
+          EXECUTOR_WORKSPACE: ${{ runner.temp }}/wegent-executor-workspace
           OTEL_ENABLED: "false"
         run: |
+          mkdir -p "${EXECUTOR_WORKSPACE}"
           source .venv/bin/activate
           nohup uvicorn main:app --host 0.0.0.0 --port 8001 > executor_manager.log 2>&1 &
           echo $! > executor_manager.pid

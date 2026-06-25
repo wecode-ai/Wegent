@@ -256,7 +256,7 @@ if [ -n "$BACKEND_MODELS" ]; then
 fi
 
 # Executor/Agent changed → Architecture and concepts docs
-EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
+EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.(py|rs|toml)$|^executor/Cargo\.lock$" || true)
 if [ -n "$EXECUTOR_CODE" ]; then
     DOC_REMINDERS+=("Executor changed → Check docs/*/concepts/architecture.md")
 fi
@@ -268,7 +268,7 @@ if [ -n "$CONFIG_FILES" ]; then
 fi
 
 # Any code change → Consider updating AGENTS.md and README
-ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|ts|tsx)$" || true)
+ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|rs|ts|tsx)$" || true)
 if [ -n "$ANY_CODE" ]; then
     DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
 fi
@@ -578,25 +578,42 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     cd executor
     
-    if ! command -v uv &> /dev/null; then
-        echo -e "   ${YELLOW}⚠️ SKIP: uv not found${NC}"
-        echo -e "   ${YELLOW}   Install uv to run Python pre-push checks${NC}"
-        WARNINGS+=("Executor: uv not found, Python checks skipped")
+    if ! command -v cargo &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: cargo not found${NC}"
+        echo -e "   ${YELLOW}   Install Rust to run executor pre-push checks${NC}"
+        WARNINGS+=("Executor: cargo not found, Rust checks skipped")
+    elif [ ! -d "tests" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+        WARNINGS+=("Executor: tests directory not found")
     else
-        if [ -d "tests" ]; then
-            maybe_run_full_python_tests \
-                "Executor" \
-                "uv run pytest tests/ --tb=short -q" \
-                "$TEMP_DIR/executor_pytest.log" \
-                "Executor Pytest"
-            run_changed_python_syntax_check \
-                "Executor" \
-                "$PROJECT_ROOT/executor" \
-                "^executor/.*\\.py$" \
-                "$TEMP_DIR/executor_syntax.log"
+        echo -e "   Running cargo fmt --check..."
+        if cargo fmt --check > "$TEMP_DIR/executor_fmt.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo fmt: PASSED${NC}"
         else
-            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
-            WARNINGS+=("Executor: tests directory not found")
+            echo -e "   ${RED}❌ cargo fmt: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo fmt")
+            FAILED_LOGS+=("$TEMP_DIR/executor_fmt.log")
+        fi
+
+        echo -e "   Running cargo test --all-features..."
+        if cargo test --all-features > "$TEMP_DIR/executor_test.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ cargo test: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo test")
+            FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
+        fi
+
+        echo -e "   Running cargo clippy..."
+        if cargo clippy --all-targets --all-features -- -D warnings > "$TEMP_DIR/executor_clippy.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo clippy: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ cargo clippy: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo clippy")
+            FAILED_LOGS+=("$TEMP_DIR/executor_clippy.log")
         fi
     fi
 

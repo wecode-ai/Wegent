@@ -72,7 +72,7 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "WORKSPACE_ROOT=/workspace" in start_script
     assert "WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects" in start_script
     assert "WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats" in start_script
-    assert "python -m executor.main" in start_script
+    assert "/app/wegent-executor" in start_script
 
 
 def test_standalone_start_can_skip_container_executor() -> None:
