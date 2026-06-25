@@ -149,7 +149,11 @@ def _wework_local_workspace_roots_for_command(
             config = ProjectConfig.model_validate(project.config or {})
         except Exception:
             continue
-        if not config.execution or not config.workspace or config.execution.deviceId != device_id:
+        if (
+            not config.execution
+            or not config.workspace
+            or config.execution.deviceId != device_id
+        ):
             continue
         workspace_paths: list[str] = []
         if config.workspace.source == "local_path" and config.workspace.localPath:
@@ -190,7 +194,9 @@ def _runtime_device_workspace_roots_for_command(
     return _dedupe_paths(roots)
 
 
-def _runtime_workspace_roots_from_rpc_result(result: dict[str, Any], path: str) -> list[str]:
+def _runtime_workspace_roots_from_rpc_result(
+    result: dict[str, Any], path: str
+) -> list[str]:
     roots: list[str] = []
     raw_workspaces = result.get("workspaces")
     if not isinstance(raw_workspaces, list):
@@ -207,7 +213,9 @@ def _runtime_workspace_roots_from_rpc_result(result: dict[str, Any], path: str) 
             if _is_device_path_within(path, root):
                 roots.append(root)
 
-        raw_tasks = raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
+        raw_tasks = (
+            raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
+        )
         if not isinstance(raw_tasks, list):
             continue
         for raw_task in raw_tasks:
