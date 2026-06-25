@@ -104,12 +104,25 @@ if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_
   exit 1
 fi
 
-export VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}"
+normalize_api_proxy_target() {
+  local value="${1%/}"
+
+  if [[ "$value" == */api ]]; then
+    value="${value%/api}"
+  fi
+
+  echo "$value"
+}
+
+export VITE_API_PROXY_TARGET="$(normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}")"
 export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"
 if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
   WEWORK_EXECUTOR_SIDECAR="$WEWORK_DIR/scripts/dev-executor-sidecar.sh"
 fi
 export WEWORK_EXECUTOR_SIDECAR
+export VITE_API_BASE_URL="/api"
+export VITE_SOCKET_BASE_URL="http://localhost:$WEWORK_PORT"
+export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
@@ -130,6 +143,9 @@ printf '{
 
 echo "Starting WeWork mac app"
 echo "  WEWORK_PORT=$WEWORK_PORT"
+echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
+echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
 echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"

@@ -72,6 +72,12 @@ In desktop Wework, open the right workspace panel to browse files from the curre
 
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
+## Use the Right-Side Browser
+
+In the macOS desktop Wework app, the right workspace panel can also open a browser tab. Click the new-tab button in the right panel, choose **Browser**, then enter an `http` or `https` URL in the address bar to open the page in app. The right panel keeps at most one browser tab; after the browser is open, the new-tab menu does not offer a second browser entry.
+
+The browser tab preserves its current page, address, title, and favicon. Switching to Files or Review, closing and reopening the right panel, or resizing the right panel does not clear the loaded page. Dragging the right divider all the way to the edge collapses the right panel; reopening it restores the existing browser tab.
+
 When the current task uses “New worktree”, the right file tree, bottom Terminal, macOS App embedded local terminal, and cloud-device IDE/code-server all use the worktree path stored on that task. Project tools use the project workspace directory only when there is no current task or the task does not have a recorded worktree path.
 
 Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.

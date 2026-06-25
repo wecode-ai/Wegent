@@ -1,3 +1,4 @@
+mod in_app_browser;
 mod local_executor;
 mod local_terminal;
 
@@ -299,6 +300,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            in_app_browser::in_app_browser_go_back,
+            in_app_browser::in_app_browser_create,
+            in_app_browser::in_app_browser_go_forward,
+            in_app_browser::in_app_browser_page_favicon,
+            in_app_browser::in_app_browser_page_title,
+            in_app_browser::in_app_browser_reload,
+            in_app_browser::in_app_browser_set_frame,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_executor::local_executor_ensure_started,

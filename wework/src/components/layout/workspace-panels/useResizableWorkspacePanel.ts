@@ -1,8 +1,9 @@
-import { useState, type PointerEvent } from 'react'
+import { useState, type PointerEvent, type RefObject } from 'react'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
+const RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH = 260
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MIN_HEIGHT = 220
 const BOTTOM_MAX_HEIGHT = 560
@@ -11,39 +12,75 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-export function useResizableRightSplitChat() {
+function getRightSplitChatMaxWidth(containerWidth: number) {
+  if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_MAX_WIDTH
+
+  return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH)
+}
+
+interface ResizableRightSplitChatOptions {
+  containerRef?: RefObject<HTMLElement | null>
+  onCollapse?: () => void
+}
+
+export function useResizableRightSplitChat({
+  containerRef,
+  onCollapse,
+}: ResizableRightSplitChatOptions = {}) {
   const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
+  const [resizing, setResizing] = useState(false)
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
 
     const startX = event.clientX
     const startWidth = width
+    const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
+    const maxWidth = getRightSplitChatMaxWidth(containerWidth)
+    let collapsed = false
 
-    const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      setWidth(
-        clamp(
-          startWidth + moveEvent.clientX - startX,
-          RIGHT_SPLIT_CHAT_MIN_WIDTH,
-          RIGHT_SPLIT_CHAT_MAX_WIDTH,
-        ),
-      )
-    }
-
-    const handleUp = () => {
+    function finishResize() {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      setResizing(false)
     }
 
+    function collapsePanel() {
+      if (collapsed) return
+
+      collapsed = true
+      finishResize()
+      setWidth(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
+      onCollapse?.()
+    }
+
+    function handleMove(moveEvent: globalThis.PointerEvent) {
+      if (collapsed) return
+
+      const rawWidth = startWidth + moveEvent.clientX - startX
+      if (onCollapse && rawWidth > startWidth && rawWidth >= maxWidth) {
+        collapsePanel()
+        return
+      }
+
+      const nextWidth = clamp(rawWidth, RIGHT_SPLIT_CHAT_MIN_WIDTH, maxWidth)
+      setWidth(nextWidth)
+    }
+
+    function handleUp() {
+      if (!collapsed) finishResize()
+    }
+
+    setResizing(true)
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
   }
 
-  return { width, handleResizeStart }
+  return { width, resizing, handleResizeStart }
 }
 
 export function useResizableBottomPanel() {
@@ -56,7 +93,9 @@ export function useResizableBottomPanel() {
     const startHeight = height
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      setHeight(clamp(startHeight + startY - moveEvent.clientY, BOTTOM_MIN_HEIGHT, BOTTOM_MAX_HEIGHT))
+      setHeight(
+        clamp(startHeight + startY - moveEvent.clientY, BOTTOM_MIN_HEIGHT, BOTTOM_MAX_HEIGHT)
+      )
     }
 
     const handleUp = () => {

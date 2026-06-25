@@ -9,6 +9,12 @@ import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsP
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
+const tauriMenuMocks = vi.hoisted(() => ({
+  getCurrentWindow: vi.fn(),
+  menuNew: vi.fn(),
+  menuPopup: vi.fn(),
+}))
+
 function createRect({
   left,
   top,
@@ -176,6 +182,28 @@ vi.mock('@pierre/trees/react', async () => {
   }
 })
 
+vi.mock('@tauri-apps/api/dpi', () => ({
+  LogicalPosition: class LogicalPosition {
+    x: number
+    y: number
+
+    constructor(x: number, y: number) {
+      this.x = x
+      this.y = y
+    }
+  },
+}))
+
+vi.mock('@tauri-apps/api/menu', () => ({
+  Menu: {
+    new: tauriMenuMocks.menuNew,
+  },
+}))
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: tauriMenuMocks.getCurrentWindow,
+}))
+
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
     <div
@@ -254,6 +282,9 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    tauriMenuMocks.getCurrentWindow.mockReturnValue({ label: 'main' })
+    tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
+    tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
     const titlebarActions = document.createElement('div')
     titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
@@ -2255,10 +2286,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+    expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveAttribute('role', 'separator')
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
+      'absolute',
+      'w-5',
+      '-translate-x-1/2',
+      'cursor-col-resize'
+    )
 
     const content = screen.getByTestId('desktop-workbench-content')
     expect(content).toHaveStyle({ width: '420px' })
@@ -2272,6 +2311,208 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(content).toHaveStyle({ width: '360px' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('opens the browser from the right workspace launcher row', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+
+    const browserTab = screen.getByTestId('right-workspace-browser-tab')
+    expect(browserTab).toHaveAttribute('role', 'tab')
+    expect(browserTab).toHaveAttribute('aria-selected', 'true')
+    expect(browserTab).toHaveTextContent(/^新选项卡$/)
+    expect(within(browserTab).getByTestId('right-workspace-browser-tab-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('bg-background')
+    expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+
+    expect(browserTab).toHaveTextContent(/^weibo.com$/)
+    expect(within(browserTab).getByTestId('right-workspace-browser-tab-favicon')).toHaveAttribute(
+      'src',
+      'https://weibo.com/favicon.ico'
+    )
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
+  })
+
+  test('preserves the browser tab after closing and reopening the right workspace area', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+    expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(rightPanelShell).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+  })
+
+  test('resizes the browser area while dragging and collapses the right panel at the edge', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+
+    vi.spyOn(screen.getByTestId('desktop-workbench-main'), 'getBoundingClientRect').mockReturnValue(
+      createRect({ left: 0, top: 0, width: 1000, height: 720 })
+    )
+
+    const content = screen.getByTestId('desktop-workbench-content')
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 420 })
+    fireEvent.pointerMove(document, { clientX: 640 })
+
+    expect(content).toHaveClass('transition-none')
+    expect(rightPanelShell).toHaveClass('transition-none')
+    expect(content).toHaveStyle({ width: '640px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+
+    fireEvent.pointerMove(document, { clientX: 900 })
+
+    expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+    expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(document.body.style.cursor).toBe('')
+    expect(document.body.style.userSelect).toBe('')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+  })
+
+  test('does not leave the browser loading when submitting the current URL again', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+
+    const urlInput = screen.getByTestId('workspace-browser-url-input')
+    await userEvent.type(urlInput, 'weibo.com{Enter}')
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+
+    await userEvent.type(urlInput, '{Enter}')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+        'src',
+        'https://weibo.com/'
+      )
+    )
+    expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
+  })
+
+  test('keeps one browser tab and preserves it when opening files from the new tab menu', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+
+    const menu = screen.getByTestId('right-workspace-new-tab-menu')
+    expect(menu).toBeInTheDocument()
+    expect(within(menu).queryByTestId('right-workspace-browser-option')).not.toBeInTheDocument()
+    expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
+
+    await userEvent.click(within(menu).getByTestId('right-workspace-file-option'))
+
+    expect(screen.queryByTestId('right-workspace-new-tab-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-browser-tab'))
+
+    expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://weibo.com/'
+    )
+  })
+
+  test('opens the right workspace new tab menu as a native Tauri popup', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+
+    const newTabButton = screen.getByTestId('right-workspace-new-tab-button')
+    vi.spyOn(newTabButton, 'getBoundingClientRect').mockReturnValue(
+      createRect({ left: 238, top: 22, width: 32, height: 32 })
+    )
+    ;(window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+
+    await userEvent.click(newTabButton)
+
+    await waitFor(() => expect(tauriMenuMocks.menuNew).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('right-workspace-new-tab-menu')).not.toBeInTheDocument()
+    expect(tauriMenuMocks.menuNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'right-workspace-new-tab-native-menu',
+        items: [
+          expect.objectContaining({
+            id: 'right-workspace-new-tab-review',
+            text: expect.stringContaining('审查'),
+          }),
+          expect.objectContaining({
+            id: 'right-workspace-new-tab-files',
+            text: expect.stringContaining('文件'),
+          }),
+        ],
+      })
+    )
+    expect(tauriMenuMocks.menuPopup).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 238, y: 60 }),
+      { label: 'main' }
+    )
   })
 
   test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
@@ -2355,7 +2596,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass('min-w-[32rem]')
   })
 
-  test('right workspace panel opens only the file tab from the launcher', async () => {
+  test('right workspace panel opens the file tab from the launcher', async () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -2381,7 +2622,7 @@ describe('DesktopWorkbenchLayout', () => {
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
@@ -2395,7 +2636,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({ width: '0px' })
+    expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -2528,7 +2771,7 @@ describe('DesktopWorkbenchLayout', () => {
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
     expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
