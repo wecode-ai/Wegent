@@ -196,6 +196,22 @@ def test_truncated_binary_attachment_hints_read_attachment():
     assert "extracted text (parsed from the binary)" in new
 
 
+def test_truncated_xmind_attachment_hints_read_attachment():
+    # XMind is a binary (zip) doc: the sandbox file isn't text, so the hint must
+    # point to read_attachment, not the sandbox path (shared MIME classification).
+    header = (
+        "[Attachment: mind.xmind | ID: 4 | Type: application/vnd.xmind.workbook | "
+        "Size: 1.0 KB | URL: /api/attachments/4/download | "
+        "File Path(already in sandbox): /home/user/1:executor:attachments/2/mind.xmind]"
+    )
+    text = _attachment_block(header + "\n" + ("word " * 5000))
+    messages = [{"role": "user", "content": text}]
+    out = apply_attachment_preview(messages, token_counter=_COUNTER, limit=200)
+    new = out[0]["content"]
+    assert "read_attachment(attachment_id=4)" in new
+    assert "Full file readable in sandbox" not in new
+
+
 def test_truncated_text_attachment_hints_sandbox_path():
     path = "/home/user/1:executor:attachments/2/notes.txt"
     header = (

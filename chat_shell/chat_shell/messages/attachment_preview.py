@@ -45,6 +45,7 @@ from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import _truncate_body
 from chat_shell.guard.traces import record_protection_trace
 from chat_shell.guard.types import TruncationPolicy
+from shared.utils.mime_types import is_text_readable_mime
 
 _ATTACHMENT_BLOCK = re.compile(r"<attachment>(.*?)</attachment>", re.DOTALL)
 
@@ -54,30 +55,20 @@ _ATTACHMENT_BLOCK = re.compile(r"<attachment>(.*?)</attachment>", re.DOTALL)
 _SEGMENT_HEADER = re.compile(r"\[(?:Image )?Attachment: [^\n]*? \| ID: (\d+) \|")
 _HEADER_TYPE = re.compile(r"\| Type: ([^|\]]+)")
 _HEADER_PATH = re.compile(r"File Path[^:]*: ([^\]]+)")
-# MIME substrings of binary office/pdf documents whose sandbox file cannot be
-# read as text — these must be read via read_attachment (parsed extracted text).
-_BINARY_MIME_HINTS = (
-    "pdf",
-    "msword",
-    "officedocument",
-    "ms-excel",
-    "ms-powerpoint",
-    "spreadsheet",
-    "presentation",
-)
 
 
 def _full_content_hint(header: str, attachment_id: str) -> str:
     """Type-aware pointer to the full content when a segment is truncated.
 
     Text files: the complete original is readable in the sandbox (beyond the
-    preview, and beyond read_attachment's parse cap). Binary docs: the sandbox
-    file is not text, so the parsed text is fetched via read_attachment.
+    preview, and beyond read_attachment's parse cap). Binary docs (pdf/office/
+    xmind/...): the sandbox file is not text, so the parsed text is fetched via
+    read_attachment. The text/binary split uses the shared MIME classification
+    so it stays consistent with the backend parser as file types are added.
     """
     type_match = _HEADER_TYPE.search(header)
     mime = type_match.group(1).strip().lower() if type_match else ""
-    is_binary = any(hint in mime for hint in _BINARY_MIME_HINTS)
-    if not is_binary:
+    if is_text_readable_mime(mime):
         path_match = _HEADER_PATH.search(header)
         if path_match:
             return (
