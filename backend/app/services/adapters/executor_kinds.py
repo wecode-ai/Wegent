@@ -135,6 +135,10 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
 
         Called when no DB subtask records exist but K8s pods may still be running.
         """
+        if not task_id or task_id <= 0:
+            raise HTTPException(
+                status_code=400, detail="task_id must be a positive integer"
+            )
         try:
             payload = {"task_id": task_id}
             logger.info(
@@ -148,7 +152,13 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Invalid delete-by-task-id response: {data!r}",
+                    )
+                return data
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=500,
