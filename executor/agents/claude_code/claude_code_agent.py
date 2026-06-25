@@ -8,6 +8,7 @@
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -70,6 +71,8 @@ from executor.agents.claude_code.standalone_chat_workspace import (
 )
 from executor.config import config
 from executor.hooks.pre_execute_hook import get_pre_execute_hook
+from executor.platform_compat import prepare_options_for_windows
+from executor.platform_compat.resource_limits import ensure_subprocess_nofile_limit
 from executor.services.task_identity import build_task_identity_context
 from executor.services.turn_file_changes import ClaudeToolFileChangeTracker
 from executor.tasks.resource_manager import ResourceManager
@@ -197,6 +200,8 @@ class ClaudeCodeAgent(Agent):
         # Config directory and env config for Local mode (populated in initialize())
         self._claude_config_dir: str = ""
         self._claude_env_config: Dict[str, Any] = {}
+        self._claude_cli_stderr_tail: str = ""
+        self._disabled_mcp_servers_after_init_failure: list[str] = []
 
         # Callback for when client is created (used for heartbeat updates)
         self.on_client_created_callback: Optional[callable] = None
@@ -227,6 +232,11 @@ class ClaudeCodeAgent(Agent):
         if stderr_output:
             # Log stderr output for debugging
             logger.warning(f"Claude CLI stderr: {stderr_output}")
+            self._claude_cli_stderr_tail = self._append_text_tail(
+                getattr(self, "_claude_cli_stderr_tail", ""),
+                stderr_output,
+                max_length=4000,
+            )
 
     def add_thinking_step(
         self,
@@ -1121,8 +1131,6 @@ class ClaudeCodeAgent(Agent):
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
-        from executor.platform_compat import prepare_options_for_windows
-
         self.options = prepare_options_for_windows(
             self.options, self._get_claude_config_dir()
         )
@@ -1140,47 +1148,9 @@ class ClaudeCodeAgent(Agent):
         # Add stderr callback to capture CLI stderr output
         self.options["stderr"] = self._stderr_callback
 
-        # Create client with options
-        if self.options:
-            # Log MCP servers being passed to SDK
-            mcp_in_opts = self.options.get("mcp_servers") or self.options.get(
-                "mcpServers"
-            )
-            if mcp_in_opts:
-                if isinstance(mcp_in_opts, dict):
-                    logger.info(
-                        "[SDK-INIT] Passing %d MCP server(s) to Claude SDK: %s",
-                        len(mcp_in_opts),
-                        list(mcp_in_opts.keys()),
-                    )
-                    for sname, scfg in mcp_in_opts.items():
-                        logger.info(
-                            "[SDK-INIT]   %s -> type=%s, url=%s",
-                            sname,
-                            scfg.get("type", "?") if isinstance(scfg, dict) else "?",
-                            (
-                                "<configured>"
-                                if isinstance(scfg, dict) and scfg.get("url")
-                                else "<empty>"
-                            ),
-                        )
-                elif isinstance(mcp_in_opts, str):
-                    logger.info(
-                        "[SDK-INIT] MCP servers via config file: %s", mcp_in_opts
-                    )
-                else:
-                    logger.info(
-                        "[SDK-INIT] MCP servers (type=%s): %s",
-                        type(mcp_in_opts).__name__,
-                        mcp_in_opts,
-                    )
-            else:
-                logger.info("[SDK-INIT] No MCP servers in options")
+        ensure_subprocess_nofile_limit()
 
-            code_options = ClaudeAgentOptions(**self.options)
-            self.client = ClaudeSDKClient(options=code_options)
-        else:
-            self.client = ClaudeSDKClient()
+        self.client = self._create_sdk_client_from_options()
 
         # Connect the client with retry logic for resume failures
         try:
@@ -1200,17 +1170,23 @@ class ClaudeCodeAgent(Agent):
                 del self.options["resume"]
                 saved_session_id = None
 
-                # Recreate client without resume option
-                if self.options:
-                    code_options = ClaudeAgentOptions(**self.options)
-                    self.client = ClaudeSDKClient(options=code_options)
-                else:
-                    self.client = ClaudeSDKClient()
+                self.client = self._create_sdk_client_from_options()
 
                 # Retry connection
                 logger.info(
                     f"Retrying connection for task {self.task_id} with fresh session"
                 )
+                await self.client.connect()
+            elif self._should_retry_without_mcp_after_init_failure(e):
+                disabled_names = self._remove_mcp_servers_from_options()
+                logger.warning(
+                    "Claude CLI initialization failed with MCP servers enabled; "
+                    "retrying once without MCP servers. task_id=%s disabled_mcp=%s error=%s",
+                    self.task_id,
+                    disabled_names,
+                    e,
+                )
+                self.client = self._create_sdk_client_from_options()
                 await self.client.connect()
             else:
                 # Not a resume failure, re-raise the exception
@@ -1252,6 +1228,76 @@ class ClaudeCodeAgent(Agent):
             resource_id=f"claude_client_{self.session_id}",
             is_async=True,
         )
+
+    def _create_sdk_client_from_options(self) -> ClaudeSDKClient:
+        """Create a Claude SDK client and log the safe option summary."""
+        if not self.options:
+            return ClaudeSDKClient()
+
+        self._log_sdk_init_options()
+        code_options = ClaudeAgentOptions(**self.options)
+        return ClaudeSDKClient(options=code_options)
+
+    def _log_sdk_init_options(self) -> None:
+        mcp_in_opts = self.options.get("mcp_servers") or self.options.get("mcpServers")
+        if not mcp_in_opts:
+            logger.info("[SDK-INIT] No MCP servers in options")
+            return
+
+        if isinstance(mcp_in_opts, dict):
+            logger.info(
+                "[SDK-INIT] Passing %d MCP server(s) to Claude SDK: %s",
+                len(mcp_in_opts),
+                list(mcp_in_opts.keys()),
+            )
+            for sname, scfg in mcp_in_opts.items():
+                logger.info(
+                    "[SDK-INIT]   %s -> type=%s, url=%s",
+                    sname,
+                    scfg.get("type", "?") if isinstance(scfg, dict) else "?",
+                    (
+                        "<configured>"
+                        if isinstance(scfg, dict) and scfg.get("url")
+                        else "<empty>"
+                    ),
+                )
+        elif isinstance(mcp_in_opts, str):
+            logger.info("[SDK-INIT] MCP servers via config file: %s", mcp_in_opts)
+        else:
+            logger.info(
+                "[SDK-INIT] MCP servers (type=%s): %s",
+                type(mcp_in_opts).__name__,
+                mcp_in_opts,
+            )
+
+    def _should_retry_without_mcp_after_init_failure(self, error: Exception) -> bool:
+        if not self._has_mcp_servers_in_options():
+            return False
+
+        text = "\n".join(
+            part
+            for part in (
+                str(error),
+                getattr(self, "_claude_cli_stderr_tail", ""),
+            )
+            if part
+        ).lower()
+        return "unexpected" in text and "exit code 1" in text
+
+    def _has_mcp_servers_in_options(self) -> bool:
+        return bool(self.options.get("mcp_servers") or self.options.get("mcpServers"))
+
+    def _remove_mcp_servers_from_options(self) -> list[str]:
+        disabled_names: list[str] = []
+        for key in ("mcp_servers", "mcpServers"):
+            servers = self.options.pop(key, None)
+            if isinstance(servers, dict):
+                disabled_names.extend(str(name) for name in servers.keys())
+            elif servers:
+                disabled_names.append(f"<{type(servers).__name__}>")
+
+        self._disabled_mcp_servers_after_init_failure = disabled_names
+        return disabled_names
 
     def _install_turn_file_change_hooks(self) -> None:
         """Install Claude file-edit tool hooks for per-turn change artifacts."""
@@ -1492,24 +1538,69 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Failed status
         """
         error_message = str(error)
+        claude_cli_stderr = getattr(self, "_claude_cli_stderr_tail", "").strip()
+        report_error_message = error_message
+        if claude_cli_stderr:
+            report_error_message = (
+                f"{error_message}\nClaude CLI stderr: {claude_cli_stderr}"
+            )
         logger.exception(f"Error in {execution_type}: {error_message}")
+
+        details = {
+            "execution_type": execution_type,
+            "error_message": error_message,
+            "claude_runtime": self._build_claude_runtime_diagnostics(),
+        }
+        if claude_cli_stderr:
+            details["claude_cli_stderr"] = claude_cli_stderr
 
         self.add_thinking_step(
             title="thinking.execution_failed",
             report_immediately=False,
             use_i18n_keys=False,
-            details={"execution_type": execution_type, "error_message": error_message},
+            details=details,
         )
 
         self.report_progress(
             100,
             TaskStatus.FAILED.value,
-            f"${{thinking.execution_failed}} {execution_type}: {error_message}",
+            f"${{thinking.execution_failed}} {execution_type}: {report_error_message}",
             result=ExecutionResult(
                 thinking=self.thinking_manager.get_thinking_steps()
             ).model_dump(),
         )
         return TaskStatus.FAILED
+
+    def _build_claude_runtime_diagnostics(self) -> Dict[str, Any]:
+        options = getattr(self, "options", {}) or {}
+        env = options.get("env")
+        env_keys = sorted(env.keys()) if isinstance(env, dict) else []
+        mcp_servers = options.get("mcp_servers") or options.get("mcpServers")
+        if isinstance(mcp_servers, dict):
+            mcp_names = sorted(str(name) for name in mcp_servers.keys())
+        else:
+            mcp_names = []
+
+        return {
+            "cwd": options.get("cwd"),
+            "model": options.get("model"),
+            "resume": bool(options.get("resume")),
+            "mcp_server_count": len(mcp_names),
+            "mcp_server_names": mcp_names[:20],
+            "disabled_mcp_servers_after_init_failure": (
+                getattr(self, "_disabled_mcp_servers_after_init_failure", [])[:20]
+            ),
+            "option_keys": sorted(str(key) for key in options.keys()),
+            "env_keys": env_keys,
+            "cli_path": str(options.get("cli_path") or shutil.which("claude") or ""),
+        }
+
+    @staticmethod
+    def _append_text_tail(current: str, addition: str, max_length: int) -> str:
+        text = f"{current}\n{addition}" if current else addition
+        if len(text) <= max_length:
+            return text
+        return text[-max_length:]
 
     @classmethod
     async def close_client(cls, session_id: str) -> TaskStatus:

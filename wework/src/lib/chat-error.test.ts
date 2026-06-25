@@ -15,7 +15,7 @@ describe('parseChatError', () => {
 
   test('extracts backend error codes from JSON-shaped messages', () => {
     const parsed = parseChatError(
-      'Task failed: {"error_code":"payload_too_large","message":"too much data"}',
+      'Task failed: {"error_code":"payload_too_large","message":"too much data"}'
     )
 
     expect(parsed.type).toBe('payload_too_large')
@@ -31,7 +31,14 @@ describe('parseChatError', () => {
     ['out of memory', 'container_oom'],
     ['peer closed connection without response', 'network_error'],
     ['请求超时，请稍后重试', 'timeout_error'],
-    ['API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议"}}', 'model_protocol_error'],
+    [
+      'API Error: 502 Bad Gateway. This is a server-side issue, usually temporary',
+      'provider_error',
+    ],
+    [
+      'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议"}}',
+      'model_protocol_error',
+    ],
   ])('classifies %s as %s', (message, type) => {
     expect(parseChatError(message).type).toBe(type)
   })

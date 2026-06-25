@@ -526,6 +526,30 @@ describe('MessageList', () => {
     expect(token).not.toHaveClass('bg-primary/10', 'text-primary')
   })
 
+  test('renders Codex file-path skill mentions as inline tokens', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$browser:control-in-app-browser](/Users/yunpeng7/.codex/plugins/cache/openai-bundled/browser/26.608.12217/skills/control-in-app-browser/SKILL.md)',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const token = screen.getByTestId('sent-local-skill-token-browser-control-in-app-browser')
+    expect(token).toHaveTextContent('$browser:control-in-app-browser')
+    expect(
+      screen.getByTestId('sent-local-skill-icon-browser-control-in-app-browser')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Users\/yunpeng7\/\.codex\/plugins/)).not.toBeInTheDocument()
+  })
+
   test('renders image attachments in user messages', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
@@ -1389,6 +1413,33 @@ describe('MessageList', () => {
     expect(
       screen.getByText('ali-deepseek-v3.1 不支持当前运行协议。请切换兼容模型后重试。')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+  })
+
+  test('hides executor i18n raw failed content before rendering the error card', () => {
+    const rawError =
+      '${thinking.execution_failed} async execution: Command failed with exit code 1 (exit code: 1) Error output: Check stderr output for details Claude CLI stderr: error: An unknown error occurred (Unexpected)'
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: rawError,
+            status: 'failed',
+            error: 'Agent execution failed: FAILED',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(container.querySelector('.assistant-markdown')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('assistant-error-card')).toHaveLength(1)
+    expect(
+      screen.queryByText(rawError, { selector: '.assistant-markdown p' })
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
   })
 

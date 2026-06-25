@@ -124,7 +124,16 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ['rate_limit', ['rate limit', 'rate_limit', 'too many requests', 'throttl']],
   ['permission_denied', ['permission_denied', 'permission denied', 'permission_error']],
   ['forbidden', ['forbidden', 'not allowed', 'unauthorized', '403']],
-  ['provider_error', ['error from provider', 'upstream error']],
+  [
+    'provider_error',
+    [
+      'error from provider',
+      'upstream error',
+      '502 bad gateway',
+      'bad gateway',
+      'server-side issue',
+    ],
+  ],
   [
     'llm_unsupported',
     ['multi-modal', 'multimodal', 'do not support', 'does not support', 'not support image'],
@@ -145,7 +154,7 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ],
   ['invalid_parameter', ['invalid parameter', 'invalid_parameter']],
   ['payload_too_large', ['413', 'payload too large']],
-  ['timeout_error', ['timeout', 'timed out', '504 gateway', '502 bad gateway', '超时']],
+  ['timeout_error', ['timeout', 'timed out', '504 gateway', '超时']],
   [
     'network_error',
     [
@@ -185,7 +194,7 @@ function classifyByMessage(message: string): ChatErrorType {
   for (const [type, patterns] of CLASSIFICATION_RULES) {
     if (
       patterns.some(pattern =>
-        typeof pattern === 'string' ? lowerMessage.includes(pattern) : pattern.test(lowerMessage),
+        typeof pattern === 'string' ? lowerMessage.includes(pattern) : pattern.test(lowerMessage)
       )
     ) {
       return type

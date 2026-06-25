@@ -508,6 +508,70 @@ class TestCreateAndConnectClientEnvPassing:
             assert tracker_hook_count == 1
             assert any(existing_hook in event_hook.hooks for event_hook in event_hooks)
 
+    def test_create_client_retries_without_mcp_after_unexpected_init_failure(
+        self, task_data, temp_workspace
+    ):
+        """Unexpected Claude CLI init failures should retry once without MCP servers."""
+        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+        with (
+            patch("executor.config.config.EXECUTOR_MODE", "local"),
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+        ):
+            agent = ClaudeCodeAgent(task_data, create_mock_emitter())
+            agent._claude_config_dir = os.path.join(
+                temp_workspace, str(task_data.task_id), ".claude"
+            )
+            agent._claude_env_config = {}
+            agent._claude_cli_stderr_tail = (
+                "error: An unknown error occurred (Unexpected)"
+            )
+            agent.options = {
+                "cwd": temp_workspace,
+                "mcp_servers": {
+                    "modelscope-@modelcontextprotocol/fetch": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                    }
+                },
+            }
+            captured_options = []
+
+            def capture_options(**kwargs):
+                captured_options.append(dict(kwargs))
+                return MagicMock()
+
+            first_client = MagicMock()
+            first_client.connect = AsyncMock(
+                side_effect=Exception("Command failed with exit code 1 (exit code: 1)")
+            )
+            second_client = MagicMock()
+            second_client.connect = AsyncMock()
+
+            with (
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeAgentOptions",
+                    side_effect=capture_options,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeSDKClient",
+                    side_effect=[first_client, second_client],
+                ),
+            ):
+                import asyncio
+
+                asyncio.run(agent._create_and_connect_client())
+
+        assert len(captured_options) == 2
+        assert "mcp_servers" in captured_options[0]
+        assert "mcp_servers" not in captured_options[1]
+        assert "mcp_servers" not in agent.options
+        assert agent._disabled_mcp_servers_after_init_failure == [
+            "modelscope-@modelcontextprotocol/fetch"
+        ]
+
 
 class TestResumeSessionProcessCleanup:
     """Tests for stale process cleanup when resuming Claude sessions."""
