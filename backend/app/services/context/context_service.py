@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -35,6 +36,14 @@ from app.services.attachment.storage_backend import StorageError, generate_stora
 from app.services.attachment.storage_factory import get_storage_backend
 from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_sync
+from shared.utils.attachment_block import (
+    build_attachment_download_url,
+    build_attachment_header,
+    build_sandbox_path,
+    build_truncation_note,
+    format_file_size,
+    truncate_for_injection,
+)
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
 logger = logging.getLogger(__name__)
@@ -70,36 +79,19 @@ class ContextService:
 
     # ==================== Helper Methods ====================
 
+    # File-size / URL / sandbox-path formatting is shared with chat_shell's
+    # history loader (single source of truth in shared.utils.attachment_block)
+    # so the attachment block format stays consistent across first-send and
+    # history replay. These thin wrappers preserve the existing public API.
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """
-        Format file size in bytes to human-readable format.
-
-        Args:
-            size_bytes: File size in bytes
-
-        Returns:
-            Formatted string like "2.5 MB", "156.3 KB", or "512 bytes"
-        """
-        if size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes} bytes"
+        """Format file size in bytes to human-readable format."""
+        return format_file_size(size_bytes)
 
     @staticmethod
     def build_attachment_url(attachment_id: int) -> str:
-        """
-        Build the download URL for an attachment.
-
-        Args:
-            attachment_id: Attachment ID
-
-        Returns:
-            Relative URL path for downloading the attachment
-        """
-        return f"/api/attachments/{attachment_id}/download"
+        """Build the download URL for an attachment."""
+        return build_attachment_download_url(attachment_id)
 
     @staticmethod
     def build_sandbox_path(
@@ -107,26 +99,8 @@ class ContextService:
         subtask_id: Optional[int],
         filename: str,
     ) -> Optional[str]:
-        """
-        Build the sandbox file path for an attachment.
-
-        This path corresponds to where the Executor downloads attachments
-        in the sandbox environment.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            filename: Original filename
-
-        Returns:
-            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
-            Returns None if task_id or subtask_id is not provided.
-        """
-        if task_id is None or subtask_id is None:
-            return None
-        # Guard against None filename and strip control characters
-        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
-        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+        """Build the sandbox file path where the Executor downloads an attachment."""
+        return build_sandbox_path(task_id, subtask_id, filename)
 
     # ==================== Attachment Operations ====================
 
@@ -304,6 +278,18 @@ class ContextService:
                 }
             context.status = ContextStatus.READY.value
 
+            # Persist the parse-time truncation flag so the injected attachment
+            # block can render a partial-content notice for modes without the
+            # chat_shell preview (executor / device). Always write it (even when
+            # False) so overwriting a previously-truncated attachment with a
+            # smaller, non-truncated file clears the stale True.
+            context.type_data = {
+                **context.type_data,
+                "is_truncated": bool(
+                    parse_result.truncation_info
+                    and parse_result.truncation_info.is_truncated
+                ),
+            }
             if parse_result.truncation_info:
                 truncation_info = TruncationInfo(
                     is_truncated=parse_result.truncation_info.is_truncated,
@@ -761,44 +747,33 @@ class ContextService:
         if not context.extracted_text:
             return None
 
-        # Check if text was truncated by comparing text_length with max limit
-        max_text_length = DocumentParser.get_max_text_length()
-        is_truncated = context.text_length >= max_text_length
-
-        # Build attachment metadata header
-        attachment_id = context.id
+        # Build attachment metadata header (shared with chat_shell loader).
+        # When the parser truncated the file, prepend a length-free partial-content
+        # notice so modes without the chat_shell preview (executor / device) still
+        # know the text is incomplete and the full file should be read.
         filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-        url = self.build_attachment_url(attachment_id)
-
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
-
-        # Build the prefix with metadata and optional truncation notice
-        if sandbox_path:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]\n"
-            )
-        else:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-            )
-
-        if is_truncated:
-            prefix += (
-                f"(Note: The file content is too long and has been truncated to "
-                f"{max_text_length} characters. The following is only partial content.)\n"
-            )
-
-        prefix += f"{context.extracted_text}\n\n"
-
-        # Wrap in <attachment> XML tags
-        return prefix
+        sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+        header = build_attachment_header(
+            attachment_id=context.id,
+            filename=filename,
+            mime_type=context.mime_type or "unknown",
+            file_size=context.file_size or 0,
+            sandbox_path=sandbox_path,
+        )
+        # Bound the inline copy: the injected text is only a preview (the full
+        # file stays reachable via the downloaded file / sandbox, or read_attachment
+        # in chat_shell), so cap it well below the stored length. This is the only
+        # length guard for modes without the chat_shell token preview (executor /
+        # device).
+        inject_text, inj_truncated = truncate_for_injection(
+            context.extracted_text, settings.ATTACHMENT_INJECT_MAX_CHARS
+        )
+        # Single partial-content signal: when the injection was capped, its inline
+        # marker already flags partiality and points to the file. Fall back to a
+        # prefix note only when parsing truncated the stored text but the inject
+        # cap did not re-truncate (rare; e.g. an unusually small cap).
+        note = build_truncation_note(context.is_truncated and not inj_truncated)
+        return f"{header}\n{note}{inject_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================
 

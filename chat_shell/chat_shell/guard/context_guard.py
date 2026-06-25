@@ -36,6 +36,7 @@ material changed.
 from __future__ import annotations
 
 import logging
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -72,6 +73,7 @@ from chat_shell.compression.summary_compactor import (
 )
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import COMPACTED_FLAG
+from chat_shell.guard.traces import record_protection_trace
 from chat_shell.guard.types import GuardSource
 from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 
@@ -559,6 +561,7 @@ class UnifiedContextGuard:
         if not self._sources:
             return _StagePass(updates=[], view=list(view))
 
+        started = time.perf_counter()
         updates: list[Any] = []
         new_view = list(view)
         idx_by_id: dict[str, int] = {
@@ -644,6 +647,16 @@ class UnifiedContextGuard:
                 "(emergency=%s, sources=%d)",
                 emergency,
                 len(self._sources),
+            )
+        else:
+            # Only trace when truncation actually happened — the pass runs before
+            # every model call and is usually a no-op.
+            record_protection_trace(
+                "tool_output",
+                "applied",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                messages_truncated=len(updates),
+                emergency=emergency,
             )
 
         return _StagePass(updates=updates, view=new_view)
@@ -733,6 +746,7 @@ class UnifiedContextGuard:
                 created_at=created_at,
             ),
         )
+        compact_started = time.perf_counter()
         try:
             result = await self._summary_compactor.compact(
                 [_dict_to_state_message(message_dict) for message_dict in view],
@@ -743,6 +757,14 @@ class UnifiedContextGuard:
                 "summary_compact_not_applicable"
                 if isinstance(exc, SummaryCompactNotApplicable)
                 else "summary_compact_failed"
+            )
+            record_protection_trace(
+                "summary_compact",
+                "fallback",
+                duration_ms=(time.perf_counter() - compact_started) * 1000,
+                before_tokens=before_tokens,
+                failure_reason=failure_reason,
+                used_legacy_fallback=self._compressor is not None,
             )
             self._context_compactions.append(
                 {
@@ -817,6 +839,14 @@ class UnifiedContextGuard:
                 created_at=created_at,
                 summary_message_id=summary_message_id,
             ),
+        )
+        record_protection_trace(
+            "summary_compact",
+            "completed",
+            duration_ms=(time.perf_counter() - compact_started) * 1000,
+            before_tokens=before_tokens,
+            after_tokens=after_tokens,
+            removed_history_items=result.removed_history_items,
         )
         logger.info(
             "[UnifiedContextGuard] Summary compact applied: %d -> %d tokens, "

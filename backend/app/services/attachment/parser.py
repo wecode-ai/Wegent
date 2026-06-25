@@ -29,7 +29,7 @@ import io
 import logging
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import chardet
 import magic
@@ -45,110 +45,16 @@ from shared.utils.image_preprocessor import (
     MAX_MODEL_IMAGE_LONG_EDGE,
     prepare_image_bytes_for_model,
 )
+from shared.utils.mime_types import TEXT_READABLE_MIME_TYPES, is_text_readable_mime
 from shared.utils.xmind_parser import XMindParseError, parse_xmind_to_markdown
 
 MAX_IMAGE_LONG_EDGE = MAX_MODEL_IMAGE_LONG_EDGE
 
+# Backwards-compatible alias: text-based MIME types now live in shared so the
+# backend parser and the chat_shell attachment preview share one definition.
+TEXT_MIME_TYPES = TEXT_READABLE_MIME_TYPES
+
 logger = logging.getLogger(__name__)
-
-
-# MIME types that are considered text-based files
-# These files can be parsed as plain text
-TEXT_MIME_TYPES: Set[str] = {
-    # text/* family
-    "text/plain",
-    "text/html",
-    "text/css",
-    "text/javascript",
-    "text/xml",
-    "text/csv",
-    "text/markdown",
-    "text/x-python",
-    "text/x-java",
-    "text/x-c",
-    "text/x-c++",
-    "text/x-ruby",
-    "text/x-perl",
-    "text/x-php",
-    "text/x-shellscript",
-    "text/x-script.python",
-    "text/x-go",
-    "text/x-rust",
-    "text/x-swift",
-    "text/x-kotlin",
-    "text/x-scala",
-    "text/x-typescript",
-    "text/x-coffeescript",
-    "text/x-lua",
-    "text/x-r",
-    "text/x-matlab",
-    "text/x-sql",
-    "text/x-yaml",
-    "text/x-toml",
-    "text/x-ini",
-    "text/x-properties",
-    "text/x-diff",
-    "text/x-patch",
-    "text/x-log",
-    "text/x-makefile",
-    "text/x-cmake",
-    "text/x-dockerfile",
-    "text/x-nginx-conf",
-    "text/x-apache-conf",
-    "text/x-systemd-unit",
-    "text/x-tex",
-    "text/x-latex",
-    "text/x-bibtex",
-    "text/x-rst",
-    "text/x-asciidoc",
-    "text/x-org",
-    "text/troff",
-    "text/rtf",
-    "text/calendar",
-    "text/vcard",
-    # application/* text-based types
-    "application/json",
-    "application/xml",
-    "application/javascript",
-    "application/x-javascript",
-    "application/ecmascript",
-    "application/x-sh",
-    "application/x-bash",
-    "application/x-csh",
-    "application/x-zsh",
-    "application/x-python",
-    "application/x-ruby",
-    "application/x-perl",
-    "application/x-php",
-    "application/sql",
-    "application/graphql",
-    "application/toml",
-    "application/x-yaml",
-    "application/yaml",
-    "application/x-httpd-php",
-    "application/x-typescript",
-    "application/typescript",
-    "application/x-tex",
-    "application/x-latex",
-    "application/x-troff",
-    "application/x-troff-man",
-    "application/x-ndjson",
-    "application/ld+json",
-    "application/manifest+json",
-    "application/schema+json",
-    "application/vnd.api+json",
-    "application/hal+json",
-    "application/problem+json",
-    "application/x-www-form-urlencoded",
-    "application/xhtml+xml",
-    "application/atom+xml",
-    "application/rss+xml",
-    "application/soap+xml",
-    "application/mathml+xml",
-    "application/xslt+xml",
-    "application/x-subrip",
-    "application/x-wine-extension-ini",
-}
 
 
 @dataclass
@@ -344,29 +250,16 @@ class DocumentParser:
         """
         Check if a MIME type represents a text-based file.
 
+        Delegates to the shared classification so the parser and the chat_shell
+        attachment preview stay consistent as file types are added.
+
         Args:
             mime_type: MIME type string to check, or None
 
         Returns:
             True if the MIME type is text-based, False otherwise
         """
-        if not mime_type:
-            return False
-
-        # Check if it starts with text/
-        if mime_type.startswith("text/"):
-            return True
-
-        # Check if it's in our whitelist of text-based application/* types
-        if mime_type in TEXT_MIME_TYPES:
-            return True
-
-        # Check for common text-based patterns
-        # Many text formats use +json, +xml suffixes
-        if mime_type.endswith("+json") or mime_type.endswith("+xml"):
-            return True
-
-        return False
+        return is_text_readable_mime(mime_type)
 
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
