@@ -158,6 +158,7 @@ async def orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                         await job_service.cleanup_orphan_pods(
                             db,
                             older_than_hours=settings.ORPHAN_POD_MIN_AGE_HOURS,
+                            dry_run=True,
                         )
         except Exception as e:
             logger.error("[job] orphan pod cleanup error: %s", e)
