@@ -38,6 +38,7 @@ import { getModelCompatibilityFamily } from '@/lib/model-ui'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import type { RuntimeTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
@@ -437,7 +438,7 @@ function createBackendServices(): WorkbenchServices {
 
 function createDefaultServices(): WorkbenchServices {
   const { runtimeMode } = getRuntimeConfig()
-  if (runtimeMode === 'local-first') {
+  if (runtimeMode === 'local-first' && isTauriRuntime()) {
     return createLocalAppServices()
   }
 

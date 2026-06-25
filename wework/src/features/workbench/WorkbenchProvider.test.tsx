@@ -31,6 +31,17 @@ vi.mock('@/tauri/localExecutor', () => ({
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
 
+function setTauriRuntime() {
+  Object.defineProperty(window, '__TAURI_INTERNALS__', {
+    value: {},
+    configurable: true,
+  })
+}
+
+function clearTauriRuntime() {
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: unknown) => void
@@ -599,6 +610,7 @@ function RuntimeTaskSkillsProbe() {
 describe('WorkbenchProvider runtime tasks', () => {
   beforeEach(() => {
     delete window.__WEWORK_RUNTIME_CONFIG__
+    clearTauriRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
     sessionStorage.clear()
@@ -618,6 +630,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {
+    setTauriRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
       runtimeMode: 'local-first',
     }

@@ -27,11 +27,23 @@ function useBackendRuntime() {
   }
 }
 
+function setTauriRuntime() {
+  Object.defineProperty(window, '__TAURI_INTERNALS__', {
+    value: {},
+    configurable: true,
+  })
+}
+
+function clearTauriRuntime() {
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+}
+
 describe('AuthProvider', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
     delete window.__WEWORK_RUNTIME_CONFIG__
+    clearTauriRuntime()
     window.history.pushState({}, '', '/')
   })
 
@@ -98,6 +110,7 @@ describe('AuthProvider', () => {
   })
 
   test('creates local user without redirect or backend calls in local-first mode', async () => {
+    setTauriRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
       runtimeMode: 'local-first',
     }
@@ -122,5 +135,27 @@ describe('AuthProvider', () => {
     expect(window.location.pathname).toBe('/')
     expect(authApi.getCurrentUser).not.toHaveBeenCalled()
     expect(authApi.getCurrentUserWithoutAuthRedirect).not.toHaveBeenCalled()
+  })
+
+  test('uses backend auth in browser even when runtime mode defaults local-first', async () => {
+    setToken(createJwt(Math.floor(Date.now() / 1000) + 3600))
+    const authApi = {
+      getCurrentUser: vi.fn().mockResolvedValue({ id: 1, user_name: 'admin', email: 'a@b.c' }),
+      getCurrentUserWithoutAuthRedirect: vi.fn(),
+      login: vi.fn(),
+      logout: vi.fn(),
+      loginWithOidcToken: vi.fn(),
+      setupAdminPassword: vi.fn(),
+    }
+
+    render(
+      <AuthProvider authApi={authApi}>
+        <Probe />
+      </AuthProvider>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('auth-probe')).toHaveTextContent('admin:ready'))
+    expect(authApi.getCurrentUser).toHaveBeenCalledTimes(1)
+    expect(window.location.pathname).toBe('/')
   })
 })
