@@ -1,7 +1,12 @@
 import {
+  ArrowRight,
+  Check,
+  ChevronDown,
   ChevronRight,
   Copy,
   FileText,
+  GitBranch,
+  GitCompareArrows,
   ListCollapse,
   PanelRightClose,
   PanelRightOpen,
@@ -9,17 +14,34 @@ import {
   Search,
   WrapText,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
+
+const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
+const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
 
 interface FileChangesReviewPanelProps {
   loading: boolean
   diff: string
   error?: string
   className?: string
+  reviewTitle?: string
+  defaultFileTreeVisible?: boolean
+  branchName?: string
+  targetBranchName?: string
+  focusFilePath?: string
+  viewOptions?: FileChangesReviewViewOption[]
   onRefresh?: () => void
+}
+
+export interface FileChangesReviewViewOption {
+  id: string
+  label: string
+  active: boolean
+  disabled?: boolean
+  onSelect: () => void
 }
 
 interface ReviewTreeNode {
@@ -50,22 +72,54 @@ export function FileChangesReviewPanel({
   diff,
   error,
   className,
+  reviewTitle,
+  defaultFileTreeVisible = true,
+  branchName,
+  targetBranchName,
+  focusFilePath,
+  viewOptions,
   onRefresh,
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
-  const [selection, setSelection] = useState({ diff: '', index: 0 })
-  const [fileTreeVisible, setFileTreeVisible] = useState(true)
+  const [selection, setSelection] = useState<{
+    diff: string
+    focusFilePath?: string
+    index: number
+  }>({ diff: '', index: 0 })
+  const [fileTreeVisibility, setFileTreeVisibility] = useState({
+    diff,
+    defaultFileTreeVisible,
+    visible: defaultFileTreeVisible,
+  })
   const [wrapLines, setWrapLines] = useState(false)
   const [hunksCollapsed, setHunksCollapsed] = useState(false)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
 
   const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
+  const focusSectionIndex = useMemo(
+    () => (focusFilePath ? findSectionIndexForPath(sections, focusFilePath) : -1),
+    [focusFilePath, sections]
+  )
+  const defaultSelectedIndex = focusSectionIndex >= 0 ? focusSectionIndex : 0
   const selectedIndex =
-    selection.diff === diff && selection.index < sections.length ? selection.index : 0
+    selection.diff === diff &&
+    selection.focusFilePath === focusFilePath &&
+    selection.index < sections.length
+      ? selection.index
+      : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
   const treeNodes = useMemo(() => buildReviewTree(sections), [sections])
+  const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
+  const isLargeDiff = useMemo(() => isLargeReviewDiff(sections), [sections])
+  const displayedSections = isLargeDiff && selectedSection ? [selectedSection] : sections
+  const fileTreeVisible =
+    fileTreeVisibility.diff === diff &&
+    fileTreeVisibility.defaultFileTreeVisible === defaultFileTreeVisible
+      ? fileTreeVisibility.visible
+      : defaultFileTreeVisible
 
   const selectSection = (index: number) => {
-    setSelection({ diff, index })
+    setSelection({ diff, focusFilePath, index })
     setHunksCollapsed(false)
     window.requestAnimationFrame(() => {
       document
@@ -74,47 +128,101 @@ export function FileChangesReviewPanel({
     })
   }
 
+  // When a specific file is requested (e.g. a file row in the changes card),
+  // scroll to its diff section once the diff has loaded. The selection itself
+  // is derived from focusFilePath during render, so this effect only handles
+  // the DOM scroll side-effect.
+  useEffect(() => {
+    if (focusSectionIndex < 0 || !diff) return
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(getDiffSectionDomId(focusSectionIndex))
+        ?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    })
+  }, [diff, focusSectionIndex])
+
   const copyGitApplyCommand = () => {
     const patch = diff.trimEnd()
     void navigator.clipboard?.writeText(`git apply <<'PATCH'\n${patch}\nPATCH`)
   }
 
+  const toggleSectionCollapsed = (section: DiffFileSection, index: number) => {
+    const key = getDiffSectionKey(section, index)
+    setCollapsedSections(current => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
   return (
     <div
       data-testid="file-changes-review-panel"
-      className={cn('min-h-0 flex-1 overflow-hidden p-3', className)}
+      className={cn('min-h-0 flex-1 overflow-hidden bg-background', className)}
     >
       {loading ? (
         <p className="py-8 text-center text-sm text-text-muted">{t('file_changes.loading_diff')}</p>
       ) : error ? (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-      ) : sections.length === 0 ? (
-        <p className="py-8 text-center text-sm text-text-muted">{t('file_changes.empty_diff')}</p>
       ) : (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <ReviewToolbar
+            title={reviewTitle}
+            branchName={branchName}
+            targetBranchName={targetBranchName}
+            viewOptions={viewOptions}
+            additions={diffStats.additions}
+            deletions={diffStats.deletions}
             fileTreeVisible={fileTreeVisible}
             wrapLines={wrapLines}
             hunksCollapsed={hunksCollapsed}
             canRefresh={Boolean(onRefresh)}
             onRefresh={onRefresh}
-            onToggleFileTree={() => setFileTreeVisible(visible => !visible)}
+            onToggleFileTree={() =>
+              setFileTreeVisibility({
+                diff,
+                defaultFileTreeVisible,
+                visible: !fileTreeVisible,
+              })
+            }
             onToggleWrap={() => setWrapLines(value => !value)}
             onToggleHunks={() => setHunksCollapsed(value => !value)}
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
+          {isLargeDiff ? (
+            <p className="shrink-0 border-b border-border bg-background px-6 py-2 text-sm text-text-muted">
+              {t('file_changes.large_diff_single_file_notice')}
+            </p>
+          ) : null}
           <div
             data-testid="file-changes-review-content"
             className="flex min-h-0 flex-1 overflow-hidden"
           >
-            <AllDiffSections
-              sections={sections}
-              selectedIndex={selectedIndex}
-              ariaLabel={t('file_changes.all_files_diff_label')}
-              wrapLines={wrapLines}
-              hunksCollapsed={hunksCollapsed}
-            />
-            {fileTreeVisible && (
+            {sections.length === 0 ? (
+              <div
+                data-testid="file-changes-review-empty"
+                className="flex min-w-0 flex-1 items-center justify-center px-4 py-8 text-center text-sm text-text-muted"
+              >
+                {t('file_changes.empty_diff')}
+              </div>
+            ) : (
+              <AllDiffSections
+                sections={displayedSections}
+                selectedIndex={isLargeDiff ? 0 : selectedIndex}
+                ariaLabel={t('file_changes.all_files_diff_label')}
+                wrapLines={wrapLines}
+                hunksCollapsed={hunksCollapsed}
+                collapsedSections={collapsedSections}
+                expandFileLabel={t('file_changes.actions.expand_file_diff')}
+                collapseFileLabel={t('file_changes.actions.collapse_file_diff')}
+                onToggleSectionCollapsed={toggleSectionCollapsed}
+              />
+            )}
+            {sections.length > 0 && fileTreeVisible && (
               <ReviewFileTree
                 nodes={treeNodes}
                 selectedSection={selectedSection}
@@ -130,6 +238,12 @@ export function FileChangesReviewPanel({
 }
 
 function ReviewToolbar({
+  title,
+  branchName,
+  targetBranchName,
+  viewOptions,
+  additions,
+  deletions,
   fileTreeVisible,
   wrapLines,
   hunksCollapsed,
@@ -140,6 +254,12 @@ function ReviewToolbar({
   onToggleHunks,
   onCopyGitApplyCommand,
 }: {
+  title?: string
+  branchName?: string
+  targetBranchName?: string
+  viewOptions?: FileChangesReviewViewOption[]
+  additions: number
+  deletions: number
   fileTreeVisible: boolean
   wrapLines: boolean
   hunksCollapsed: boolean
@@ -151,54 +271,132 @@ function ReviewToolbar({
   onCopyGitApplyCommand: () => void
 }) {
   const { t } = useTranslation('chat')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const sourceBranchLabel = branchName?.trim() || t('file_changes.branch_unknown')
+  const targetBranchLabel = targetBranchName?.trim()
+  const hasBranchContext = Boolean(branchName?.trim() || targetBranchName?.trim())
+  const toolbarTitle =
+    title?.trim() ||
+    (hasBranchContext ? t('file_changes.branch_label') : t('file_changes.changes_label'))
+  const canSwitchView = Boolean(viewOptions?.length)
 
   return (
     <div
       data-testid="file-changes-review-toolbar"
-      className="mb-3 flex min-h-9 shrink-0 items-center justify-end gap-1.5"
+      className="flex min-h-11 shrink-0 flex-col justify-center gap-0.5 border-b border-border bg-background px-3 py-1"
     >
-      <ToolbarButton
-        testId="refresh-review-diff-button"
-        label={t('file_changes.actions.refresh')}
-        onClick={onRefresh}
-        disabled={!canRefresh}
-        icon={RefreshCw}
-      />
-      <ToolbarButton
-        testId="toggle-line-wrap-button"
-        label={t('file_changes.actions.toggle_wrap')}
-        onClick={onToggleWrap}
-        pressed={wrapLines}
-        icon={WrapText}
-      />
-      <ToolbarButton
-        testId="collapse-all-diff-hunks-button"
-        label={
-          hunksCollapsed
-            ? t('file_changes.actions.expand_all_hunks')
-            : t('file_changes.actions.collapse_all_hunks')
-        }
-        onClick={onToggleHunks}
-        pressed={hunksCollapsed}
-        icon={ListCollapse}
-      />
-      <ToolbarButton
-        testId="copy-git-apply-command-button"
-        label={t('file_changes.actions.copy_git_apply')}
-        onClick={onCopyGitApplyCommand}
-        icon={Copy}
-      />
-      <ToolbarButton
-        testId="toggle-file-tree-button"
-        label={
-          fileTreeVisible
-            ? t('file_changes.actions.hide_files')
-            : t('file_changes.actions.show_files')
-        }
-        onClick={onToggleFileTree}
-        pressed={fileTreeVisible}
-        icon={fileTreeVisible ? PanelRightClose : PanelRightOpen}
-      />
+      <div className="flex min-h-7 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-text-primary">
+          <div className="relative shrink-0">
+            {canSwitchView ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="review-view-switcher-button"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen(open => !open)}
+                  className="flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  <span>{toolbarTitle}</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+                {menuOpen ? (
+                  <div
+                    data-testid="review-view-switcher-menu"
+                    role="menu"
+                    className="absolute left-0 top-full z-popover mt-1 w-40 overflow-hidden rounded-lg border border-border bg-background py-1 text-xs shadow-lg"
+                  >
+                    {viewOptions?.map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={option.active}
+                        disabled={option.disabled}
+                        data-testid="review-view-switcher-option"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          option.onSelect()
+                        }}
+                        className="flex h-7 w-full items-center gap-2 px-2.5 text-left font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                        {option.active ? <Check className="h-4 w-4 shrink-0" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <span className="shrink-0">{toolbarTitle}</span>
+            )}
+          </div>
+          <span className="shrink-0 font-normal text-green-600">+{additions.toLocaleString()}</span>
+          <span className="shrink-0 font-normal text-red-600">-{deletions.toLocaleString()}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <ToolbarButton
+            testId="refresh-review-diff-button"
+            label={t('file_changes.actions.refresh')}
+            onClick={onRefresh}
+            disabled={!canRefresh}
+            icon={RefreshCw}
+          />
+          <ToolbarButton
+            testId="toggle-line-wrap-button"
+            label={t('file_changes.actions.toggle_wrap')}
+            onClick={onToggleWrap}
+            pressed={wrapLines}
+            icon={WrapText}
+          />
+          <ToolbarButton
+            testId="collapse-all-diff-hunks-button"
+            label={
+              hunksCollapsed
+                ? t('file_changes.actions.expand_all_hunks')
+                : t('file_changes.actions.collapse_all_hunks')
+            }
+            onClick={onToggleHunks}
+            pressed={hunksCollapsed}
+            icon={ListCollapse}
+          />
+          <ToolbarButton
+            testId="copy-git-apply-command-button"
+            label={t('file_changes.actions.copy_git_apply')}
+            onClick={onCopyGitApplyCommand}
+            icon={Copy}
+          />
+          <ToolbarButton
+            testId="toggle-file-tree-button"
+            label={
+              fileTreeVisible
+                ? t('file_changes.actions.hide_files')
+                : t('file_changes.actions.show_files')
+            }
+            onClick={onToggleFileTree}
+            pressed={fileTreeVisible}
+            icon={fileTreeVisible ? PanelRightClose : PanelRightOpen}
+          />
+        </div>
+      </div>
+      {hasBranchContext ? (
+        <div className="flex min-h-4 min-w-0 items-center gap-2.5 text-xs text-text-muted">
+          <GitBranch className="hidden h-4 w-4 shrink-0 text-text-muted sm:block" />
+          <span className="min-w-0 truncate">{sourceBranchLabel}</span>
+          {targetBranchLabel ? (
+            <>
+              <ArrowRight className="h-4 w-4 shrink-0 text-text-muted" />
+              <span className="min-w-0 truncate">{targetBranchLabel}</span>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex min-h-4 min-w-0 items-center gap-2 text-xs text-text-muted">
+          <GitCompareArrows className="hidden h-4 w-4 shrink-0 text-text-muted sm:block" />
+          <span className="min-w-0 truncate">{t('file_changes.all_files_diff_label')}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -228,11 +426,11 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
+        'flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
         pressed && 'border-border bg-muted text-text-primary'
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-3.5 w-3.5" />
     </button>
   )
 }
@@ -272,11 +470,11 @@ function ReviewFileTree({
   return (
     <aside
       data-testid="file-changes-review-file-tree"
-      className="flex h-full min-h-0 w-[260px] shrink-0 flex-col border-l border-border bg-background"
+      className="flex h-full min-h-0 w-[34%] min-w-[240px] max-w-[380px] shrink-0 flex-col border-l border-border bg-background"
       aria-label={t('file_changes.file_list_label')}
     >
-      <div className="border-b border-border p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2">
+      <div className="px-3 py-2.5">
+        <div className="flex h-9 items-center gap-2 rounded-xl border border-border bg-background px-3">
           <Search className="h-4 w-4 text-text-muted" />
           <input
             data-testid="file-changes-review-file-search-input"
@@ -284,11 +482,11 @@ function ReviewFileTree({
             onChange={event => setQuery(event.target.value)}
             placeholder={t('file_changes.file_search_placeholder')}
             aria-label={t('file_changes.file_search_placeholder')}
-            className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
           />
         </div>
       </div>
-      <div role="tablist" className="min-h-0 flex-1 overflow-auto p-2">
+      <div role="tablist" className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {visibleNodes.length === 0 ? (
           <p className="px-2 py-3 text-sm text-text-muted">{t('file_changes.file_search_empty')}</p>
         ) : (
@@ -390,7 +588,7 @@ function ReviewTreeNodeRow({
         }
       }}
       className={cn(
-        'flex min-h-8 w-full items-center rounded-md pr-2 text-left font-mono text-xs text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary/40',
+        'flex min-h-8 w-full items-center rounded-md pr-2 text-left font-sans text-sm text-text-muted outline-none transition-colors hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary/40',
         selected && 'bg-muted text-text-primary'
       )}
     >
@@ -401,7 +599,7 @@ function ReviewTreeNodeRow({
       <span className="min-w-0 flex-1 truncate" title={node.path}>
         {node.name}
       </span>
-      <span className="ml-2 shrink-0 font-mono text-[11px]">
+      <span className="ml-2 shrink-0 font-mono text-xs">
         <span className="text-green-600">+{node.additions}</span>{' '}
         <span className="text-red-600">-{node.deletions}</span>
       </span>
@@ -430,24 +628,32 @@ function AllDiffSections({
   ariaLabel,
   wrapLines,
   hunksCollapsed,
+  collapsedSections,
+  expandFileLabel,
+  collapseFileLabel,
+  onToggleSectionCollapsed,
 }: {
   sections: DiffFileSection[]
   selectedIndex: number
   ariaLabel: string
   wrapLines: boolean
   hunksCollapsed: boolean
+  collapsedSections: Set<string>
+  expandFileLabel: string
+  collapseFileLabel: string
+  onToggleSectionCollapsed: (section: DiffFileSection, index: number) => void
 }) {
   return (
     <section
       id="file-changes-review-diff"
       data-testid="file-changes-review-diff"
-      className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border"
+      className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
       aria-label={ariaLabel}
     >
       <div
         data-testid="file-changes-review-diff-lines"
         data-wrap={wrapLines ? 'true' : 'false'}
-        className="min-h-0 flex-1 overflow-auto bg-background font-mono text-xs leading-5"
+        className="min-h-0 flex-1 overflow-y-auto bg-background font-mono text-xs leading-5"
       >
         {sections.map((section, index) => (
           <DiffFileSectionView
@@ -457,6 +663,10 @@ function AllDiffSections({
             selected={index === selectedIndex}
             wrapLines={wrapLines}
             hunksCollapsed={hunksCollapsed}
+            collapsed={collapsedSections.has(getDiffSectionKey(section, index))}
+            expandFileLabel={expandFileLabel}
+            collapseFileLabel={collapseFileLabel}
+            onToggleCollapsed={() => onToggleSectionCollapsed(section, index)}
           />
         ))}
       </div>
@@ -470,12 +680,20 @@ function DiffFileSectionView({
   selected,
   wrapLines,
   hunksCollapsed,
+  collapsed,
+  expandFileLabel,
+  collapseFileLabel,
+  onToggleCollapsed,
 }: {
   section: DiffFileSection
   sectionIndex: number
   selected: boolean
   wrapLines: boolean
   hunksCollapsed: boolean
+  collapsed: boolean
+  expandFileLabel: string
+  collapseFileLabel: string
+  onToggleCollapsed: () => void
 }) {
   const { additions, deletions } = getDiffStats(section.lines)
   const hunks = useMemo(() => parseDiffHunks(section), [section])
@@ -485,40 +703,66 @@ function DiffFileSectionView({
       id={getDiffSectionDomId(sectionIndex)}
       data-testid="file-changes-review-file-diff-section"
       className={cn(
-        'scroll-mt-2 border-b border-border last:border-b-0',
-        selected && 'ring-1 ring-inset ring-primary/40'
+        'scroll-mt-0 w-full border-b border-border last:border-b-0',
+        selected && 'ring-1 ring-inset ring-primary/25'
       )}
     >
-      <header className="sticky top-0 z-10 flex min-h-10 items-center gap-2 border-b border-border bg-surface px-2.5 py-1.5 font-mono text-xs font-medium text-text-primary">
-        <span className="min-w-0 flex-1 truncate" title={section.path}>
-          {section.path}
-        </span>
-        <span className="shrink-0 font-mono text-[11px]">
+      <header className="sticky top-0 z-10 flex min-h-9 items-center gap-2 border-b border-border bg-background px-2 py-1 text-sm font-medium">
+        <button
+          type="button"
+          data-testid="toggle-file-diff-section-button"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface hover:text-text-primary"
+          aria-label={collapsed ? expandFileLabel : collapseFileLabel}
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapsed}
+        >
+          <ChevronRight className={cn('h-4 w-4 transition-transform', !collapsed && 'rotate-90')} />
+        </button>
+        <DiffFilePathLabel path={section.path} />
+        <span className="shrink-0 font-mono text-xs">
           <span className="text-green-600">+{additions}</span>{' '}
           <span className="text-red-600">-{deletions}</span>
         </span>
       </header>
-      {hunks.map(hunk => (
-        <section
-          key={hunk.id}
-          data-testid={hunk.header ? 'file-changes-review-hunk' : 'file-changes-review-metadata'}
-        >
-          {hunk.header ? (
-            <div className="grid grid-cols-[4rem_4rem_minmax(0,1fr)] bg-surface text-text-secondary">
-              <span />
-              <span />
-              <span className="min-w-0 px-2">{hunk.header}</span>
-            </div>
-          ) : null}
-          {!hunksCollapsed
-            ? buildDiffLineRows(hunk).map((row, index) => (
-                <DiffLine key={`${hunk.id}:${index}:${row.line}`} row={row} wrapLines={wrapLines} />
-              ))
-            : null}
-        </section>
-      ))}
+      {!collapsed && !hunksCollapsed ? (
+        <div className={cn(!wrapLines && 'overflow-x-auto')}>
+          <div className={cn(wrapLines ? 'min-w-full' : 'w-max min-w-full')}>
+            {hunks
+              .filter(hunk => hunk.header)
+              .map(hunk => (
+                <section
+                  key={hunk.id}
+                  data-testid={
+                    hunk.header ? 'file-changes-review-hunk' : 'file-changes-review-metadata'
+                  }
+                >
+                  {buildDiffLineRows(hunk).map((row, index) => (
+                    <DiffLine
+                      key={`${hunk.id}:${index}:${row.line}`}
+                      row={row}
+                      wrapLines={wrapLines}
+                    />
+                  ))}
+                </section>
+              ))}
+          </div>
+        </div>
+      ) : null}
     </article>
   )
+}
+
+function getDiffSectionKey(section: DiffFileSection, index: number) {
+  return `${section.path}:${index}`
+}
+
+function findSectionIndexForPath(sections: DiffFileSection[], path: string) {
+  const exact = sections.findIndex(section => section.path === path)
+  if (exact >= 0) return exact
+  // Diff section paths and card file paths can differ by a leading directory
+  // segment (e.g. workspace-relative vs repo-relative), so fall back to a
+  // suffix match before giving up.
+  return sections.findIndex(section => section.path.endsWith(path) || path.endsWith(section.path))
 }
 
 function getDiffSectionDomId(index: number) {
@@ -529,21 +773,15 @@ function DiffLine({ row, wrapLines }: { row: DiffLineRow; wrapLines: boolean }) 
   return (
     <div
       className={cn(
-        'grid grid-cols-[4rem_4rem_minmax(0,1fr)]',
-        row.line.startsWith('+') && !row.line.startsWith('+++') && 'bg-green-50 text-green-800',
-        row.line.startsWith('-') && !row.line.startsWith('---') && 'bg-red-50 text-red-800',
-        (row.line.startsWith('diff --git') ||
-          row.line.startsWith('index ') ||
-          row.line.startsWith('---') ||
-          row.line.startsWith('+++')) &&
-          'bg-surface text-text-secondary'
+        wrapLines
+          ? 'grid w-full grid-cols-[3rem_minmax(0,1fr)]'
+          : 'grid w-max min-w-full grid-cols-[3rem_max-content]',
+        row.line.startsWith('+') && 'bg-green-50 text-green-800',
+        row.line.startsWith('-') && 'bg-red-50 text-red-800'
       )}
     >
       <span className="select-none border-r border-border/70 px-2 text-right text-text-muted">
-        {row.oldLine ?? ''}
-      </span>
-      <span className="select-none border-r border-border/70 px-2 text-right text-text-muted">
-        {row.newLine ?? ''}
+        {getDisplayLineNumber(row)}
       </span>
       <span
         className={cn(
@@ -551,9 +789,40 @@ function DiffLine({ row, wrapLines }: { row: DiffLineRow; wrapLines: boolean }) 
           wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'
         )}
       >
-        {row.line || ' '}
+        {formatDiffLineContent(row.line)}
       </span>
     </div>
+  )
+}
+
+function getDisplayLineNumber(row: DiffLineRow) {
+  return row.newLine ?? row.oldLine ?? ''
+}
+
+function formatDiffLineContent(line: string) {
+  if (!line) return ' '
+  if (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ')) {
+    return line.slice(1) || ' '
+  }
+  return line
+}
+
+function DiffFilePathLabel({ path }: { path: string }) {
+  const separatorIndex = path.lastIndexOf('/')
+  const directory = separatorIndex >= 0 ? path.slice(0, separatorIndex + 1) : ''
+  const fileName = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center" title={path}>
+      {directory ? (
+        // direction:rtl keeps the ellipsis on the leading edge so the file name
+        // stays visible when the header is narrow; <bdi> preserves left-to-right text.
+        <span dir="rtl" className="min-w-0 truncate text-text-muted">
+          <bdi>{directory}</bdi>
+        </span>
+      ) : null}
+      <span className="shrink-0 text-text-primary">{fileName}</span>
+    </span>
   )
 }
 
@@ -627,17 +896,34 @@ function filterTreeNodes(nodes: ReviewTreeNode[], normalizedQuery: string): Revi
 
 function parseDiffHunks(section: DiffFileSection): DiffHunk[] {
   const hunks: DiffHunk[] = []
+  let metadataIndex = 0
   let current: DiffHunk = {
-    id: `${section.path}:metadata`,
+    id: `${section.path}:metadata:${metadataIndex}`,
     lines: [],
   }
   let hunkIndex = 0
 
+  const flush = () => {
+    if (current.header || current.lines.length > 0) {
+      hunks.push(current)
+    }
+  }
+
   section.lines.forEach(line => {
-    if (line.startsWith('@@')) {
-      if (current.header || current.lines.length > 0) {
-        hunks.push(current)
+    // A new "diff --git" inside a merged section starts a fresh metadata block
+    // so its header/index/--- /+++ lines are not rendered as diff content.
+    if (line.startsWith('diff --git')) {
+      flush()
+      metadataIndex += 1
+      current = {
+        id: `${section.path}:metadata:${metadataIndex}`,
+        lines: [],
       }
+      return
+    }
+
+    if (line.startsWith('@@')) {
+      flush()
       current = {
         id: `${section.path}:hunk:${hunkIndex}`,
         header: line,
@@ -650,9 +936,7 @@ function parseDiffHunks(section: DiffFileSection): DiffHunk[] {
     current.lines.push(line)
   })
 
-  if (current.header || current.lines.length > 0) {
-    hunks.push(current)
-  }
+  flush()
 
   return hunks
 }
@@ -708,4 +992,25 @@ function getDiffStats(lines: string[]) {
     },
     { additions: 0, deletions: 0 }
   )
+}
+
+function getSectionsDiffStats(sections: DiffFileSection[]) {
+  return sections.reduce(
+    (total, section) => {
+      const stats = getDiffStats(section.lines)
+      total.additions += stats.additions
+      total.deletions += stats.deletions
+      return total
+    },
+    { additions: 0, deletions: 0 }
+  )
+}
+
+function isLargeReviewDiff(sections: DiffFileSection[]) {
+  if (sections.length > LARGE_DIFF_FILE_COUNT_THRESHOLD) {
+    return true
+  }
+
+  const lineCount = sections.reduce((total, section) => total + section.lines.length, 0)
+  return lineCount > LARGE_DIFF_LINE_COUNT_THRESHOLD
 }

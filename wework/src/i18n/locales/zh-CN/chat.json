@@ -8,6 +8,9 @@
   "process_text": {
     "running": "正在处理"
   },
+  "assistant_status": {
+    "stopped_after": "你在 {{duration}} 后停止了"
+  },
   "file_changes": {
     "edited_files": "已编辑 {{count}} 个文件",
     "show_more": "再显示 {{count}} 个文件",
@@ -24,6 +27,14 @@
     "reverting": "撤销中",
     "loading_diff": "正在从设备加载变更...",
     "empty_diff": "没有可展示的文本变更",
+    "changes_label": "变更",
+    "unstaged_label": "未暂存",
+    "staged_label": "已暂存",
+    "commit_label": "提交",
+    "previous_turn_label": "上轮对话",
+    "branch_label": "分支",
+    "branch_unknown": "当前工作区",
+    "large_diff_single_file_notice": "此差异较大，每次仅显示一个文件",
     "file_list_label": "变更文件",
     "file_search_placeholder": "筛选文件...",
     "file_search_empty": "没有匹配的文件",
@@ -33,6 +44,8 @@
       "toggle_wrap": "启用自动换行",
       "collapse_all_hunks": "折叠全部差异",
       "expand_all_hunks": "展开全部差异",
+      "collapse_file_diff": "折叠文件差异",
+      "expand_file_diff": "展开文件差异",
       "copy_git_apply": "复制 git apply 命令",
       "hide_files": "隐藏文件",
       "show_files": "显示文件"

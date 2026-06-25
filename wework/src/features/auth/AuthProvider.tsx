@@ -50,6 +50,9 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     setUser(null)
     setAdminPasswordSetupRequired(true)
     setAdminUsername(getAdminUsernameFromSetupError(error))
+    if (!isAuthRoute(window.location.pathname)) {
+      redirectToLogin()
+    }
   }, [])
 
   const fetchAnonymousLoginHandshake = useCallback(async () => {

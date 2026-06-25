@@ -141,6 +141,24 @@ class TestDockerExecutor:
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
 
+    @patch.dict(os.environ, {"TASK_API_DOMAIN": "http://backend:8000"}, clear=False)
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_adds_task_api_domain(
+        self, mock_callback, mock_find_port, executor, sample_task
+    ):
+        """Docker containers should expose the task API domain."""
+        mock_find_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, "test-executor", "test/executor:latest"
+        )
+
+        assert "TASK_API_DOMAIN=http://backend:8000" in cmd
+        assert "WEGENT_BACKEND_URL=http://backend:8000" not in cmd
+
     @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_sandbox_env_vars(

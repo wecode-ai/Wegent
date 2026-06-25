@@ -33,12 +33,25 @@ class LocalTaskRecord:
     workspace_path: str
     title: str
     runtime: str
+    workspace_kind: str = "workspace"
+    worktree_id: Optional[str] = None
     runtime_handle: dict[str, Any] = field(default_factory=dict)
     parent: Optional[dict[str, Any]] = None
     children: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
     running: bool = False
+    status: str = "active"
+
+
+@dataclass
+class LocalWorkspaceRecord:
+    workspace_path: str
+    runtime: str
+    title: str
+    runtime_handle: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
     status: str = "active"
 
 
@@ -64,6 +77,8 @@ class LocalTaskStore:
             workspace_path=workspace_path,
             title=task.title,
             runtime=task.runtime,
+            workspace_kind=task.workspace_kind or "workspace",
+            worktree_id=task.worktree_id,
             runtime_handle=task.runtime_handle,
             parent=task.parent,
             children=task.children,
@@ -77,6 +92,55 @@ class LocalTaskStore:
             index = self._read_index()
             index["tasks"][normalized.local_task_id] = asdict(normalized)
             self._write_index(index)
+
+    def upsert_workspace(self, workspace: LocalWorkspaceRecord) -> None:
+        workspace_path = normalize_workspace_path(workspace.workspace_path)
+        now = utc_now_iso()
+        normalized = LocalWorkspaceRecord(
+            workspace_path=workspace_path,
+            runtime=workspace.runtime,
+            title=workspace.title,
+            runtime_handle=workspace.runtime_handle,
+            created_at=workspace.created_at or now,
+            updated_at=workspace.updated_at or now,
+            status=workspace.status or "active",
+        )
+
+        with self._lock:
+            index = self._read_index()
+            index["workspaces"][workspace_path] = asdict(normalized)
+            self._write_index(index)
+
+    def list_workspaces(
+        self,
+        workspace_path: Optional[str] = None,
+        include_archived: bool = False,
+    ) -> list[LocalWorkspaceRecord]:
+        normalized_workspace = (
+            normalize_workspace_path(workspace_path) if workspace_path else None
+        )
+        with self._lock:
+            records = [
+                self._payload_to_workspace_record(payload)
+                for payload in self._read_index()["workspaces"].values()
+            ]
+
+        filtered = []
+        for record in records:
+            if normalized_workspace and record.workspace_path != normalized_workspace:
+                continue
+            if not include_archived and record.status == "archived":
+                continue
+            filtered.append(record)
+
+        return sorted(
+            filtered,
+            key=lambda record: (
+                parse_task_time(record.updated_at),
+                parse_task_time(record.created_at),
+            ),
+            reverse=True,
+        )
 
     def list_tasks(
         self,
@@ -153,6 +217,10 @@ class LocalTaskStore:
                 workspace_path=normalize_workspace_path(updated.workspace_path),
                 title=updated.title,
                 runtime=updated.runtime,
+                workspace_kind=updated.workspace_kind
+                or current.workspace_kind
+                or "workspace",
+                worktree_id=updated.worktree_id,
                 runtime_handle=updated.runtime_handle,
                 parent=updated.parent,
                 children=updated.children,
@@ -165,6 +233,29 @@ class LocalTaskStore:
             self._write_index(index)
             return normalized
 
+    def delete_task(
+        self,
+        local_task_id: str,
+        workspace_path: Optional[str] = None,
+    ) -> Optional[LocalTaskRecord]:
+        """Delete one task atomically and return the removed record."""
+
+        with self._lock:
+            index = self._read_index()
+            payload = index["tasks"].get(local_task_id)
+            if payload is None:
+                return None
+
+            current = self._payload_to_record(payload)
+            if workspace_path and current.workspace_path != normalize_workspace_path(
+                workspace_path
+            ):
+                raise KeyError(f"Local task not found in workspace: {local_task_id}")
+
+            index["tasks"].pop(local_task_id, None)
+            self._write_index(index)
+            return current
+
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
         with cls._locks_guard:
@@ -174,7 +265,7 @@ class LocalTaskStore:
 
     def _read_index(self) -> dict[str, Any]:
         if not self.index_path.exists():
-            return {"version": INDEX_VERSION, "tasks": {}}
+            return {"version": INDEX_VERSION, "tasks": {}, "workspaces": {}}
 
         try:
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
@@ -184,7 +275,16 @@ class LocalTaskStore:
         tasks = data.get("tasks")
         if not isinstance(tasks, dict):
             raise ValueError("Invalid local task index: tasks must be an object")
-        return {"version": data.get("version", INDEX_VERSION), "tasks": tasks}
+        workspaces = data.get("workspaces")
+        if workspaces is None:
+            workspaces = {}
+        if not isinstance(workspaces, dict):
+            raise ValueError("Invalid local task index: workspaces must be an object")
+        return {
+            "version": data.get("version", INDEX_VERSION),
+            "tasks": tasks,
+            "workspaces": workspaces,
+        }
 
     def _write_index(self, index: dict[str, Any]) -> None:
         payload = json.dumps(index, ensure_ascii=False, indent=2, sort_keys=True)
@@ -200,6 +300,8 @@ class LocalTaskStore:
             workspace_path=normalize_workspace_path(str(payload["workspace_path"])),
             title=str(payload["title"]),
             runtime=str(payload["runtime"]),
+            workspace_kind=str(payload.get("workspace_kind") or "workspace"),
+            worktree_id=self._optional_text_value(payload.get("worktree_id")),
             runtime_handle=self._dict_value(payload.get("runtime_handle")),
             parent=self._optional_dict_value(payload.get("parent")),
             children=self._list_value(payload.get("children")),
@@ -209,11 +311,27 @@ class LocalTaskStore:
             status=str(payload.get("status") or "active"),
         )
 
+    def _payload_to_workspace_record(self, payload: Any) -> LocalWorkspaceRecord:
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid local workspace record")
+        return LocalWorkspaceRecord(
+            workspace_path=normalize_workspace_path(str(payload["workspace_path"])),
+            runtime=str(payload["runtime"]),
+            title=str(payload.get("title") or payload["workspace_path"]),
+            runtime_handle=self._dict_value(payload.get("runtime_handle")),
+            created_at=str(payload.get("created_at") or utc_now_iso()),
+            updated_at=str(payload.get("updated_at") or utc_now_iso()),
+            status=str(payload.get("status") or "active"),
+        )
+
     def _dict_value(self, value: Any) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
 
     def _optional_dict_value(self, value: Any) -> Optional[dict[str, Any]]:
         return value if isinstance(value, dict) else None
+
+    def _optional_text_value(self, value: Any) -> Optional[str]:
+        return value if isinstance(value, str) and value.strip() else None
 
     def _list_value(self, value: Any) -> list[dict[str, Any]]:
         return value if isinstance(value, list) else []

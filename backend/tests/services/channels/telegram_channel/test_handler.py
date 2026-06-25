@@ -369,6 +369,67 @@ class TestTelegramChannelHandler:
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
+    async def test_create_and_process_chat_keeps_device_streaming_emitter_open(
+        self, handler
+    ):
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        creation_result = _creation_result()
+        creation_result.task.json = {"spec": {"device_id": "hw-4e4bfa88fa25"}}
+        db = MagicMock()
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch(
+                "app.services.channels.handler.SessionLocal",
+                return_value=db,
+            ),
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(61, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=team),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ),
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger_mock,
+        ):
+            result = await handler._create_and_process_chat(user, message_context)
+
+        assert result is None
+        assert trigger_mock.await_args.kwargs["result_emitter"] is None
+
+    @pytest.mark.asyncio
     async def test_create_and_process_device_task_attaches_im_source_metadata(
         self, handler
     ):
@@ -565,6 +626,7 @@ class TestTelegramChannelHandler:
             )
 
         assert trigger_mock.await_args.kwargs["device_id"] == "hw-4e4bfa88fa25"
+        assert trigger_mock.await_args.kwargs["result_emitter"] is None
 
     @pytest.mark.asyncio
     async def test_private_im_continue_task_reports_running_task(self, handler):

@@ -38,6 +38,7 @@ from app.services.device.command_service import (
     execute_configured_device_command,
 )
 from app.services.device_service import device_service
+from app.services.runtime_work_kind_store import list_device_workspace_kinds
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,27 @@ def _wework_local_workspace_roots_for_command(
     return _dedupe_paths(roots)
 
 
+def _runtime_device_workspace_roots_for_command(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    roots = []
+    for mapping in list_device_workspace_kinds(db=db, user_id=user_id):
+        if mapping.device_id != device_id or not mapping.workspace_path:
+            continue
+        root = _normalize_device_path(mapping.workspace_path)
+        if _is_device_path_within(path, root):
+            roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
 def _device_command_env(
     *,
     db: Session,
@@ -173,12 +195,20 @@ def _device_command_env(
         return env
 
     env.pop(WORKSPACE_ROOTS_ENV, None)
+    path = request.path or request.cwd
     roots = _wework_local_workspace_roots_for_command(
         db=db,
         user_id=user_id,
         device_id=device_id,
-        path=request.path or request.cwd,
+        path=path,
     )
+    roots += _runtime_device_workspace_roots_for_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        path=path,
+    )
+    roots = _dedupe_paths(roots)
     if roots:
         env[WORKSPACE_ROOTS_ENV] = os.pathsep.join(roots)
     return env

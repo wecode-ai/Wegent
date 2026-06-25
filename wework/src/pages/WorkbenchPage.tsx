@@ -14,7 +14,11 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    currentRuntimeTaskRunning,
+    isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
+    runtimeTranscriptHasMoreBefore,
+    isRuntimeTranscriptLoadingMore,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -24,11 +28,18 @@ export function WorkbenchPage() {
     selectProject,
     selectProjectWorkspace,
     selectStandaloneDevice,
+    openStandaloneWorkspace,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    searchRuntimeWork,
+    loadOlderRuntimeTranscript,
+    renameRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    archiveProjectConversations,
+    archiveProjectsConversations,
+    archiveChatConversations,
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
@@ -77,6 +88,7 @@ export function WorkbenchPage() {
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
@@ -101,7 +113,11 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+      isAwaitingAssistantStart={isAwaitingAssistantStart}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
+      runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
+      isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -111,9 +127,16 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onSearchRuntimeWork={searchRuntimeWork}
+      onLoadOlderRuntimeTranscript={loadOlderRuntimeTranscript}
+      onRenameRuntimeLocalTask={renameRuntimeLocalTask}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+      onArchiveProjectConversations={archiveProjectConversations}
+      onArchiveProjectsConversations={archiveProjectsConversations}
+      onArchiveChatConversations={archiveChatConversations}
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
+      onOpenStandaloneWorkspace={openStandaloneWorkspace}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}

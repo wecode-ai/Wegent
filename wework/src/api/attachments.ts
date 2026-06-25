@@ -16,6 +16,19 @@ function getFileExtension(fileName: string): string {
   return dotIndex >= 0 ? fileName.substring(dotIndex) : ''
 }
 
+function canCreateObjectUrl(): boolean {
+  return typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+}
+
+function isImageFile(file: File): boolean {
+  return (
+    file.type.toLowerCase().startsWith('image/') ||
+    ['.apng', '.avif', '.bmp', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp'].includes(
+      getFileExtension(file.name).toLowerCase()
+    )
+  )
+}
+
 function toAttachmentResponse(response: UploadAttachmentResponse, file: File): Attachment {
   return {
     id: response.id,
@@ -29,6 +42,8 @@ function toAttachmentResponse(response: UploadAttachmentResponse, file: File): A
     subtask_id: response.subtask_id ?? null,
     file_extension: response.file_extension || getFileExtension(file.name),
     created_at: response.created_at || new Date().toISOString(),
+    local_preview_url:
+      isImageFile(file) && canCreateObjectUrl() ? URL.createObjectURL(file) : undefined,
   }
 }
 

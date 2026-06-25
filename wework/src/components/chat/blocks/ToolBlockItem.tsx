@@ -9,12 +9,18 @@ const THINKING_PREVIEW_MAX_LENGTH = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  forceExpanded?: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }
 
-export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps) {
-  const [expanded, setExpanded] = useState(false)
+export function ToolBlockItem({
+  block,
+  forceExpanded = false,
+  onOpenWorkspaceFile,
+}: ToolBlockItemProps) {
+  const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -36,7 +42,7 @@ export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps
               onOpenWorkspaceFile(workspaceFilePath)
               return
             }
-            setExpanded(value => !value)
+            setUserExpanded(value => !value)
           }}
           className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
         >
@@ -46,7 +52,7 @@ export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps
         </button>
         <button
           type="button"
-          onClick={() => setExpanded(value => !value)}
+          onClick={() => setUserExpanded(value => !value)}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
           aria-label={expanded ? '收起工具详情' : '展开工具详情'}
           aria-expanded={expanded}
@@ -90,7 +96,6 @@ function ThinkingBlockItem({
           aria-live="polite"
           data-testid="thinking-live-preview"
         >
-          <CommentaryIcon className="h-4 w-4 shrink-0 text-text-muted" />
           <span className="shrink-0">{t('thinking.running')}</span>
           <span className="shrink-0 text-text-muted">·</span>
           <span className="min-w-0 truncate text-text-muted">
@@ -114,7 +119,6 @@ function ThinkingBlockItem({
         onClick={() => setExpanded(value => !value)}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
       >
-        <CommentaryIcon className="h-4 w-4 shrink-0" />
         <span className="min-w-0 truncate">
           {t('thinking.completed')} · {charCount} {t('thinking.chars')}
         </span>
@@ -149,14 +153,13 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="flex min-w-0 gap-1.5 overflow-x-hidden text-[13px] text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-[13px] text-text-secondary"
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
       data-testid="process-text-block"
     >
-      <CommentaryIcon className="mt-1 h-4 w-4 shrink-0 text-text-muted" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <ProcessMarkdown content={block.content} />
       </div>
     </div>
@@ -348,24 +351,6 @@ function ToolIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M11.42 15.17l-5.1 5.1a2.121 2.121 0 11-3-3l5.1-5.1m0 0L15.17 4.83a2.121 2.121 0 113 3l-7.75 7.34z"
-      />
-    </svg>
-  )
-}
-
-function CommentaryIcon({ className = 'mt-1 h-4 w-4 shrink-0' }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z"
       />
     </svg>
   )

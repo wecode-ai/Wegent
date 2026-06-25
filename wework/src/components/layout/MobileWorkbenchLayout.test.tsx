@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { UnifiedModel } from '@/types/api'
+import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
 import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
 import '@/i18n'
 
@@ -54,6 +54,38 @@ const baseProjectChat = {
   removeAttachment: vi.fn().mockResolvedValue(undefined),
 }
 
+function runtimeWork(
+  items: Array<{
+    id: number
+    name: string
+    workspaceId?: number | null
+    deviceId?: string
+    deviceName?: string
+    workspacePath?: string
+  }>
+): RuntimeWorkListResponse {
+  return {
+    projects: items.map(item => ({
+      project: { id: item.id, name: item.name },
+      deviceWorkspaces: [
+        {
+          id: item.workspaceId ?? null,
+          projectId: item.id,
+          deviceId: item.deviceId ?? 'device-1',
+          deviceName: item.deviceName ?? 'Local Device',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
+          mapped: true,
+          localTasks: [],
+        },
+      ],
+    })),
+    chats: [],
+    totalLocalTasks: 0,
+  }
+}
+
 describe('MobileWorkbenchLayout', () => {
   function createDeferred<T>() {
     let resolve!: (value: T) => void
@@ -85,11 +117,33 @@ describe('MobileWorkbenchLayout', () => {
 
   test('uses the project selector instead of a static project work shortcut', async () => {
     const onSelectProject = vi.fn()
+    const onSelectProjectWorkspace = vi.fn()
 
     render(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
+        projectWork={{
+          projects: baseState.projects,
+          devices: [],
+          runtimeWork: runtimeWork([
+            {
+              id: 1,
+              name: 'github_wegent',
+              workspaceId: 10,
+            },
+          ]),
+          currentProject: null,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: null,
+          selectedDeviceWorkspaceId: null,
+          executionMode: 'current_workspace',
+          executionModeLocked: false,
+          onSelectProject,
+          onSelectProjectWorkspace,
+          onSelectStandaloneDevice: vi.fn(),
+          onExecutionModeChange: vi.fn(),
+        }}
         onSelectProject={onSelectProject}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
@@ -102,7 +156,8 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('project-option-1'))
 
-    expect(onSelectProject).toHaveBeenCalledWith(1)
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(1, 10)
+    expect(onSelectProject).not.toHaveBeenCalled()
   })
 
   test('does not show the user avatar on the mobile empty chat page', () => {
@@ -226,6 +281,7 @@ describe('MobileWorkbenchLayout', () => {
         'conversation-device-offline-banner'
       )
     ).toBeInTheDocument()
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-scroll-area')).not.toHaveClass('pt-28')
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
@@ -416,10 +472,22 @@ describe('MobileWorkbenchLayout', () => {
         projectWork={{
           projects: [currentProject],
           devices: [],
+          runtimeWork: runtimeWork([
+            {
+              id: currentProject.id,
+              name: currentProject.name,
+              workspaceId: 10,
+              workspacePath: '/workspace/github_wegent',
+            },
+          ]),
+          currentProject,
           currentProjectId: currentProject.id,
+          currentStandaloneDeviceId: null,
+          selectedDeviceWorkspaceId: 10,
           executionMode: 'current_workspace',
           executionModeLocked: false,
           onSelectProject: vi.fn(),
+          onSelectProjectWorkspace: vi.fn(),
           onSelectStandaloneDevice: vi.fn(),
           onExecutionModeChange: vi.fn(),
         }}
@@ -822,7 +890,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 1,
           },
         }}
@@ -835,6 +903,9 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    expect(screen.getByTestId('mobile-runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('mobile-runtime-chat-empty')).toHaveTextContent('暂无会话')
+    expect(screen.queryByText('未映射工作区')).not.toBeInTheDocument()
     await userEvent.click(screen.getByText('github_wegent'))
 
     expect(screen.queryByText('Local Mac · Wegent local')).not.toBeInTheDocument()
@@ -877,7 +948,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 1,
           },
         }}
@@ -897,7 +968,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(runningStatus.querySelector('svg')).not.toBeNull()
   })
 
-  test('renders unmapped chat runtime tasks as conversations in the mobile drawer', async () => {
+  test('renders chat runtime tasks as conversations in the mobile drawer', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
@@ -907,7 +978,7 @@ describe('MobileWorkbenchLayout', () => {
           ...baseState,
           runtimeWork: {
             projects: [],
-            unmappedDeviceWorkspaces: [
+            chats: [
               {
                 deviceId: 'local-device',
                 deviceName: 'Local Mac',
@@ -939,8 +1010,9 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
-    expect(screen.getByText('对话')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-runtime-chat-section')).toHaveTextContent('对话')
     expect(screen.queryByText(`Local Mac ${chatPath}`)).not.toBeInTheDocument()
+    expect(screen.queryByText('未映射工作区')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('mobile-chat-runtime-task-button'))
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
@@ -1015,7 +1087,7 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            unmappedDeviceWorkspaces: [],
+            chats: [],
             totalLocalTasks: 6,
           },
         }}
@@ -1103,7 +1175,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(onUpdateProjectName).toHaveBeenCalledWith(1, 'renamed-project')
   })
 
-  test('opens a mobile-specific settings page with plugins inside settings', async () => {
+  test('opens a mobile-specific settings page without unreleased plugins navigation', async () => {
     const onOpenPlugins = vi.fn()
 
     render(
@@ -1122,8 +1194,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
-    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
+    expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 })

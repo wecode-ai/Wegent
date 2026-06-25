@@ -2,11 +2,13 @@ import { X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TextInputDialogProps {
   open: boolean
   title: string
   label: string
+  description?: string
   initialValue: string
   confirmLabel: string
   cancelLabel: string
@@ -16,10 +18,7 @@ interface TextInputDialogProps {
   onSubmit: (value: string) => Promise<void> | void
 }
 
-export function TextInputDialog({
-  open,
-  ...props
-}: TextInputDialogProps) {
+export function TextInputDialog({ open, ...props }: TextInputDialogProps) {
   if (!open) return null
 
   return <TextInputDialogContent key={props.initialValue} {...props} />
@@ -28,6 +27,7 @@ export function TextInputDialog({
 function TextInputDialogContent({
   title,
   label,
+  description,
   initialValue,
   confirmLabel,
   cancelLabel,
@@ -36,8 +36,10 @@ function TextInputDialogContent({
   onClose,
   onSubmit,
 }: Omit<TextInputDialogProps, 'open'>) {
+  const { t } = useTranslation('common')
   const [value, setValue] = useState(initialValue)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const trimmedValue = value.trim()
 
@@ -55,10 +57,7 @@ function TextInputDialogContent({
         className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl"
       >
         <div className="flex items-center justify-between gap-4">
-          <h2
-            id={`${inputTestId}-title`}
-            className="text-base font-semibold text-[#202124]"
-          >
+          <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-[#202124]">
             {title}
           </h2>
           <button
@@ -71,6 +70,9 @@ function TextInputDialogContent({
             <X className="h-4 w-4" />
           </button>
         </div>
+        {description && (
+          <p className="mt-2 text-[13px] leading-[18px] text-[#606368]">{description}</p>
+        )}
         <label className="mt-5 block text-[13px] font-medium leading-[18px] text-[#3c4043]">
           {label}
         </label>
@@ -78,9 +80,14 @@ function TextInputDialogContent({
           data-testid={inputTestId}
           value={value}
           autoFocus
-          onChange={event => setValue(event.target.value)}
+          onFocus={event => event.currentTarget.select()}
+          onChange={event => {
+            setValue(event.target.value)
+            setError(null)
+          }}
           className="mt-2 h-9 w-full rounded-md border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
         />
+        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
@@ -96,9 +103,16 @@ function TextInputDialogContent({
             disabled={!trimmedValue || submitting}
             onClick={async () => {
               setSubmitting(true)
+              setError(null)
               try {
                 await onSubmit(trimmedValue)
                 onClose()
+              } catch (submitError) {
+                setError(
+                  submitError instanceof Error
+                    ? submitError.message
+                    : t('workbench.save_failed', '保存失败')
+                )
               } finally {
                 setSubmitting(false)
               }
@@ -110,6 +124,6 @@ function TextInputDialogContent({
         </div>
       </div>
     </div>,
-    document.body,
+    document.body
   )
 }

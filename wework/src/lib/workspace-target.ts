@@ -10,6 +10,7 @@ import {
   resolveProjectWorkspacePath,
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
@@ -93,13 +94,14 @@ export function resolveRuntimeWorkspaceContext({
       if (!task) continue
 
       return {
-        project: projects.find(project => project.id === projectWork.project.id) ?? null,
+        project:
+          projects.find(project => project.id === runtimeProjectUiId(projectWork.project)) ?? null,
         workspaceTarget: workspaceTargetFromRuntimeTask(workspace, task),
       }
     }
   }
 
-  for (const workspace of runtimeWork?.unmappedDeviceWorkspaces ?? []) {
+  for (const workspace of runtimeWork?.chats ?? []) {
     const task = workspace.localTasks.find(item =>
       runtimeTaskMatches(currentRuntimeTask, workspace, item)
     )

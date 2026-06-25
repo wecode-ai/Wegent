@@ -203,6 +203,7 @@ export function ProjectChatComposer({
           projects={projectWork.projects}
           devices={projectWork.devices}
           runtimeWork={projectWork.runtimeWork}
+          currentProject={projectWork.currentProject}
           currentProjectId={projectWork.currentProjectId}
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}

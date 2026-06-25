@@ -335,6 +335,21 @@ def test_admin_token(test_admin_user: User) -> str:
 
 
 @pytest.fixture(scope="function")
+def test_task_token(test_user: User) -> str:
+    """
+    Create a valid task token for the test user, usable with executor/MCP auth.
+    """
+    from app.services.auth.task_token import create_task_token
+
+    return create_task_token(
+        task_id=1,
+        subtask_id=1,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
+
+
+@pytest.fixture(scope="function")
 def test_client(test_db: Session) -> TestClient:
     """
     Create a test client with database dependency override.

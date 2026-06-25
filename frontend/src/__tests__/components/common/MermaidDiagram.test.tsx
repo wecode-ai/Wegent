@@ -254,6 +254,39 @@ describe('MermaidDiagram', () => {
     }
   })
 
+  it('renders fullscreen modal at page level and locks body scrolling', async () => {
+    await act(async () => {
+      renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
+    })
+
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><text x="10" y="20">Diagram text</text></svg>',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('mermaid-fullscreen-button'))
+    })
+
+    const modal = await screen.findByTestId('mermaid-fullscreen-modal')
+    expect(document.body).toContainElement(modal)
+    expect(document.body.style.overflow).toBe('hidden')
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('mermaid-fullscreen-close-button'))
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('mermaid-fullscreen-modal')).not.toBeInTheDocument()
+    })
+    expect(document.body.style.overflow).toBe('')
+  })
+
   it('renders error state for invalid mermaid code', async () => {
     // Create a mock that rejects for this test
     let rejectRender: (error: Error) => void = () => {}
