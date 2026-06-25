@@ -96,4 +96,83 @@ describe('createLocalAppServices', () => {
       timeout_seconds: 10,
     })
   })
+
+  test('adapts executor runtime workspace list to workbench shape', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/Users/me/project',
+          label: 'Project',
+          workspaceSource: 'local',
+          localTasks: [
+            {
+              localTaskId: 'task-1',
+              workspacePath: '/Users/me/project',
+              title: 'Build',
+              runtime: 'codex',
+              workspaceKind: 'workspace',
+            },
+          ],
+        },
+        {
+          workspacePath: '/Users/me/chat',
+          localTasks: [
+            {
+              localTaskId: 'chat-1',
+              workspacePath: '/Users/me/chat',
+              title: 'Chat',
+              runtime: 'codex',
+              workspaceKind: 'chat',
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual({
+      projects: [
+        {
+          project: {
+            key: 'local:/Users/me/project',
+            id: expect.any(Number),
+            name: 'Project',
+          },
+          deviceWorkspaces: [
+            expect.objectContaining({
+              deviceId: 'local-device',
+              workspacePath: '/Users/me/project',
+              workspaceKind: 'workspace',
+              workspaceSource: 'local',
+              label: 'Project',
+              localTasks: [
+                expect.objectContaining({
+                  localTaskId: 'task-1',
+                }),
+              ],
+            }),
+          ],
+          totalLocalTasks: 1,
+        },
+      ],
+      chats: [
+        expect.objectContaining({
+          deviceId: 'local-device',
+          workspacePath: '/Users/me/chat',
+          workspaceKind: 'chat',
+          localTasks: [
+            expect.objectContaining({
+              localTaskId: 'chat-1',
+            }),
+          ],
+        }),
+      ],
+      totalLocalTasks: 2,
+    })
+  })
 })

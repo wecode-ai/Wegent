@@ -2,7 +2,9 @@ import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
 import type {
   DeviceCommandResponse,
   DeviceInfo,
+  LocalTaskSummary,
   LocalDeviceSkill,
+  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeWorkListResponse,
@@ -105,12 +107,122 @@ function assertCommandSuccess(response: DeviceCommandResponse, fallback: string)
   }
 }
 
+function stableLocalId(value: string): number {
+  let hash = 0
+  for (const char of value) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  }
+  return (hash % 1_000_000_000) + 1
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function workspaceLabel(workspacePath: string, label: unknown): string {
+  const explicitLabel = stringValue(label)
+  if (explicitLabel) return explicitLabel
+  return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
+}
+
+function adaptRuntimeWorkListResponse(response: unknown): RuntimeWorkListResponse {
+  const record = recordValue(response)
+  if (Array.isArray(record.projects) && Array.isArray(record.chats)) {
+    return response as RuntimeWorkListResponse
+  }
+
+  const workspaces = Array.isArray(record.workspaces) ? record.workspaces : []
+  const projects: RuntimeWorkListResponse['projects'] = []
+  const chats: RuntimeWorkListResponse['chats'] = []
+  let totalLocalTasks = 0
+
+  for (const rawWorkspace of workspaces) {
+    const workspace = recordValue(rawWorkspace)
+    const workspacePath =
+      stringValue(workspace.workspacePath) ?? stringValue(workspace.workspace_path)
+    if (!workspacePath) continue
+
+    const rawTasks = Array.isArray(workspace.localTasks)
+      ? workspace.localTasks
+      : Array.isArray(workspace.local_tasks)
+        ? workspace.local_tasks
+        : []
+    const localTasks = rawTasks.reduce<LocalTaskSummary[]>((items, task) => {
+      const taskRecord = recordValue(task)
+      const localTaskId =
+        stringValue(taskRecord.localTaskId) ?? stringValue(taskRecord.local_task_id)
+      if (!localTaskId) {
+        return items
+      }
+      const taskWorkspacePath = stringValue(taskRecord.workspacePath) ?? workspacePath
+      items.push({
+        ...taskRecord,
+        localTaskId,
+        workspacePath: taskWorkspacePath,
+        title: stringValue(taskRecord.title) ?? localTaskId,
+        runtime: stringValue(taskRecord.runtime) ?? 'codex',
+      })
+      return items
+    }, [])
+    totalLocalTasks += localTasks.length
+
+    const firstTask = recordValue(localTasks[0])
+    const workspaceKind =
+      stringValue(workspace.workspaceKind) ??
+      stringValue(workspace.workspace_kind) ??
+      stringValue(firstTask.workspaceKind) ??
+      stringValue(firstTask.workspace_kind) ??
+      'workspace'
+    const label = workspaceLabel(workspacePath, workspace.label)
+    const deviceWorkspace: RuntimeDeviceWorkspace = {
+      id: null,
+      projectId: null,
+      deviceId:
+        stringValue(workspace.deviceId) ?? stringValue(workspace.device_id) ?? LOCAL_DEVICE_ID,
+      deviceName: 'Local Executor',
+      deviceStatus: 'online',
+      available: true,
+      workspacePath,
+      workspaceKind,
+      label,
+      workspaceSource:
+        stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),
+      remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
+      mapped: true,
+      localTasks,
+    }
+
+    if (workspaceKind === 'chat') {
+      chats.push(deviceWorkspace)
+      continue
+    }
+
+    projects.push({
+      project: {
+        key: `local:${workspacePath}`,
+        id: stableLocalId(workspacePath),
+        name: label,
+      },
+      deviceWorkspaces: [deviceWorkspace],
+      totalLocalTasks: localTasks.length,
+    })
+  }
+
+  return { projects, chats, totalLocalTasks }
+}
+
 function createRuntimeWorkApi(
   request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
 ) {
   return {
-    listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      return request('runtime.tasks.list', {})
+    async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
+      return adaptRuntimeWorkListResponse(await request('runtime.tasks.list', {}))
     },
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')
@@ -196,8 +308,15 @@ function createRuntimeWorkApi(
     cancelRuntimeTask(data: RuntimeTaskAddress) {
       return request('runtime.tasks.cancel', data as unknown as Record<string, unknown>)
     },
-    createRuntimeTask(data: RuntimeTaskCreateRequest) {
-      return request('runtime.tasks.create', data as unknown as Record<string, unknown>)
+    async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+      const response = await request<Record<string, unknown>>(
+        'runtime.tasks.create',
+        data as unknown as Record<string, unknown>
+      )
+      return {
+        ...response,
+        deviceId: stringValue(response.deviceId) ?? data.deviceId ?? LOCAL_DEVICE_ID,
+      }
     },
     forkRuntimeTask(data: Record<string, unknown>) {
       return request('runtime.tasks.import_fork', data)
