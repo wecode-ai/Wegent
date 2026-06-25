@@ -39,7 +39,7 @@ describe('workbenchReducer', () => {
           ],
         },
       ],
-      unmappedDeviceWorkspaces: [],
+      chats: [],
       totalLocalTasks: 1,
     }
 
@@ -115,7 +115,7 @@ describe('workbenchReducer', () => {
       ],
       runtimeWork: {
         projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [] }],
-        unmappedDeviceWorkspaces: [
+        chats: [
           {
             deviceId: 'device-1',
             workspacePath: '/workspace/repo',
@@ -156,7 +156,7 @@ describe('workbenchReducer', () => {
         mapped: true,
       }),
     ])
-    expect(updated.runtimeWork?.unmappedDeviceWorkspaces).toEqual([])
+    expect(updated.runtimeWork?.chats).toEqual([])
   })
 
   test('keeps existing devices when a device refresh returns a transient empty list', () => {
@@ -242,7 +242,7 @@ describe('workbenchReducer', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 0,
       },
     })

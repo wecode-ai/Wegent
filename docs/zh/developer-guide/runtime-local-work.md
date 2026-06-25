@@ -88,6 +88,24 @@ Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。executor
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
+## 已归档会话
+
+已归档会话同样是设备侧状态。Backend 只做用户、设备和工作区校验，然后把请求转发给目标 executor；它不会读取或写入 `TaskResource.STATE_ARCHIVED`，也不会调用中心库 `/tasks/archived`。Wework 的归档列表只从运行时 Project 和 Conversation 范围内产生，避免展示不属于当前 Codex Lite 侧栏的数据。
+
+归档相关 HTTP API 包括：
+
+```text
+POST /api/runtime-work/archived-conversations/list
+POST /api/runtime-work/archived-conversations/archive
+POST /api/runtime-work/archived-conversations/archive-project
+POST /api/runtime-work/archived-conversations/archive-all
+POST /api/runtime-work/archived-conversations/unarchive
+POST /api/runtime-work/archived-conversations/delete
+POST /api/runtime-work/archived-conversations/delete-bulk
+```
+
+executor 对原生 Codex 会话通过 Codex SDK 或本机 Codex state 执行 archive/unarchive；删除已归档会话时，需要在设备侧移除对应 Codex 本地 state 行以及 rollout/session 文件。列表响应会标准化 `id`、`localTaskId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。批量删除只作用于前端当前提交的归档项集合。
+
 图片附件上传成功后，Wework 会在当前页面的 `Attachment` 对象上保留一个前端本地的 `local_preview_url`，用于发送后立即展示图片预览，避免刚发送的消息再通过附件下载接口拉取同一张图片。该字段只属于前端渲染状态，不写入 Backend，也不会进入 `attachment_ids` 或 executor 请求；页面刷新后仍以持久化附件 ID 为准重新读取附件。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。

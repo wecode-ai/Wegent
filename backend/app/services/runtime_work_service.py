@@ -30,6 +30,10 @@ from app.models.subtask_context import ContextStatus, ContextType, SubtaskContex
 from app.models.user import User
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
+    ArchivedConversationItem,
+    ArchivedConversationProjectGroup,
+    ArchivedConversationsListRequest,
+    ArchivedConversationsListResponse,
     BindRuntimeTaskIMSessionsRequest,
     BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspacePrepareRequest,
@@ -37,6 +41,9 @@ from app.schemas.runtime_work import (
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     LocalTaskSummary,
+    RuntimeArchivedConversationBulkRequest,
+    RuntimeArchivedConversationBulkResponse,
+    RuntimeArchiveProjectConversationsRequest,
     RuntimeDeviceWorkspace,
     RuntimeFileChangesRevertRequest,
     RuntimeFileChangesRevertResponse,
@@ -57,6 +64,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -66,6 +74,8 @@ from app.schemas.runtime_work import (
     RuntimeWorkSearchResponse,
     RuntimeWorkspaceOpenRequest,
     RuntimeWorkspaceOpenResponse,
+    RuntimeWorkspaceRemoveRequest,
+    RuntimeWorkspaceRenameRequest,
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
@@ -126,6 +136,17 @@ class RuntimeForkWorkspaceTransfer:
     mode: str
     target_workspace_path: str
     source_commit: str
+
+
+@dataclass(frozen=True)
+class RuntimeWorkspaceListing:
+    """Executor workspace listing plus local task summaries."""
+
+    local_tasks: list[LocalTaskSummary]
+    order_index: int = 0
+    label: Optional[str] = None
+    workspace_source: Optional[str] = None
+    remote_host_id: Optional[str] = None
 
 
 def normalize_workspace_path(path: str) -> str:
@@ -197,6 +218,12 @@ async def prepare_device_workspace(
             action=payload.action,
         )
     )
+    await _register_prepared_runtime_workspace(
+        user_id=user_id,
+        device_id=payload.device_id,
+        workspace_path=workspace_path,
+        project_name=project.name,
+    )
     mapping = upsert_device_workspace(
         db=db,
         user_id=user_id,
@@ -264,15 +291,17 @@ async def list_runtime_work(
         user_id=user_id,
         devices=devices,
     )
+    device_order = _runtime_device_order(devices)
 
     projects: list[RuntimeProjectWork] = []
     conversations: list[RuntimeDeviceWorkspace] = []
     total_local_tasks = 0
 
-    for (device_id, workspace_path), local_tasks in sorted(
+    for (device_id, workspace_path), workspace_listing in sorted(
         runtime_workspaces.items(),
-        key=lambda item: _runtime_workspace_sort_key(item[1]),
+        key=lambda item: _runtime_workspace_order_key(item, device_order),
     ):
+        local_tasks = workspace_listing.local_tasks
         total_local_tasks += len(local_tasks)
         device = devices_by_id.get(device_id)
         workspace_kind_fields = _runtime_workspace_kind_fields_from_tasks(
@@ -287,6 +316,9 @@ async def list_runtime_work(
             deviceStatus=_device_status(device),
             workspacePath=workspace_path,
             **workspace_kind_fields,
+            label=workspace_listing.label,
+            workspaceSource=workspace_listing.workspace_source,
+            remoteHostId=workspace_listing.remote_host_id,
             mapped=True,
             available=True,
             localTasks=local_tasks,
@@ -294,7 +326,11 @@ async def list_runtime_work(
         if workspace.workspace_kind == "chat":
             conversations.append(workspace)
             continue
-        project_ref = _runtime_project_ref_from_workspace(device_id, workspace_path)
+        project_ref = _runtime_project_ref_from_workspace(
+            device_id,
+            workspace_path,
+            label=workspace_listing.label,
+        )
         projects.append(
             RuntimeProjectWork(
                 project=project_ref,
@@ -304,7 +340,7 @@ async def list_runtime_work(
 
     return RuntimeWorkListResponse(
         projects=projects,
-        unmappedDeviceWorkspaces=conversations,
+        chats=conversations,
         totalLocalTasks=total_local_tasks,
     )
 
@@ -713,6 +749,42 @@ async def archive_runtime_task(
     return _runtime_archive_response(result, normalized_address)
 
 
+async def rename_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskRenameRequest,
+) -> RuntimeTaskArchiveResponse:
+    """Rename a LocalTask through the owning local executor."""
+
+    normalized_address = _normalized_address(request.address)
+    title = request.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="title is required",
+        )
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.rename",
+            payload={
+                **_runtime_task_address_payload(normalized_address),
+                "title": title,
+            },
+            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_archive_response(result, normalized_address)
+
+
 async def cancel_runtime_task(
     *,
     db: Session,
@@ -738,6 +810,194 @@ async def cancel_runtime_task(
             detail=str(exc),
         ) from exc
     return _runtime_cancel_response(result, normalized_address)
+
+
+async def list_archived_conversations(
+    *,
+    db: Session,
+    user_id: int,
+    request: ArchivedConversationsListRequest,
+) -> ArchivedConversationsListResponse:
+    """List archived conversations from online device-local runtime state."""
+
+    devices = await device_service.get_all_devices(db, user_id)
+    if request.device_id:
+        _ensure_owned_device(db, user_id, request.device_id)
+        devices = [
+            device
+            for device in devices
+            if str(device.get("device_id") or "") == request.device_id
+        ]
+
+    project_lookup = _archived_project_lookup(db, user_id)
+    items: list[ArchivedConversationItem] = []
+    for device in devices:
+        device_id = str(device.get("device_id") or "")
+        if not device_id or _device_status(device) not in {"online", "busy"}:
+            continue
+        device_source = _archived_device_source(device)
+        if request.source != "all" and request.source != device_source:
+            continue
+        try:
+            result = await runtime_rpc_service.call(
+                user_id=user_id,
+                device_id=device_id,
+                method="runtime.archived_conversations.list",
+                payload=_archived_list_payload(request),
+                timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+            )
+        except RuntimeRpcError:
+            continue
+        for raw_item in result.get("items", []):
+            item = _archived_conversation_item(
+                raw_item,
+                device_id=device_id,
+                device_name=_device_name(device, device_id),
+                device_address=_device_address(device, device_id),
+                source=device_source,
+                project_lookup=project_lookup,
+            )
+            if item is not None and _include_archived_item(item, request):
+                items.append(item)
+
+    items = _sort_archived_items(items, request.sort)
+    return ArchivedConversationsListResponse(
+        items=items,
+        projectGroups=_archived_project_groups(items),
+        total=len(items),
+    )
+
+
+async def archive_project_conversations(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeArchiveProjectConversationsRequest,
+) -> RuntimeArchivedConversationBulkResponse:
+    """Archive active conversations under one runtime project."""
+
+    if request.project_id is None and not request.runtime_project_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="projectId or runtimeProjectKey is required",
+        )
+    if request.project_id is not None:
+        _get_active_project(db, user_id, request.project_id, None)
+
+    runtime_work = await list_runtime_work(db=db, user_id=user_id)
+    addresses = _active_runtime_addresses(
+        runtime_work,
+        project_id=request.project_id,
+        runtime_project_key=request.runtime_project_key,
+    )
+    return await _archive_runtime_addresses(
+        db=db,
+        user_id=user_id,
+        addresses=addresses,
+    )
+
+
+async def archive_all_conversations(
+    *,
+    db: Session,
+    user_id: int,
+) -> RuntimeArchivedConversationBulkResponse:
+    """Archive all active runtime conversations visible on online devices."""
+
+    runtime_work = await list_runtime_work(db=db, user_id=user_id)
+    addresses = _active_runtime_addresses(runtime_work)
+    return await _archive_runtime_addresses(
+        db=db,
+        user_id=user_id,
+        addresses=addresses,
+    )
+
+
+async def unarchive_conversation(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskArchiveResponse:
+    """Unarchive one device-local conversation through the owning executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    result = await _call_archived_conversation_rpc(
+        user_id=user_id,
+        address=normalized_address,
+        method="runtime.archived_conversations.unarchive",
+    )
+    if result.get("success") and normalized_address.workspace_path:
+        _touch_workspace_mapping(db, user_id, normalized_address)
+    return _runtime_archive_response(result, normalized_address)
+
+
+async def delete_archived_conversation(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskArchiveResponse:
+    """Delete one archived device-local conversation through the executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    result = await _call_archived_conversation_rpc(
+        user_id=user_id,
+        address=normalized_address,
+        method="runtime.archived_conversations.delete",
+    )
+    return _runtime_archive_response(result, normalized_address)
+
+
+async def delete_archived_conversations_bulk(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeArchivedConversationBulkRequest,
+) -> RuntimeArchivedConversationBulkResponse:
+    """Delete archived conversations grouped by owning device RPC."""
+
+    addresses = [_normalized_address(address) for address in request.items]
+    for address in addresses:
+        _ensure_owned_device(db, user_id, address.device_id)
+
+    grouped: dict[str, list[RuntimeTaskAddress]] = {}
+    for address in addresses:
+        grouped.setdefault(address.device_id, []).append(address)
+
+    results: list[dict[str, Any]] = []
+    deleted_count = 0
+    for device_id, device_addresses in grouped.items():
+        try:
+            result = await runtime_rpc_service.call(
+                user_id=user_id,
+                device_id=device_id,
+                method="runtime.archived_conversations.delete_bulk",
+                payload={
+                    "items": [
+                        _runtime_task_address_payload(address)
+                        for address in device_addresses
+                    ]
+                },
+                timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+            )
+        except RuntimeRpcError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+        results.append(result)
+        deleted_count += int(result.get("deletedCount") or 0)
+
+    return RuntimeArchivedConversationBulkResponse(
+        accepted=True,
+        requestedCount=len(addresses),
+        acceptedCount=len(addresses),
+        deletedCount=deleted_count,
+        results=results,
+    )
 
 
 async def create_runtime_task(
@@ -786,6 +1046,41 @@ async def create_runtime_task(
     )
 
 
+async def _register_prepared_runtime_workspace(
+    *,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    project_name: str,
+) -> None:
+    payload = {
+        "runtime": "codex",
+        "workspacePath": workspace_path,
+    }
+    normalized_name = project_name.strip() if isinstance(project_name, str) else ""
+    if normalized_name:
+        payload["label"] = normalized_name
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspaces.open",
+            payload=payload,
+            timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    if result.get("success") is False or result.get("accepted") is False:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(result.get("error") or "Runtime workspace registration failed"),
+        )
+
+
 async def open_runtime_workspace(
     *,
     db: Session,
@@ -801,12 +1096,91 @@ async def open_runtime_workspace(
         "runtime": request.runtime,
         "workspacePath": workspace_path,
     }
+    if request.label:
+        payload["label"] = request.label.strip()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=device_id,
             method="runtime.workspaces.open",
             payload=payload,
+            timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_workspace_open_response(
+        result=result,
+        runtime=request.runtime,
+        device_id=device_id,
+        workspace_path=workspace_path,
+    )
+
+
+async def rename_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceRenameRequest,
+) -> RuntimeWorkspaceOpenResponse:
+    """Rename a runtime workspace project without touching conversations."""
+
+    device_id = request.device_id.strip()
+    workspace_path = normalize_workspace_path(request.workspace_path)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="name is required",
+        )
+    _ensure_owned_device(db, user_id, device_id)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspaces.rename",
+            payload={
+                "runtime": request.runtime,
+                "workspacePath": workspace_path,
+                "label": name,
+            },
+            timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_workspace_open_response(
+        result=result,
+        runtime=request.runtime,
+        device_id=device_id,
+        workspace_path=workspace_path,
+    )
+
+
+async def remove_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceRemoveRequest,
+) -> RuntimeWorkspaceOpenResponse:
+    """Remove a runtime workspace project without deleting conversations."""
+
+    device_id = request.device_id.strip()
+    workspace_path = normalize_workspace_path(request.workspace_path)
+    _ensure_owned_device(db, user_id, device_id)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspaces.remove",
+            payload={
+                "runtime": request.runtime,
+                "workspacePath": workspace_path,
+            },
             timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -2002,63 +2376,395 @@ async def _list_online_runtime_workspaces(
     *,
     user_id: int,
     devices: list[dict[str, Any]],
-) -> dict[tuple[str, str], list[LocalTaskSummary]]:
-    grouped: dict[tuple[str, str], list[LocalTaskSummary]] = {}
-    for device in devices:
-        device_id = str(device.get("device_id") or "")
-        if not device_id or _device_status(device) not in {"online", "busy"}:
-            continue
-        try:
-            result = await runtime_rpc_service.call(
-                user_id=user_id,
-                device_id=device_id,
-                method="runtime.tasks.list",
-                payload={},
-                timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
+    started_at = time.perf_counter()
+    online_devices = [
+        device
+        for device in devices
+        if str(device.get("device_id") or "")
+        and _device_status(device) in {"online", "busy"}
+    ]
+    results = await asyncio.gather(
+        *[
+            _list_runtime_workspaces_for_device(user_id=user_id, device=device)
+            for device in online_devices
+        ],
+        return_exceptions=True,
+    )
+
+    grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning(
+                "[RuntimeWork] Failed to list runtime workspaces from device: user_id=%s error_type=%s",
+                user_id,
+                result.__class__.__name__,
             )
-        except RuntimeRpcError:
             continue
-        for workspace in _iter_runtime_workspaces(result):
-            workspace_path = normalize_workspace_path(workspace["workspacePath"])
-            tasks = [
-                LocalTaskSummary.model_validate(
-                    {
-                        **task,
-                        **_runtime_task_kind_fields(
-                            task,
-                            normalize_workspace_path(
-                                str(task.get("workspacePath") or workspace_path)
-                            ),
-                        ),
-                        "workspacePath": normalize_workspace_path(
-                            str(task.get("workspacePath") or workspace_path)
-                        ),
-                    }
-                )
-                for task in workspace["localTasks"]
-                if isinstance(task, dict)
-            ]
-            grouped[(device_id, workspace_path)] = tasks
+        grouped.update(result)
+
+    logger.info(
+        "[RuntimeWork] Listed runtime workspaces: user_id=%s online_devices=%s workspace_count=%s task_count=%s elapsed_ms=%s",
+        user_id,
+        len(online_devices),
+        len(grouped),
+        sum(len(listing.local_tasks) for listing in grouped.values()),
+        int((time.perf_counter() - started_at) * 1000),
+    )
     return grouped
 
 
-def _runtime_workspace_sort_key(
-    local_tasks: list[LocalTaskSummary],
-) -> tuple[float, str]:
-    latest = max((_task_timestamp(task) for task in local_tasks), default=0.0)
-    title = local_tasks[0].title if local_tasks else ""
-    return (-latest, title.lower())
+async def _list_runtime_workspaces_for_device(
+    *,
+    user_id: int,
+    device: dict[str, Any],
+) -> dict[tuple[str, str], RuntimeWorkspaceListing]:
+    started_at = time.perf_counter()
+    device_id = str(device.get("device_id") or "")
+    if not device_id:
+        return {}
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        logger.warning(
+            "[RuntimeWork] Runtime workspace list failed: user_id=%s device_id=%s elapsed_ms=%s error=%s",
+            user_id,
+            device_id,
+            int((time.perf_counter() - started_at) * 1000),
+            str(exc),
+        )
+        return {}
+
+    grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
+    for order_index, workspace in enumerate(_iter_runtime_workspaces(result)):
+        workspace_path = normalize_workspace_path(workspace["workspacePath"])
+        tasks = [
+            LocalTaskSummary.model_validate(
+                {
+                    **task,
+                    **_runtime_task_kind_fields(
+                        task,
+                        normalize_workspace_path(
+                            str(task.get("workspacePath") or workspace_path)
+                        ),
+                    ),
+                    "workspacePath": normalize_workspace_path(
+                        str(task.get("workspacePath") or workspace_path)
+                    ),
+                }
+            )
+            for task in workspace["localTasks"]
+            if isinstance(task, dict)
+        ]
+        grouped[(device_id, workspace_path)] = RuntimeWorkspaceListing(
+            local_tasks=tasks,
+            order_index=order_index,
+            label=_runtime_workspace_label(workspace),
+            workspace_source=_runtime_workspace_source(workspace),
+            remote_host_id=_runtime_workspace_remote_host_id(workspace),
+        )
+
+    logger.info(
+        "[RuntimeWork] Runtime workspace list completed: user_id=%s device_id=%s workspace_count=%s task_count=%s elapsed_ms=%s",
+        user_id,
+        device_id,
+        len(grouped),
+        sum(len(listing.local_tasks) for listing in grouped.values()),
+        int((time.perf_counter() - started_at) * 1000),
+    )
+    return grouped
 
 
-def _task_timestamp(task: LocalTaskSummary) -> float:
-    for value in (task.updated_at, task.created_at):
-        if not value:
+def _archived_list_payload(
+    request: ArchivedConversationsListRequest,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if request.workspace_path:
+        payload["workspacePath"] = normalize_workspace_path(request.workspace_path)
+    if request.search:
+        payload["search"] = request.search.strip()
+    return payload
+
+
+def _archived_project_lookup(
+    db: Session,
+    user_id: int,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
+    project_ids = {mapping.project_id for mapping in mappings}
+    projects = (
+        db.query(Project)
+        .filter(
+            Project.user_id == user_id,
+            Project.id.in_(project_ids),
+            Project.is_active == True,
+        )
+        .all()
+        if project_ids
+        else []
+    )
+    projects_by_id = {project.id: project for project in projects}
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for mapping in mappings:
+        workspace_path = normalize_workspace_path(mapping.workspace_path)
+        project = projects_by_id.get(mapping.project_id)
+        lookup[(mapping.device_id, workspace_path)] = {
+            "projectId": mapping.project_id,
+            "projectKey": f"project:{mapping.project_id}",
+            "projectName": project.name if project else mapping.label,
+        }
+    return lookup
+
+
+def _archived_conversation_item(
+    raw_item: Any,
+    *,
+    device_id: str,
+    device_name: str,
+    device_address: str,
+    source: str,
+    project_lookup: dict[tuple[str, str], dict[str, Any]],
+) -> Optional[ArchivedConversationItem]:
+    if not isinstance(raw_item, dict):
+        return None
+    local_task_id = raw_item.get("localTaskId") or raw_item.get("id")
+    workspace_path = raw_item.get("workspacePath")
+    if not isinstance(local_task_id, str) or not local_task_id.strip():
+        return None
+    if not isinstance(workspace_path, str) or not workspace_path.strip():
+        return None
+
+    normalized_workspace = normalize_workspace_path(workspace_path)
+    project = project_lookup.get((device_id, normalized_workspace)) or {}
+    project_key = str(
+        project.get("projectKey")
+        or _runtime_workspace_key(device_id, normalized_workspace)
+    )
+    project_name = str(
+        project.get("projectName") or _path_basename(normalized_workspace)
+    )
+    runtime = raw_item.get("runtime")
+    return ArchivedConversationItem(
+        id=f"{device_id}:{local_task_id.strip()}",
+        localTaskId=local_task_id.strip(),
+        title=str(raw_item.get("title") or local_task_id).strip(),
+        projectId=project.get("projectId"),
+        projectKey=project_key,
+        projectName=project_name,
+        workspacePath=normalized_workspace,
+        workspaceKind=raw_item.get("workspaceKind") or "workspace",
+        deviceId=device_id,
+        deviceName=device_name,
+        deviceAddress=device_address,
+        source=source if source == "local" else "cloud",
+        runtime=runtime if runtime in {"codex", "claude_code"} else None,
+        createdAt=raw_item.get("createdAt"),
+        updatedAt=raw_item.get("updatedAt"),
+    )
+
+
+def _include_archived_item(
+    item: ArchivedConversationItem,
+    request: ArchivedConversationsListRequest,
+) -> bool:
+    if request.source != "all" and item.source != request.source:
+        return False
+    if request.project_id is not None and item.project_id != request.project_id:
+        return False
+    if request.runtime_project_key and item.project_key != request.runtime_project_key:
+        return False
+    if (
+        request.search
+        and request.search.strip().lower()
+        not in " ".join(
+            [
+                item.title,
+                item.project_name or "",
+                item.workspace_path,
+                item.local_task_id,
+            ]
+        ).lower()
+    ):
+        return False
+    return True
+
+
+def _sort_archived_items(
+    items: list[ArchivedConversationItem],
+    sort_key: str,
+) -> list[ArchivedConversationItem]:
+    if sort_key == "alphabetical":
+        return sorted(items, key=lambda item: item.title.lower())
+    if sort_key == "created":
+        return sorted(
+            items,
+            key=lambda item: _timestamp_from_iso(item.created_at),
+            reverse=True,
+        )
+    return sorted(
+        items,
+        key=lambda item: _timestamp_from_iso(item.updated_at or item.created_at),
+        reverse=True,
+    )
+
+
+def _archived_project_groups(
+    items: list[ArchivedConversationItem],
+) -> list[ArchivedConversationProjectGroup]:
+    grouped: dict[tuple[Optional[int], Optional[str], str], int] = {}
+    for item in items:
+        key = (
+            item.project_id,
+            item.project_key,
+            item.project_name or _path_basename(item.workspace_path),
+        )
+        grouped[key] = grouped.get(key, 0) + 1
+    return [
+        ArchivedConversationProjectGroup(
+            projectId=project_id,
+            projectKey=project_key,
+            projectName=project_name,
+            count=count,
+        )
+        for (project_id, project_key, project_name), count in sorted(
+            grouped.items(),
+            key=lambda item: item[0][2].lower(),
+        )
+    ]
+
+
+async def _archive_runtime_addresses(
+    *,
+    db: Session,
+    user_id: int,
+    addresses: list[RuntimeTaskAddress],
+) -> RuntimeArchivedConversationBulkResponse:
+    results: list[dict[str, Any]] = []
+    accepted_count = 0
+    for address in addresses:
+        response = await archive_runtime_task(
+            db=db,
+            user_id=user_id,
+            address=address,
+        )
+        payload = response.model_dump(by_alias=True, exclude_none=True)
+        if response.accepted:
+            accepted_count += 1
+        results.append(payload)
+    return RuntimeArchivedConversationBulkResponse(
+        accepted=True,
+        requestedCount=len(addresses),
+        acceptedCount=accepted_count,
+        results=results,
+    )
+
+
+def _active_runtime_addresses(
+    runtime_work: RuntimeWorkListResponse,
+    *,
+    project_id: Optional[int] = None,
+    runtime_project_key: Optional[str] = None,
+) -> list[RuntimeTaskAddress]:
+    addresses: list[RuntimeTaskAddress] = []
+    include_chats = project_id is None and runtime_project_key is None
+    for project_work in runtime_work.projects:
+        if not _runtime_project_matches(
+            project_work,
+            project_id=project_id,
+            runtime_project_key=runtime_project_key,
+        ):
             continue
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            continue
-    return 0.0
+        addresses.extend(_workspace_task_addresses(project_work.device_workspaces))
+    if include_chats:
+        addresses.extend(_workspace_task_addresses(runtime_work.chats))
+    return addresses
+
+
+def _runtime_project_matches(
+    project_work: RuntimeProjectWork,
+    *,
+    project_id: Optional[int],
+    runtime_project_key: Optional[str],
+) -> bool:
+    if project_id is not None and project_work.project.id != project_id:
+        return False
+    if runtime_project_key and project_work.project.key != runtime_project_key:
+        return False
+    return True
+
+
+def _workspace_task_addresses(
+    workspaces: list[RuntimeDeviceWorkspace],
+) -> list[RuntimeTaskAddress]:
+    addresses: list[RuntimeTaskAddress] = []
+    for workspace in workspaces:
+        for task in workspace.local_tasks:
+            if task.status == "archived":
+                continue
+            addresses.append(
+                RuntimeTaskAddress(
+                    deviceId=workspace.device_id,
+                    workspacePath=workspace.workspace_path,
+                    localTaskId=task.local_task_id,
+                )
+            )
+    return addresses
+
+
+async def _call_archived_conversation_rpc(
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    method: str,
+) -> dict[str, Any]:
+    try:
+        return await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method=method,
+            payload=_runtime_task_address_payload(address),
+            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+
+def _runtime_device_order(devices: list[dict[str, Any]]) -> dict[str, int]:
+    ordered_devices = sorted(
+        enumerate(devices),
+        key=lambda item: (_runtime_device_type_rank(item[1]), item[0]),
+    )
+    return {
+        str(device.get("device_id") or ""): index
+        for index, (_original_index, device) in enumerate(ordered_devices)
+        if str(device.get("device_id") or "")
+    }
+
+
+def _runtime_device_type_rank(device: dict[str, Any]) -> int:
+    return 0 if _device_type(device) == "local" else 1
+
+
+def _runtime_workspace_order_key(
+    item: tuple[tuple[str, str], RuntimeWorkspaceListing],
+    device_order: dict[str, int],
+) -> tuple[int, int, str]:
+    (device_id, workspace_path), listing = item
+    return (
+        device_order.get(device_id, len(device_order)),
+        listing.order_index,
+        workspace_path.lower(),
+    )
 
 
 def _parse_optional_timestamp(value: Optional[str]) -> float:
@@ -2150,8 +2856,34 @@ def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:
         raw_tasks = item.get("localTasks") or item.get("local_tasks") or []
         if not isinstance(raw_tasks, list):
             raw_tasks = []
-        normalized.append({"workspacePath": path, "localTasks": raw_tasks})
+        normalized.append(
+            {
+                "workspacePath": path,
+                "localTasks": raw_tasks,
+                "label": _runtime_workspace_label(item),
+                "workspaceSource": _runtime_workspace_source(item),
+                "remoteHostId": _runtime_workspace_remote_host_id(item),
+            }
+        )
     return normalized
+
+
+def _runtime_workspace_label(workspace: dict[str, Any]) -> Optional[str]:
+    label = workspace.get("label")
+    return label.strip() if isinstance(label, str) and label.strip() else None
+
+
+def _runtime_workspace_source(workspace: dict[str, Any]) -> Optional[str]:
+    source = workspace.get("workspaceSource") or workspace.get("workspace_source")
+    if not isinstance(source, str):
+        return None
+    normalized = source.strip().lower()
+    return normalized if normalized in {"local", "remote"} else None
+
+
+def _runtime_workspace_remote_host_id(workspace: dict[str, Any]) -> Optional[str]:
+    host_id = workspace.get("remoteHostId") or workspace.get("remote_host_id")
+    return host_id.strip() if isinstance(host_id, str) and host_id.strip() else None
 
 
 def _parse_runtime_worktree_path(path: str) -> Optional[RuntimeWorktreePath]:
@@ -2245,14 +2977,25 @@ def _path_basename(path: str) -> str:
 def _runtime_project_ref_from_workspace(
     device_id: str,
     workspace_path: str,
+    *,
+    label: Optional[str] = None,
 ) -> RuntimeProjectRef:
     normalized_path = normalize_workspace_path(workspace_path)
+    display_name = (
+        label.strip()
+        if isinstance(label, str) and label.strip()
+        else _path_basename(normalized_path) or normalized_path
+    )
     return RuntimeProjectRef(
-        key=f"{device_id}:{normalized_path}",
-        name=_path_basename(normalized_path) or normalized_path,
+        key=_runtime_workspace_key(device_id, normalized_path),
+        name=display_name,
         description=normalized_path,
         color=None,
     )
+
+
+def _runtime_workspace_key(device_id: str, workspace_path: str) -> str:
+    return f"{device_id}:{normalize_workspace_path(workspace_path)}"
 
 
 def _device_name(device: Optional[dict[str, Any]], fallback: str) -> str:
@@ -2262,11 +3005,80 @@ def _device_name(device: Optional[dict[str, Any]], fallback: str) -> str:
     return str(name) if name else fallback
 
 
+def _archived_device_source(device: Optional[dict[str, Any]]) -> str:
+    return "local" if _device_type(device) == "local" else "cloud"
+
+
+def _device_type(device: Optional[dict[str, Any]]) -> str:
+    if not device:
+        return ""
+    raw_type = (
+        device.get("device_type")
+        or device.get("deviceType")
+        or device.get("type")
+        or ""
+    )
+    if hasattr(raw_type, "value"):
+        raw_type = raw_type.value
+    return str(raw_type).strip().lower()
+
+
+def _device_address(device: Optional[dict[str, Any]], fallback: str) -> str:
+    if not device:
+        return fallback
+
+    for key in (
+        "runtime_transfer_host",
+        "runtimeTransferHost",
+        "client_ip",
+        "clientIp",
+        "ip",
+        "ip_address",
+        "ipAddress",
+        "private_ip",
+        "privateIp",
+        "public_ip",
+        "publicIp",
+        "host",
+        "hostname",
+    ):
+        value = _string_value(device.get(key))
+        if value:
+            return value
+
+    for config_key in ("remote_config", "remoteConfig", "cloud_config", "cloudConfig"):
+        config = device.get(config_key)
+        if not isinstance(config, dict):
+            continue
+        for key in (
+            "ip",
+            "ipAddress",
+            "host",
+            "hostname",
+            "deviceId",
+            "deviceName",
+        ):
+            value = _string_value(config.get(key))
+            if value:
+                return value
+
+    return _string_value(device.get("device_id")) or fallback
+
+
 def _device_status(device: Optional[dict[str, Any]]) -> str:
     if not device:
         return "unavailable"
     status_value = device.get("status")
     return str(status_value) if status_value else "offline"
+
+
+def _timestamp_from_iso(value: Optional[str]) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
@@ -2351,10 +3163,11 @@ def _project_runtime_target(
     if config.workspace:
         workspace_source = config.workspace.source
         if config.workspace.source == "git":
+            checkout_path = config.workspace.checkoutPath
             workspace_path = (
-                f"projects/{config.workspace.checkoutPath}"
-                if config.workspace.checkoutPath
-                else None
+                checkout_path
+                if checkout_path and posixpath.isabs(checkout_path)
+                else f"projects/{checkout_path}" if checkout_path else None
             )
         else:
             workspace_path = config.workspace.localPath

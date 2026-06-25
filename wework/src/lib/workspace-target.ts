@@ -101,7 +101,7 @@ export function resolveRuntimeWorkspaceContext({
     }
   }
 
-  for (const workspace of runtimeWork?.unmappedDeviceWorkspaces ?? []) {
+  for (const workspace of runtimeWork?.chats ?? []) {
     const task = workspace.localTasks.find(item =>
       runtimeTaskMatches(currentRuntimeTask, workspace, item)
     )

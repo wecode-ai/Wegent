@@ -32,7 +32,7 @@ describe('normalizeTurnFileChanges', () => {
         ...summary,
         diff: 'diff --git a/src/main.ts b/src/main.ts',
         revertible: false,
-      }),
+      })
     ).toEqual({
       ...summary,
       diff: 'diff --git a/src/main.ts b/src/main.ts',
@@ -45,13 +45,13 @@ describe('normalizeTurnFileChanges', () => {
       normalizeTurnFileChanges({
         ...summary,
         file_count: 2,
-      }),
+      })
     ).toBeUndefined()
     expect(
       normalizeTurnFileChanges({
         ...summary,
         files: [{ ...summary.files[0], additions: -1 }],
-      }),
+      })
     ).toBeUndefined()
   })
 })

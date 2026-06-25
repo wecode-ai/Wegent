@@ -88,6 +88,24 @@ Backend forwards `deviceId + localTaskId` as `runtime.tasks.cancel`. For native 
 
 Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
 
+## Archived Conversations
+
+Archived conversations are also device-side state. Backend only validates the user, device, and workspace, then dispatches the request to the target executor. It does not read or write `TaskResource.STATE_ARCHIVED`, and it does not call the central `/tasks/archived` flow. Wework builds the archived list only from runtime Projects and Conversations, so the page does not show data outside the current Codex Lite sidebar scope.
+
+The archive HTTP APIs are:
+
+```text
+POST /api/runtime-work/archived-conversations/list
+POST /api/runtime-work/archived-conversations/archive
+POST /api/runtime-work/archived-conversations/archive-project
+POST /api/runtime-work/archived-conversations/archive-all
+POST /api/runtime-work/archived-conversations/unarchive
+POST /api/runtime-work/archived-conversations/delete
+POST /api/runtime-work/archived-conversations/delete-bulk
+```
+
+For native Codex conversations, the executor archives and unarchives through the Codex SDK or local Codex state. Deleting an archived conversation must remove the matching Codex local state rows and rollout/session files on the device. List responses normalize `id`, `localTaskId`, title, Project name, workspace path, device, source, and timestamp fields, and include grouped Project counts. Bulk delete only applies to the archived item set submitted by the frontend.
+
 After an image attachment uploads successfully, Wework keeps a frontend-local `local_preview_url` on the current page's `Attachment` object. The sent message can display the image immediately without fetching the same attachment through the download API again. This field belongs only to frontend render state; it is not written to Backend and is not sent through `attachment_ids` or executor requests. After a page refresh, persisted attachment ids remain the source of truth.
 
 When rendering a message that already has persisted image attachments, Wework prefers those attachment previews and ignores local image file mentions embedded in the Codex prompt. This avoids showing both the uploaded attachment and a temporary local path. Codex local image mentions are used only as a same-device preview fallback when no attachment record exists. If the current environment cannot convert the local path through Tauri `convertFileSrc`, or the converted image fails to load, the frontend does not display that local path.

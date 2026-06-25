@@ -79,7 +79,7 @@ const runtimeWork: RuntimeWorkListResponse = {
       ],
     },
   ],
-  unmappedDeviceWorkspaces: [],
+  chats: [],
   totalLocalTasks: 0,
 }
 
@@ -142,7 +142,7 @@ describe('project workspace selection', () => {
             ],
           },
         ],
-        unmappedDeviceWorkspaces: [],
+        chats: [],
         totalLocalTasks: 0,
       },
     })

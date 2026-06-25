@@ -12,6 +12,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -89,32 +90,64 @@ class CodexSessionDiscovery:
 
     def discover(self) -> list[LocalTaskRecord]:
         try:
-            records = self._discover_with_sdk()
+            records = self._discover_with_sdk(archived=False)
         except Exception:
             logger.exception("Failed to list Codex threads through SDK")
             return []
 
         return _sort_local_tasks(records)
 
-    def _discover_with_sdk(self) -> list[LocalTaskRecord]:
+    def discover_archived(
+        self,
+        *,
+        workspace_path: Optional[str] = None,
+        search_term: Optional[str] = None,
+    ) -> list[LocalTaskRecord]:
+        try:
+            records = self._discover_with_sdk(
+                archived=True,
+                workspace_path=workspace_path,
+                search_term=search_term,
+            )
+        except Exception:
+            logger.exception("Failed to list archived Codex threads through SDK")
+            return []
+
+        return _sort_local_tasks(records)
+
+    def _discover_with_sdk(
+        self,
+        *,
+        archived: bool,
+        workspace_path: Optional[str] = None,
+        search_term: Optional[str] = None,
+    ) -> list[LocalTaskRecord]:
         client = self._create_codex_client()
         with client as codex:
             response = codex.thread_list(
                 limit=self.limit,
-                archived=False,
+                archived=archived,
                 sort_direction=_codex_enum_value("SortDirection", "desc"),
                 sort_key=_codex_enum_value("ThreadSortKey", "updated_at"),
                 use_state_db_only=True,
             )
 
-        return [
+        records = [
             task
             for task in (
-                _thread_to_local_task(thread)
+                _thread_to_local_task(
+                    thread,
+                    status="archived" if archived else "active",
+                )
                 for thread in getattr(response, "data", [])
             )
             if task is not None
         ]
+        return _filter_local_tasks(
+            records,
+            workspace_path=workspace_path,
+            search_term=search_term,
+        )
 
     def _create_codex_client(self) -> Any:
         if self.codex_client_factory is not None:
@@ -290,10 +323,97 @@ class CodexSessionDiscovery:
             return path
         return None
 
-    def archive_thread(self, thread_id: str) -> None:
+    def archive_thread(self, thread_id: str) -> dict[str, Any]:
+        """Archive a Codex thread through the Codex SDK."""
+
+        normalized_thread_id = _required_thread_id(thread_id)
         client = self._create_codex_client()
         with client as codex:
-            codex.thread_archive(thread_id)
+            codex.thread_archive(normalized_thread_id)
+        return {
+            "threadId": normalized_thread_id,
+            "sdkUpdated": True,
+        }
+
+    def unarchive_thread(self, thread_id: str) -> None:
+        client = self._create_codex_client()
+        with client as codex:
+            codex.thread_unarchive(thread_id)
+
+    def rename_thread(self, thread_id: str, title: str) -> dict[str, Any]:
+        """Rename a Codex thread in the local Codex state used by Codex App."""
+
+        normalized_thread_id = _required_thread_id(thread_id)
+        normalized_title = _required_title(title)
+        sdk_updated = self._rename_thread_with_sdk(
+            normalized_thread_id,
+            normalized_title,
+        )
+        state_path = _find_codex_state_path(self.codex_home)
+        state_result = {"updated": False, "matched": False}
+        if state_path is not None:
+            state_result = _rename_thread_state(
+                state_path,
+                normalized_thread_id,
+                normalized_title,
+            )
+        return {
+            "threadId": normalized_thread_id,
+            "title": normalized_title,
+            "sdkUpdated": sdk_updated,
+            "stateUpdated": state_result["updated"],
+            "stateMatched": state_result["matched"],
+            "statePath": str(state_path) if state_path is not None else None,
+        }
+
+    def _rename_thread_with_sdk(self, thread_id: str, title: str) -> bool:
+        client = self._create_codex_client()
+        with client as codex:
+            if _try_call_codex_rename(codex, thread_id, title):
+                return True
+        return False
+
+    def delete_archived_thread(
+        self,
+        thread_id: str,
+        *,
+        session_path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        normalized_thread_id = _required_thread_id(thread_id)
+        state_path = _find_codex_state_path(self.codex_home)
+        thread_state = None
+        deleted_state = False
+
+        if state_path is not None:
+            thread_state, deleted_state = _delete_archived_thread_state(
+                state_path,
+                normalized_thread_id,
+            )
+
+        deleted_files = []
+        for candidate in _unique_texts(
+            session_path,
+            _thread_state_text(thread_state, "rollout_path"),
+        ):
+            deleted_path = _delete_codex_owned_file(self.codex_home, candidate)
+            if deleted_path:
+                deleted_files.append(deleted_path)
+                self._transcript_cache.pop(deleted_path, None)
+
+        return {
+            "threadId": normalized_thread_id,
+            "deletedState": deleted_state,
+            "deletedFiles": deleted_files,
+            "workspacePath": _thread_state_text(thread_state, "cwd"),
+            "title": _thread_state_text(thread_state, "title")
+            or _thread_state_text(thread_state, "preview"),
+            "createdAt": _codex_time_to_iso(
+                _thread_state_value(thread_state, "created_at")
+            ),
+            "updatedAt": _codex_time_to_iso(
+                _thread_state_value(thread_state, "updated_at")
+            ),
+        }
 
     async def stream_message(
         self,
@@ -343,6 +463,7 @@ class CodexSessionDiscovery:
             thread = await codex.thread_start(
                 cwd=normalized_workspace_path,
                 service_name="wegent",
+                thread_source=_codex_thread_source_user(),
             )
         thread_id = _object_text(thread, "id", "session_id")
         if not thread_id:
@@ -380,7 +501,10 @@ class CodexSessionDiscovery:
         )
         client_config = self._codex_config_type()(
             codex_bin=codex_config.codex_bin,
-            config_overrides=codex_config.config_overrides,
+            config_overrides=_codex_lite_config_overrides(
+                codex_config.config_overrides,
+                use_user_config=_codex_config_uses_user_config(codex_config),
+            ),
             cwd=cwd,
             env=_codex_env(self.codex_home, codex_config.env),
         )
@@ -454,7 +578,11 @@ class CodexSessionDiscovery:
             _cleanup_paths(attachment_result.model_input_files)
 
 
-def _thread_to_local_task(thread: Any) -> Optional[LocalTaskRecord]:
+def _thread_to_local_task(
+    thread: Any,
+    *,
+    status: str = "active",
+) -> Optional[LocalTaskRecord]:
     thread_id = _object_text(thread, "id", "session_id")
     cwd = _object_text(thread, "cwd")
     if not thread_id or not cwd:
@@ -487,8 +615,320 @@ def _thread_to_local_task(thread: Any) -> Optional[LocalTaskRecord]:
         updated_at=updated_at,
         running=_is_thread_running(thread)
         or _is_session_transcript_running(session_path),
-        status="active",
+        status=status,
     )
+
+
+def _filter_local_tasks(
+    records: list[LocalTaskRecord],
+    *,
+    workspace_path: Optional[str],
+    search_term: Optional[str],
+) -> list[LocalTaskRecord]:
+    normalized_workspace = (
+        normalize_workspace_path(workspace_path) if workspace_path else None
+    )
+    normalized_search = search_term.strip().lower() if search_term else None
+    filtered = []
+    for record in records:
+        if normalized_workspace and record.workspace_path != normalized_workspace:
+            continue
+        if (
+            normalized_search
+            and normalized_search
+            not in " ".join(
+                [
+                    record.title,
+                    record.local_task_id,
+                    record.workspace_path,
+                ]
+            ).lower()
+        ):
+            continue
+        filtered.append(record)
+    return filtered
+
+
+def _required_thread_id(thread_id: str) -> str:
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("thread_id is required")
+    return thread_id.strip()
+
+
+def _required_title(title: str) -> str:
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title is required")
+    return title.strip()
+
+
+def _try_call_codex_rename(codex: Any, thread_id: str, title: str) -> bool:
+    for method_name in ("thread_rename", "thread_update"):
+        method = getattr(codex, method_name, None)
+        if method is None:
+            continue
+        for kwargs in ({"title": title}, {"name": title}):
+            try:
+                method(thread_id, **kwargs)
+                return True
+            except TypeError:
+                continue
+            except Exception:
+                logger.exception("Failed to rename Codex thread through SDK")
+                return False
+        try:
+            method(thread_id, title)
+            return True
+        except TypeError:
+            continue
+        except Exception:
+            logger.exception("Failed to rename Codex thread through SDK")
+            return False
+    return False
+
+
+def _find_codex_state_path(codex_home: Path) -> Optional[Path]:
+    roots = [
+        codex_home,
+        codex_home / "sqlite",
+        codex_home / ".codex" / "sqlite",
+    ]
+    candidates = [root / "state_5.sqlite" for root in roots if root is not None]
+    for root in roots:
+        with contextlib.suppress(OSError):
+            candidates.extend(
+                sorted(
+                    root.glob("state_*.sqlite"),
+                    key=lambda path: path.name,
+                    reverse=True,
+                )
+            )
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _rename_thread_state(
+    state_path: Path,
+    thread_id: str,
+    title: str,
+) -> dict[str, bool]:
+    try:
+        connection = sqlite3.connect(str(state_path), timeout=5.0)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                row = connection.execute(
+                    "SELECT * FROM threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    return {"updated": False, "matched": False}
+
+                columns = _sqlite_table_columns(connection, "threads")
+                title_columns = [
+                    column for column in ("title", "preview") if column in columns
+                ]
+                if not title_columns:
+                    return {"updated": False, "matched": False}
+                if all(
+                    _sqlite_row_text(row, column) == title for column in title_columns
+                ):
+                    return {"updated": False, "matched": True}
+
+                assignments = []
+                values: list[Any] = []
+                for column in title_columns:
+                    assignments.append(f"{column} = ?")
+                    values.append(title)
+                if "updated_at" in columns:
+                    assignments.append("updated_at = ?")
+                    values.append(_codex_now_for_column(row["updated_at"]))
+                if "updated_at_ms" in columns:
+                    assignments.append("updated_at_ms = ?")
+                    values.append(int(time.time() * 1000))
+
+                values.append(thread_id)
+                cursor = connection.execute(
+                    f"UPDATE threads SET {', '.join(assignments)} WHERE id = ?",
+                    tuple(values),
+                )
+                updated = cursor.rowcount > 0
+                return {"updated": updated, "matched": updated}
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"Failed to rename Codex thread state: {exc}") from exc
+
+
+def _sqlite_row_text(row: sqlite3.Row, column: str) -> Optional[str]:
+    value = row[column]
+    return value if isinstance(value, str) else None
+
+
+def _codex_now_for_column(existing_value: Any) -> Any:
+    if isinstance(existing_value, int):
+        return int(time.time())
+    if isinstance(existing_value, float):
+        return time.time()
+    if isinstance(existing_value, str):
+        return utc_now_iso()
+    return int(time.time())
+
+
+def _delete_archived_thread_state(
+    state_path: Path,
+    thread_id: str,
+) -> tuple[Optional[dict[str, Any]], bool]:
+    try:
+        connection = sqlite3.connect(str(state_path), timeout=5.0)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                row = connection.execute(
+                    "SELECT * FROM threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    return None, False
+
+                thread_state = dict(row)
+                archived = int(thread_state.get("archived") or 0)
+                if archived != 1:
+                    raise ValueError("Only archived Codex threads can be deleted")
+
+                _delete_codex_thread_child_rows(connection, thread_id)
+                cursor = connection.execute(
+                    "DELETE FROM threads WHERE id = ?",
+                    (thread_id,),
+                )
+                return thread_state, cursor.rowcount > 0
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise ValueError(f"Failed to delete Codex thread state: {exc}") from exc
+
+
+def _delete_codex_thread_child_rows(
+    connection: sqlite3.Connection,
+    thread_id: str,
+) -> None:
+    if _sqlite_table_exists(connection, "thread_dynamic_tools"):
+        columns = _sqlite_table_columns(connection, "thread_dynamic_tools")
+        if "thread_id" in columns:
+            connection.execute(
+                "DELETE FROM thread_dynamic_tools WHERE thread_id = ?",
+                (thread_id,),
+            )
+
+    if not _sqlite_table_exists(connection, "thread_spawn_edges"):
+        return
+
+    columns = _sqlite_table_columns(connection, "thread_spawn_edges")
+    clauses = []
+    values = []
+    for column in ("thread_id", "parent_thread_id", "child_thread_id"):
+        if column in columns:
+            clauses.append(f"{column} = ?")
+            values.append(thread_id)
+    if clauses:
+        connection.execute(
+            f"DELETE FROM thread_spawn_edges WHERE {' OR '.join(clauses)}",
+            tuple(values),
+        )
+
+
+def _sqlite_table_exists(
+    connection: sqlite3.Connection,
+    table_name: str,
+) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _sqlite_table_columns(
+    connection: sqlite3.Connection,
+    table_name: str,
+) -> set[str]:
+    return {
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
+def _delete_codex_owned_file(codex_home: Path, raw_path: str) -> Optional[str]:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = codex_home / path
+    resolved_path = path.resolve(strict=False)
+    if not any(
+        _path_is_relative_to(resolved_path, root)
+        for root in _codex_owned_roots(codex_home)
+    ):
+        logger.warning("Skipping Codex file delete outside Codex home: %s", path)
+        return None
+
+    if not path.is_file():
+        return None
+    path.unlink()
+    return str(resolved_path)
+
+
+def _codex_owned_roots(codex_home: Path) -> list[Path]:
+    roots = [codex_home, codex_home / ".codex"]
+    if codex_home.name == ".codex":
+        roots.append(codex_home.parent / ".codex")
+    return [root.expanduser().resolve(strict=False) for root in roots]
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _unique_texts(*values: Optional[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        normalized = value.strip()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _thread_state_text(
+    thread_state: Optional[dict[str, Any]],
+    key: str,
+) -> Optional[str]:
+    value = _thread_state_value(thread_state, key)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _thread_state_value(
+    thread_state: Optional[dict[str, Any]],
+    key: str,
+) -> Any:
+    if not isinstance(thread_state, dict):
+        return None
+    return thread_state.get(key)
 
 
 def _codex_thread_workspace_kind(cwd: str) -> str:
@@ -711,12 +1151,51 @@ def _thread_start_kwargs(
         "model": codex_config.model,
         "sandbox": sandbox,
         "service_name": "wegent",
+        "thread_source": _codex_thread_source_user(),
     }
     if cwd:
         kwargs["cwd"] = cwd
-    if codex_config.model_provider:
+    if not _codex_config_uses_user_config(codex_config) and codex_config.model_provider:
         kwargs["model_provider"] = codex_config.model_provider
     return kwargs
+
+
+def _codex_config_uses_user_config(codex_config: Any) -> bool:
+    return bool(getattr(codex_config, "use_user_config", False))
+
+
+def _codex_lite_config_overrides(
+    overrides: Iterable[str],
+    *,
+    use_user_config: bool,
+) -> tuple[str, ...]:
+    if not use_user_config:
+        return tuple(override for override in overrides if isinstance(override, str))
+    return tuple(
+        override
+        for override in overrides
+        if isinstance(override, str) and not _is_model_provider_override(override)
+    )
+
+
+def _is_model_provider_override(override: str) -> bool:
+    normalized = override.strip()
+    return normalized.startswith(
+        (
+            "forced_login_method=",
+            "model_provider=",
+            "model_providers.",
+        )
+    )
+
+
+def _codex_thread_source_user() -> Any:
+    try:
+        from openai_codex.generated.v2_all import ThreadSource
+
+        return ThreadSource.user
+    except (ImportError, AttributeError):
+        return "user"
 
 
 def _turn_reasoning_kwargs(codex_config: Any) -> dict[str, Any]:
