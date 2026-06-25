@@ -1325,6 +1325,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
+            localTaskId="runtime-client-1",
             teamId=3,
             runtime="claude_code",
             message="create runtime task",
@@ -1341,6 +1342,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         method="runtime.tasks.create",
         payload={
             "runtime": "claude_code",
+            "localTaskId": "runtime-client-1",
             "workspacePath": "/repo/Wegent",
             "message": "create runtime task",
             "title": "Create runtime task",

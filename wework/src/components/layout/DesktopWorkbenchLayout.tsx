@@ -66,6 +66,7 @@ interface DesktopWorkbenchLayoutProps {
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
   currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
   isRuntimeTranscriptLoadingMore?: boolean
@@ -170,6 +171,7 @@ export function DesktopWorkbenchLayout({
   guidanceMessages = [],
   codeCommentContexts = [],
   currentRuntimeTaskRunning = false,
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
   isRuntimeTranscriptLoadingMore = false,
@@ -777,6 +779,7 @@ export function DesktopWorkbenchLayout({
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}
           currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+          isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}

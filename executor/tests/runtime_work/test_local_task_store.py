@@ -2086,6 +2086,94 @@ def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     assert transcript[1]["status"] == "done"
 
 
+def test_codex_discovery_preserves_local_images_in_user_message(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789b0"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    image_path = "/var/folders/tmp/codex-clipboard.png"
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "分析下这个图片",
+                "images": [],
+                "local_images": [image_path],
+            },
+        },
+        {
+            "timestamp": "2026-06-20T05:52:23Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "last_agent_message": "看到了",
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in page.messages] == ["user", "assistant"]
+    assert page.messages[0]["content"] == "\n".join(
+        [
+            "# Files mentioned by the user:",
+            "",
+            f"## codex-clipboard.png: {image_path}",
+            "",
+            "## My request for Codex:",
+            "分析下这个图片",
+            "",
+        ]
+    )
+    assert page.messages[1]["content"] == "看到了"
+
+
+def test_codex_discovery_embeds_readable_local_image_previews(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789b1"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    image_path = tmp_path / "codex-clipboard.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    _write_codex_session(
+        session_path,
+        {
+            "timestamp": "2026-06-20T05:52:21Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "分析下这个图片",
+                "local_images": [str(image_path)],
+            },
+        },
+    )
+
+    page = CodexSessionDiscovery(codex_home=codex_home).read_transcript_page(
+        thread_id,
+        str(session_path),
+    )
+
+    attachment = page.messages[0]["attachments"][0]
+    assert attachment["filename"] == "codex-clipboard.png"
+    assert attachment["mime_type"] == "image/png"
+    assert attachment["file_extension"] == ".png"
+    assert attachment["file_size"] == 8
+    assert attachment["status"] == "ready"
+    assert attachment["local_preview_url"] == "data:image/png;base64,iVBORw0KGgo="
+
+
 def test_codex_discovery_keeps_commentary_when_task_complete_is_empty(tmp_path):
     from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 

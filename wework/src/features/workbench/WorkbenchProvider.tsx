@@ -268,6 +268,7 @@ export interface WorkbenchContextValue {
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts: CodeCommentContext[]
   currentRuntimeTaskRunning: boolean
+  isAwaitingAssistantStart: boolean
   isRuntimeTranscriptLoading: boolean
   runtimeTranscriptHasMoreBefore: boolean
   isRuntimeTranscriptLoadingMore: boolean
@@ -894,6 +895,15 @@ function buildRuntimeTaskTitle(message: string, fallback?: string): string {
   return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
 }
 
+function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']): string {
+  const prefix = runtime === 'codex' ? 'codex' : 'runtime'
+  const randomId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${randomId}`
+}
+
 export function WorkbenchProvider({ children, user, services }: WorkbenchProviderProps) {
   const resolvedServices = useMemo(() => services ?? createDefaultServices(), [services])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
@@ -913,7 +923,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     beforeCursor: null,
     loadingMore: false,
   })
-  const [, setIsAwaitingAssistantStart] = useState(false)
+  const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [routeSearch, setRouteSearch] = useState(() => window.location.search)
   const [projectExecutionMode, setProjectExecutionMode] =
@@ -1642,6 +1652,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setQueuedSends([])
     setGuidanceMessages([])
     setCodeCommentContexts([])
+    setIsAwaitingAssistantStart(false)
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
     navigateTo('/')
@@ -1661,6 +1672,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     setQueuedSends([])
     setGuidanceMessages([])
     setCodeCommentContexts([])
+    setIsAwaitingAssistantStart(false)
     cancelRuntimeTranscriptLoad()
     handledRuntimeTaskRouteRef.current = null
     navigateTo('/')
@@ -1707,6 +1719,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       if (project) {
         writeLastProjectId(user.id, project.id)
       }
+      setIsAwaitingAssistantStart(false)
       dispatch({
         type: 'runtime_task_opened',
         address,
@@ -2144,6 +2157,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [messages]
   )
   const hasActiveTurn = Boolean(activeAssistantMessage)
+  const currentRuntimeTaskBusy =
+    currentRuntimeTaskRunning || hasActiveTurn || isAwaitingAssistantStart
 
   const buildSendPayload = useCallback(
     (
@@ -2255,11 +2270,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         RuntimeTaskCreateRequest,
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
+      let optimisticDeviceId: string
       if (projectId) {
         if (!selectedProjectWorkspace) {
           reportSendBlocked('请选择任务运行位置')
           return false
         }
+        optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
           selectedProjectWorkspace.id != null
             ? {
@@ -2278,6 +2295,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           reportSendBlocked('请选择项目或打开设备工作区后再发送')
           return false
         }
+        optimisticDeviceId = activeDeviceId
         runtimeTaskTarget = {
           deviceId: activeDeviceId,
           workspacePath,
@@ -2286,10 +2304,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
       const selectedModel =
         modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+      const runtime = inferRuntimeName(selectedModel)
+      const localTaskId = createRuntimeLocalTaskId(runtime)
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
+        localTaskId,
         teamId: payload.team_id,
-        runtime: inferRuntimeName(selectedModel),
+        runtime,
         message: payload.message,
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
@@ -2299,6 +2320,24 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         attachmentIds: payload.attachment_ids ?? [],
         execution: payload.execution,
       }
+      const optimisticAddress: RuntimeTaskAddress = {
+        deviceId: optimisticDeviceId,
+        localTaskId,
+      }
+      const runtimeProject = projectId
+        ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
+        : null
+
+      if (optimisticAddress.deviceId) rememberExecutionDevice(optimisticAddress.deviceId)
+      currentRuntimeTaskRef.current = optimisticAddress
+      dispatch({
+        type: 'runtime_task_opened',
+        address: optimisticAddress,
+        project: runtimeProject,
+      })
+      handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(optimisticAddress)
+      navigateTo(buildRuntimeTaskRoute(optimisticAddress))
+      setIsAwaitingAssistantStart(true)
 
       dispatch({ type: 'sending_started' })
       dispatchMessages({
@@ -2320,19 +2359,20 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           throw new Error(response.error || '发送失败')
         }
         const address: RuntimeTaskAddress = {
-          deviceId: response.deviceId,
-          localTaskId: response.localTaskId,
+          deviceId: response.deviceId || optimisticAddress.deviceId,
+          localTaskId: response.localTaskId || optimisticAddress.localTaskId,
         }
-        const runtimeProject = projectId
-          ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
-          : null
-        if (address.deviceId) rememberExecutionDevice(address.deviceId)
-        currentRuntimeTaskRef.current = address
-        dispatch({
-          type: 'runtime_task_opened',
-          address,
-          project: runtimeProject,
-        })
+        if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {
+          if (address.deviceId) rememberExecutionDevice(address.deviceId)
+          currentRuntimeTaskRef.current = address
+          dispatch({
+            type: 'runtime_task_opened',
+            address,
+            project: runtimeProject,
+          })
+          handledRuntimeTaskRouteRef.current = getRuntimeTaskRouteKey(address)
+          navigateTo(buildRuntimeTaskRoute(address))
+        }
         await refreshWorkLists()
         // A freshly created task has no prior history, so reset pagination
         // directly instead of re-fetching the transcript. Re-fetching here would
@@ -2348,6 +2388,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         navigateTo(buildRuntimeTaskRoute(address))
         return true
       } catch (error) {
+        if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, optimisticAddress)) {
+          currentRuntimeTaskRef.current = null
+          setIsAwaitingAssistantStart(false)
+          dispatch({ type: 'current_task_cleared' })
+          handledRuntimeTaskRouteRef.current = null
+          navigateTo('/')
+        }
         dispatch({
           type: 'error_set',
           error: error instanceof Error ? error.message : '发送失败',
@@ -2390,7 +2437,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         reportSendBlocked('当前 LocalTask 暂不支持代码评论')
         return
       }
-      if (currentRuntimeTaskRunning || hasActiveTurn) {
+      if (currentRuntimeTaskBusy) {
         const currentAttachments = attachmentSelection.attachments
         setQueuedSends(items => [
           ...items,
@@ -2427,6 +2474,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         },
       })
       attachmentSelection.resetAttachments()
+      setIsAwaitingAssistantStart(true)
 
       try {
         const runtimeSendRequest: RuntimeSendRequest = {
@@ -2443,6 +2491,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
         await refreshWorkLists()
       } catch (error) {
+        setIsAwaitingAssistantStart(false)
         dispatch({
           type: 'error_set',
           error: error instanceof Error ? error.message : '发送失败',
@@ -2513,8 +2562,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     buildSendPayload,
     clearCodeCommentContexts,
     codeCommentContexts,
-    currentRuntimeTaskRunning,
-    hasActiveTurn,
+    currentRuntimeTaskBusy,
     reportSendBlocked,
     sendPreparedRuntimeMessage,
     state.devices,
@@ -2529,7 +2577,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   useEffect(() => {
     const queuedMessage = queuedSends.find(item => item.status === 'queued')
     if (!queuedMessage) return
-    if (!state.currentRuntimeTask || currentRuntimeTaskRunning || hasActiveTurn) return
+    if (!state.currentRuntimeTask || currentRuntimeTaskBusy) return
     if (queuedSends.some(item => item.status === 'sending')) return
     const runtimeWorkApi = resolvedServices.runtimeWorkApi
     if (!runtimeWorkApi) return
@@ -2543,6 +2591,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         item.id === queuedMessageToSend.id ? { ...item, status: 'sending' } : item
       )
     )
+    setIsAwaitingAssistantStart(true)
 
     async function sendQueuedRuntimeMessage() {
       try {
@@ -2575,6 +2624,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         setQueuedSends(items => items.filter(item => item.id !== queuedMessageToSend.id))
         await refreshWorkLists()
       } catch (error) {
+        setIsAwaitingAssistantStart(false)
         setQueuedSends(items =>
           items.map(item =>
             item.id === queuedMessageToSend.id
@@ -2591,8 +2641,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
     void sendQueuedRuntimeMessage()
   }, [
-    currentRuntimeTaskRunning,
-    hasActiveTurn,
+    currentRuntimeTaskBusy,
     queuedSends,
     refreshWorkLists,
     resolvedServices.runtimeWorkApi,
@@ -2888,6 +2937,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
                 attachment => attachment.id
               )
             }
+            setIsAwaitingAssistantStart(true)
             dispatchMessages({
               type: 'user_added',
               message: {
@@ -2906,6 +2956,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             setQueuedSends(items => items.filter(item => item.id !== id))
             await refreshWorkLists()
           } catch (error) {
+            setIsAwaitingAssistantStart(false)
             setQueuedSends(items =>
               items.map(item =>
                 item.id === id
@@ -3016,6 +3067,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     guidanceMessages,
     codeCommentContexts,
     currentRuntimeTaskRunning,
+    isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore: runtimeTranscriptPage.hasMoreBefore,
     isRuntimeTranscriptLoadingMore: runtimeTranscriptPage.loadingMore,

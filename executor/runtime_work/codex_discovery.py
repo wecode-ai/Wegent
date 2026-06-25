@@ -4,10 +4,12 @@
 
 """Discover Codex sessions as device-local runtime work items."""
 
+import base64
 import contextlib
 import gzip
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import time
@@ -16,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import unquote, urlparse
 
 from executor.agents.codex.config_builder import _resolve_codex_binary
 from executor.config import config
@@ -36,6 +39,7 @@ CODEX_TRANSCRIPT_DEFAULT_LIMIT = 50
 CODEX_TRANSCRIPT_MAX_LIMIT = 200
 CODEX_TRANSCRIPT_INITIAL_WINDOW_BYTES = 1024 * 1024
 CODEX_TRANSCRIPT_MAX_WINDOW_BYTES = 64 * 1024 * 1024
+CODEX_LOCAL_IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
 CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
 CODEX_CONVERSATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODEX_TRANSCRIPT_CURSOR_PATTERN = re.compile(r"^offset:(\d+)$")
@@ -832,6 +836,113 @@ def _first_text(record: dict[str, Any], *keys: str) -> Optional[str]:
     return None
 
 
+def _codex_user_message_content(payload: dict[str, Any]) -> Optional[str]:
+    message = _first_text(payload, "message") or ""
+    local_image_paths = _local_image_paths_from_payload(payload)
+    if not local_image_paths:
+        return message or None
+    return _build_files_mentioned_text(message, local_image_paths).lstrip()
+
+
+def _local_image_paths_from_payload(payload: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for key in ("local_images", "localImages", "images"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            path = _local_image_path_from_item(item)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _local_image_path_from_item(item: Any) -> Optional[str]:
+    if isinstance(item, str):
+        return _normalize_local_image_path(item)
+    if not isinstance(item, dict):
+        return None
+
+    for key in ("path", "local_path", "localPath", "file_path", "filePath"):
+        path = _normalize_local_image_path(item.get(key))
+        if path is not None:
+            return path
+    return None
+
+
+def _normalize_local_image_path(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    path = value.strip()
+    if not path:
+        return None
+    parsed = urlparse(path)
+    if parsed.scheme and parsed.scheme != "file":
+        return None
+    return path
+
+
+def _set_local_image_attachments(
+    message: dict[str, Any],
+    payload: dict[str, Any],
+    created_at: str,
+) -> None:
+    attachments = [
+        attachment
+        for path in _local_image_paths_from_payload(payload)
+        if (attachment := _local_image_attachment(path, created_at)) is not None
+    ]
+    if attachments:
+        message["attachments"] = attachments
+
+
+def _local_image_attachment(path: str, created_at: str) -> Optional[dict[str, Any]]:
+    filesystem_path = _local_image_filesystem_path(path)
+    file_path = Path(filesystem_path)
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return None
+    if not file_path.is_file() or stat.st_size > CODEX_LOCAL_IMAGE_PREVIEW_MAX_BYTES:
+        return None
+
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    if not mime_type.startswith("image/"):
+        return None
+
+    try:
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+
+    return {
+        "id": _local_image_attachment_id(path),
+        "filename": file_path.name,
+        "file_size": stat.st_size,
+        "mime_type": mime_type,
+        "status": "ready",
+        "file_extension": file_path.suffix,
+        "created_at": created_at,
+        "local_preview_url": f"data:{mime_type};base64,{encoded}",
+    }
+
+
+def _local_image_filesystem_path(path: str) -> str:
+    if not path.startswith("file://"):
+        return path
+    parsed = urlparse(path)
+    pathname = unquote(parsed.path)
+    return pathname[1:] if re.match(r"^/[a-zA-Z]:/", pathname) else pathname
+
+
+def _local_image_attachment_id(path: str) -> int:
+    digest = hashlib.sha256(path.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
 def _parse_datetime(value: Any) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
         return None
@@ -918,18 +1029,18 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                     processing_blocks = []
                     tool_blocks_by_call_id = {}
                     turn_started_at = timestamp
-                    message = _first_text(payload, "message")
+                    message = _codex_user_message_content(payload)
                     if message:
-                        messages.append(
-                            _transcript_message(
-                                thread_id=thread_id,
-                                turn_counter=turn_counter,
-                                role="user",
-                                content=message,
-                                created_at=timestamp,
-                                status="done",
-                            )
+                        user_message = _transcript_message(
+                            thread_id=thread_id,
+                            turn_counter=turn_counter,
+                            role="user",
+                            content=message,
+                            created_at=timestamp,
+                            status="done",
                         )
+                        _set_local_image_attachments(user_message, payload, timestamp)
+                        messages.append(user_message)
                 elif event_type == "agent_message":
                     message = _first_text(payload, "message")
                     if message:
@@ -1139,18 +1250,18 @@ def _read_session_transcript_window(
                     cwd = payload.get("cwd")
                     if isinstance(cwd, str) and cwd.strip():
                         turn_workspace_path = cwd.strip()
-                    message = _first_text(payload, "message")
+                    message = _codex_user_message_content(payload)
                     if message:
-                        messages.append(
-                            _transcript_message_from_offset(
-                                thread_id=thread_id,
-                                offset=line_start,
-                                role="user",
-                                content=message,
-                                created_at=timestamp,
-                                status="done",
-                            )
+                        user_message = _transcript_message_from_offset(
+                            thread_id=thread_id,
+                            offset=line_start,
+                            role="user",
+                            content=message,
+                            created_at=timestamp,
+                            status="done",
                         )
+                        _set_local_image_attachments(user_message, payload, timestamp)
+                        messages.append(user_message)
                 elif event_type == "agent_message":
                     message = _first_text(payload, "message")
                     if message:

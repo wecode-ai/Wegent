@@ -26,8 +26,10 @@ const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag',
 const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'du', 'file'])
 
 export function buildProcessingDisplayRows(
-  blocks: ProcessingBlock[]
+  blocks: ProcessingBlock[],
+  options: { groupCompletedTools?: boolean } = {}
 ): ProcessingDisplayRow[] {
+  const groupCompletedTools = options.groupCompletedTools ?? true
   const rows: ProcessingDisplayRow[] = []
   let completedTools: ToolBlock[] = []
 
@@ -43,7 +45,7 @@ export function buildProcessingDisplayRows(
   }
 
   for (const block of blocks) {
-    if (block.type === 'tool' && isCompletedToolBlock(block)) {
+    if (groupCompletedTools && block.type === 'tool' && isCompletedToolBlock(block)) {
       completedTools.push(block)
       continue
     }

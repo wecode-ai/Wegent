@@ -763,6 +763,8 @@ async def create_runtime_task(
         "title": _runtime_task_title(request),
         "executionRequest": execution_request.to_dict(),
     }
+    if request.local_task_id:
+        payload["localTaskId"] = request.local_task_id
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
