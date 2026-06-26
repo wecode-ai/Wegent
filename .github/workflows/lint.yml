@@ -156,6 +156,14 @@ jobs:
           chmod +x ./scripts/hooks/check-settings-config.sh
           ./scripts/hooks/check-settings-config.sh
 
+      - name: Run repository policy check
+        env:
+          REPOSITORY_POLICY_PATTERN_B64: ${{ secrets.REPOSITORY_POLICY_PATTERN_B64 }}
+          REPOSITORY_POLICY_APPROVED_B64: ${{ secrets.REPOSITORY_POLICY_APPROVED_B64 }}
+        run: |
+          chmod +x ./scripts/hooks/check-repository-policy.sh
+          ./scripts/hooks/check-repository-policy.sh
+
   check-alembic-heads:
     name: Check Alembic Multi-Head
     runs-on: ubuntu-latest
