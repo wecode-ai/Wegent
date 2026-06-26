@@ -7,6 +7,7 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
   useImperativeHandle,
   forwardRef,
 } from 'react'
@@ -160,39 +161,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
-  const [teamScopedBotDetail, setTeamScopedBotDetail] = useState<Bot | null>(null)
-
-  useEffect(() => {
-    if (!defaultKnowledgeBaseTeamId || editingBotId <= 0) {
-      setTeamScopedBotDetail(null)
-      return
-    }
-
-    let cancelled = false
-
-    botApis
-      .getBot(editingBotId, defaultKnowledgeBaseTeamId)
-      .then(bot => {
-        if (!cancelled) {
-          setTeamScopedBotDetail(bot)
-        }
-      })
-      .catch(error => {
-        if (!cancelled) {
-          console.error('Failed to precheck default knowledge bases:', error)
-          setTeamScopedBotDetail(null)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [defaultKnowledgeBaseTeamId, editingBotId])
+  const lastResetKeyRef = useRef<string | null>(null)
+  const lastResetSnapshotRef = useRef<string | null>(null)
 
   const baseBot = useMemo(() => {
-    if (teamScopedBotDetail) {
-      return teamScopedBotDetail
-    }
     if (editingBot) {
       return editingBot
     }
@@ -200,18 +172,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return cloningBot
     }
     return null
-  }, [editingBot, editingBotId, cloningBot, teamScopedBotDetail])
+  }, [editingBot, editingBotId, cloningBot])
 
   const [botName, setBotName] = useState(baseBot?.name || '')
   // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
   const [agentName, setAgentName] = useState(baseBot?.shell_name || baseBot?.shell_type || '')
   // Helper function to remove protocol from agent_config for display
-  const getAgentConfigWithoutProtocol = (config: Record<string, unknown> | undefined): string => {
-    if (!config) return ''
+  const getAgentConfigWithoutProtocol = useCallback(
+    (config: Record<string, unknown> | undefined): string => {
+      if (!config) return ''
 
-    const { protocol: _, ...rest } = config
-    return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : ''
-  }
+      const { protocol: _, ...rest } = config
+      return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : ''
+    },
+    []
+  )
   const [agentConfig, setAgentConfig] = useState(
     baseBot?.agent_config ? getAgentConfigWithoutProtocol(baseBot.agent_config) : ''
   )
@@ -223,8 +198,43 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >(baseBot?.default_knowledge_base_refs || [])
-  const canEditDefaultKnowledgeBases =
-    scope === 'public' || embedded || Boolean(defaultKnowledgeBaseTeamId)
+  const hasDefaultKnowledgeBaseTeamContext =
+    typeof defaultKnowledgeBaseTeamId === 'number' && defaultKnowledgeBaseTeamId > 0
+  const canEditDefaultKnowledgeBases = scope === 'public' || hasDefaultKnowledgeBaseTeamContext
+
+  useEffect(() => {
+    if (!hasDefaultKnowledgeBaseTeamContext || editingBotId <= 0) {
+      return
+    }
+
+    let cancelled = false
+    const teamId = defaultKnowledgeBaseTeamId as number
+
+    botApis
+      .getBot(editingBotId, teamId)
+      .then(bot => {
+        if (!cancelled) {
+          setDefaultKnowledgeBaseRefs(prev => {
+            const refIdentity = (refs: KnowledgeBaseDefaultRef[]) =>
+              JSON.stringify(refs.map(ref => ({ id: ref.id, name: ref.name })))
+            const baseRefs = editingBot?.default_knowledge_base_refs || []
+            if (refIdentity(prev) !== refIdentity(baseRefs)) {
+              return prev
+            }
+            return bot.default_knowledge_base_refs || []
+          })
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.error('Failed to precheck default knowledge bases:', error)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [defaultKnowledgeBaseTeamId, editingBot, editingBotId, hasDefaultKnowledgeBaseTeamContext])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -234,6 +244,48 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
+
+  const currentFormSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        botName,
+        agentName,
+        prompt,
+        mcpConfig,
+        agentConfig,
+        selectedSkills,
+        preloadSkills,
+        selectedSkillRefs,
+        defaultKnowledgeBaseRefs,
+      }),
+    [
+      agentConfig,
+      agentName,
+      botName,
+      defaultKnowledgeBaseRefs,
+      mcpConfig,
+      preloadSkills,
+      prompt,
+      selectedSkillRefs,
+      selectedSkills,
+    ]
+  )
+
+  const buildBaseFormSnapshot = useCallback(
+    (bot: Bot | null) =>
+      JSON.stringify({
+        botName: bot?.name || '',
+        agentName: bot?.shell_name || bot?.shell_type || '',
+        prompt: bot?.system_prompt || '',
+        mcpConfig: bot?.mcp_servers ? JSON.stringify(bot.mcp_servers, null, 2) : '',
+        agentConfig: bot?.agent_config ? getAgentConfigWithoutProtocol(bot.agent_config) : '',
+        selectedSkills: bot?.skills || [],
+        preloadSkills: bot?.preload_skills || [],
+        selectedSkillRefs: bot?.skill_refs || {},
+        defaultKnowledgeBaseRefs: bot?.default_knowledge_base_refs || [],
+      }),
+    [getAgentConfigWithoutProtocol]
+  )
 
   const resetAgentDependentConfig = useCallback(() => {
     setIsCustomModel(false)
@@ -539,6 +591,22 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Reset base form when switching editing object
   useEffect(() => {
+    const resetKey = [
+      editingBotId,
+      baseBot?.id || 'new',
+      baseBot?.updated_at || '',
+      cloningBot?.id || '',
+    ].join(':')
+    if (lastResetKeyRef.current === resetKey) {
+      return
+    }
+
+    const formIsDirty =
+      lastResetSnapshotRef.current !== null && currentFormSnapshot !== lastResetSnapshotRef.current
+    if (formIsDirty) {
+      return
+    }
+
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
@@ -572,7 +640,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } else {
       setAgentConfig('')
     }
-  }, [editingBotId, baseBot, shells])
+    lastResetKeyRef.current = resetKey
+    lastResetSnapshotRef.current = buildBaseFormSnapshot(baseBot)
+  }, [
+    baseBot,
+    buildBaseFormSnapshot,
+    cloningBot?.id,
+    currentFormSnapshot,
+    editingBotId,
+    getAgentConfigWithoutProtocol,
+    shells,
+  ])
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {

@@ -412,6 +412,18 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     if not team_refs:
         return {}
 
+    loose_ref_keys: set[tuple[str, str]] = set()
+    exact_ref_keys: set[tuple[str, str, int]] = set()
+    for ref in team_refs:
+        if len(ref) == 2:
+            loose_ref_keys.add((ref[0], ref[1]))
+        elif len(ref) == 3:
+            exact_ref_keys.add((ref[0], ref[1], ref[2]))
+        else:
+            raise ValueError(
+                "team ref must be (name, namespace) or (name, namespace, owner_id)"
+            )
+
     team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
     approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
     accessible_team_ids = _get_accessible_team_ids(
@@ -423,30 +435,47 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
         if accessible_team_ids
         else owner_filter
     )
-    ref_keys = {(name, namespace, owner_id) for name, namespace, owner_id in team_refs}
-    lookup_pairs = {(name, namespace) for name, namespace, _ in ref_keys}
-    owner_ids = {owner_id for _, _, owner_id in ref_keys}
+    lookup_pairs = loose_ref_keys | {
+        (name, namespace) for name, namespace, _ in exact_ref_keys
+    }
 
-    accessible_teams = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Team",
-            tuple_(Kind.name, Kind.namespace).in_(lookup_pairs),
-            Kind.user_id.in_(owner_ids),
-            Kind.is_active.is_(True),
-            access_filter,
-        )
-        .all()
+    query = db.query(Kind).filter(
+        Kind.kind == "Team",
+        tuple_(Kind.name, Kind.namespace).in_(lookup_pairs),
+        Kind.is_active.is_(True),
+        access_filter,
     )
+    if not loose_ref_keys:
+        owner_ids = {owner_id for _, _, owner_id in exact_ref_keys}
+        query = query.filter(Kind.user_id.in_(owner_ids))
+
+    accessible_teams = query.all()
 
     team_data: Dict[str, Kind] = {}
+    loose_key_priority: dict[str, int] = {}
     for team in accessible_teams:
         ref_key = (team.name, team.namespace, team.user_id)
-        if ref_key in ref_keys:
+        if ref_key in exact_ref_keys:
             key = f"{team.name}:{team.namespace}:{team.user_id}"
             team_data[key] = team
+        loose_ref_key = (team.name, team.namespace)
+        if loose_ref_key in loose_ref_keys:
+            key = f"{team.name}:{team.namespace}"
+            priority = _get_team_lookup_priority(team, user_id)
+            if key not in team_data or priority < loose_key_priority[key]:
+                team_data[key] = team
+                loose_key_priority[key] = priority
 
     return team_data
+
+
+def _get_team_lookup_priority(team: Kind, user_id: int) -> int:
+    """Prefer personal teams, then shared teams, then public teams."""
+    if team.user_id == user_id:
+        return 0
+    if team.user_id == 0:
+        return 2
+    return 1
 
 
 def _get_accessible_team_ids(

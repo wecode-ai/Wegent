@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -420,6 +422,31 @@ async def test_mixed_default_and_explicit_kbs_split_per_call_filters():
 
 
 @pytest.mark.asyncio
+async def test_explicit_empty_kb_ids_do_not_fall_back_to_tool_kbs():
+    tool = KnowledgeBaseTool(knowledge_base_ids=[1, 2], user_id=7)
+
+    with patch.object(
+        tool,
+        "_retrieve_with_strategy_via_http",
+        AsyncMock(
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            }
+        ),
+    ) as retrieve:
+        await tool._retrieve_with_strategy_from_all_kbs(
+            query="release checklist",
+            max_results=8,
+            knowledge_base_ids=[],
+        )
+
+    assert retrieve.call_args.kwargs["knowledge_base_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_mixed_default_and_explicit_kbs_merge_sort_and_truncate_results():
     tool = KnowledgeBaseTool(
         knowledge_base_ids=[1, 2],
@@ -467,6 +494,74 @@ async def test_mixed_default_and_explicit_kbs_merge_sort_and_truncate_results():
         (2, "explicit-mid"),
     ]
     assert result["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scoped_package_mediation_uses_active_scope_kb_ids():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1, 2],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=False),
+            KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False),
+        ],
+        tool_access_mode="restricted_search_only",
+        db_session=MagicMock(),
+        user_id=7,
+    )
+    active_scopes = [KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False)]
+    retrieval_service = MagicMock()
+    retrieval_service.retrieve_with_routing = AsyncMock(
+        return_value={
+            "mode": "rag_retrieval",
+            "records": [{"knowledge_base_id": 2, "content": "active"}],
+            "total": 1,
+            "total_estimated_tokens": 1,
+        }
+    )
+    mediator = MagicMock()
+    mediator.transform = AsyncMock(
+        return_value=SimpleNamespace(
+            model_dump=lambda: {
+                "mode": "rag_retrieval",
+                "records": [{"knowledge_base_id": 2, "content": "mediated"}],
+                "total": 1,
+                "total_estimated_tokens": 1,
+            }
+        )
+    )
+    app_module = ModuleType("app")
+    services_module = ModuleType("app.services")
+    rag_module = ModuleType("app.services.rag")
+    retrieval_module = ModuleType("app.services.rag.retrieval_service")
+    retrieval_module.RetrievalService = MagicMock(return_value=retrieval_service)
+    knowledge_module = ModuleType("app.services.knowledge")
+    mediation_module = ModuleType("app.services.knowledge.protected_mediation")
+    mediation_module.protected_knowledge_mediator = mediator
+
+    with patch.dict(
+        sys.modules,
+        {
+            "app": app_module,
+            "app.services": services_module,
+            "app.services.rag": rag_module,
+            "app.services.rag.retrieval_service": retrieval_module,
+            "app.services.knowledge": knowledge_module,
+            "app.services.knowledge.protected_mediation": mediation_module,
+        },
+    ):
+        await tool._retrieve_with_scopes_package_mode(
+            query="release checklist",
+            max_results=8,
+            route_mode="auto",
+            knowledge_base_scopes=active_scopes,
+        )
+
+    retrieval_service.retrieve_with_routing.assert_awaited_once()
+    assert retrieval_service.retrieve_with_routing.call_args.kwargs[
+        "knowledge_base_ids"
+    ] == [2]
+    mediator.transform.assert_awaited_once()
+    assert mediator.transform.call_args.kwargs["knowledge_base_ids"] == [2]
 
 
 def test_scoped_tool_schema_hides_document_filters():

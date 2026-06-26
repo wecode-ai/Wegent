@@ -395,7 +395,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         if (cancelled) {
           return
         }
-        setBots(prev => prev.map(item => (item.id === bot.id ? bot : item)))
         setSimpleDefaultKnowledgeBaseRefs(bot.default_knowledge_base_refs || [])
       })
       .catch(error => {
@@ -407,7 +406,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return () => {
       cancelled = true
     }
-  }, [editingTeamId, formTeam, open, setBots])
+  }, [editingTeamId, formTeam, open])
 
   // Update bot selection when bots change
   useEffect(() => {

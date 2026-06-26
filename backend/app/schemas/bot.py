@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
 from app.schemas.user import UserInDB
@@ -55,7 +55,8 @@ class BotKnowledgeBaseDefaultRef(KnowledgeBaseDefaultRef):
     """Response model for Ghost-level default KB bindings."""
 
     available: Optional[bool] = None
-    unavailableReason: Optional[str] = None
+    unavailable_reason: Optional[str] = Field(None, alias="unavailableReason")
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class BotInDB(BaseModel):

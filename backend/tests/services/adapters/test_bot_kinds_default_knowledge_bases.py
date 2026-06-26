@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from fastapi import HTTPException
 
 from app.models.kind import Kind
-from app.schemas.bot import BotCreate, BotUpdate
+from app.schemas.bot import BotCreate, BotKnowledgeBaseDefaultRef, BotUpdate
 from app.services.adapters.bot_kinds import BotKindsService
 
 
@@ -25,6 +25,20 @@ def test_bot_create_schema_preserves_default_knowledge_base_refs():
         {"id": 101, "name": "Product Docs"}
     ]
     assert payload.default_knowledge_base_team_id is None
+
+
+def test_bot_default_kb_response_serializes_unavailable_reason_alias():
+    payload = BotKnowledgeBaseDefaultRef(
+        id=101,
+        name="Product Docs",
+        available=False,
+        unavailable_reason="team_owner_cannot_read_kb",
+    )
+
+    assert payload.unavailable_reason == "team_owner_cannot_read_kb"
+    assert payload.model_dump(by_alias=True)["unavailableReason"] == (
+        "team_owner_cannot_read_kb"
+    )
 
 
 def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():
@@ -361,13 +375,13 @@ def test_annotate_default_knowledge_base_availability_uses_team_owner():
             "id": 101,
             "name": "Owner Docs",
             "available": True,
-            "unavailableReason": None,
+            "unavailable_reason": None,
         },
         {
             "id": 202,
             "name": "Other Team Docs",
             "available": False,
-            "unavailableReason": "team_owner_cannot_read_kb",
+            "unavailable_reason": "team_owner_cannot_read_kb",
         },
     ]
 

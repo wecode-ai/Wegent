@@ -874,10 +874,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             next_ref = dict(ref)
             if share_service._get_resource(db, next_ref["id"], team_owner_user_id):
                 next_ref["available"] = True
-                next_ref["unavailableReason"] = None
+                next_ref["unavailable_reason"] = None
             else:
                 next_ref["available"] = False
-                next_ref["unavailableReason"] = "team_owner_cannot_read_kb"
+                next_ref["unavailable_reason"] = "team_owner_cannot_read_kb"
             annotated_refs.append(next_ref)
         bot_dict["default_knowledge_base_refs"] = annotated_refs
 

@@ -82,6 +82,7 @@ def _make_kb(kb_id: int, name: str):
 def _make_task_resource(user_id: int = 7, team_user_id: int = 7):
     task = Mock()
     task.id = 1001
+    task.kind = "Task"
     task.user_id = user_id
     task.json = {
         "kind": "Task",
@@ -323,6 +324,52 @@ def test_get_task_default_knowledge_base_resolution_filters_by_team_owner():
     assert [scope.knowledge_base_id for scope in resolution.scopes] == [11]
     assert [warning.knowledge_base_id for warning in resolution.warnings] == [22]
     assert resolution.warnings[0].reason == "team_owner_cannot_read_kb"
+
+
+def test_get_task_default_knowledge_base_resolution_warns_unresolved_default_kb():
+    from app.services.chat.task_default_knowledge_bases import (
+        get_task_default_knowledge_base_resolution,
+    )
+
+    db = Mock()
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = _make_task_resource(user_id=9, team_user_id=7)
+    db.query.return_value = query
+    team = _make_team()
+    team.user_id = 7
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return _make_bot("bot-one", "ghost-one")
+        return _make_ghost(
+            "ghost-one",
+            [{"id": 22, "name": "Deleted Docs"}],
+        )
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases._get_task_team",
+        return_value=team,
+    ):
+        with patch(
+            "app.services.chat.task_default_knowledge_bases._can_user_use_team",
+            return_value=True,
+        ):
+            with patch(
+                "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
+                side_effect=_kind_lookup,
+            ):
+                with patch(
+                    "app.services.chat.task_default_knowledge_bases._get_default_knowledge_base",
+                    return_value=None,
+                ):
+                    resolution = get_task_default_knowledge_base_resolution(
+                        db, task_id=1001, user_id=9
+                    )
+
+    assert resolution.scopes == []
+    assert [warning.knowledge_base_id for warning in resolution.warnings] == [22]
+    assert resolution.warnings[0].reason == "knowledge_base_not_found"
 
 
 def test_get_task_default_knowledge_base_scopes_rejects_public_private_kb():

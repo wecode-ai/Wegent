@@ -220,7 +220,9 @@ async def _dispatch_task_async(task_id: int) -> None:
         user = db.query(User).filter(User.id == task.user_id).first()
 
         if not user:
-            logger.error(f"[schedule_dispatch] User {task.user_id} not found")
+            error_message = f"User {task.user_id} not found"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
         # Build and dispatch each subtask

@@ -188,3 +188,70 @@ async def test_dispatch_marks_pending_subtask_failed_when_team_is_unauthorized()
     assert "cannot use Team" in update_fields.call_args.kwargs["error_message"]
     db.commit.assert_called_once()
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_marks_pending_subtask_failed_when_user_is_missing() -> None:
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    task = SimpleNamespace(
+        id=100,
+        user_id=10,
+        kind="Task",
+        json={
+            "kind": "Task",
+            "apiVersion": "agent.wecode.io/v1",
+            "metadata": {"name": "task", "namespace": "default"},
+            "spec": {
+                "title": "Task",
+                "prompt": "hello",
+                "teamRef": {
+                    "name": "team",
+                    "namespace": "default",
+                    "user_id": 20,
+                },
+                "workspaceRef": {"name": "workspace", "namespace": "default"},
+            },
+            "status": {"phase": "pending"},
+        },
+    )
+    subtask = SimpleNamespace(id=200, task_id=100)
+    team = Kind(
+        id=2,
+        user_id=20,
+        kind="Team",
+        name="team",
+        namespace="default",
+        json={"kind": "Team", "metadata": {"name": "team"}},
+        is_active=True,
+    )
+
+    with (
+        patch("app.api.dependencies.get_db", return_value=iter([db])),
+        patch("app.stores.tasks.task_store.get_by_id", return_value=task),
+        patch(
+            "app.stores.tasks.subtask_store.list_by_task_status",
+            return_value=[subtask],
+        ),
+        patch(
+            "app.services.task_team_resolver.resolve_task_team_ref",
+            return_value=team,
+        ),
+        patch(
+            "app.services.task_team_resolver.can_user_use_team",
+            return_value=True,
+        ),
+        patch("app.stores.tasks.subtask_store.update_fields") as update_fields,
+        patch(
+            "app.services.execution.dispatcher.execution_dispatcher.dispatch",
+            AsyncMock(),
+        ) as dispatch,
+    ):
+        await _dispatch_task_async(100)
+
+    update_fields.assert_called_once()
+    assert update_fields.call_args.kwargs["subtask"] is subtask
+    assert update_fields.call_args.kwargs["status"] == SubtaskStatus.FAILED
+    assert update_fields.call_args.kwargs["error_message"] == "User 10 not found"
+    db.commit.assert_called_once()
+    dispatch.assert_not_awaited()

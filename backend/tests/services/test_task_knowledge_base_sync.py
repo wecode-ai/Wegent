@@ -701,6 +701,10 @@ class TestKBPriorityLogic:
 
         with (
             patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
+            patch(
                 "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
             ) as mock_get_bound,
             patch(
@@ -737,6 +741,10 @@ class TestKBPriorityLogic:
 
         with (
             patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
+            patch(
                 "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
                 return_value=[],
             ),
@@ -771,6 +779,10 @@ class TestKBPriorityLogic:
             reason="team_owner_cannot_read_kb",
         )
         with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
             patch(
                 "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
                 return_value=[],

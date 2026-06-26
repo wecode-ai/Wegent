@@ -962,7 +962,11 @@ class KnowledgeBaseTool(BaseTool):
         allow_split: bool = True,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
-        active_kb_ids = knowledge_base_ids or self.knowledge_base_ids
+        active_kb_ids = (
+            knowledge_base_ids
+            if knowledge_base_ids is not None
+            else self.knowledge_base_ids
+        )
         active_scopes = (
             knowledge_base_scopes
             if knowledge_base_scopes is not None
@@ -1312,6 +1316,9 @@ class KnowledgeBaseTool(BaseTool):
             if knowledge_base_scopes is not None
             else self.knowledge_base_scopes
         )
+        active_kb_ids = list(
+            dict.fromkeys(scope.knowledge_base_id for scope in active_scopes)
+        )
 
         unscoped_kb_ids = [
             scope.knowledge_base_id
@@ -1396,7 +1403,7 @@ class KnowledgeBaseTool(BaseTool):
                 retrieval_mode=mode,
                 records=records,
                 mediation_context=self._build_mediation_context(),
-                knowledge_base_ids=self.knowledge_base_ids,
+                knowledge_base_ids=active_kb_ids,
                 total_estimated_tokens=total_estimated_tokens,
                 user_id=self.user_id,
                 user_name=self.user_name or "system",
@@ -1425,7 +1432,11 @@ class KnowledgeBaseTool(BaseTool):
         else:
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
-        active_kb_ids = knowledge_base_ids or self.knowledge_base_ids
+        active_kb_ids = (
+            knowledge_base_ids
+            if knowledge_base_ids is not None
+            else self.knowledge_base_ids
+        )
         active_scopes = (
             knowledge_base_scopes
             if knowledge_base_scopes is not None

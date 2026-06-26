@@ -129,6 +129,8 @@ Flexible document chunking options:
 3. Save configuration
 4. Conversations with this agent will automatically reference knowledge base content
 
+Default knowledge bases are resolved at runtime from the Bot configuration of the current Team members. Personal or group Teams only load default knowledge bases that the Team owner can read; public Teams only load organization knowledge bases that public Teams can use. Unreadable default knowledge bases are skipped.
+
 ---
 
 ## 💡 Use Cases
