@@ -55,7 +55,7 @@ flowchart LR
     EX --> FS
 ```
 
-Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。executor 使用 `~/.wegent-executor/app-ipc.lock` 保证同一用户目录下最多只有一个本地执行器进程。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
@@ -341,7 +341,7 @@ flowchart LR
 
 ### 本地执行器连接配置
 
-本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。没有远端地址时，`wegent-executor` 无参数启动会监听 `~/.wegent-executor/app-ipc.sock` 且不会连接 Backend；设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后，executor 继续保留本机 socket，同时以本地设备模式连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。同一用户目录下通过 `~/.wegent-executor/app-ipc.lock` 限制为一个 executor 进程，避免网页版出现同一设备的重复连接。
+本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。没有远端地址时，`wegent-executor` 无参数启动会监听 `~/.wegent-executor/app-ipc.sock` 且不会连接 Backend；设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后，executor 继续保留本机 socket，同时以本地设备模式连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。Wework App 只管理自己启动的 executor；如果用户在 App 外手动启动 executor，App 会优先连接已有 socket，不会在退出时终止该外部进程。不要让多个手动启动的 executor 复用同一个 `WEGENT_EXECUTOR_HOME` 或 socket 路径，否则后启动的进程可能替换 socket 路径并造成连接归属不清。
 
 `EXECUTOR_MODE` 覆盖 `mode`，`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入这些环境变量；只要设备配置文件中已有有效模式和连接信息，executor 就可以直接启动。
 

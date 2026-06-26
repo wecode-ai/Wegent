@@ -67,6 +67,9 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
     assert!(dev_sidecar.contains("--features dev-reload"));
     assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
+    assert!(dev_sidecar.contains("cargo build"));
+    assert!(dev_sidecar.contains("exec \"$EXECUTOR_DIR/target/debug/wegent-executor-dev\""));
+    assert!(!dev_sidecar.contains("exec cargo run"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));
