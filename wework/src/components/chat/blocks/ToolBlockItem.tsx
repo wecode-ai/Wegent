@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
+import { isCommandToolName } from './toolBlockActivity'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 
@@ -185,14 +187,9 @@ function ProcessMarkdown({ content }: { content: string }) {
             if (isBlock) {
               const lang = match ? match[1] || '' : ''
               return (
-                <code className="mb-1.5 block max-w-full overflow-hidden rounded border border-border">
-                  <span className="block border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">
-                    {lang || 'text'}
-                  </span>
-                  <span className="block max-w-full overflow-x-auto px-4 py-2 font-mono text-xs leading-5 text-text-primary">
-                    {String(children).replace(/\n$/, '')}
-                  </span>
-                </code>
+                <MarkdownCodeBlock lang={lang} compact>
+                  {children}
+                </MarkdownCodeBlock>
               )
             }
             return (
@@ -201,9 +198,7 @@ function ProcessMarkdown({ content }: { content: string }) {
               </code>
             )
           },
-          pre: ({ children }) => (
-            <pre className="mb-1.5 max-w-full overflow-hidden">{children}</pre>
-          ),
+          pre: ({ children }) => <>{children}</>,
           blockquote: ({ children }) => (
             <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
               {children}
@@ -231,7 +226,7 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
-  if (name === 'bash' || name === 'execute_command' || name === 'run_terminal_command') {
+  if (isCommandToolName(name)) {
     const command = getInputField(block, 'command', 'cmd')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
@@ -359,7 +354,7 @@ function ToolIcon() {
 function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
 
-  if (name === 'bash' || name === 'execute_command' || name === 'run_terminal_command') {
+  if (isCommandToolName(name)) {
     return <BashBlockDetail block={block} />
   }
   if (name === 'write' || name === 'create_file' || name === 'write_file') {

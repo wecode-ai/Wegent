@@ -217,8 +217,13 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_default();
         let messages = local_link
             .as_ref()
-            .map(|link| merge_cached_messages(transcript_messages(thread), cached_messages(link)))
-            .unwrap_or_else(|| transcript_messages(thread));
+            .map(|link| {
+                merge_cached_messages(
+                    transcript_messages(thread, &self.device_id),
+                    cached_messages(link),
+                )
+            })
+            .unwrap_or_else(|| transcript_messages(thread, &self.device_id));
 
         Ok(json!({
             "success": true,
@@ -866,7 +871,7 @@ impl RuntimeWorkRpcHandler {
         {
             Ok(response) => {
                 let thread = response.get("thread").unwrap_or(&response);
-                transcript_messages(thread)
+                transcript_messages(thread, &self.device_id)
             }
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");

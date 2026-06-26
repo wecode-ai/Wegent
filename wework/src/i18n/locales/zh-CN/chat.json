@@ -11,10 +11,32 @@
   "assistant_status": {
     "stopped_after": "你在 {{duration}} 后停止了"
   },
+  "codex_context": {
+    "compacting": "正在自动压缩上下文",
+    "compacted": "上下文已自动压缩"
+  },
+  "codex_references": {
+    "title": "引用文件",
+    "open_label": "打开 {{path}}",
+    "open_with": "打开方式",
+    "preview_label": "打开预览",
+    "kind": "文档",
+    "kind_with_extension": "文档 · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} 条记忆引用",
+    "line_label": "{{range}} 行",
+    "open_label": "打开 {{path}}"
+  },
   "file_changes": {
     "edited_files": "已编辑 {{count}} 个文件",
+    "edited_file": "已编辑 {{filename}}",
+    "created_file": "已创建 {{filename}}",
+    "deleted_file": "已删除 {{filename}}",
+    "renamed_file": "已重命名 {{filename}}",
+    "view_changes": "查看更改",
     "show_more": "再显示 {{count}} 个文件",
-    "show_less": "收起",
+    "show_less": "收起文件",
     "review": "审核",
     "review_title": "本轮文件变更",
     "preview_file_label": "预览 {{path}} 的文件变更",

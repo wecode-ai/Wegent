@@ -11,10 +11,32 @@
   "assistant_status": {
     "stopped_after": "You stopped after {{duration}}"
   },
+  "codex_context": {
+    "compacting": "Compacting context",
+    "compacted": "Context compacted"
+  },
+  "codex_references": {
+    "title": "Referenced files",
+    "open_label": "Open {{path}}",
+    "open_with": "Open with",
+    "preview_label": "Open preview",
+    "kind": "Document",
+    "kind_with_extension": "Document · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} memory citations",
+    "line_label": "lines {{range}}",
+    "open_label": "Open {{path}}"
+  },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
+    "edited_file": "Edited {{filename}}",
+    "created_file": "Created {{filename}}",
+    "deleted_file": "Deleted {{filename}}",
+    "renamed_file": "Renamed {{filename}}",
+    "view_changes": "View changes",
     "show_more": "Show {{count}} more files",
-    "show_less": "Show less",
+    "show_less": "Collapse files",
     "review": "Review",
     "review_title": "Changes from this turn",
     "preview_file_label": "Preview file changes for {{path}}",

@@ -1,5 +1,8 @@
 import type {
   Attachment,
+  CodexContextEvent,
+  CodexMemoryCitation,
+  CodexReference,
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
@@ -41,6 +44,9 @@ export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
 
 export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary> & {
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+  contextEvents?: CodexContextEvent[] | null
 }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'

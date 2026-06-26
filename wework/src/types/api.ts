@@ -256,6 +256,45 @@ export interface NormalizedRuntimeMessage {
   blocks?: ChatBlock[]
   fileChanges?: TurnFileChangesSummary | null
   file_changes?: TurnFileChangesSummary | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+  memory_citations?: CodexMemoryCitation[] | null
+  memoryCitation?: CodexMemoryCitation | null
+  memory_citation?: CodexMemoryCitation | null
+  contextEvents?: CodexContextEvent[] | null
+  context_events?: CodexContextEvent[] | null
+}
+
+export interface CodexReference {
+  path: string
+  title?: string | null
+  lineStart?: number | null
+  lineEnd?: number | null
+}
+
+export interface CodexMemoryCitationEntry {
+  path: string
+  lineStart?: number | null
+  line_start?: number | null
+  lineEnd?: number | null
+  line_end?: number | null
+  note?: string | null
+}
+
+export interface CodexMemoryCitation {
+  entries?: CodexMemoryCitationEntry[]
+  rolloutIds?: string[]
+  rollout_ids?: string[]
+  threadIds?: string[]
+  thread_ids?: string[]
+}
+
+export interface CodexContextEvent {
+  id: string
+  type: 'context_compaction' | 'contextCompaction' | string
+  status?: 'pending' | 'streaming' | 'done' | 'error' | string | null
+  createdAt?: number | string | null
+  created_at?: number | string | null
 }
 
 export interface LocalTaskSummary {

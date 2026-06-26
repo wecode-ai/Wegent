@@ -273,7 +273,7 @@ export interface WorkbenchServices {
 }
 
 async function createConversationWorkspace(
-  deviceApi: WorkbenchServices['deviceApi'],
+  deviceApi: Pick<WorkbenchServices['deviceApi'], 'createDirectory' | 'getHomeDirectory'>,
   deviceId: string,
   message: string
 ): Promise<string> {
@@ -775,6 +775,47 @@ function getRuntimeMessageBlockSubtaskId(
   return RUNTIME_BLOCK_SUBTASK_ID_OFFSET + hash
 }
 
+function normalizeRuntimeReferences(
+  references: NormalizedRuntimeMessage['references']
+): WorkbenchMessage['references'] {
+  if (!Array.isArray(references)) return undefined
+  const normalized = references.filter(
+    reference => reference && typeof reference.path === 'string' && reference.path.trim()
+  )
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeRuntimeMemoryCitations(
+  message: NormalizedRuntimeMessage
+): WorkbenchMessage['memoryCitations'] {
+  const citations: NonNullable<WorkbenchMessage['memoryCitations']> = []
+  const addCitation = (value: unknown) => {
+    if (isRecord(value) && Array.isArray(value.entries)) {
+      citations.push(value as NonNullable<WorkbenchMessage['memoryCitations']>[number])
+    }
+  }
+
+  if (Array.isArray(message.memoryCitations)) {
+    message.memoryCitations.forEach(addCitation)
+  }
+  if (Array.isArray(message.memory_citations)) {
+    message.memory_citations.forEach(addCitation)
+  }
+  addCitation(message.memoryCitation)
+  addCitation(message.memory_citation)
+
+  return citations.length > 0 ? citations : undefined
+}
+
+function normalizeRuntimeContextEvents(
+  message: NormalizedRuntimeMessage
+): WorkbenchMessage['contextEvents'] {
+  const events = [...(message.contextEvents ?? []), ...(message.context_events ?? [])].filter(
+    event => event && typeof event.id === 'string' && typeof event.type === 'string'
+  )
+  return events.length > 0 ? events : undefined
+}
+
 function runtimeMessageToWorkbenchMessage(
   address: RuntimeTaskAddress,
   message: NormalizedRuntimeMessage
@@ -816,6 +857,9 @@ function runtimeMessageToWorkbenchMessage(
     attachments: message.attachments,
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
+    references: normalizeRuntimeReferences(message.references),
+    memoryCitations: normalizeRuntimeMemoryCitations(message),
+    contextEvents: normalizeRuntimeContextEvents(message),
     createdAt,
   }
 }

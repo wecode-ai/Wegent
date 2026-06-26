@@ -17,7 +17,13 @@ interface ActivityStats {
   failedTools: number
 }
 
-const COMMAND_TOOLS = new Set(['bash', 'execute_command', 'run_terminal_command'])
+const COMMAND_TOOLS = new Set([
+  'bash',
+  'exec_command',
+  'execute_command',
+  'functions.exec_command',
+  'run_terminal_command',
+])
 const FILE_TOOLS = new Set(['read', 'read_file'])
 const CREATE_TOOLS = new Set(['write', 'create_file', 'write_file'])
 const EDIT_TOOLS = new Set(['edit', 'str_replace_editor', 'edit_file'])
@@ -83,7 +89,7 @@ function getActivityStats(blocks: ToolBlock[]): ActivityStats {
     (stats, block) => {
       const kind = getToolActivityKind(block)
       if (block.status === 'error') {
-        if (kind === 'command' || isCommandTool(block.toolName)) {
+        if (kind === 'command' || isCommandToolName(block.toolName)) {
           stats.failedCommands += 1
         } else {
           stats.failedTools += 1
@@ -118,7 +124,7 @@ function getToolActivityKind(block: ToolBlock): ToolActivityKind {
   if (CREATE_TOOLS.has(name)) return 'create'
   if (EDIT_TOOLS.has(name)) return 'edit'
   if (SEARCH_TOOL_HINTS.some(hint => name.includes(hint))) return 'search'
-  if (isCommandTool(name)) return getCommandActivityKind(getInputField(block, 'command', 'cmd'))
+  if (isCommandToolName(name)) return getCommandActivityKind(getInputField(block, 'command', 'cmd'))
   return 'tool'
 }
 
@@ -150,7 +156,7 @@ function isCompletedToolBlock(block: ToolBlock): boolean {
   return block.status === 'done' || block.status === 'error'
 }
 
-function isCommandTool(name: string): boolean {
+export function isCommandToolName(name: string): boolean {
   return COMMAND_TOOLS.has(name.toLowerCase())
 }
 
