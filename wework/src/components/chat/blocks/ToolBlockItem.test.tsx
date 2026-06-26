@@ -85,4 +85,142 @@ describe('ToolBlockItem', () => {
       'Let me explore the repository structure.'
     )
   })
+
+  test('renders process text code blocks with shared syntax highlighting', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          status: 'done',
+          content: [
+            'Use CSS:',
+            '',
+            '```css',
+            '.collapsible {',
+            '  display: grid;',
+            '}',
+            '```',
+          ].join('\n'),
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
+    expect(screen.queryByTestId('markdown-code-wrap-button')).not.toBeInTheDocument()
+  })
+
+  test('renders markdown code labels as md and toggles line wrapping', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          status: 'done',
+          content: ['```markdown', 'After creating the PR, check for merge conflicts.', '```'].join(
+            '\n'
+          ),
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('md')
+
+    const wrapButton = screen.getByTestId('markdown-code-wrap-button')
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    const code = screen.getByTestId('markdown-code-block').querySelector('code')
+
+    expect(wrapButton).toHaveAttribute('aria-pressed', 'false')
+    expect(wrapButton).toHaveAttribute('aria-label', '开启自动换行')
+    expect(wrapButton).toHaveAttribute('title', '开启自动换行')
+    expect(screen.getByTestId('markdown-code-wrap-disabled-icon')).toBeInTheDocument()
+    expect(scrollContainer).toHaveAttribute('data-wrap', 'false')
+    expect(scrollContainer).toHaveClass('overflow-x-auto')
+    expect(code).toHaveStyle({
+      whiteSpace: 'pre',
+      overflowWrap: 'normal',
+      wordBreak: 'normal',
+    })
+
+    await user.click(wrapButton)
+
+    expect(wrapButton).toHaveAttribute('aria-pressed', 'true')
+    expect(wrapButton).toHaveAttribute('aria-label', '禁用自动换行')
+    expect(wrapButton).toHaveAttribute('title', '禁用自动换行')
+    expect(screen.getByTestId('markdown-code-wrap-enabled-icon')).toBeInTheDocument()
+    expect(scrollContainer).toHaveAttribute('data-wrap', 'true')
+    expect(scrollContainer).toHaveClass('overflow-x-hidden')
+    expect(code).toHaveStyle({
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word',
+    })
+
+    await user.unhover(wrapButton)
+
+    expect(wrapButton).toHaveAttribute('aria-pressed', 'true')
+    expect(wrapButton).toHaveAttribute('aria-label', '禁用自动换行')
+    expect(scrollContainer).toHaveAttribute('data-wrap', 'true')
+    expect(code).toHaveStyle({
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word',
+    })
+
+    await user.click(wrapButton)
+
+    expect(wrapButton).toHaveAttribute('aria-pressed', 'false')
+    expect(wrapButton).toHaveAttribute('aria-label', '开启自动换行')
+    expect(scrollContainer).toHaveAttribute('data-wrap', 'false')
+    expect(code).toHaveStyle({
+      whiteSpace: 'pre',
+      overflowWrap: 'normal',
+      wordBreak: 'normal',
+    })
+  })
+
+  test('keeps markdown line wrapping when the code block remounts', async () => {
+    const user = userEvent.setup()
+    const markdownContent = [
+      '```markdown',
+      'Persistent markdown wrap state after pointer leaves and the block remounts.',
+      '```',
+    ].join('\n')
+
+    const { unmount } = render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          status: 'done',
+          content: markdownContent,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('markdown-code-wrap-button'))
+
+    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
+      'data-wrap',
+      'true'
+    )
+
+    unmount()
+
+    render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          status: 'done',
+          content: markdownContent,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('markdown-code-wrap-button')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('markdown-code-scroll-container')).toHaveAttribute(
+      'data-wrap',
+      'true'
+    )
+  })
 })

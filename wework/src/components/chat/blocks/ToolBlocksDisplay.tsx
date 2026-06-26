@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
-import { buildProcessingDisplayRows, type ProcessingDisplayRow } from './toolBlockActivity'
+import {
+  buildProcessingDisplayRows,
+  isCommandToolName,
+  type ProcessingDisplayRow,
+} from './toolBlockActivity'
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -56,63 +61,100 @@ export function ToolBlocksDisplay({
     }
   }, [completedAt, hasRenderedRunning, isRunning])
 
-  if (blocks.length === 0 && !isStreaming) return null
-
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning })
-  const expanded = forceExpanded || isRunning || userExpanded
-  const hasLiveNarrativeBlock = rows.some(
-    row =>
-      row.type === 'block' &&
-      (row.block.type === 'thinking' || row.block.type === 'text') &&
-      row.block.status !== 'done' &&
-      row.block.status !== 'error' &&
-      Boolean(row.block.content)
+  const rows = useMemo(
+    () => buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning }),
+    [blocks, isRunning]
   )
+  const expanded = forceExpanded || isRunning || userExpanded
+  const hasLiveNarrativeBlock = useMemo(
+    () =>
+      rows.some(
+        row =>
+          row.type === 'block' &&
+          (row.block.type === 'thinking' || row.block.type === 'text') &&
+          row.block.status !== 'done' &&
+          row.block.status !== 'error' &&
+          Boolean(row.block.content)
+      ),
+    [rows]
+  )
+  const processingContent = useMemo(
+    () => (
+      <div className="flex min-w-0 flex-col gap-3 pt-0.5">
+        {rows.map(row =>
+          row.type === 'activity_group' ? (
+            <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          ) : (
+            <ToolBlockItem
+              key={row.id}
+              block={row.block}
+              forceExpanded={isRunning && row.block.type === 'tool'}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          )
+        )}
+        {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+      </div>
+    ),
+    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows]
+  )
+
+  if (blocks.length === 0 && !isStreaming) return null
 
   return (
     <div className="mb-3 min-w-0">
       {showSummary && isRunning ? (
         // While the turn is still running the summary is informational only:
         // render it as plain, non-interactive text so it does not look clickable.
-        <div className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-xs text-text-muted">
-          <span>{duration}</span>
+        <div className="mb-3 border-b border-border pb-2 text-xs text-text-muted">
+          <span className="inline-flex items-center gap-1">{duration}</span>
         </div>
       ) : showSummary ? (
-        <button
-          type="button"
-          className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-left text-xs text-text-muted hover:text-text-secondary"
-          onClick={() => setUserExpanded(value => !value)}
-        >
-          <span>{duration}</span>
-          <svg
-            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
+        <div className="mb-3 border-b border-border pb-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-left text-xs text-text-muted hover:text-text-secondary"
+            onClick={() => setUserExpanded(value => !value)}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-      ) : null}
-      {expanded && (
-        <div className="flex min-w-0 flex-col gap-3">
-          {rows.map(row =>
-            row.type === 'activity_group' ? (
-              <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-            ) : (
-              <ToolBlockItem
-                key={row.id}
-                block={row.block}
-                forceExpanded={isRunning && row.block.type === 'tool'}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            )
-          )}
-          {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+            <span>{duration}</span>
+            <svg
+              className="h-3 w-3 -rotate-90"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
-      )}
+      ) : null}
+      <CollapsibleProcessingContent expanded={expanded}>
+        {processingContent}
+      </CollapsibleProcessingContent>
+    </div>
+  )
+}
+
+function CollapsibleProcessingContent({
+  expanded,
+  children,
+}: {
+  expanded: boolean
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-testid="processing-collapse-content"
+      aria-hidden={!expanded}
+      inert={!expanded ? true : undefined}
+      className={[
+        'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0',
+      ].join(' ')}
+    >
+      <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   )
 }
@@ -155,9 +197,7 @@ function ToolActivityGroup({
 }
 
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
-  return blocks.some(block =>
-    ['bash', 'execute_command', 'run_terminal_command'].includes(block.toolName.toLowerCase())
-  )
+  return blocks.some(block => isCommandToolName(block.toolName))
 }
 
 function ThinkingIndicator() {

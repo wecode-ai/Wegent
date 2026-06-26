@@ -30,6 +30,32 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
   })
 
+  test('opens completed processing details with a short content transition', () => {
+    render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
+
+    const toggle = screen.getByRole('button', { name: /已处理/ })
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(toggle).toHaveClass('inline-flex')
+    expect(toggle).not.toHaveClass('w-full')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(collapseContent).toHaveClass(
+      'transition-[grid-template-rows,opacity]',
+      'duration-[220ms]',
+      'grid-rows-[0fr]',
+      'opacity-0',
+      'pointer-events-none'
+    )
+
+    fireEvent.click(toggle.parentElement as HTMLElement)
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.click(toggle)
+
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(collapseContent).toHaveClass('grid-rows-[1fr]', 'opacity-100')
+    expect(toggle.querySelector('svg')).toHaveClass('-rotate-90')
+  })
+
   test('keeps live duration when the run finishes', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))

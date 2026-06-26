@@ -1,18 +1,45 @@
 import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import type {
+  ArchivedConversationsListRequest,
+  ArchivedConversationsListResponse,
+  DeleteDeviceWorkspaceRequest,
+  DeleteDeviceWorkspaceResponse,
   DeviceCommandResponse,
-  DeviceInfo,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   LocalTaskSummary,
   LocalDeviceSkill,
+  RuntimeArchiveProjectConversationsRequest,
+  RuntimeArchivedConversationBulkRequest,
+  RuntimeArchivedConversationBulkResponse,
   RuntimeDeviceWorkspace,
+  RuntimeFileChangesRevertRequest,
+  RuntimeFileChangesRevertResponse,
   RuntimeTaskAddress,
+  RuntimeTaskArchiveResponse,
+  RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
+  RuntimeTaskCreateResponse,
+  RuntimeTaskForkRequest,
+  RuntimeTaskForkResponse,
+  RuntimeTaskRenameRequest,
+  RuntimeSendRequest,
+  RuntimeSendResponse,
+  RuntimeTranscriptRequest,
+  RuntimeTranscriptResponse,
+  RuntimeWorkspaceOpenRequest,
+  RuntimeWorkspaceOpenResponse,
+  RuntimeWorkspaceRemoveRequest,
+  RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeWorkSearchRequest,
+  RuntimeWorkSearchResponse,
   Team,
   UnifiedModel,
   User,
 } from '@/types/api'
+import type { DeviceInfo } from '@/types/devices'
 import type {
   WorkspaceFileEntry,
   WorkspaceTextFileResponse,
@@ -80,13 +107,13 @@ function cloudConnectionRequired(name: string): never {
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
   const online = status.running && status.ready !== false && !status.error
-  return {
+  const device = {
     id: 0,
     device_id: status.deviceId || LOCAL_DEVICE_ID,
     name: 'Local Executor',
-    status: online ? 'online' : 'offline',
+    status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
-    device_type: 'local',
+    device_type: 'local' as const,
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
@@ -95,9 +122,10 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     latest_version: null,
     update_available: false,
     error: status.error ?? null,
-    bind_shell: 'claudecode',
+    bind_shell: 'claudecode' as const,
     runtime_transfer_host: null,
   }
+  return device
 }
 
 function localDeviceIdFromStatus(status: LocalExecutorStatus | null | undefined): string {
@@ -609,13 +637,16 @@ function createRuntimeWorkApi(
   request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
   getLocalDeviceId: () => Promise<string>
 ) {
-  const normalizeRequest = async <T extends Record<string, unknown>>(data: T): Promise<T> =>
-    normalizeLocalDeviceRecord(data, await getLocalDeviceId())
+  const normalizeRequest = async <T extends object>(
+    data: T
+  ): Promise<T & Record<string, unknown>> =>
+    normalizeLocalDeviceRecord(data as Record<string, unknown>, await getLocalDeviceId()) as T &
+      Record<string, unknown>
 
-  const requestWithLocalDevice = async <T>(
+  const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
-    data: Record<string, unknown>
-  ): Promise<T> => request(method, await normalizeRequest(data))
+    data: TRequest
+  ): Promise<TResponse> => request(method, await normalizeRequest(data))
 
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
@@ -625,31 +656,41 @@ function createRuntimeWorkApi(
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')
     },
-    prepareDeviceWorkspace(data: Record<string, unknown>) {
+    prepareDeviceWorkspace(
+      data: DeviceWorkspacePrepareRequest
+    ): Promise<DeviceWorkspacePrepareResponse> {
       return requestWithLocalDevice('runtime.workspaces.prepare', data)
     },
-    deleteDeviceWorkspace(data: Record<string, unknown>) {
+    deleteDeviceWorkspace(
+      data: DeleteDeviceWorkspaceRequest
+    ): Promise<DeleteDeviceWorkspaceResponse> {
       return requestWithLocalDevice('runtime.workspaces.delete', data)
     },
-    getRuntimeTranscript(data: Record<string, unknown>) {
+    getRuntimeTranscript(data: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return requestWithLocalDevice('runtime.tasks.transcript', data)
     },
-    searchRuntimeWork(data: Record<string, unknown>) {
+    searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return requestWithLocalDevice('runtime.tasks.search', data)
     },
-    revertRuntimeFileChanges(data: Record<string, unknown>) {
+    revertRuntimeFileChanges(
+      data: RuntimeFileChangesRevertRequest
+    ): Promise<RuntimeFileChangesRevertResponse> {
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
-    sendRuntimeMessage(data: Record<string, unknown>) {
+    sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return requestWithLocalDevice('runtime.tasks.send', data)
     },
-    openRuntimeWorkspace(data: Record<string, unknown>) {
+    openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)
     },
-    renameRuntimeWorkspace(data: Record<string, unknown>) {
+    renameRuntimeWorkspace(
+      data: RuntimeWorkspaceRenameRequest
+    ): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.rename', data)
     },
-    removeRuntimeWorkspace(data: Record<string, unknown>) {
+    removeRuntimeWorkspace(
+      data: RuntimeWorkspaceRemoveRequest
+    ): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.remove', data)
     },
     bindRuntimeTaskImSessions() {
@@ -670,61 +711,59 @@ function createRuntimeWorkApi(
     unsubscribeRuntimeTaskNotifications(address: RuntimeTaskAddress) {
       return Promise.resolve({ address, subscribed: false, sessionKeys: [] })
     },
-    archiveRuntimeTask(data: RuntimeTaskAddress) {
-      return requestWithLocalDevice(
-        'runtime.tasks.archive',
-        data as unknown as Record<string, unknown>
-      )
+    archiveRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return requestWithLocalDevice('runtime.tasks.archive', data)
     },
-    renameRuntimeTask(data: Record<string, unknown>) {
+    renameRuntimeTask(data: RuntimeTaskRenameRequest): Promise<RuntimeTaskArchiveResponse> {
       return requestWithLocalDevice('runtime.tasks.rename', data)
     },
-    listArchivedConversations(data: Record<string, unknown> = {}) {
+    listArchivedConversations(
+      data: ArchivedConversationsListRequest = {}
+    ): Promise<ArchivedConversationsListResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.list', data)
     },
-    archiveConversation(data: RuntimeTaskAddress) {
-      return requestWithLocalDevice(
-        'runtime.tasks.archive',
-        data as unknown as Record<string, unknown>
-      )
+    archiveConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return requestWithLocalDevice('runtime.tasks.archive', data)
     },
-    archiveProjectConversations(data: Record<string, unknown>) {
+    archiveProjectConversations(
+      data: RuntimeArchiveProjectConversationsRequest
+    ): Promise<RuntimeArchivedConversationBulkResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.archive_project', data)
     },
-    archiveAllConversations() {
+    archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
       return request('runtime.archived_conversations.archive_all', {})
     },
-    unarchiveConversation(data: RuntimeTaskAddress) {
-      return requestWithLocalDevice(
-        'runtime.archived_conversations.unarchive',
-        data as unknown as Record<string, unknown>
-      )
+    unarchiveConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return requestWithLocalDevice('runtime.archived_conversations.unarchive', data)
     },
-    deleteArchivedConversation(data: RuntimeTaskAddress) {
-      return requestWithLocalDevice(
-        'runtime.archived_conversations.delete',
-        data as unknown as Record<string, unknown>
-      )
+    deleteArchivedConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return requestWithLocalDevice('runtime.archived_conversations.delete', data)
     },
-    deleteArchivedConversationsBulk(data: Record<string, unknown>) {
+    deleteArchivedConversationsBulk(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationBulkResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.delete_bulk', data)
     },
-    cancelRuntimeTask(data: RuntimeTaskAddress) {
-      return requestWithLocalDevice(
-        'runtime.tasks.cancel',
-        data as unknown as Record<string, unknown>
-      )
+    cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
-    async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+    async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await getLocalDeviceId()
       const payload = createLocalRuntimeTaskPayload(data, localDeviceId)
-      const response = await request<Record<string, unknown>>('runtime.tasks.create', payload)
+      const response = await request<Partial<RuntimeTaskCreateResponse>>(
+        'runtime.tasks.create',
+        payload
+      )
       return {
         ...response,
+        accepted: response.accepted ?? true,
         deviceId: localDeviceId,
+        localTaskId: response.localTaskId ?? data.localTaskId ?? '',
+        workspacePath: response.workspacePath ?? requiredRuntimeWorkspacePath(data),
+        runtime: response.runtime ?? data.runtime,
       }
     },
-    forkRuntimeTask(data: Record<string, unknown>) {
+    forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }

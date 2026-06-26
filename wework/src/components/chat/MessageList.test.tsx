@@ -60,7 +60,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('已编辑 main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
   test('renders cancelled assistant turns like stopped Codex turns', () => {
@@ -125,7 +126,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('processing-activity-group-toggle')).toHaveTextContent(
       '已运行 1 条命令'
     )
-    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('已编辑 main.ts')
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
@@ -152,7 +153,7 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getAllByTestId('message-hover-time')[0].parentElement).toHaveClass('min-h-5')
+    expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
   })
 
   const originalCreateObjectUrl = URL.createObjectURL
@@ -272,6 +273,53 @@ describe('MessageList', () => {
     expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
   })
 
+  test('keeps completed process text collapsed when the assistant has final content', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        subtaskId: 11,
+        type: 'text',
+        content: '我会先看这个 skill 当前的流程结构和相关记忆。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'rg -n workflow' },
+        toolOutput: 'ok',
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-with-process',
+            role: 'assistant',
+            content: '最终建议放在 PR flow 里。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('最终建议放在 PR flow 里。')).toBeInTheDocument()
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(collapseContent).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('我会先看这个 skill 当前的流程结构和相关记忆。')).toBeInTheDocument()
+  })
+
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
     const { container } = render(
       <MessageList
@@ -345,8 +393,38 @@ describe('MessageList', () => {
 
     // A filesystem path must not render as a navigating anchor.
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('renders assistant file link line numbers without passing them to open-file actions', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-file-line-link',
+            role: 'assistant',
+            content:
+              '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveTextContent(
+      'references/github-pr-flow.md (line 18)'
+    )
+    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveClass(
+      'max-w-[min(36rem,calc(100vw-3rem))]',
+      'break-all'
+    )
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md')
   })
 
   test('routes assistant file links to the turn diff review focused on that file', async () => {
@@ -391,7 +469,7 @@ describe('MessageList', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
     expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
     const request = onOpenFileChangesReview.mock.calls[0][0]
@@ -401,6 +479,100 @@ describe('MessageList', () => {
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
     await request.loadDiff()
     expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
+  })
+
+  test('renders Codex context events, memory citations, and one-column deduped file references', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-codex-rich',
+            role: 'assistant',
+            content:
+              'Updated [SKILL.md](/workspace/project/SKILL.md), [github-pr-flow.md](/workspace/project/references/github-pr-flow.md:18), and [notify_pr_ready.sh](/workspace/project/scripts/notify_pr_ready.sh).',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            references: [
+              { path: '/workspace/project/SKILL.md' },
+              { path: '/workspace/project/references/github-pr-flow.md', lineStart: 18 },
+              { path: '/workspace/project/SKILL.md:22' },
+              { path: '/workspace/project/scripts/notify_pr_ready.sh' },
+            ],
+            contextEvents: [
+              {
+                id: 'context-1',
+                type: 'context_compaction',
+                status: 'done',
+                createdAt: Date.parse('2026-06-24T08:00:00.000Z'),
+              },
+            ],
+            memoryCitations: [
+              {
+                entries: [
+                  {
+                    path: 'MEMORY.md',
+                    lineStart: 10,
+                    lineEnd: 12,
+                    note: 'repo guidance',
+                  },
+                ],
+                threadIds: ['thread-1'],
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('codex-context-events')).toBeInTheDocument()
+    expect(screen.queryByText('引用文件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-memory-citations')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-reference-list')).toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('codex-memory-citations')
+        .compareDocumentPosition(screen.getByTestId('codex-reference-list')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    const referenceCards = screen.getAllByTestId('codex-reference-card')
+    expect(referenceCards).toHaveLength(2)
+    expect(screen.getByTestId('codex-reference-list')).not.toHaveTextContent('notify_pr_ready.sh')
+    expect(referenceCards[0]).toHaveTextContent('SKILL.md')
+    expect(referenceCards[0]).toHaveTextContent('文档 · MD')
+    expect(referenceCards[0]).toHaveTextContent('打开预览')
+    expect(screen.getAllByTestId('codex-reference-kind-label')[0]).toHaveClass(
+      'group-hover/reference-card:opacity-0'
+    )
+    expect(screen.getAllByTestId('codex-reference-preview-label')[0]).toHaveClass(
+      'opacity-0',
+      'group-hover/reference-card:opacity-100'
+    )
+    expect(referenceCards[1]).toHaveTextContent('github-pr-flow.md')
+
+    await userEvent.click(referenceCards[1])
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/workspace/project/references/github-pr-flow.md'
+    )
+
+    expect(screen.getByTestId('codex-memory-citations-toggle')).toHaveTextContent('1 条记忆引用')
+    await userEvent.click(screen.getByTestId('codex-memory-citations-toggle'))
+    const memoryEntry = screen.getByTestId('codex-memory-citation-entry')
+    expect(memoryEntry).toHaveTextContent('MEMORY.md')
+    expect(memoryEntry).toHaveTextContent('10-12 行')
+    expect(memoryEntry).toHaveTextContent('repo guidance')
+    expect(memoryEntry).toHaveAttribute('aria-label', '打开 MEMORY.md')
+    expect(screen.getByTestId('codex-memory-citation-tooltip')).toHaveTextContent('MEMORY.md')
+    expect(screen.getByTestId('codex-memory-citation-tooltip')).toHaveClass(
+      'max-w-[min(28rem,calc(100vw-3rem))]',
+      'break-all'
+    )
+
+    onOpenWorkspaceFile.mockClear()
+    await userEvent.click(memoryEntry)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
   })
 
   test('renders IM source badge for user messages with channel label', () => {
@@ -978,7 +1150,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-document-attachment')).toHaveTextContent('PDF')
   })
 
-  test('shows user message hover actions with time and copy', async () => {
+  test('shows user message hover actions with time, copy label, and resettable success icon', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
@@ -996,7 +1168,31 @@ describe('MessageList', () => {
       />
     )
 
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    const hoverActions = screen.getByTestId('message-hover-actions')
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(hoverActions).not.toHaveClass(
+      'group-hover/message:opacity-100',
+      'group-focus-within/message:opacity-100'
+    )
+    expect(hoverRegion).toHaveClass('max-w-[80%]')
+
+    fireEvent.pointerEnter(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-100', 'pointer-events-auto')
+
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
+    expect(screen.getByTestId('copy-message-label')).toHaveClass(
+      'opacity-0',
+      'group-hover/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-label')).not.toHaveClass(
+      'group-focus-within/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
 
     vi.useRealTimers()
 
@@ -1006,11 +1202,23 @@ describe('MessageList', () => {
     })
 
     const copyButton = screen.getByTestId('copy-message-button')
-    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+    expect(copyButton).toHaveAttribute('title', '复制')
+    expect(copyButton).not.toHaveClass('opacity-0')
 
     await userEvent.click(copyButton)
 
     expect(writeText).toHaveBeenCalledWith('对 bind_shell=openclaw 直接跳过')
+    expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
+    expect(copyButton).toHaveClass('bg-text-primary', 'text-background/70')
+
+    fireEvent.mouseLeave(hoverActions)
+    fireEvent.pointerLeave(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
+    fireEvent.transitionEnd(screen.getByTestId('copy-message-label'), { propertyName: 'opacity' })
+    expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
+    fireEvent.transitionEnd(hoverActions, { propertyName: 'opacity' })
+    expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
   })
 
   test('collapses long user messages without changing copied content', async () => {
@@ -1046,6 +1254,10 @@ describe('MessageList', () => {
     expect(messageContent).not.toHaveClass('max-h-44')
     expect(toggleButton).toHaveAttribute('aria-expanded', 'true')
     expect(toggleButton).toHaveTextContent('收起')
+
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    expect(hoverRegion).toHaveClass('max-w-[80%]')
+    fireEvent.pointerEnter(hoverRegion)
 
     await userEvent.click(screen.getByTestId('copy-message-button'))
     expect(writeText).toHaveBeenCalledWith(content)
@@ -1096,7 +1308,57 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows assistant message hover actions with time and copy', async () => {
+  test('shows date and clock time for messages not created today in the current year', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '昨天的消息',
+              status: 'done',
+              createdAt: '2026-06-18T12:04:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('6月18日 12:04')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows year for messages not created this year', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '去年的消息',
+              status: 'done',
+              createdAt: '2025-06-18T12:04:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('2025年6月18日 12:04')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows assistant message hover actions with time and icon-hover copy label', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
@@ -1114,7 +1376,30 @@ describe('MessageList', () => {
       />
     )
 
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    const hoverActions = screen.getByTestId('message-hover-actions')
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(hoverActions).not.toHaveClass(
+      'group-hover/message:opacity-100',
+      'group-focus-within/message:opacity-100'
+    )
+    expect(hoverRegion).toHaveClass('w-fit', 'max-w-full')
+
+    fireEvent.pointerEnter(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-100', 'pointer-events-auto')
+
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
+    expect(screen.getByTestId('copy-message-label')).toHaveClass(
+      'opacity-0',
+      'group-hover/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-label')).not.toHaveClass(
+      'group-focus-within/copy:opacity-100'
+    )
 
     vi.useRealTimers()
 
@@ -1124,7 +1409,8 @@ describe('MessageList', () => {
     })
 
     const copyButton = screen.getByTestId('copy-message-button')
-    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+    expect(copyButton).toHaveAttribute('title', '复制')
+    expect(copyButton).not.toHaveClass('opacity-0')
 
     await userEvent.click(copyButton)
 
@@ -1472,7 +1758,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('网络连接失败：请检查网络连接后重试')).not.toBeInTheDocument()
   })
 
-  test('keeps regular long content inside the page while tables and code scroll locally', () => {
+  test('keeps regular long content inside the page while tables and highlighted code scroll locally', () => {
     const longToken = 'a'.repeat(120)
     const { container } = render(
       <MessageList
@@ -1494,8 +1780,8 @@ describe('MessageList', () => {
               '| --- |',
               `| ${longToken} |`,
               '',
-              '```text',
-              longToken,
+              '```css',
+              `.collapsible { color: ${longToken}; }`,
               '```',
             ].join('\n'),
             status: 'done',
@@ -1515,7 +1801,9 @@ describe('MessageList', () => {
       'overflow-x-auto',
       'max-w-full'
     )
-    expect(container.querySelector('pre')).toHaveClass('max-w-full', 'overflow-hidden')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
+    expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
   })
 
   test('renders local skill markdown links in user messages', () => {

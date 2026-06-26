@@ -187,15 +187,21 @@ pub(crate) fn extract_text(item: &Value) -> Option<String> {
     if let Some(content) = string_field(item, "content") {
         return Some(content);
     }
+    if let Some(message) = string_field(item, "message") {
+        return Some(message);
+    }
     let text = item
         .get("content")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|part| {
-            part.get("text")
-                .or_else(|| part.get("content"))
-                .and_then(Value::as_str)
+            part.as_str().map(str::to_owned).or_else(|| {
+                part.get("text")
+                    .or_else(|| part.get("content"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
         })
         .collect::<Vec<_>>()
         .join("");
