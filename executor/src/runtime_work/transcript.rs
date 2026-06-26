@@ -39,8 +39,10 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 "reasoning" => push_reasoning_block(&mut blocks, item, created_at),
                 "commandexecution" => blocks.push(command_block(item, created_at)),
                 "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
-                | "toolsearchcall" | "websearch" | "imagegeneration" | "imageview" | "sleep"
-                | "localshellcall" | "shellcall" => blocks.push(tool_block(item, created_at)),
+                | "toolsearchcall" | "websearchcall" | "websearch" | "imagegeneration"
+                | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
+                    blocks.push(tool_block(item, created_at))
+                }
                 "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput" => {
                     merge_tool_output(&mut blocks, item, created_at);
                 }
@@ -434,6 +436,7 @@ fn is_tool_item_type(item_type: &str) -> bool {
             | "dynamictoolcall"
             | "mcptoolcall"
             | "toolsearchcall"
+            | "websearchcall"
             | "websearch"
             | "imagegeneration"
             | "imageview"
@@ -474,7 +477,7 @@ fn tool_name(item: &Value) -> String {
                 .unwrap_or(tool)
         }
         "toolsearchcall" | "toolsearchoutput" => "tool_search".to_owned(),
-        "websearch" => "web_search".to_owned(),
+        "websearch" | "websearchcall" => "web_search".to_owned(),
         "imagegeneration" => "image_generation".to_owned(),
         "imageview" => "view_image".to_owned(),
         "sleep" => "sleep".to_owned(),
@@ -493,6 +496,10 @@ fn tool_input(item: &Value) -> Value {
         }
         "mcptoolcall" => item.get("arguments").cloned().unwrap_or(Value::Null),
         "websearch" => json!({"query": string_field(item, "query").unwrap_or_default()}),
+        "websearchcall" => item
+            .get("action")
+            .cloned()
+            .unwrap_or_else(|| json!({"query": string_field(item, "query").unwrap_or_default()})),
         "imageview" => json!({"path": string_field(item, "path").unwrap_or_default()}),
         "sleep" => {
             json!({"duration_ms": item.get("durationMs").or_else(|| item.get("duration_ms")).cloned().unwrap_or(Value::Null)})

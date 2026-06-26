@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -169,7 +169,15 @@ describe('MessageList', () => {
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
+    delete (navigator as unknown as { clipboard?: Clipboard }).clipboard
   })
+
+  function stubClipboardWriteText(writeText: ReturnType<typeof vi.fn>) {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+  }
 
   test('renders user and assistant messages', () => {
     const { container } = render(
@@ -318,6 +326,118 @@ describe('MessageList', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByText('我会先看这个 skill 当前的流程结构和相关记忆。')).toBeInTheDocument()
+  })
+
+  test('renders final answer web search sources as a Codex-style source chip', async () => {
+    const user = userEvent.setup()
+    const openWindowMock = vi.fn()
+    vi.stubGlobal('open', openWindowMock)
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'web-search-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'search',
+          query: 'site:weather.com weather today Beijing China',
+        },
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'web-open-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'open_page',
+          url: 'https://www.weather.com/weather/today/l/Beijing+China',
+        },
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-web-sources',
+            role: 'assistant',
+            content: '北京今天适合室内活动。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('北京今天适合室内活动。')).toBeInTheDocument()
+    expect(screen.getByTestId('web-search-sources-chip')).toHaveTextContent('来源')
+    expect(screen.getByTestId('web-search-source-popup')).toHaveTextContent(
+      'weather.com/weather/today/l/Beijing+China'
+    )
+    expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(1)
+
+    await user.click(screen.getByTestId('web-search-source-popup-row'))
+
+    await waitFor(() =>
+      expect(openWindowMock).toHaveBeenCalledWith(
+        'https://www.weather.com/weather/today/l/Beijing+China',
+        '_blank',
+        'noopener,noreferrer'
+      )
+    )
+  })
+
+  test('keeps processing expansion state scoped to each conversation', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+    ]
+    const buildMessage = (id: string): Parameters<typeof MessageList>[0]['messages'][number] => ({
+      id,
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      blocks,
+      createdAt: '2026-06-24T08:00:01.000Z',
+    })
+
+    const { rerender } = render(
+      <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+
+    rerender(
+      <MessageList conversationKey="conversation-b" messages={[buildMessage('assistant-b')]} />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+
+    rerender(
+      <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
   })
 
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
@@ -1197,9 +1317,7 @@ describe('MessageList', () => {
     vi.useRealTimers()
 
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
 
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveAttribute('title', '复制')
@@ -1223,9 +1341,7 @@ describe('MessageList', () => {
 
   test('collapses long user messages without changing copied content', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
 
     render(
@@ -1404,9 +1520,7 @@ describe('MessageList', () => {
     vi.useRealTimers()
 
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
 
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveAttribute('title', '复制')

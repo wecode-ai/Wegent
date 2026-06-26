@@ -267,6 +267,7 @@ export function ScrollableMessageArea({
               )}
               <MessageList
                 messages={messages}
+                conversationKey={conversationKey}
                 isWaitingForAssistant={isWaitingForAssistant}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}

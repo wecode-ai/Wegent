@@ -16,6 +16,49 @@ const completedCommandBlock: ProcessingBlock = {
   createdAt: 1770000000000,
 }
 
+const completedWebSearchBlocks: ProcessingBlock[] = [
+  {
+    id: 'web-search-1',
+    subtaskId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'search',
+      query: 'Beijing weather today June 17 2026 temperature rain',
+      queries: [
+        'Beijing weather today June 17 2026 temperature rain',
+        'Beijing China current weather forecast today AccuWeather',
+      ],
+    },
+    status: 'done',
+    createdAt: 1770000000000,
+  },
+  {
+    id: 'web-search-2',
+    subtaskId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'search',
+      query: 'site:weather.com weather today Beijing China',
+    },
+    status: 'done',
+    createdAt: 1770000001000,
+  },
+  {
+    id: 'web-open-1',
+    subtaskId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'open_page',
+      url: 'https://www.weather.com/weather/today/l/Beijing+China',
+    },
+    status: 'done',
+    createdAt: 1770000002000,
+  },
+]
+
 describe('ToolBlocksDisplay', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -28,6 +71,37 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+  })
+
+  test('renders completed web search tools as a Codex-style web search activity', () => {
+    render(<ToolBlocksDisplay blocks={completedWebSearchBlocks} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '已搜索网页' }))
+
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'Beijing weather today June 17 2026 temperature rain'
+    )
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'https://www.weather.com/weather/today/l/Beijing+China'
+    )
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'weather today Beijing China | weather.com'
+    )
+    expect(
+      screen.queryByText('Beijing China current weather forecast today AccuWeather')
+    ).toBeNull()
+    expect(screen.getAllByText('Beijing weather today June 17 2026 temperature rain')).toHaveLength(
+      1
+    )
+    expect(screen.getByTestId('web-search-activity-results').parentElement).not.toHaveClass(
+      'border-l'
+    )
+    expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(2)
   })
 
   test('opens completed processing details with a short content transition', () => {

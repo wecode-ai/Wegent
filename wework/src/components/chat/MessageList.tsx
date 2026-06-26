@@ -16,12 +16,16 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { resolveDirectMarkdownImageSrc } from './assistantMarkdownLinks'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { isWebSearchToolName } from './blocks/toolBlockActivity'
+import { WebSearchSourcesChip } from './blocks/WebSearchSources'
+import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexContextEvents, CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
@@ -47,6 +51,7 @@ const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg
 
 export function MessageList({
   messages,
+  conversationKey,
   isWaitingForAssistant = false,
   devices = [],
   onRetryFailedMessage,
@@ -81,6 +86,7 @@ export function MessageList({
           ) : (
             <AssistantMessage
               message={message}
+              conversationKey={conversationKey}
               devices={devices}
               onRetryFailedMessage={onRetryFailedMessage}
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
@@ -583,8 +589,16 @@ function getDisplayProcessingBlocks(
   })
 }
 
+function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
+  return blocks.filter(
+    (block): block is Extract<ProcessingBlock, { type: 'tool' }> =>
+      block.type === 'tool' && isWebSearchToolName(block.toolName)
+  )
+}
+
 function AssistantMessage({
   message,
+  conversationKey,
   devices,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -594,6 +608,7 @@ function AssistantMessage({
   onOpenWorkspaceFile,
 }: {
   message: WorkbenchMessage
+  conversationKey?: string | number | null
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -617,6 +632,9 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
+  const webSearchSources = isStreaming
+    ? []
+    : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const shouldShowCompactThinking = isStreaming && !hasBlocks && !hasVisibleContent
   const contextEvents = message.contextEvents ?? []
   const memoryCitations = message.memoryCitations ?? []
@@ -657,12 +675,16 @@ function AssistantMessage({
               startedAt={getTurnStartMs(message.createdAt)}
               forceExpanded={isCancelled}
               showSummary={!isCancelled}
+              stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )}
           {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
           {hasVisibleContent && (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
+          )}
+          {hasVisibleContent && webSearchSources.length > 0 && (
+            <WebSearchSourcesChip sources={webSearchSources} />
           )}
           {memoryCitations.length > 0 && (
             <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
@@ -716,6 +738,14 @@ function AssistantMessage({
       </div>
     </div>
   )
+}
+
+function getMessageDisplayStateKey(
+  conversationKey: string | number | null | undefined,
+  message: WorkbenchMessage
+): string {
+  const conversationPart = conversationKey == null ? 'default' : String(conversationKey)
+  return `${conversationPart}:${message.id}`
 }
 
 function AssistantErrorCard({

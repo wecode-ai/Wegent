@@ -6,8 +6,12 @@ import { ToolBlockItem } from './ToolBlockItem'
 import {
   buildProcessingDisplayRows,
   isCommandToolName,
+  isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -20,6 +24,7 @@ interface ToolBlocksDisplayProps {
   startedAt?: number
   forceExpanded?: boolean
   showSummary?: boolean
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }
 
@@ -29,10 +34,13 @@ export function ToolBlocksDisplay({
   startedAt,
   forceExpanded = false,
   showSummary = true,
+  stateKey,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
+    stateKey ? `${stateKey}:processing` : undefined
+  )
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -84,12 +92,18 @@ export function ToolBlocksDisplay({
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
         {rows.map(row =>
           row.type === 'activity_group' ? (
-            <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+            <ToolActivityGroup
+              key={row.id}
+              row={row}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
           ) : (
             <ToolBlockItem
               key={row.id}
               block={row.block}
               forceExpanded={isRunning && row.block.type === 'tool'}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )
@@ -97,7 +111,7 @@ export function ToolBlocksDisplay({
         {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
       </div>
     ),
-    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows]
+    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
   )
 
   if (blocks.length === 0 && !isStreaming) return null
@@ -161,12 +175,15 @@ function CollapsibleProcessingContent({
 
 function ToolActivityGroup({
   row,
+  stateKey,
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = usePersistentProcessingExpansion(stateKey)
+  const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
   const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
 
   return (
@@ -186,14 +203,36 @@ function ToolActivityGroup({
         />
       </button>
       {expanded && (
-        <div className="mt-2 flex min-w-0 flex-col gap-3 border-l border-border pl-4">
-          {row.blocks.map(block => (
-            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          ))}
+        <div
+          className={[
+            'mt-2 flex min-w-0 flex-col gap-3',
+            isWebSearchGroup ? '' : 'border-l border-border pl-4',
+          ].join(' ')}
+        >
+          {isWebSearchGroup ? (
+            <WebSearchActivityDetails blocks={row.blocks} />
+          ) : (
+            row.blocks.map(block => (
+              <ToolBlockItem
+                key={block.id}
+                block={block}
+                stateKey={stateKey ? `${stateKey}:${block.id}` : undefined}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            ))
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
+  const items = getWebSearchActivityItems(blocks)
+
+  if (items.length === 0) return null
+
+  return <WebSearchActivityRows items={items} />
 }
 
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {

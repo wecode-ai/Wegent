@@ -1,31 +1,44 @@
 import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
-import { isCommandToolName } from './toolBlockActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { isCommandToolName, isWebSearchToolName } from './toolBlockActivity'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
   forceExpanded?: boolean
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }
 
 export function ToolBlockItem({
   block,
   forceExpanded = false,
+  stateKey,
   onOpenWorkspaceFile,
 }: ToolBlockItemProps) {
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
+    stateKey ? `${stateKey}:tool` : undefined
+  )
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ThinkingBlockItem
+        block={block}
+        isRunning={isRunning}
+        stateKey={stateKey ? `${stateKey}:thinking` : undefined}
+      />
+    )
   }
   if (block.type === 'text') {
     return <ProcessTextBlockItem block={block} isRunning={isRunning} />
@@ -78,12 +91,14 @@ export function ToolBlockItem({
 function ThinkingBlockItem({
   block,
   isRunning,
+  stateKey,
 }: {
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
+  stateKey?: string
 }) {
   const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = usePersistentProcessingExpansion(stateKey)
 
   if (!block.content) return null
 
@@ -246,6 +261,12 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
   }
+  if (isWebSearchToolName(name)) {
+    return {
+      icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
+      label: prefix.webSearch,
+    }
+  }
   return { icon: <ToolIcon />, label: `${prefix.generic} ${block.toolName}` }
 }
 
@@ -256,6 +277,7 @@ function getToolStatusPrefix(block: ToolBlock) {
       create: '新增失败',
       edit: '编辑失败',
       read: '读取失败',
+      webSearch: '搜索网页失败',
       generic: '执行失败',
     }
   }
@@ -266,6 +288,7 @@ function getToolStatusPrefix(block: ToolBlock) {
       create: '已新增',
       edit: '已编辑',
       read: '已读取',
+      webSearch: '已搜索网页',
       generic: '已运行',
     }
   }
@@ -275,6 +298,7 @@ function getToolStatusPrefix(block: ToolBlock) {
     create: '正在新增',
     edit: '正在编辑',
     read: '正在读取',
+    webSearch: '正在搜索网页',
     generic: '正在运行',
   }
 }
@@ -363,6 +387,9 @@ function renderBlockDetail(block: ToolBlock) {
   if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
     return <FileEditDetail block={block} />
   }
+  if (isWebSearchToolName(name)) {
+    return <WebSearchBlockDetail block={block} />
+  }
 
   const input = block.toolInput
   if (!input) return null
@@ -370,6 +397,18 @@ function renderBlockDetail(block: ToolBlock) {
     <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs text-text-secondary">
       {JSON.stringify(input, null, 2)}
     </pre>
+  )
+}
+
+function WebSearchBlockDetail({ block }: { block: ToolBlock }) {
+  const items = getWebSearchActivityItems([block])
+
+  if (items.length === 0) return null
+
+  return (
+    <div data-testid="web-search-block-detail">
+      <WebSearchActivityRows items={items} />
+    </div>
   )
 }
 

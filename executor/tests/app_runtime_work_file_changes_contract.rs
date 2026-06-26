@@ -185,6 +185,54 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
 }
 
 #[tokio::test]
+async fn runtime_transcript_preserves_codex_web_search_actions() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-web-search-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let fake_codex = write_fake_web_search_codex(&temp_path("runtime-web-search-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "thread-1"
+            }
+        }))
+        .await
+        .expect("transcript should succeed");
+
+    assert_eq!(transcript["success"], true);
+    let assistant = &transcript["messages"][1];
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["content"], "Done");
+    assert_eq!(assistant["blocks"].as_array().unwrap().len(), 3);
+    assert_eq!(assistant["blocks"][0]["type"], "text");
+    assert_eq!(assistant["blocks"][1]["type"], "tool");
+    assert_eq!(assistant["blocks"][1]["tool_name"], "web_search");
+    assert_eq!(assistant["blocks"][1]["tool_input"]["type"], "search");
+    assert_eq!(
+        assistant["blocks"][1]["tool_input"]["query"],
+        "Beijing weather today June 17 2026 temperature rain"
+    );
+    assert_eq!(
+        assistant["blocks"][1]["tool_input"]["queries"][1],
+        "Beijing China current weather forecast today AccuWeather"
+    );
+    assert_eq!(assistant["blocks"][2]["tool_name"], "web_search");
+    assert_eq!(assistant["blocks"][2]["tool_input"]["type"], "open_page");
+    assert_eq!(
+        assistant["blocks"][2]["tool_input"]["url"],
+        "https://www.weather.com/weather/today/l/Beijing+China"
+    );
+}
+
+#[tokio::test]
 async fn runtime_transcript_merges_multiple_codex_file_change_items_in_one_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -441,6 +489,100 @@ while IFS= read -r line; do
 done
 "#,
         log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_web_search_codex(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-web-search-transcript", "sh");
+    let _ = fs::remove_file(log_path);
+    let response = json!({
+        "id": 2,
+        "result": {
+            "thread": {
+                "id": "thread-1",
+                "cwd": "/tmp/project",
+                "name": "Web search transcript",
+                "preview": "search",
+                "path": "/tmp/codex/thread-1.jsonl",
+                "createdAt": 1780000000_i64,
+                "updatedAt": 1780000060_i64,
+                "status": "idle",
+                "turns": [{
+                    "id": "turn-web-search",
+                    "createdAt": 1780000000_i64,
+                    "items": [
+                        {
+                            "id": "user-1",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "weather"}],
+                        },
+                        {
+                            "id": "agent-progress",
+                            "type": "agentMessage",
+                            "text": "I will search the web.",
+                            "phase": "analysis",
+                        },
+                        {
+                            "id": "web-search-1",
+                            "type": "web_search_call",
+                            "status": "completed",
+                            "action": {
+                                "type": "search",
+                                "query": "Beijing weather today June 17 2026 temperature rain",
+                                "queries": [
+                                    "Beijing weather today June 17 2026 temperature rain",
+                                    "Beijing China current weather forecast today AccuWeather",
+                                ],
+                            },
+                        },
+                        {
+                            "id": "web-open-1",
+                            "type": "web_search_call",
+                            "status": "completed",
+                            "action": {
+                                "type": "open_page",
+                                "url": "https://www.weather.com/weather/today/l/Beijing+China",
+                            },
+                        },
+                        {
+                            "id": "agent-1",
+                            "type": "agentMessage",
+                            "text": "Done",
+                            "phase": "final_answer",
+                        },
+                    ],
+                }],
+            },
+        },
+    });
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' {}
+      exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        shell_single_quote(&response.to_string()),
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
