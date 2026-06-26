@@ -205,6 +205,21 @@ The most stable observability surfaces today are:
   for uniform timing and savings metrics across `tool_output`,
   `summary_compact`, and `attachment_preview`
 
+All three protections emit via `chat_shell/guard/traces.py::record_protection_trace`
+under the event name `context_protection.{operation}` with a consistent schema, so
+the backend can derive **event count / success rate (by status) / duration
+(duration_ms) / tokens saved**:
+
+| operation | Trigger | status | Key attributes |
+|---|---|---|---|
+| `attachment_preview` | message with an attachment block | `applied` / `noop` | duration_ms, before/after_tokens, tokens_saved, attachment_blocks_truncated |
+| `tool_output` | tool-output truncation (only when it happens) | `applied` | duration_ms, messages_truncated, emergency |
+| `summary_compact` | request-level summary compaction | `completed` / `fallback` | duration_ms, before/after_tokens, tokens_saved, removed_history_items / failure_reason |
+
+No event is emitted on a no-op (`tool_output` only when it truncates,
+`attachment_preview` only when an attachment block is present); `add_span_event`
+is a no-op when telemetry is disabled.
+
 This is why Stage 1 added status and metrics before Stage 2 and Stage 3:
 without observability, governance is hard to tune safely.
 
@@ -247,6 +262,3 @@ those two views.
 
 - [Chat Shell Attachment Context](./chat-shell-attachment-context.md)
 - [Dynamic Context](./dynamic-context.md)
-- `docs/superpowers/specs/2026-06-03-chat-shell-context-governance-design.md`
-- `docs/superpowers/specs/2026-06-09-chat-shell-summary-compact-design.md`
-- `docs/superpowers/specs/2026-06-23-chat-shell-attachment-reading-design.md`

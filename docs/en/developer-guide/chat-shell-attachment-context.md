@@ -47,16 +47,33 @@ Multiple attachments of one message are **merged into a single `<attachment>`
 block**, each with a `[Attachment: name | ID: n | Type: … | File Path(already in sandbox): …]`
 header.
 
-## Inline preview (token-bounded)
+## Injection cap (backend, character-level, all modes)
+
+The extracted text is first capped on the backend injection layer
+(`context_service.build_document_text_prefix`) to `ATTACHMENT_INJECT_MAX_CHARS`
+**characters** (default 32000) before it enters any mode's prompt. This separates
+**storage** from **injection**:
+
+- **Storage**: the full extracted text (≤ `MAX_EXTRACTED_TEXT_LENGTH`, default
+  500k chars) stays in the DB for `read_attachment` paging and for the
+  executor/device to download the real file;
+- **Injection**: what enters the prompt is a bounded preview (contiguous head +
+  tail + a single marker pointing to the full file in the header).
+
+This layer applies to **all modes** and is the only injection-length guard for
+executor / device (which have no chat-shell token preview). chat shell adds a
+token-level preview on top (below).
+
+## Inline preview (token-bounded, chat shell)
 
 After `agent.build_messages` assembles the messages (and before cache
 breakpoints), every `<attachment>` block is token-bounded (current turn and
-replayed history handled identically). See
-`chat_shell/messages/attachment_preview.py`, which reuses the tool-output
-truncation logic (`guard/tool_output._truncate_body`, head/tail +
+replayed history handled identically; refining on top of the backend character
+cap above). See `chat_shell/messages/attachment_preview.py`, which reuses the
+tool-output truncation logic (`guard/tool_output._truncate_body`, head/tail +
 `…N tokens truncated…` marker).
 
-- **Budget**: `ATTACHMENT_PREVIEW_TOKEN_LIMIT` (default 30000, configurable;
+- **Budget**: `ATTACHMENT_PREVIEW_TOKEN_LIMIT` (default 15000, configurable;
   `<=0` disables), capped relative to the window: `min(context_window // 2, configured)`,
   so a small-context model is not swamped. The window comes from
   `get_model_context_config(model_id, model_config)`.
@@ -83,10 +100,15 @@ preserved**; with multiple attachments a consolidated id index line is prepended
 A truncated segment gets a trailing pointer to the full content, decided by the
 `Type:` in its header:
 
-- **Text**: `[Preview truncated. Full file readable in sandbox: <path>]` — the
-  sandbox original is complete and exceeds the parse-time cap;
-- **Binary (pdf/office)**: `[Preview truncated. Use read_attachment(attachment_id=N) for the full text.]`
-  — the sandbox file is binary, so the parsed text is fetched via the tool.
+- **Text**: `[Preview truncated. Full file in the sandbox at <path> — read or grep/search it with your file tools to get the rest.]`
+  — the sandbox original is complete; encourages targeted grep/search instead of
+  reading the whole file;
+- **Binary (pdf/office/xmind)**: `[Preview truncated. Get the rest via read_attachment(attachment_id=N) for the parsed text, or open the sandbox file (path in the header above) with a suitable tool.]`
+  — not locking the model into a single action.
+
+The text/binary split uses the shared MIME classification
+`shared/utils/mime_types.py::is_text_readable_mime`, consistent with the backend
+parser (new types are added in one place).
 
 ## The `read_attachment` tool
 
@@ -95,9 +117,14 @@ extracted text (mainly for binary attachments; text attachments can be read
 directly from the sandbox).
 
 - **Conditional registration**: added to the function-calling schema only when
-  the conversation (history or current turn) contains an `<attachment>` block
-  (`services/context.py`). Plain chats don't register it; it does not use the
-  lazy provider (that is skill-system specific).
+  the conversation has a **document** attachment (`services/context.py`).
+  `read_attachment` serves extracted text, which only documents have; images and
+  videos have none (a call would just return "empty"), so image/video-only
+  conversations don't register it. Detection: the structured
+  `request.attachments[].mime_type` for the current turn (a document is anything
+  not `image/*` or `video/*` — format-independent and stable), falling back to a
+  `[Attachment:` header scan for history. Plain chats don't register it; it does
+  not use the lazy provider (that is skill-system specific).
 - **Pagination protocol**: **character offset + token clamp** — the cursor is a
   character position (tokenizer-independent, reproducible across turns/models);
   the returned page is clamped to the per-page token budget (default aligned with
@@ -139,28 +166,20 @@ backend first-send preprocessing (`context_service` / `contexts`) and the chat
 shell history rebuild (`history/loader`), so the format does not drift between the
 first turn and history replay.
 
-## Observability (traces)
+## Observability
 
-The three context protections emit a uniformly-shaped span event via
-`chat_shell/guard/traces.py::record_protection_trace`, named
-`context_protection.{operation}`, so the tracing backend can derive **event
-count / success rate (by status) / duration (duration_ms) / tokens saved**:
-
-| operation | Trigger | status | Key attributes |
-|---|---|---|---|
-| `attachment_preview` | message with an attachment block | `applied` / `noop` | duration_ms, before/after_tokens, tokens_saved, attachment_blocks_truncated |
-| `tool_output` | tool-output truncation (only when it happens) | `applied` | duration_ms, messages_truncated, emergency |
-| `summary_compact` | request-level summary compaction | `completed` / `fallback` | duration_ms, before/after_tokens, tokens_saved, removed_history_items / failure_reason |
-
-To avoid noise, no event is emitted on a no-op (`tool_output` only when it
-truncates, `attachment_preview` only when an attachment block is present);
-`add_span_event` is a no-op when telemetry is disabled.
+Attachment-preview traces share the unified `context_protection.{operation}`
+structure with tool output and summary compact; see the consolidated reference
+(per-operation status / attribute schema) in
+[Chat Shell Context Governance · Observability](./chat-shell-context-governance.md#observability).
 
 ## Configuration
 
 | Setting | Default | Description |
 |---|---|---|
-| `ATTACHMENT_PREVIEW_TOKEN_LIMIT` | 30000 | Shared attachment preview budget (min'd with `context_window // 2`); `<=0` disables the preview |
+| `ATTACHMENT_INJECT_MAX_CHARS` | 32000 | Backend injection char cap (all modes); head/tail truncation beyond it |
+| `ATTACHMENT_PREVIEW_TOKEN_LIMIT` | 15000 | chat shell attachment preview budget (min'd with `context_window // 2`); `<=0` disables |
+| `MAX_EXTRACTED_TEXT_LENGTH` | 500000 | Parse-time storage cap (for read_attachment / real-file download, not the injected amount) |
 
 ## Non-goals (future tiers)
 

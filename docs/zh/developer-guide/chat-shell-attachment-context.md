@@ -34,11 +34,20 @@ user.content = [
 
 同一条消息的多个附件**合并在同一个 `<attachment>` 块**内，各自带 `[Attachment: name | ID: n | Type: … | File Path(already in sandbox): …]` 头。
 
-## 注入预览（token 化）
+## 注入截断（backend，字符级，所有模式）
 
-在 `agent.build_messages` 装配消息后、缓存断点前，对每条消息里的 `<attachment>` 块做 token 预览截断（当前轮与历史轮同一处理）。实现见 `chat_shell/messages/attachment_preview.py`，复用工具输出截断逻辑（`guard/tool_output._truncate_body`，head/tail + `…N tokens truncated…` 标记）。
+提取文本先在 backend 注入层（`context_service.build_document_text_prefix`）按**字符**截断到 `ATTACHMENT_INJECT_MAX_CHARS`（默认 32000），再进入各模式的 prompt。这是**存储**与**注入**的分离：
 
-- **预算**：`ATTACHMENT_PREVIEW_TOKEN_LIMIT`（默认 30000，可配；`<=0` 关闭），并与窗口取小：`min(context_window // 2, 配置值)`，避免小窗口模型被预览淹没。窗口由 `get_model_context_config(model_id, model_config)` 解析。
+- **存储**：完整提取文本（≤ `MAX_EXTRACTED_TEXT_LENGTH`，默认 50 万字符）留在 DB，供 `read_attachment` 分页、executor/device 下载真文件；
+- **注入**：进 prompt 的是有界预览（连续 head + tail + 单个标记，指向 header 里的完整文件）。
+
+这层对**所有模式**生效，是 executor / device（无 chat shell token 预览）唯一的注入长度护栏。chat shell 会在其上再做一道 token 级预览（见下）。
+
+## 注入预览（token 化，chat shell）
+
+在 `agent.build_messages` 装配消息后、缓存断点前，对每条消息里的 `<attachment>` 块做 token 预览截断（当前轮与历史轮同一处理；在上面 backend 字符截断之上再精修）。实现见 `chat_shell/messages/attachment_preview.py`，复用工具输出截断逻辑（`guard/tool_output._truncate_body`，head/tail + `…N tokens truncated…` 标记）。
+
+- **预算**：`ATTACHMENT_PREVIEW_TOKEN_LIMIT`（默认 15000，可配；`<=0` 关闭），并与窗口取小：`min(context_window // 2, 配置值)`，避免小窗口模型被预览淹没。窗口由 `get_model_context_config(model_id, model_config)` 解析。
 - **快路径**：整块在预算内则原样返回，保持 prefix 缓存稳定。
 
 ### 多附件分配（water-filling）
@@ -54,14 +63,16 @@ user.content = [
 
 被截断的段后追加一行“如何取完整内容”的提示，按 header 里的 `Type:` 判定：
 
-- **文本类**：`[Preview truncated. Full file readable in sandbox: <path>]` —— 沙箱原文完整，且可超过解析期截断上限；
-- **二进制类（pdf/office）**：`[Preview truncated. Use read_attachment(attachment_id=N) for the full text.]` —— 沙箱里是二进制不可直读，用工具取解析后的文本。
+- **文本类**：`[Preview truncated. Full file in the sandbox at <path> — read or grep/search it with your file tools to get the rest.]` —— 沙箱原文完整，鼓励 grep/search 定向取而非整篇读；
+- **二进制类（pdf/office/xmind）**：`[Preview truncated. Get the rest via read_attachment(attachment_id=N) for the parsed text, or open the sandbox file (path in the header above) with a suitable tool.]` —— 不把模型限定在单一手段。
+
+文本/二进制的判定用统一的 MIME 归类 `shared/utils/mime_types.py::is_text_readable_mime`，与 backend parser 保持一致（新增类型只改一处）。
 
 ## `read_attachment` 工具
 
 补充预览：让模型分页读取附件的完整提取文本（主要面向二进制附件；文本附件可直接读沙箱原文）。
 
-- **条件注册**：仅当对话（历史或当前轮）含 `<attachment>` 块时，才注册进 function-calling schema（`services/context.py`）。普通对话不注册，不走 lazy provider（那是技能系统专用）。
+- **条件注册**：仅当对话含**文档**附件时才注册进 function-calling schema（`services/context.py`）。`read_attachment` 只服务有提取文本的文档；图片/视频没有文本（调用只会返回 empty），故纯图片/视频对话**不注册**。判定：当前轮用结构化的 `request.attachments[].mime_type`（非 `image/`、非 `video/` 即文档，格式无关、稳定），历史轮 fallback 扫 `[Attachment:` 头。普通对话不注册，不走 lazy provider（那是技能系统专用）。
 - **分页协议**：**char 偏移 + token 夹紧** —— 游标用字符位（与分词器无关、跨轮/跨模型可复现），返回页按 token 夹到每页预算（默认对齐工具输出 15k），保证一页不超预算、不被请求级 guard 二次截断；`next_offset = offset + 实际返回字符数`。
 - **内容上界**：解析期截断（默认 50 万字符）；超出部分需读沙箱原文。
 - **调用上限**：每会话上限防止无限翻页。
@@ -86,23 +97,17 @@ user.content = [
 
 `<attachment>` 头部由 `shared/utils/attachment_block.py::build_attachment_header` 统一构建，backend 首发预处理（`context_service` / `contexts`）与 chat shell 历史重建（`history/loader`）共用，避免首轮与翻历史后格式漂移。
 
-## 可观测性（traces）
+## 可观测性
 
-三个上下文防护统一通过 `chat_shell/guard/traces.py::record_protection_trace` 发 span event，事件名 `context_protection.{operation}`，schema 一致，便于在追踪后端聚合**事件数 / 成功率（按 status）/ 耗时（duration_ms）/ token 节省**：
-
-| operation | 触发点 | status | 关键属性 |
-|---|---|---|---|
-| `attachment_preview` | 含附件块的消息 | `applied` / `noop` | duration_ms, before/after_tokens, tokens_saved, attachment_blocks_truncated |
-| `tool_output` | 工具输出截断（仅发生时） | `applied` | duration_ms, messages_truncated, emergency |
-| `summary_compact` | 请求级摘要压缩 | `completed` / `fallback` | duration_ms, before/after_tokens, tokens_saved, removed_history_items / failure_reason |
-
-为避免噪声，空跑不发事件（`tool_output` 仅截断时发，`attachment_preview` 仅有附件块时发）；telemetry 关闭时 `add_span_event` 为 no-op。
+附件预览的 traces 与 tool output、summary compact 共用统一的 `context_protection.{operation}` 结构,集中说明(各 operation 的 status / 属性 schema)见 [Chat Shell 上下文治理 · 可观测性](./chat-shell-context-governance.md#可观测性)。
 
 ## 配置
 
 | 配置项 | 默认 | 说明 |
 |---|---|---|
-| `ATTACHMENT_PREVIEW_TOKEN_LIMIT` | 30000 | 附件预览共享预算（与 `context_window // 2` 取小）；`<=0` 关闭预览 |
+| `ATTACHMENT_INJECT_MAX_CHARS` | 32000 | backend 注入层字符上限（所有模式）；超出做 head/tail 截断 |
+| `ATTACHMENT_PREVIEW_TOKEN_LIMIT` | 15000 | chat shell 附件预览共享预算（与 `context_window // 2` 取小）；`<=0` 关闭预览 |
+| `MAX_EXTRACTED_TEXT_LENGTH` | 500000 | 解析期存储上限（供 read_attachment / 真文件下载，非注入量） |
 
 ## 非目标（后续档位）
 

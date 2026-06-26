@@ -168,6 +168,16 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 - `context_protection.{operation}` traces
   用于统一统计 `tool_output`、`summary_compact`、`attachment_preview` 的耗时与节省量。
 
+三个防护统一通过 `chat_shell/guard/traces.py::record_protection_trace` 发出，事件名 `context_protection.{operation}`，schema 一致，便于聚合**事件数 / 成功率（按 status）/ 耗时（duration_ms）/ token 节省**：
+
+| operation | 触发点 | status | 关键属性 |
+|---|---|---|---|
+| `attachment_preview` | 含附件块的消息 | `applied` / `noop` | duration_ms, before/after_tokens, tokens_saved, attachment_blocks_truncated |
+| `tool_output` | 工具输出截断（仅发生时） | `applied` | duration_ms, messages_truncated, emergency |
+| `summary_compact` | 请求级摘要压缩 | `completed` / `fallback` | duration_ms, before/after_tokens, tokens_saved, removed_history_items / failure_reason |
+
+为避免噪声空跑不发事件（`tool_output` 仅截断时、`attachment_preview` 仅有附件块时）；telemetry 关闭时 `add_span_event` 为 no-op。
+
 这也是为什么 Stage 1 先补“状态与指标”，再做 Stage 2/3：没有观测面，很难知道治理是否真的生效。
 
 ## 注意事项
@@ -201,6 +211,3 @@ backend / shared 不依赖 `tiktoken`。因此：
 
 - [Chat Shell 附件上下文管理（预览与按需读取）](./chat-shell-attachment-context.md)
 - [Dynamic Context（动态上下文注入）](./dynamic-context.md)
-- `docs/superpowers/specs/2026-06-03-chat-shell-context-governance-design.md`
-- `docs/superpowers/specs/2026-06-09-chat-shell-summary-compact-design.md`
-- `docs/superpowers/specs/2026-06-23-chat-shell-attachment-reading-design.md`
