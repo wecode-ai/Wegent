@@ -81,6 +81,8 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));
+    assert!(!e2e_workflow.contains("Install executor dependencies"));
+    assert!(!e2e_workflow.contains("source executor/.venv/bin/activate"));
     assert!(e2e_workflow.contains(
         "docker cp \"$container_id:/app/executor\" executor/target/release/wegent-executor"
     ));
