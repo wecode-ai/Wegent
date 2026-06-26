@@ -16,6 +16,7 @@ pub mod interactive_mcp;
 use crate::{
     claude_session,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
+    logging::{log_executor_event, task_fields},
     process::{CommandSpec, StreamProcessEngine},
     protocol::{AgentKind, ExecutionRequest},
     runner::{AgentEngine, ExecutionOutcome},
@@ -86,7 +87,12 @@ impl AgentEngine for AgentProcessEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let planner = self.planner.clone();
         Box::pin(async move {
-            match request.resolved_agent_kind() {
+            let agent_kind = request.resolved_agent_kind();
+            let mut fields = task_fields(request.task_id, request.subtask_id);
+            fields.push(("agent", format!("{agent_kind:?}")));
+            log_executor_event("agent dispatch", &fields);
+
+            match agent_kind {
                 AgentKind::CodeX => {
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
@@ -96,12 +102,24 @@ impl AgentEngine for AgentProcessEngine {
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
                 _ => match planner.command_for(&request) {
                     Ok(spec) => {
+                        let mut command_fields = fields.clone();
+                        command_fields.push(("program", spec.program().to_owned()));
+                        command_fields.push(("arg_count", spec.args().len().to_string()));
+                        if let Some(cwd) = spec.current_dir() {
+                            command_fields.push(("cwd", cwd.display().to_string()));
+                        }
+                        log_executor_event("command planned", &command_fields);
                         if request.resolved_agent_kind() == AgentKind::ClaudeCode {
                             run_pre_execute_hook(&request, &spec).await;
                         }
                         StreamProcessEngine::new(spec).run(request).await
                     }
-                    Err(message) => ExecutionOutcome::Failed { message },
+                    Err(message) => {
+                        let mut failed_fields = fields;
+                        failed_fields.push(("error_len", message.len().to_string()));
+                        log_executor_event("command planning failed", &failed_fields);
+                        ExecutionOutcome::Failed { message }
+                    }
                 },
             }
         })
@@ -122,13 +140,24 @@ async fn run_pre_execute_hook(request: &ExecutionRequest, spec: &CommandSpec) {
         .unwrap_or_else(|| PathBuf::from("."));
     let _ = fs::create_dir_all(&task_dir);
 
-    let _ = hook
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("cwd", task_dir.display().to_string()));
+    log_executor_event("pre-execute hook started", &fields);
+    let exit = hook
         .execute(PreExecuteContext {
             task_dir,
             task_id: (request.task_id > 0).then_some(request.task_id),
             git_url: request.git_url(),
         })
         .await;
+    fields.push(("exit_code", exit.code.to_string()));
+    fields.push(("stdout_len", exit.stdout.len().to_string()));
+    fields.push(("stderr_len", exit.stderr.len().to_string()));
+    if exit.code == 0 {
+        log_executor_event("pre-execute hook finished", &fields);
+    } else {
+        log_executor_event("pre-execute hook failed", &fields);
+    }
 }
 
 pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> CommandSpec {

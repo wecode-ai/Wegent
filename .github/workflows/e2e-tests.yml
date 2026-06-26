@@ -586,6 +586,14 @@ jobs:
             -f frontend/e2e/fixtures/claudecode-executor/Dockerfile \
             .
 
+      - name: Extract ClaudeCode Executor Binary
+        run: |
+          mkdir -p executor/target/release
+          container_id="$(docker create wegent/e2e-claudecode-executor:latest)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
+          chmod 0755 executor/target/release/wegent-executor
+
       - name: Start Local ClaudeCode Executor
         env:
           EXECUTOR_MODE: local
@@ -657,10 +665,7 @@ jobs:
           print(token_response["access_token"])
           PY
           )
-          (
-            cd executor
-            cargo build --release --locked
-          )
+          test -x executor/target/release/wegent-executor
           WEGENT_AUTH_TOKEN="$TOKEN" \
             nohup executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
           echo $! > executor/local-executor.pid

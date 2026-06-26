@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use crate::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
+    logging::{log_executor_event, task_fields},
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
 };
@@ -107,8 +108,18 @@ where
     let background = request.background();
     let execution_request = request.to_execution_request();
     let response_id = format!("resp_{}", execution_request.subtask_id);
+    let mut fields = task_fields(execution_request.task_id, execution_request.subtask_id);
+    fields.push((
+        "agent",
+        format!("{:?}", execution_request.resolved_agent_kind()),
+    ));
+    fields.push(("background", background.to_string()));
+    log_executor_event("received request", &fields);
+
     let result = state.runner.submit(execution_request).await;
     let status = response_status(background, result.status);
+    fields.push(("status", result.status.to_string()));
+    log_executor_event("request submitted", &fields);
 
     Ok(Json(OpenAIBackgroundResponse {
         id: response_id,

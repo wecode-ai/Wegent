@@ -13,6 +13,7 @@ pub mod envd;
 pub mod hooks;
 pub mod image_preprocessor;
 pub mod local;
+pub mod logging;
 pub mod mcp_utils;
 pub mod process;
 pub mod prompt_enrichment;

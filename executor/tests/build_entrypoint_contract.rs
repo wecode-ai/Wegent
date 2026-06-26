@@ -81,7 +81,11 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));
-    assert!(e2e_workflow.contains("cargo build --release --locked"));
+    assert!(e2e_workflow.contains(
+        "docker cp \"$container_id:/app/executor\" executor/target/release/wegent-executor"
+    ));
+    assert!(e2e_workflow.contains("test -x executor/target/release/wegent-executor"));
+    assert!(!e2e_workflow.contains("cd executor\n            cargo build --release --locked"));
 
     let e2e_fixture =
         fs::read_to_string("../frontend/e2e/fixtures/claudecode-executor/Dockerfile").unwrap();

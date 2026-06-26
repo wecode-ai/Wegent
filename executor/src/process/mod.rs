@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Instant;
 use std::{
     collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin, time::Duration,
 };
@@ -10,6 +11,7 @@ use tokio::{process::Command, time::timeout};
 
 use crate::{
     claude_session,
+    logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
     stream::{collect_ndjson_outcome, extract_claude_session_id},
@@ -111,7 +113,7 @@ impl AgentEngine for StreamProcessEngine {
                     }
                     collect_ndjson_outcome(&stdout)
                 }
-                CommandOutcome::Failure { stderr, stdout } => ExecutionOutcome::Failed {
+                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
                     message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
                 },
             }
@@ -122,15 +124,21 @@ impl AgentEngine for StreamProcessEngine {
 async fn run_command(spec: CommandSpec) -> ExecutionOutcome {
     match run_command_output(spec).await {
         CommandOutcome::Success { stdout } => ExecutionOutcome::Completed { content: stdout },
-        CommandOutcome::Failure { stderr, stdout } => ExecutionOutcome::Failed {
+        CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
             message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
         },
     }
 }
 
 enum CommandOutcome {
-    Success { stdout: String },
-    Failure { stderr: String, stdout: String },
+    Success {
+        stdout: String,
+    },
+    Failure {
+        stderr: String,
+        stdout: String,
+        exit_code: Option<i32>,
+    },
 }
 
 async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
@@ -142,19 +150,29 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
             return CommandOutcome::Failure {
                 stderr: format!("failed to create command cwd {}: {error}", cwd.display()),
                 stdout: String::new(),
+                exit_code: None,
             };
         }
         command.current_dir(cwd);
     }
 
     let timeout_seconds = process_timeout_seconds();
-    match timeout(Duration::from_secs(timeout_seconds), command.output()).await {
+    let mut fields = command_log_fields(&spec);
+    fields.push(("timeout_seconds", timeout_seconds.to_string()));
+    log_executor_event("process started", &fields);
+    let started = Instant::now();
+    let outcome = match timeout(Duration::from_secs(timeout_seconds), command.output()).await {
         Err(_) => CommandOutcome::Failure {
             stderr: format!("command timed out after {timeout_seconds}s"),
             stdout: String::new(),
+            exit_code: None,
         },
         Ok(result) => command_outcome(result),
-    }
+    };
+    fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
+    fields.extend(command_outcome_fields(&outcome));
+    log_executor_event("process finished", &fields);
+    outcome
 }
 
 fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutcome {
@@ -165,11 +183,49 @@ fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutc
         Ok(output) => CommandOutcome::Failure {
             stderr: decode_output(output.stderr),
             stdout: decode_output(output.stdout),
+            exit_code: output.status.code(),
         },
         Err(error) => CommandOutcome::Failure {
             stderr: error.to_string(),
             stdout: String::new(),
+            exit_code: None,
         },
+    }
+}
+
+fn command_log_fields(spec: &CommandSpec) -> Vec<(&'static str, String)> {
+    let mut fields = vec![
+        ("program", spec.program.clone()),
+        ("arg_count", spec.args.len().to_string()),
+    ];
+    if let Some(cwd) = spec.cwd.as_ref() {
+        fields.push(("cwd", cwd.display().to_string()));
+    }
+    fields
+}
+
+fn command_outcome_fields(outcome: &CommandOutcome) -> Vec<(&'static str, String)> {
+    match outcome {
+        CommandOutcome::Success { stdout } => vec![
+            ("status", "success".to_owned()),
+            ("stdout_len", stdout.len().to_string()),
+            ("stderr_len", "0".to_owned()),
+        ],
+        CommandOutcome::Failure {
+            stderr,
+            stdout,
+            exit_code,
+        } => {
+            let mut fields = vec![
+                ("status", "failed".to_owned()),
+                ("stdout_len", stdout.len().to_string()),
+                ("stderr_len", stderr.len().to_string()),
+            ];
+            if let Some(exit_code) = exit_code {
+                fields.push(("exit_code", exit_code.to_string()));
+            }
+            fields
+        }
     }
 }
 

@@ -25,6 +25,7 @@ use tokio::{
 use crate::{
     attachments::{process_prompt, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model,
+    logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -197,9 +198,21 @@ pub async fn run_codex_app_server_turn(
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
     let launch_config = build_codex_launch_config(&prepared.request);
+    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    fields.push(("binary", resolve_codex_binary(binary)));
+    if let Some(cwd) = prepared.request.cwd() {
+        fields.push(("cwd", cwd.to_owned()));
+    }
+    log_executor_event("codex app-server starting", &fields);
     let mut child = match spawn_codex_app_server(binary, &launch_config) {
-        Ok(child) => child,
+        Ok(child) => {
+            log_executor_event("codex app-server started", &fields);
+            child
+        }
         Err(error) => {
+            let mut failed_fields = fields.clone();
+            failed_fields.push(("error_len", error.len().to_string()));
+            log_executor_event("codex app-server failed to start", &failed_fields);
             cleanup_generated_files(&prepared.generated_files);
             return Err(error);
         }
@@ -240,6 +253,9 @@ pub async fn run_codex_app_server_turn(
         } else {
             ("thread/start", thread_start_params(request, &launch_config))
         };
+        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
+        thread_fields.push(("operation", thread_operation.to_owned()));
+        log_executor_event("codex thread request started", &thread_fields);
         let thread = with_rpc_timeout(
             thread_operation,
             timeout_seconds,
@@ -252,7 +268,12 @@ pub async fn run_codex_app_server_turn(
             .and_then(Value::as_str)
             .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
             .to_owned();
+        thread_fields.push(("thread_id", thread_id.clone()));
+        log_executor_event("codex thread request finished", &thread_fields);
 
+        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        turn_fields.push(("thread_id", thread_id.clone()));
+        log_executor_event("codex turn request started", &turn_fields);
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
@@ -268,14 +289,26 @@ pub async fn run_codex_app_server_turn(
             rpc.read_turn(turn_request_id, &mut state, notifications),
         )
         .await?;
+        turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
+        log_executor_event("codex turn request finished", &turn_fields);
         Ok(CodexAppServerTurn { thread_id, outcome })
     }
     .await;
 
     let _ = child.start_kill();
     let _ = child.wait().await;
+    log_executor_event("codex app-server stopped", &fields);
     cleanup_generated_files(&prepared.generated_files);
     result
+}
+
+fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
+    match outcome {
+        ExecutionOutcome::Completed { .. } => "completed",
+        ExecutionOutcome::Failed { .. } => "failed",
+        ExecutionOutcome::Running => "running",
+        ExecutionOutcome::Cancelled { .. } => "cancelled",
+    }
 }
 
 fn spawn_codex_app_server(

@@ -6,6 +6,7 @@ use std::{future::Future, pin::Pin};
 
 use crate::{
     emitter::{EventEnvelope, ResponsesEventBuilder},
+    logging::{log_executor_event, task_fields},
     protocol::{ExecutionRequest, TaskStatus},
     server::{RunnerResult, TaskRunner},
 };
@@ -54,16 +55,22 @@ where
         let sink = self.sink.clone();
         Box::pin(async move {
             let builder = event_builder(&request);
+            let fields = task_fields(request.task_id, request.subtask_id);
+            log_executor_event("sending response.created callback", &fields);
             if let Err(message) = sink
                 .send(builder.response_created(request.resolved_shell_type().as_deref()))
                 .await
             {
+                let mut failed_fields = fields.clone();
+                failed_fields.push(("error_len", message.len().to_string()));
+                log_executor_event("response.created callback failed", &failed_fields);
                 return RunnerResult {
                     status: TaskStatus::Failed,
                     message: Some(message),
                 };
             }
 
+            log_executor_event("queued background task", &fields);
             tokio::spawn(run_in_background(engine, sink, builder, request));
             RunnerResult::accepted(TaskStatus::Running)
         })
@@ -79,13 +86,26 @@ async fn run_in_background<E, S>(
     E: AgentEngine,
     S: EventSink,
 {
-    let event = match engine.run(request).await {
+    let fields = task_fields(request.task_id, request.subtask_id);
+    log_executor_event("background task started", &fields);
+    let outcome = engine.run(request).await;
+    let mut outcome_fields = fields.clone();
+    outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
+    log_executor_event("background task finished", &outcome_fields);
+
+    let event = match outcome {
         ExecutionOutcome::Completed { content } => builder.response_completed(&content),
         ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
         ExecutionOutcome::Cancelled { message } => builder.error(&message, "cancelled"),
         ExecutionOutcome::Running => return,
     };
-    let _ = sink.send(event).await;
+    match sink.send(event).await {
+        Ok(()) => log_executor_event("final callback sent", &outcome_fields),
+        Err(message) => {
+            outcome_fields.push(("error_len", message.len().to_string()));
+            log_executor_event("final callback failed", &outcome_fields);
+        }
+    }
 }
 
 fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
@@ -100,4 +120,13 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
             request.executor_name.as_deref(),
             request.executor_namespace.as_deref(),
         )
+}
+
+fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
+    match outcome {
+        ExecutionOutcome::Completed { .. } => "completed",
+        ExecutionOutcome::Failed { .. } => "failed",
+        ExecutionOutcome::Running => "running",
+        ExecutionOutcome::Cancelled { .. } => "cancelled",
+    }
 }
