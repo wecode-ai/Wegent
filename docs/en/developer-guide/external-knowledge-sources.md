@@ -39,6 +39,51 @@ Key constraints:
 - Do not persist raw external URLs in source payloads. Use a stable, verifiable, provider-interpretable `source_uri` when a source needs to be located.
 - Task detail, WebSocket payloads, and Chat Shell metadata should only pass provider-neutral fields.
 
+### Reference Fields
+
+`externalKnowledgeRefs[]` uses provider-neutral fields and must not store provider-private objects:
+
+| Field                                   | Description                                                                                                                                                                                                                      |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`                              | Provider id.                                                                                                                                                                                                                     |
+| `mode`                                  | Binding mode, usually `explicit`; `all_accessible` means a provider-interpretable all-accessible scope.                                                                                                                          |
+| `id`                                    | Stable provider-owned source ID. Required when `mode=explicit`.                                                                                                                                                                  |
+| `name`                                  | User-readable source name, such as the knowledge base name.                                                                                                                                                                      |
+| `scope`                                 | Provider-interpretable scope, such as `personal`, `group`, or `organization`.                                                                                                                                                    |
+| `target_type`                           | Optional target type: `knowledge_base`, `folder`, or `document`. Missing values are treated as whole-source bindings.                                                                                                            |
+| `node_id` / `document_id` / `parent_id` | Provider-neutral folder or document locator fields.                                                                                                                                                                              |
+| `target_name`                           | Display name for a selected folder or document. Document-scoped refs should keep `name` as the source name and store the document title in `target_name`, so source lists do not mistake the document title for the source name. |
+
+### Management Entry and API
+
+External knowledge sources form Task-level bindings like built-in knowledge bases and can affect follow-up messages. Clearing the composer selection does not remove a Task-level binding. Removing a binding only affects future execution requests and must not rewrite context shown on historical messages.
+
+The frontend should reuse the existing task/group management entry and its Knowledge tab. Built-in knowledge bases and external knowledge sources should appear in one list instead of maintaining a separate "bound external knowledge" manager inside the composer context selector. External rows should use a short provider badge, such as `AP`.
+
+Backend exposes these Task-level external binding APIs:
+
+| Method | Path                                                  | Description                                                 |
+| ------ | ----------------------------------------------------- | ----------------------------------------------------------- |
+| `GET`  | `/api/tasks/{task_id}/external-knowledge-refs`        | Return external knowledge refs bound to the current Task.   |
+| `POST` | `/api/tasks/{task_id}/external-knowledge-refs/remove` | Remove one external knowledge ref by normalized target key. |
+
+The remove request body is:
+
+```json
+{
+  "ref": {
+    "provider": "ap",
+    "mode": "explicit",
+    "id": "kb-1",
+    "target_type": "document",
+    "node_id": "document:node-1",
+    "document_id": "node-1"
+  }
+}
+```
+
+Management UI must treat external binding load failures as non-blocking: built-in knowledge base listing and unbinding remain available, while the external failure is shown as a local warning.
+
 ## Retrieval Merge Flow
 
 `internal_retrieve` merges built-in knowledge base records and external provider records for Chat Shell. The recommended flow is:
@@ -55,12 +100,12 @@ External provider errors must be isolated per source. If one source times out, f
 
 When external records enter messages, tool events, or reference lists, use provider-neutral provenance fields:
 
-| Field | Description |
-| --- | --- |
+| Field         | Description                                                                         |
+| ------------- | ----------------------------------------------------------------------------------- |
 | `source_type` | Source type or provider namespace for distinguishing built-in and external sources. |
-| `source_id` | Stable provider-owned ID. |
-| `source_uri` | Stable provider-interpretable URI. This should not be a raw external download URL. |
-| `source_name` | User-readable source name. |
+| `source_id`   | Stable provider-owned ID.                                                           |
+| `source_uri`  | Stable provider-interpretable URI. This should not be a raw external download URL.  |
+| `source_name` | User-readable source name.                                                          |
 
 Reference rendering must degrade to plain text source metadata when an opener is missing or a provider is unavailable. It must not drop the message body.
 

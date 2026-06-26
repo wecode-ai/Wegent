@@ -414,6 +414,17 @@
     "stale_update_10m": "Task is still running, but no stream updates for over 10 minutes. Consider stopping and retrying.",
     "started_over_20m": "Task has been running for over 20 minutes. Please check execution status and consider stopping and retrying."
   },
+  "knowledgeBinding": {
+    "title": "Knowledge Bases",
+    "count": "{{count}} bound",
+    "externalKnowledge": "External knowledge base",
+    "empty": "No knowledge bases bound",
+    "loadFailed": "Failed to load knowledge bases",
+    "externalLoadFailed": "External knowledge bases could not be loaded. Internal knowledge bases remain available.",
+    "remove": "Remove {{name}}",
+    "removeSuccess": "Removed \"{{name}}\"",
+    "removeFailed": "Failed to remove knowledge base"
+  },
   "groupChat": {
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",

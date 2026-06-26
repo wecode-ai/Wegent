@@ -9,11 +9,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 import app.stores.tasks as task_stores
 from app.schemas.external_knowledge import (
     ExternalKnowledgeBindingLevel,
     ExternalKnowledgeRef,
 )
+from app.services.rag.sources import ExternalRefValidationError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -95,10 +98,16 @@ def validate_external_knowledge_refs(
 
     from app.services.rag.sources import validate_external_refs
 
-    validate_external_refs(
-        [ExternalKnowledgeRef.model_validate(ref) for ref in refs],
-        binding_level=binding_level,
-    )
+    try:
+        validated_refs = [ExternalKnowledgeRef.model_validate(ref) for ref in refs]
+        validate_external_refs(
+            validated_refs,
+            binding_level=binding_level,
+        )
+    except ExternalRefValidationError:
+        raise
+    except (ValidationError, ValueError) as exc:
+        raise ExternalRefValidationError(str(exc)) from exc
 
 
 def extract_task_external_knowledge_refs(task: "TaskResource") -> list[dict[str, Any]]:
@@ -132,6 +141,38 @@ def sync_task_external_knowledge_refs(
 
     if existing_refs == next_refs:
         return next_refs
+
+    if next_refs:
+        spec["externalKnowledgeRefs"] = next_refs
+    else:
+        spec.pop("externalKnowledgeRefs", None)
+    task_json["spec"] = spec
+    task_stores.task_store.update_json(db, task=task, payload=task_json)
+    return next_refs
+
+
+def remove_task_external_knowledge_ref(
+    db: "Session",
+    task: "TaskResource",
+    ref_to_remove: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Remove one task-level external ref by its normalized target key."""
+    normalized = normalize_external_knowledge_refs([ref_to_remove])
+    if not normalized:
+        raise ExternalRefValidationError("Invalid external knowledge ref")
+
+    remove_key = _target_key(normalized[0])
+    task_json = task.json if isinstance(task.json, dict) else {}
+    spec = task_json.setdefault("spec", {})
+    existing_refs = normalize_external_knowledge_refs(
+        spec.get("externalKnowledgeRefs") or []
+    )
+    next_refs = [ref for ref in existing_refs if _target_key(ref) != remove_key]
+
+    if len(next_refs) == len(existing_refs):
+        raise ExternalRefValidationError(
+            "External knowledge ref is not bound to this task"
+        )
 
     if next_refs:
         spec["externalKnowledgeRefs"] = next_refs

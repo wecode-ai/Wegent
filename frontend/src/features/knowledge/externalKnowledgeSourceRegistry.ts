@@ -33,9 +33,9 @@ export interface ExternalKnowledgeScopeDescriptor {
 export interface ExternalKnowledgeSource {
   providerId: string
   label?: string
+  shortLabel?: string
   capabilities?: {
     supportsKnowledgeBaseSelection?: boolean
-    supportsFolderSelection?: boolean
     supportsDocumentSelection?: boolean
     supportsDocumentTree?: boolean
     supportsScopedRetrieval?: boolean

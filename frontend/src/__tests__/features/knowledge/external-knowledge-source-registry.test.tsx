@@ -418,9 +418,11 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         expect.objectContaining({
           id: 'external:fake-provider:explicit:lib-1:document:document:doc-1',
           ref: expect.objectContaining({
+            name: 'Fake Lib',
             target_type: 'document',
             node_id: 'document:doc-1',
             document_id: 'doc-1',
+            target_name: 'Doc 1',
           }),
         }),
       ])
@@ -435,6 +437,68 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         }),
       ])
     )
+  })
+
+  it('opens external knowledge bases without selecting them when whole-KB selection is unsupported', async () => {
+    const onSelect = jest.fn()
+    registerExternalKnowledgeSource(FAKE_PROVIDER, {
+      providerId: FAKE_PROVIDER,
+      label: 'Fake Provider',
+      capabilities: {
+        supportsKnowledgeBaseSelection: false,
+        supportsDocumentSelection: true,
+        supportsDocumentTree: true,
+        supportsScopedRetrieval: false,
+      },
+      scopes: [
+        {
+          key: 'organization',
+          label: 'Organization',
+          icon: 'organization',
+        },
+      ],
+      listKnowledgeBases: mockListFakeKnowledgeBases,
+      listNodes: mockListFakeNodes,
+      toRef: kb => ({
+        provider: FAKE_PROVIDER,
+        mode: 'explicit',
+        id: kb.knowledge_base_id,
+        name: kb.knowledge_base_name,
+        scope: kb.scope ?? undefined,
+      }),
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={onSelect}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-picker-external-kb-lib-1')).toBeInTheDocument()
+    )
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-lib-1'))
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('knowledge-picker-external-node-document:doc-1')
+      ).toBeInTheDocument()
+    )
+    expect(onSelect).not.toHaveBeenCalled()
   })
 
   it('disables external document rows when the provider does not support document selection', async () => {

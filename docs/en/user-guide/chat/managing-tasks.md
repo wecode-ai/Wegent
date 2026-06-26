@@ -14,6 +14,7 @@ This guide explains how to create conversation-type tasks in the Wegent frontend
 - [Creating a Conversation](#-creating-a-conversation)
 - [Conversation Interface](#-conversation-interface)
 - [Advanced Features](#-advanced-features)
+- [Managing Task Knowledge](#-managing-task-knowledge)
 - [Best Practices](#-best-practices)
 - [Common Issues](#-common-issues)
 - [Related Resources](#-related-resources)
@@ -25,18 +26,19 @@ This guide explains how to create conversation-type tasks in the Wegent frontend
 In Wegent, a conversation is the primary way users interact with AI agents. Each conversation creates a Task that records the complete conversation history.
 
 **Core Concept**:
+
 ```
 Conversation = User Message + Agent + Context + Conversation History
 ```
 
 ### Conversation Components
 
-| Component | Description | Example |
-|-----------|-------------|---------|
-| **Message** | User's question or instruction | "Help me analyze this report" |
-| **Agent** | AI team executing the task | Data Analysis Agent |
-| **Context** | Attached knowledge bases, files, etc. | Project docs, data files |
-| **Status** | Conversation execution status | PENDING → RUNNING → COMPLETED |
+| Component   | Description                           | Example                       |
+| ----------- | ------------------------------------- | ----------------------------- |
+| **Message** | User's question or instruction        | "Help me analyze this report" |
+| **Agent**   | AI team executing the task            | Data Analysis Agent           |
+| **Context** | Attached knowledge bases, files, etc. | Project docs, data files      |
+| **Status**  | Conversation execution status         | PENDING → RUNNING → COMPLETED |
 
 ---
 
@@ -52,7 +54,7 @@ Conversation = User Message + Agent + Context + Conversation History
 Above the input area, click the agent selector:
 
 1. **Click the agent dropdown** - Shows available agents
-2. **Select an appropriate agent** 
+2. **Select an appropriate agent**
 
 ### Step 3: Configure Conversation Options (Optional)
 
@@ -112,16 +114,16 @@ If the agent supports skills:
 
 The input area contains the following controls:
 
-| Control | Function | Location |
-|---------|----------|----------|
-| **Agent Selector** | Select the agent for the task | Above input box |
-| **Model Selector** | Override default model | Control bar |
-| **Context Button** | Add knowledge bases | Control bar |
-| **Attachment Button** | Upload files | Control bar |
-| **Skill Button** | Select skills | Control bar |
-| **Follow-up Button** | Enable smart follow-up mode | Control bar |
-| **Cross-Validation Button** | Enable AI cross-validation | Control bar |
-| **Send Button** | Send message | Right side of input box |
+| Control                     | Function                      | Location                |
+| --------------------------- | ----------------------------- | ----------------------- |
+| **Agent Selector**          | Select the agent for the task | Above input box         |
+| **Model Selector**          | Override default model        | Control bar             |
+| **Context Button**          | Add knowledge bases           | Control bar             |
+| **Attachment Button**       | Upload files                  | Control bar             |
+| **Skill Button**            | Select skills                 | Control bar             |
+| **Follow-up Button**        | Enable smart follow-up mode   | Control bar             |
+| **Cross-Validation Button** | Enable AI cross-validation    | Control bar             |
+| **Send Button**             | Send message                  | Right side of input box |
 
 ### Message Area
 
@@ -155,6 +157,7 @@ Select a different model for a single conversation without modifying agent confi
 3. **Enable force override** - Ensures the selected model is used
 
 **Use Cases**:
+
 - Use a more powerful model for complex tasks
 - Use a faster/cheaper model for simple queries
 - Test different models' effectiveness
@@ -197,6 +200,10 @@ Add knowledge bases to enhance agent capabilities:
 2. **Select knowledge bases** - Multiple selection supported
 3. **Agent searches knowledge bases** - Provides more accurate answers
 
+After you select knowledge bases and send a message, they become knowledge bindings on the current Task. Follow-up messages may continue to use those bindings even if you do not select them again. External knowledge sources, when enabled by your deployment, follow the same rule.
+
+To stop future messages from using a knowledge base, open the task/group management panel from the top-right corner and remove the entry from the **Knowledge** tab. Removal only affects future messages. It does not delete context badges or citations already shown on historical messages.
+
 ### Skill Selection
 
 Add additional capabilities to the agent:
@@ -205,6 +212,22 @@ Add additional capabilities to the agent:
 2. **Select skills** - Check the needed skills
 3. **Or type "/" command** - Quick skill selection
 4. **Skills load on-demand** - Dynamically loaded during execution
+
+---
+
+## 📚 Managing Task Knowledge
+
+Regular conversations and group chats both use the top-right task/group management entry to manage knowledge bound to the current Task.
+
+In the **Knowledge** tab:
+
+- Built-in knowledge bases and external knowledge sources appear in one list.
+- External knowledge sources show a short provider badge, such as `AP`.
+- Click **Remove** to unbind a knowledge base or external knowledge source from the Task.
+- Unbinding only affects future messages; historical message context remains unchanged.
+- If external knowledge sources fail to load temporarily, built-in knowledge bases remain visible and removable.
+
+The composer context selector adds knowledge to the current message. The task/group management panel is where you view and remove Task-level bindings that can be inherited by follow-up messages.
 
 ---
 
@@ -227,10 +250,10 @@ Add additional capabilities to the agent:
 
 ### 2. Choosing the Right Agent
 
-
 ### 3. Task Granularity
 
 **Recommended granularity**:
+
 - Small task: Single clear objective
 - Medium task: Contains a few related steps
 - Large task: Split into multiple smaller tasks
@@ -254,11 +277,13 @@ Add additional capabilities to the agent:
 ### Q1: Conversation stuck in PENDING status?
 
 **Possible reasons**:
+
 1. Agent is unavailable
 2. System resources are limited
 3. Repository configuration error
 
 **Solutions**:
+
 - Check agent status in Settings → Agents
 - Verify repository access permissions
 - Try selecting a different agent
@@ -266,6 +291,7 @@ Add additional capabilities to the agent:
 ### Q2: Agent response is incomplete?
 
 **Solutions**:
+
 - Click "Continue" to resume generation
 - Select a model with larger context window
 - Split complex tasks into smaller parts
@@ -273,6 +299,7 @@ Add additional capabilities to the agent:
 ### Q3: How to stop a running conversation?
 
 **Method**:
+
 1. Click the "Stop" button in the input area
 2. Agent stops processing
 3. You can continue the conversation or start a new task
@@ -280,6 +307,7 @@ Add additional capabilities to the agent:
 ### Q4: How to retry a failed conversation?
 
 **Method**:
+
 1. Click the "Retry" button on the failed message
 2. Optionally modify the message before retrying
 3. Agent will attempt the task again
@@ -287,6 +315,7 @@ Add additional capabilities to the agent:
 ### Q5: How to share a conversation?
 
 **Method**:
+
 1. Click the share button in the message area
 2. Copy the generated link
 3. Share with team members (requires access permissions)
@@ -294,6 +323,7 @@ Add additional capabilities to the agent:
 ### Q6: How to export conversation history?
 
 **Method**:
+
 1. Click the export button in the task menu
 2. Choose export format (Markdown, JSON)
 3. Download the conversation history
@@ -303,17 +333,20 @@ Add additional capabilities to the agent:
 ## 🔗 Related Resources
 
 ### Prerequisites
+
 - [Agent Settings](../settings/agent-settings.md) - Configure agents and bots
 - [Configuring Models](../settings/configuring-models.md) - Set up AI models
 - [Configuring Shells](../settings/configuring-shells.md) - Configure execution environments
 
 ### Reference Documentation
+
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent concepts
 - [Collaboration Models](../../concepts/collaboration-models.md) - Multi-agent collaboration
 
 ### Detailed Feature Documentation
 
 For more details on advanced features, see:
+
 - [Smart Follow-up Mode Guide](./clarification-mode-guide.md) - Let agent confirm requirements before execution
 - [AI Cross-Validation Guide](./correction-mode-guide.md) - Use another model to verify and improve responses
 - [IM Channel Integration](./im-channel-integration.md) - Integrate enterprise IM

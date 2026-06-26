@@ -39,6 +39,51 @@ registry 是 core 和 provider 之间的边界。Core 只依赖 registry 查找 
 - 不把外部原始 URL 持久化到 source payload；如需定位来源，使用稳定、可校验、可由 provider 解释的 `source_uri`。
 - Task detail、WebSocket payload 和 Chat Shell metadata 只透传 provider-neutral 字段。
 
+### 引用字段
+
+`externalKnowledgeRefs[]` 使用 provider-neutral 字段，不保存 provider 私有对象：
+
+| 字段                                    | 说明                                                                                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`                              | provider id。                                                                                                                                     |
+| `mode`                                  | 绑定模式，通常为 `explicit`；`all_accessible` 表示 provider 可解释的全部可访问范围。                                                              |
+| `id`                                    | provider 内稳定的知识源 ID。`mode=explicit` 时必填。                                                                                              |
+| `name`                                  | 用户可读的知识源名称，例如知识库名。                                                                                                              |
+| `scope`                                 | provider 可解释的范围，例如 `personal`、`group` 或 `organization`。                                                                               |
+| `target_type`                           | 可选目标类型：`knowledge_base`、`folder` 或 `document`。缺省按整库处理。                                                                          |
+| `node_id` / `document_id` / `parent_id` | provider-neutral 的目录或文档定位字段。                                                                                                           |
+| `target_name`                           | 当选择的是文件夹或文档时的目标展示名。文档级引用应保留 `name` 为知识源名，并用 `target_name` 保存文档名，避免后续来源列表把文档名误当成知识源名。 |
+
+### 管理入口和 API
+
+外部知识源会像内置知识库一样形成 Task 级绑定，影响后续消息。用户取消输入框中的本轮选择不会解除 Task 级绑定；移除绑定只影响后续执行请求，不会修改历史消息上的 context 展示。
+
+前端应复用原任务/群聊管理入口中的“知识库”页签，把内置知识库和外部知识源放在同一个列表中展示，而不是在输入框上下文选择器中单独维护一套“已绑定外部知识”管理入口。外部条目使用短 provider badge 区分，例如 `AP`。
+
+Backend 提供以下 Task 级外部绑定管理接口：
+
+| 方法   | 路径                                                  | 说明                                       |
+| ------ | ----------------------------------------------------- | ------------------------------------------ |
+| `GET`  | `/api/tasks/{task_id}/external-knowledge-refs`        | 返回当前 Task 已绑定的外部知识引用。       |
+| `POST` | `/api/tasks/{task_id}/external-knowledge-refs/remove` | 按规范化 target key 移除一个外部知识引用。 |
+
+移除接口请求体为：
+
+```json
+{
+  "ref": {
+    "provider": "ap",
+    "mode": "explicit",
+    "id": "kb-1",
+    "target_type": "document",
+    "node_id": "document:node-1",
+    "document_id": "node-1"
+  }
+}
+```
+
+管理 UI 必须把外部绑定加载失败视为非阻断错误：内置知识库列表和解绑能力仍应可用，外部失败只显示局部提示。
+
 ## 检索合并流程
 
 `internal_retrieve` 负责把内置知识库记录和外部 provider 返回的记录合并给 Chat Shell。推荐流程：
@@ -55,12 +100,12 @@ registry 是 core 和 provider 之间的边界。Core 只依赖 registry 查找 
 
 外部记录进入消息、工具事件或引用列表时，应使用 provider-neutral provenance 字段：
 
-| 字段 | 说明 |
-| --- | --- |
+| 字段          | 说明                                                    |
+| ------------- | ------------------------------------------------------- |
 | `source_type` | 来源类型或 provider namespace，用于区分内置和外部来源。 |
-| `source_id` | provider 内部稳定 ID。 |
-| `source_uri` | provider 可解释的稳定 URI，不应是外部原始下载 URL。 |
-| `source_name` | 用户可读的来源名称。 |
+| `source_id`   | provider 内部稳定 ID。                                  |
+| `source_uri`  | provider 可解释的稳定 URI，不应是外部原始下载 URL。     |
+| `source_name` | 用户可读的来源名称。                                    |
 
 引用渲染应能在缺少 opener 或 provider 不可用时降级为纯文本来源，不应丢失消息主体。
 

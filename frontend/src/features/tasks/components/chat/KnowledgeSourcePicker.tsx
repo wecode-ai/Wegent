@@ -150,6 +150,10 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
   return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
 }
 
+function supportsExternalKnowledgeBaseSelection(source: ExternalKnowledgeSource) {
+  return source.capabilities?.supportsKnowledgeBaseSelection === true
+}
+
 export function countSelectedExternalKnowledgeBaseIds(
   contexts: ContextItem[],
   providerId: string,
@@ -655,6 +659,9 @@ export function KnowledgeSourcePicker({
     source: ExternalKnowledgeSource,
     kb: ExternalKnowledgeBase
   ) => {
+    if (!supportsExternalKnowledgeBaseSelection(source)) {
+      return
+    }
     const existing = getExternalContext(selectedContexts, source.providerId, kb.knowledge_base_id)
     const childContexts = getExternalChildContexts(
       selectedContexts,
@@ -708,12 +715,13 @@ export function KnowledgeSourcePicker({
       provider: source.providerId,
       mode: 'explicit',
       id: kb.knowledge_base_id,
-      name: node.name,
+      name: kb.knowledge_base_name,
       scope: kb.scope ?? undefined,
       target_type: 'document',
       node_id: node.node_id,
       document_id: stripTypedExternalId(node.raw_id ?? node.node_id),
       parent_id: stripTypedExternalId(node.parent_id),
+      target_name: node.name,
     }
     const context: ExternalKnowledgeContext = {
       type: 'external_knowledge',
@@ -1459,6 +1467,7 @@ function ExternalKnowledgeBaseRows({
   return (
     <div className="space-y-1 p-2">
       {visibleItems.map(item => {
+        const canSelectKnowledgeBase = supportsExternalKnowledgeBaseSelection(source)
         const existing = getExternalContext(
           selectedContexts,
           source.providerId,
@@ -1473,7 +1482,9 @@ function ExternalKnowledgeBaseRows({
             type="button"
             className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
             onClick={() => {
-              onToggle(item)
+              if (canSelectKnowledgeBase) {
+                onToggle(item)
+              }
               onOpen(item)
             }}
             data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
@@ -1489,7 +1500,7 @@ function ExternalKnowledgeBaseRows({
                 </span>
               </span>
             </span>
-            {existing || childSelected ? (
+            {(canSelectKnowledgeBase && existing) || childSelected ? (
               <Check
                 className={cn(
                   'h-4 w-4 shrink-0 text-primary',

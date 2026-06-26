@@ -493,6 +493,7 @@ export function useChatStreamHandlers({
               node_id: ref.node_id,
               document_id: ref.document_id,
               parent_id: ref.parent_id,
+              target_name: ref.target_name,
             },
           })
         })

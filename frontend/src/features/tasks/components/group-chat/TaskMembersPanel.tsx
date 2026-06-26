@@ -21,7 +21,7 @@ import { useToast } from '@/hooks/use-toast'
 import { taskMemberApi, TaskMember } from '@/apis/task-member'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AddMembersDialog } from './AddMembersDialog'
-import TaskKnowledgeBasePanel from './TaskKnowledgeBasePanel'
+import TaskKnowledgeBindingPanel from './TaskKnowledgeBindingPanel'
 import { cn } from '@/lib/utils'
 
 interface TaskMembersPanelProps {
@@ -345,7 +345,7 @@ export function TaskMembersPanel({
               </TabsContent>
 
               <TabsContent value="knowledge" className="flex-1 overflow-hidden mt-4 -mx-6 -mb-6">
-                <TaskKnowledgeBasePanel taskId={taskId} onClose={handleClose} />
+                <TaskKnowledgeBindingPanel taskId={taskId} onClose={handleClose} />
               </TabsContent>
             </Tabs>
           ) : (

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chat_shell.tools.builtin.knowledge_listing import (
+    KBToolCallCounter,
     KbHeadTool,
     KbLsTool,
     KnowledgeListDocumentsTool,
@@ -317,7 +318,9 @@ class TestKnowledgeListDocumentsTool:
         ]
 
     @pytest.mark.asyncio
-    async def test_surfaces_external_listing_error_when_internal_documents_exist(self) -> None:
+    async def test_surfaces_external_listing_error_when_internal_documents_exist(
+        self,
+    ) -> None:
         """Partial listing success should still report failed external sources."""
         tool = KnowledgeListDocumentsTool(
             knowledge_base_ids=[107],
@@ -391,6 +394,71 @@ class TestKnowledgeListDocumentsTool:
             "error": "Failed to list knowledge documents",
             "status_code": 503,
         }
+
+    @pytest.mark.asyncio
+    async def test_provider_source_name_overrides_document_ref_seed(self) -> None:
+        """Document-scoped refs should not make selected sources use document names."""
+        tool = KnowledgeListDocumentsTool(
+            external_knowledge_refs=[
+                {
+                    "provider": "demo",
+                    "id": "demo-kb-1",
+                    "name": "api-reference.md",
+                    "target_type": "document",
+                    "document_id": "doc-1",
+                }
+            ],
+            user_id=2,
+        )
+        external_response = MagicMock()
+        external_response.status_code = 200
+        external_response.json.return_value = {
+            "documents": [
+                {
+                    "provider": "demo",
+                    "source_id": "demo-kb-1",
+                    "source_name": "External Demo",
+                    "document_id": "doc-1",
+                    "title": "api-reference.md",
+                }
+            ],
+            "total_returned": 1,
+            "warnings": [],
+        }
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(return_value=external_response)
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            result = json.loads(await tool._arun())
+
+        assert result["selected_sources"][0]["source_name"] == "External Demo"
+        assert (
+            result["selected_sources"][0]["documents"][0]["title"] == "api-reference.md"
+        )
+
+    @pytest.mark.asyncio
+    async def test_basic_validation_does_not_consume_listing_counter(self) -> None:
+        """Empty or invalid list calls should not consume the actual listing budget."""
+        counter = KBToolCallCounter(max_calls=1)
+        empty_tool = KnowledgeListDocumentsTool()
+        empty_tool._call_counter = counter
+
+        empty_result = json.loads(await empty_tool._arun())
+        assert empty_result["message"] == "No listable knowledge sources are mounted."
+        assert counter.call_count == 0
+
+        mounted_tool = KnowledgeListDocumentsTool(knowledge_base_ids=[107])
+        mounted_tool._call_counter = counter
+        invalid_result = json.loads(await mounted_tool._arun(limit=0))
+        assert invalid_result["error"] == "limit must be between 1 and 100"
+        assert counter.call_count == 0
 
 
 class TestKbHeadTool:

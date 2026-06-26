@@ -8,6 +8,10 @@ from unittest.mock import Mock, patch
 from fastapi import HTTPException
 
 from app.models.task import TaskResource
+from app.services.chat.external_knowledge_refs import (
+    remove_task_external_knowledge_ref,
+    validate_external_knowledge_refs,
+)
 from app.services.chat.preprocessing.contexts import (
     _batch_update_and_insert_contexts,
     _prepare_contexts_for_creation,
@@ -66,6 +70,7 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
         "node_id": None,
         "document_id": None,
         "parent_id": None,
+        "target_name": None,
     }
 
 
@@ -134,11 +139,13 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
             "provider": "demo-source",
             "mode": "explicit",
             "id": "kb-1",
+            "name": "API Knowledge",
             "scope": "organization",
             "target_type": "document",
             "node_id": "document:node-1",
             "document_id": "document:node-1",
             "parent_id": "folder:parent-1",
+            "target_name": "api-reference.md",
         },
     )
 
@@ -153,12 +160,13 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
                     "provider": "demo-source",
                     "mode": "explicit",
                     "id": "kb-1",
-                    "name": "api-reference.md",
+                    "name": "API Knowledge",
                     "scope": "organization",
                     "target_type": "document",
                     "node_id": "document:node-1",
                     "document_id": "document:node-1",
                     "parent_id": "folder:parent-1",
+                    "target_name": "api-reference.md",
                 }
             ],
         ) as sync_refs,
@@ -170,12 +178,13 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
             "provider": "demo-source",
             "mode": "explicit",
             "id": "kb-1",
-            "name": "api-reference.md",
+            "name": "API Knowledge",
             "scope": "organization",
             "target_type": "document",
             "node_id": "document:node-1",
             "document_id": "document:node-1",
             "parent_id": "folder:parent-1",
+            "target_name": "api-reference.md",
         }
     ]
     validate_refs.assert_called_once_with(
@@ -185,6 +194,87 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
     sync_refs.assert_called_once_with(db, task, expected_refs)
     db.commit.assert_not_called()
     db.refresh.assert_not_called()
+
+
+def test_validate_external_knowledge_refs_wraps_value_errors() -> None:
+    with patch(
+        "app.services.rag.sources.validate_external_refs",
+        side_effect=ValueError("too many sources"),
+    ):
+        try:
+            validate_external_knowledge_refs(
+                [{"provider": "demo-source", "mode": "explicit", "id": "kb-1"}],
+                binding_level="conversation",
+            )
+        except ExternalRefValidationError as exc:
+            assert str(exc) == "too many sources"
+        else:
+            raise AssertionError("Expected ExternalRefValidationError")
+
+
+def test_validate_external_knowledge_refs_wraps_pydantic_errors() -> None:
+    try:
+        validate_external_knowledge_refs(
+            [{"provider": "demo-source", "mode": "explicit"}],
+            binding_level="conversation",
+        )
+    except ExternalRefValidationError as exc:
+        assert "id is required when mode is explicit" in str(exc)
+    else:
+        raise AssertionError("Expected ExternalRefValidationError")
+
+
+def test_remove_task_external_knowledge_ref_removes_only_matching_target() -> None:
+    db = Mock()
+    task = Mock(spec=TaskResource)
+    task.json = {
+        "spec": {
+            "externalKnowledgeRefs": [
+                {
+                    "provider": "demo-source",
+                    "mode": "explicit",
+                    "id": "kb-1",
+                    "name": "Demo source",
+                },
+                {
+                    "provider": "demo-source",
+                    "mode": "explicit",
+                    "id": "kb-1",
+                    "name": "Demo source",
+                    "target_type": "document",
+                    "node_id": "document:node-1",
+                    "document_id": "node-1",
+                    "target_name": "api-reference.md",
+                },
+            ]
+        }
+    }
+
+    with patch(
+        "app.services.chat.external_knowledge_refs.task_stores.task_store.update_json"
+    ):
+        next_refs = remove_task_external_knowledge_ref(
+            db,
+            task,
+            {
+                "provider": "demo-source",
+                "mode": "explicit",
+                "id": "kb-1",
+                "target_type": "document",
+                "node_id": "document:node-1",
+                "document_id": "node-1",
+            },
+        )
+
+    assert next_refs == [
+        {
+            "provider": "demo-source",
+            "mode": "explicit",
+            "id": "kb-1",
+            "name": "Demo source",
+        }
+    ]
+    db.commit.assert_not_called()
 
 
 def test_sync_external_contexts_raises_validation_errors_without_syncing() -> None:

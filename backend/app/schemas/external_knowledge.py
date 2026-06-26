@@ -23,6 +23,7 @@ class ExternalKnowledgeRef(BaseModel):
     node_id: Optional[str] = None
     document_id: Optional[str] = None
     parent_id: Optional[str] = None
+    target_name: Optional[str] = None
     boundBy: Optional[str] = None
     boundAt: Optional[str] = None
 

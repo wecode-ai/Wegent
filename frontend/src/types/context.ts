@@ -17,9 +17,9 @@ export type ContextType =
 
 /**
  * Canonical external knowledge reference shape.
- * Provider-neutral; reused verbatim across the entire chain (conversation
- * context, CHAT_SEND payload, Bot defaults). `mode`/`scope` must never be
- * dropped. Mirrors the backend ExternalKnowledgeRef
+ * Provider-neutral; reused verbatim across the entire chain (send-time
+ * context, CHAT_SEND payload, task-level bindings, Bot defaults).
+ * `mode`/`scope` must never be dropped. Mirrors the backend ExternalKnowledgeRef
  * (backend/app/services/rag/sources/models.py).
  */
 export interface ExternalKnowledgeRef {
@@ -32,6 +32,7 @@ export interface ExternalKnowledgeRef {
   node_id?: string
   document_id?: string
   parent_id?: string
+  target_name?: string
 }
 
 /**
@@ -127,8 +128,10 @@ export interface DingTalkDocContext extends BaseContextItem {
 }
 
 /**
- * External knowledge context item (conversation-level temporary mount).
- * Embeds the full canonical ref; the context `id` is namespaced
+ * External knowledge context item selected in the composer before sending.
+ * On send, Backend materializes this ref into task-level externalKnowledgeRefs;
+ * clearing composer selections does not unbind task-level refs. Embeds the full canonical ref;
+ * the context `id` is namespaced
  * (external:{provider}:{mode}:{id ?? 'all'}) to avoid collision with internal
  * KB/table numeric ids. The send-assembly split reads `ref` verbatim.
  */

@@ -589,11 +589,6 @@ class KnowledgeListDocumentsTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """List documents in mounted knowledge sources."""
-        if self._call_counter:
-            allowed, error_msg = self._call_counter.check_and_increment()
-            if not allowed:
-                return error_msg
-
         if not self.knowledge_base_ids and not self.external_knowledge_refs:
             return json.dumps(
                 {
@@ -613,6 +608,11 @@ class KnowledgeListDocumentsTool(BaseTool):
                 {"error": "offset must be greater than or equal to 0"},
                 ensure_ascii=False,
             )
+
+        if self._call_counter:
+            allowed, error_msg = self._call_counter.check_and_increment()
+            if not allowed:
+                return error_msg
 
         internal_documents = await self._list_internal_documents(
             offset=offset,
@@ -681,7 +681,7 @@ class KnowledgeListDocumentsTool(BaseTool):
                     "documents": [],
                 },
             )
-            if doc.get("source_name") and source["source_name"].startswith("KB-"):
+            if doc.get("source_name"):
                 source["source_name"] = doc["source_name"]
             self._append_selected_document(source, doc)
 
