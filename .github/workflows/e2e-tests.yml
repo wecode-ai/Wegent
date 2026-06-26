@@ -469,7 +469,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Next.js build
+      - name: Cache Next.js cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
@@ -478,15 +478,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-e2e-
-
-      - name: Build frontend for E2E
-        working-directory: ./frontend
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
-          NEXT_TELEMETRY_DISABLED: 1
-          RUNTIME_INTERNAL_API_URL: http://localhost:8000
-          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm exec next build
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -562,7 +553,7 @@ jobs:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          nohup pnpm exec next start > next-dev.log 2>&1 &
+          nohup env -u TURBOPACK pnpm exec next dev --port 3000 > next-dev.log 2>&1 &
           echo $! > next-dev.pid
 
       - name: Start Mock Model Server
