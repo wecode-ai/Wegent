@@ -22,6 +22,7 @@ type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
+  startupReady?: boolean
 }
 
 interface LocalRuntimeState {
@@ -56,24 +57,16 @@ function localRuntimeMinimumReadyDelayMs(): number {
   return import.meta.env.DEV ? LOCAL_RUNTIME_ANIMATION_CYCLE_MS : 0
 }
 
-function delay(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve()
-  return new Promise(resolve => window.setTimeout(resolve, ms))
-}
-
 async function resolveLocalRuntimeState(
   fallbackError: string,
-  errorText: LocalRuntimeErrorText,
-  minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
+  errorText: LocalRuntimeErrorText
 ): Promise<LocalRuntimeState> {
-  const startedAt = Date.now()
   try {
     const status = await ensureLocalExecutorStarted()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
       throw new Error(statusError)
     }
-    await delay(minimumReadyDelayMs - (Date.now() - startedAt))
     return { phase: 'ready', error: null }
   } catch (error) {
     return {
@@ -154,10 +147,15 @@ function StartupStatusList() {
   )
 }
 
-export function LocalRuntimeInitializer({ children }: LocalRuntimeInitializerProps) {
+export function LocalRuntimeInitializer({
+  children,
+  startupReady = true,
+}: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
+  const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
+  const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
   const runtimeErrorText = useMemo(
     () => ({
       notRunning: t('error_not_running'),
@@ -169,6 +167,17 @@ export function LocalRuntimeInitializer({ children }: LocalRuntimeInitializerPro
     phase: enabled ? 'starting' : 'ready',
     error: null,
   }))
+
+  useEffect(() => {
+    if (minimumReadyDelayMs === 0) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      setMinimumDelayElapsed(true)
+    }, minimumReadyDelayMs)
+    return () => window.clearTimeout(timer)
+  }, [minimumReadyDelayMs])
 
   const retryInitialize = useCallback(async () => {
     if (!enabled) return
@@ -189,72 +198,80 @@ export function LocalRuntimeInitializer({ children }: LocalRuntimeInitializerPro
     }
   }, [enabled, fallbackError, runtimeErrorText])
 
-  if (state.phase === 'ready') {
-    return <>{children}</>
-  }
-
+  const canMountChildren = state.phase === 'ready'
+  const canRevealChildren = canMountChildren && (!enabled || (startupReady && minimumDelayElapsed))
+  const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 
   return (
-    <main
-      data-testid="local-runtime-initializer"
-      className="flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
-    >
-      <section className="flex w-full max-w-[520px] flex-col items-center text-center">
-        {failed ? (
-          <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
-            <AlertCircle className="h-6 w-6 text-amber-600" />
-          </div>
-        ) : (
-          <WorkspaceSetupAnimation />
-        )}
-        {!failed && (
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text-secondary">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-            {t('starting_status')}
-          </div>
-        )}
-        <h1 className="text-xl font-semibold">
-          {failed ? t('failed_title') : t('starting_title')}
-        </h1>
-        <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
-          {failed ? t('failed_description') : t('starting_description')}
-        </p>
-
-        {failed ? (
-          <div className="mt-6 w-full rounded-lg border border-border bg-surface px-4 py-3 text-left">
-            {state.error && (
-              <p
-                data-testid="local-runtime-error"
-                className="break-words text-sm leading-6 text-text-primary"
-              >
-                {state.error}
-              </p>
+    <>
+      {canMountChildren && (
+        <div hidden={!canRevealChildren} aria-hidden={!canRevealChildren}>
+          {children}
+        </div>
+      )}
+      {shouldShowStartupScreen && (
+        <main
+          data-testid="local-runtime-initializer"
+          className="flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
+        >
+          <section className="flex w-full max-w-[520px] flex-col items-center text-center">
+            {failed ? (
+              <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
+                <AlertCircle className="h-6 w-6 text-amber-600" />
+              </div>
+            ) : (
+              <WorkspaceSetupAnimation />
             )}
-            <div className="mt-3 text-xs leading-5 text-text-secondary">
-              <span className="font-medium">{t('log_label')}: </span>
-              <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
-                {LOCAL_EXECUTOR_LOG_PATH}
-              </code>
-            </div>
-          </div>
-        ) : (
-          <StartupStatusList />
-        )}
+            {!failed && (
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text-secondary">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                {t('starting_status')}
+              </div>
+            )}
+            <h1 className="text-xl font-semibold">
+              {failed ? t('failed_title') : t('starting_title')}
+            </h1>
+            <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
+              {failed ? t('failed_description') : t('starting_description')}
+            </p>
 
-        {failed && (
-          <Button
-            type="button"
-            variant="primary"
-            className="mt-6 h-10 min-w-[112px]"
-            onClick={() => void retryInitialize()}
-            data-testid="local-runtime-retry-button"
-          >
-            <RefreshCw className="h-4 w-4" />
-            {t('retry')}
-          </Button>
-        )}
-      </section>
-    </main>
+            {failed ? (
+              <div className="mt-6 w-full rounded-lg border border-border bg-surface px-4 py-3 text-left">
+                {state.error && (
+                  <p
+                    data-testid="local-runtime-error"
+                    className="break-words text-sm leading-6 text-text-primary"
+                  >
+                    {state.error}
+                  </p>
+                )}
+                <div className="mt-3 text-xs leading-5 text-text-secondary">
+                  <span className="font-medium">{t('log_label')}: </span>
+                  <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
+                    {LOCAL_EXECUTOR_LOG_PATH}
+                  </code>
+                </div>
+              </div>
+            ) : (
+              <StartupStatusList />
+            )}
+
+            {failed && (
+              <Button
+                type="button"
+                variant="primary"
+                className="mt-6 h-10 min-w-[112px]"
+                onClick={() => void retryInitialize()}
+                data-testid="local-runtime-retry-button"
+              >
+                <RefreshCw className="h-4 w-4" />
+                {t('retry')}
+              </Button>
+            )}
+          </section>
+        </main>
+      )}
+    </>
   )
 }

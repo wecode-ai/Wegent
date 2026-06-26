@@ -322,6 +322,7 @@ function joinDevicePath(root: string, ...segments: string[]): string {
 
 export interface WorkbenchContextValue {
   state: WorkbenchState
+  isStartupReady: boolean
   messages: WorkbenchMessage[]
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
@@ -465,6 +466,7 @@ interface WorkbenchProviderProps {
   children: ReactNode
   user: User
   services?: WorkbenchServices
+  onStartupReadyChange?: (ready: boolean) => void
 }
 
 function createBackendServices(): WorkbenchServices {
@@ -1057,7 +1059,12 @@ function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']):
   return `${prefix}-${randomId}`
 }
 
-export function WorkbenchProvider({ children, user, services }: WorkbenchProviderProps) {
+export function WorkbenchProvider({
+  children,
+  user,
+  services,
+  onStartupReadyChange,
+}: WorkbenchProviderProps) {
   const resolvedServices = useMemo(() => services ?? createDefaultServices(), [services])
   const executorClient = useMemo(() => {
     if (resolvedServices.executorClient) return resolvedServices.executorClient
@@ -1264,6 +1271,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
   })
+  const isStartupReady =
+    !state.isBootstrapping && modelSelection.isSelectionReady && !skillSelection.isLoading
+
+  useEffect(() => {
+    onStartupReadyChange?.(isStartupReady)
+  }, [isStartupReady, onStartupReadyChange])
+
   const attachmentSelection = useWorkbenchAttachments()
   const addCodeCommentContext = useCallback((context: CodeCommentContext) => {
     setCodeCommentContexts(items => [...items.filter(item => item.id !== context.id), context])
@@ -3218,6 +3232,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const value: WorkbenchContextValue = {
     state,
+    isStartupReady,
     messages,
     queuedMessages: queuedSends,
     guidanceMessages,

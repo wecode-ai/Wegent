@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { ensureLocalExecutorStarted } from '@/tauri/localExecutor'
@@ -17,6 +18,14 @@ function enableTauri() {
     configurable: true,
     value: {},
   })
+}
+
+function MountProbe({ onMount }: { onMount: () => void }) {
+  useEffect(() => {
+    onMount()
+  }, [onMount])
+
+  return <div data-testid="main-app">Main app</div>
 }
 
 describe('LocalRuntimeInitializer', () => {
@@ -50,6 +59,45 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
+  test('mounts children behind the startup screen until app startup is ready', async () => {
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer startupReady={false}>
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).not.toBeVisible()
+    expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
+  })
+
+  test('does not remount children when the startup screen is dismissed', async () => {
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    const onMount = vi.fn()
+
+    const { rerender } = render(
+      <LocalRuntimeInitializer startupReady={false}>
+        <MountProbe onMount={onMount} />
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).not.toBeVisible()
+    expect(onMount).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <LocalRuntimeInitializer startupReady>
+        <MountProbe onMount={onMount} />
+      </LocalRuntimeInitializer>
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    expect(onMount).toHaveBeenCalledTimes(1)
+  })
+
   test('keeps the startup animation visible for one cycle in dev mode', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-26T00:00:00Z'))
@@ -68,7 +116,7 @@ describe('LocalRuntimeInitializer', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(DEV_STARTUP_HOLD_MS - 1)
     })
-    expect(screen.queryByTestId('main-app')).not.toBeInTheDocument()
+    expect(screen.getByTestId('main-app')).not.toBeVisible()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)

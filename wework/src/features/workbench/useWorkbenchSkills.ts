@@ -27,6 +27,7 @@ export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOp
   const [preloadedSkillNames, setPreloadedSkillNames] = useState<string[]>([])
   const [selectedSkills, setSelectedSkillsState] = useState<SkillRef[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isTeamSkillsLoading, setIsTeamSkillsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
@@ -64,9 +65,11 @@ export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOp
       if (!teamId) {
         setTeamSkillNames([])
         setPreloadedSkillNames([])
+        setIsTeamSkillsLoading(false)
         return
       }
 
+      setIsTeamSkillsLoading(true)
       try {
         const response = await api.getTeamSkills(teamId)
         if (!cancelled) {
@@ -77,6 +80,10 @@ export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOp
         if (!cancelled) {
           setTeamSkillNames([])
           setPreloadedSkillNames([])
+        }
+      } finally {
+        if (!cancelled) {
+          setIsTeamSkillsLoading(false)
         }
       }
     }
@@ -121,7 +128,7 @@ export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOp
     selectedSkillNames,
     setSelectedSkills,
     toggleSkill,
-    isLoading,
+    isLoading: isLoading || isTeamSkillsLoading,
     error,
   }
 }

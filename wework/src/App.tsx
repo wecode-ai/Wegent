@@ -30,10 +30,19 @@ function useCurrentPath() {
   return path
 }
 
-function AppRoutes() {
+interface AppRoutesProps {
+  onWorkbenchStartupReadyChange?: (ready: boolean) => void
+}
+
+function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+
+  useEffect(() => {
+    if (isLoading || !user || isNativeApp || !activeTab?.url) return
+    onWorkbenchStartupReadyChange?.(true)
+  }, [activeTab?.url, isLoading, isNativeApp, onWorkbenchStartupReadyChange, user])
 
   if (path === '/login') {
     return <LoginPage />
@@ -54,7 +63,7 @@ function AppRoutes() {
 
   // native WeWork routes
   return (
-    <WorkbenchProvider user={user}>
+    <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {path === '/plugins/manage' ? (
         <PluginManagementPage />
       ) : path === '/plugins' ? (
@@ -82,17 +91,30 @@ export default function App() {
 
 function AppShell() {
   const path = useCurrentPath()
-  const { user } = useAuth()
+  const { user, isLoading } = useAuth()
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
+  const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
 
   // No chrome on login/setup pages
-  if (path === '/login' || path === '/login/oidc' || !user) {
+  if (path === '/login' || path === '/login/oidc') {
+    return <AppRoutes />
+  }
+
+  if (isLoading) {
+    return (
+      <LocalRuntimeInitializer startupReady={false}>
+        <div />
+      </LocalRuntimeInitializer>
+    )
+  }
+
+  if (!user) {
     return <AppRoutes />
   }
 
   return (
-    <LocalRuntimeInitializer>
+    <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
       <div className="flex h-screen flex-col overflow-hidden bg-surface">
         {isTauri && (
           <ChromeTitlebar
@@ -103,7 +125,7 @@ function AppShell() {
           />
         )}
         <div className="min-h-0 flex-1 overflow-hidden">
-          <AppRoutes />
+          <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
         </div>
       </div>
     </LocalRuntimeInitializer>

@@ -302,6 +302,7 @@ function BootstrapProbe() {
       <span data-testid="boot-state">
         {workbench.state.isBootstrapping ? 'loading' : workbench.state.user?.user_name}
       </span>
+      <span data-testid="startup-ready">{workbench.isStartupReady ? 'ready' : 'loading'}</span>
       <span data-testid="project-count">{workbench.state.projects.length}</span>
       <span data-testid="runtime-total">{workbench.state.runtimeWork?.totalLocalTasks ?? 0}</span>
     </div>
@@ -638,6 +639,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbenchWithDefaultServices(<BootstrapProbe />)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('local'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
@@ -650,6 +652,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<BootstrapProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
