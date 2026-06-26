@@ -67,9 +67,12 @@ def _attachments_have_document(attachments: Any) -> bool:
     if not isinstance(attachments, list):
         return False
     for att in attachments:
-        if not isinstance(att, dict):
-            continue
-        mime = str(att.get("mime_type") or "").lower()
+        # ExecutionRequest.attachments is untyped: entries may be plain dicts or
+        # attachment objects that expose mime_type as an attribute.
+        if isinstance(att, dict):
+            mime = str(att.get("mime_type") or "").lower()
+        else:
+            mime = str(getattr(att, "mime_type", "") or "").lower()
         if mime and not mime.startswith("image/") and not mime.startswith("video/"):
             return True
     return False
@@ -243,6 +246,7 @@ class ChatContext:
                 or any(
                     _content_has_readable_attachment(message.get("content"))
                     for message in history
+                    if isinstance(message, dict)
                 )
             )
 

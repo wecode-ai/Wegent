@@ -123,6 +123,19 @@ def test_attachments_have_document_empty_or_malformed():
     assert _attachments_have_document(["not-a-dict"]) is False
 
 
+def test_attachments_have_document_object_style():
+    # Entries may be attachment objects exposing mime_type as an attribute,
+    # not only plain dicts.
+    class _Att:
+        def __init__(self, mime_type):
+            self.mime_type = mime_type
+
+    assert _attachments_have_document([_Att("application/pdf")]) is True
+    assert _attachments_have_document([_Att("image/png")]) is False
+    assert _attachments_have_document([_Att(None)]) is False
+    assert _attachments_have_document([object()]) is False
+
+
 @pytest.mark.asyncio
 async def test_load_chat_history_uses_request_history_for_stateless_request():
     request = ExecutionRequest(
