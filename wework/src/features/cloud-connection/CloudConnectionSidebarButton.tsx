@@ -45,14 +45,12 @@ export function CloudConnectionSidebarButton({
     [cloudWorkDevices]
   )
   const preferredCloudDevice = useMemo(() => {
-    return cloudWorkDevices
-      .filter(canUseForProjectCreation)
-      .sort((left, right) => {
-        const leftBusy = left.status === 'busy' ? 1 : 0
-        const rightBusy = right.status === 'busy' ? 1 : 0
-        if (leftBusy !== rightBusy) return leftBusy - rightBusy
-        return (left.name || left.device_id).localeCompare(right.name || right.device_id)
-      })[0]
+    return cloudWorkDevices.filter(canUseForProjectCreation).sort((left, right) => {
+      const leftBusy = left.status === 'busy' ? 1 : 0
+      const rightBusy = right.status === 'busy' ? 1 : 0
+      if (leftBusy !== rightBusy) return leftBusy - rightBusy
+      return (left.name || left.device_id).localeCompare(right.name || right.device_id)
+    })[0]
   }, [cloudWorkDevices])
   const connected = cloud.isConnected
   const needsAttention = cloud.status === 'expired' || cloud.status === 'error'
@@ -68,15 +66,16 @@ export function CloudConnectionSidebarButton({
   const cloudWorkAvailable =
     connected && !needsAttention && cloudWorkStatus?.availability === 'available'
   const hasErrorDetail = connected && (needsAttention || cloudWorkUnavailable)
-  const statusLabel = needsAttention
-    ? t('workbench.cloud_work_unavailable', '不可用')
-    : cloudWorkSyncing
-      ? t('workbench.cloud_work_syncing', '同步中')
-      : cloudWorkEmpty
-        ? t('workbench.cloud_work_empty', '无设备')
-        : cloudWorkAvailable
-          ? t('workbench.cloud_work_available', '可用')
-          : null
+  const statusLabel =
+    needsAttention || cloudWorkUnavailable
+      ? t('workbench.cloud_work_unavailable', '不可用')
+      : cloudWorkSyncing
+        ? t('workbench.cloud_work_syncing', '同步中')
+        : cloudWorkEmpty
+          ? t('workbench.cloud_work_empty', '无设备')
+          : cloudWorkAvailable
+            ? t('workbench.cloud_work_available', '可用')
+            : null
   const label = connected
     ? t('workbench.cloud_work_entry', '云端工作')
     : needsAttention
@@ -93,10 +92,10 @@ export function CloudConnectionSidebarButton({
     : label
   const statusTitle = cloudWorkStatus?.error ? `${title}\n${cloudWorkStatus.error}` : title
   const errorDetail = needsAttention
-    ? cloud.error || t('workbench.cloud_connection_relogin_required', '云端登录已过期，请重新登录。')
+    ? cloud.error ||
+      t('workbench.cloud_connection_relogin_required', '云端登录已过期，请重新登录。')
     : cloudWorkUnavailable
-      ? cloudWorkStatus?.error ||
-        t('workbench.cloud_work_unavailable_detail', '云端工作暂不可用。')
+      ? cloudWorkStatus?.error || t('workbench.cloud_work_unavailable_detail', '云端工作暂不可用。')
       : null
   const checkLabels: Record<keyof CloudWorkStatus['checks'], string> = {
     teams: t('workbench.cloud_work_check_teams', '云端智能体'),

@@ -287,15 +287,16 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListRuntimeWork).not.toHaveBeenCalled()
   })
 
-  it('does not expose the current app cloud mirror as a background cloud work device', async () => {
+  it('does not expose the current app registration as a background cloud work device', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
         id: 1,
-        device_id: 'local-device-cloud',
-        name: 'Current App Cloud Mirror',
+        device_id: 'local-device',
+        name: 'Current App Registration',
         status: 'online',
         is_default: false,
-        device_type: 'cloud',
+        device_type: 'app',
+        app_device_id: 'local-device',
         bind_shell: 'claudecode',
       },
       {
@@ -316,24 +317,24 @@ describe('createHybridWorkbenchServices', () => {
     expect(devices?.map(device => device.device_id)).toEqual(['cloud-device'])
   })
 
-  it('removes current app cloud mirror work from background runtime work', async () => {
+  it('removes current app registration work from background runtime work', async () => {
     mocks.cloudListRuntimeWork.mockResolvedValue({
       projects: [
         {
-          project: { key: 'mirror', name: 'Mirror' },
+          project: { key: 'app', name: 'Current App' },
           totalLocalTasks: 1,
           deviceWorkspaces: [
             {
-              deviceId: 'local-device-cloud',
-              deviceName: 'Current App Cloud Mirror',
+              deviceId: 'local-device',
+              deviceName: 'Current App Registration',
               deviceStatus: 'online',
               available: true,
-              workspacePath: '/mirror',
+              workspacePath: '/app',
               localTasks: [
                 {
-                  localTaskId: 'mirror-task',
-                  workspacePath: '/mirror',
-                  title: 'Mirror task',
+                  localTaskId: 'app-task',
+                  workspacePath: '/app',
+                  title: 'App task',
                   runtime: 'codex',
                 },
               ],
@@ -364,17 +365,17 @@ describe('createHybridWorkbenchServices', () => {
       ],
       chats: [
         {
-          deviceId: 'local-device-cloud',
-          deviceName: 'Current App Cloud Mirror',
+          deviceId: 'local-device',
+          deviceName: 'Current App Registration',
           deviceStatus: 'online',
           available: true,
-          workspacePath: '/mirror-chat',
+          workspacePath: '/app-chat',
           workspaceKind: 'chat',
           localTasks: [
             {
-              localTaskId: 'mirror-chat',
-              workspacePath: '/mirror-chat',
-              title: 'Mirror chat',
+              localTaskId: 'app-chat',
+              workspacePath: '/app-chat',
+              title: 'App chat',
               runtime: 'codex',
             },
           ],

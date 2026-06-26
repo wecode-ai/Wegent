@@ -347,9 +347,7 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
 
-    expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent(
-      'wegent-executor'
-    )
+    expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent('wegent-executor')
   })
 
   test('hides plugins navigation while the feature is not released', () => {

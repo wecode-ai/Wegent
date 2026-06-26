@@ -176,7 +176,10 @@ function cloudWorkAvailability(
   return 'available'
 }
 
-function cloudWorkErrorMessage(label: string, result: PromiseSettledResult<unknown>): string | null {
+function cloudWorkErrorMessage(
+  label: string,
+  result: PromiseSettledResult<unknown>
+): string | null {
   if (result.status === 'fulfilled') return null
   if (result.reason instanceof Error) return `${label}: ${result.reason.message}`
   return `${label}: ${String(result.reason || 'failed')}`
@@ -1260,8 +1263,7 @@ export function WorkbenchProvider({
     [] as WorkbenchMessage[]
   )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
-  const [cloudWorkStatus, setCloudWorkStatus] =
-    useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
+  const [cloudWorkStatus, setCloudWorkStatus] = useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
@@ -1502,10 +1504,14 @@ export function WorkbenchProvider({
       setCloudWorkStatus(startCloudWorkSync(activeChecks))
 
       if (backgroundApi?.listTeams) {
-        void timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams()).then(result => {
-          if (options?.isCancelled?.()) return
-          setCloudWorkStatus(current => finishCloudWorkCheck(current, 'teams', '云端团队', result))
-        })
+        void timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams()).then(
+          result => {
+            if (options?.isCancelled?.()) return
+            setCloudWorkStatus(current =>
+              finishCloudWorkCheck(current, 'teams', '云端团队', result)
+            )
+          }
+        )
       }
 
       const [devicesResult, runtimeWorkResult] = await Promise.all([
@@ -1653,12 +1659,12 @@ export function WorkbenchProvider({
       executorClient.runtime.listRuntimeWork().catch(() => undefined),
     ])
     const devices = resolveDeviceListWithCache(devicesResult)
-    const runtimeWork = runtimeWorkResult ?? state.runtimeWork
+    const runtimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
       devices,
-      runtimeWork: runtimeWorkResult,
+      runtimeWork,
       standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
     })
     void refreshCloudBackgroundData(devices, runtimeWork, {
@@ -1702,7 +1708,7 @@ export function WorkbenchProvider({
         devices,
         standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
       })
-      void refreshCloudBackgroundData(devices, state.runtimeWork, {
+      void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
         projects: state.projects,
         standaloneDeviceId: state.standaloneDeviceId,
       }).catch(() => undefined)
@@ -2461,9 +2467,9 @@ export function WorkbenchProvider({
       })
       setRuntimeTranscriptPage({
         hasMoreBefore: Boolean(transcript.hasMoreBefore),
-          beforeCursor: transcript.beforeCursor ?? null,
-          loadingMore: false,
-        })
+        beforeCursor: transcript.beforeCursor ?? null,
+        loadingMore: false,
+      })
     } catch (error) {
       const currentAddress = currentRuntimeTaskRef.current
       if (currentAddress && getRuntimeTaskRouteKey(currentAddress) === requestKey) {
