@@ -43,6 +43,7 @@ The migration scope is executor-only:
 | Legacy Python behavior | Rust status | Rust coverage |
 | --- | --- | --- |
 | Persist a stable device id instead of falling back to `local-device` | Migrated | `executor/tests/config_contract.rs`, `executor/tests/app_startup_contract.rs` |
+| Build default device names safely for non-ASCII device ids | Migrated | `executor/tests/config_contract.rs` |
 | Include running task ids in heartbeat | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/local_backend_contract.rs` |
 | Include local capability report in heartbeat | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/local_backend_contract.rs` |
 | Include runtime auth file report in heartbeat | Migrated | `executor/tests/local_backend_contract.rs` |
@@ -57,16 +58,42 @@ The migration scope is executor-only:
 | Preserve pre-registration cancel requests and apply them on task start | Migrated | `executor/tests/local_backend_dispatch_contract.rs` |
 | Close a task session and refresh heartbeat | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 
+## Capability Sync
+
+| Legacy Python behavior | Rust status | Rust coverage |
+| --- | --- | --- |
+| Download managed skill packages from the backend with encoded namespace query parameters | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/local_capability_sync_contract.rs` |
+| Restrict package bearer tokens to backend-origin downloads | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
+| Extract skill packages through per-sync staging directories before atomic replacement | Migrated | `executor/src/local/backend/capability.rs`, `executor/tests/local_capability_sync_contract.rs` |
+| Sync plugins from uploaded package downloads and marketplace metadata | Migrated | `executor/tests/local_capability_sync_contract.rs` |
+
+## Sessions
+
+| Legacy Python behavior | Rust status | Rust coverage |
+| --- | --- | --- |
+| Resolve relative terminal/code-server paths under the configured local workspace root | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/local_session_handler_contract.rs` |
+| Route terminal input, resize, and close events to the active PTY session | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/unix_pty_manager_contract.rs` |
+| Serve code-server sessions through the local gateway URL | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/local_session_handler_contract.rs` |
+
 ## Upgrade
 
 | Legacy Python behavior | Rust status | Rust coverage |
 | --- | --- | --- |
 | Reject upgrade while tasks are running unless `force_stop_tasks` is set | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 | Force-stop running tasks before upgrade | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
+| Abort backend-triggered upgrade when any forced task cancellation fails | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
+| Bind injected upgrade services to the current task controller independent of builder call order | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 | Emit `device:upgrade_status` states: `busy`, `checking`, `skipped`, `success`, `restarting`, `error` | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 | Run updater service with registry overrides and `auto_confirm` | Migrated | `executor/tests/local_backend_device_migration_contract.rs`, `executor/tests/updater_service_contract.rs` |
 | Restart executor after successful backend-triggered upgrade | Migrated | `executor/src/local/backend/upgrade.rs`, `executor/tests/process_manager_contract.rs` |
 | `--upgrade` CLI update check | Migrated | `executor/tests/app_startup_contract.rs`, `executor/tests/updater_service_contract.rs` |
+
+## Extensions
+
+| Legacy Python behavior | Rust status | Rust coverage |
+| --- | --- | --- |
+| Run extension scripts from the task-scoped `.claude/skills/<extension>` directory | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
+| Reject extension script path escapes and path meta extension names | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 
 ## Not Ported
 

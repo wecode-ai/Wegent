@@ -175,6 +175,7 @@ where
             }
 
             running_tasks.add(task_id);
+            let mut guard = handles.lock().expect("managed task lock");
             let handle = tokio::spawn(run_managed_task(
                 engine,
                 sink,
@@ -183,13 +184,10 @@ where
                 running_tasks.clone(),
                 Arc::clone(&handles),
             ));
-            if let Some(previous) = handles
-                .lock()
-                .expect("managed task lock")
-                .insert(task_id, ManagedTaskHandle { builder, handle })
-            {
+            if let Some(previous) = guard.insert(task_id, ManagedTaskHandle { builder, handle }) {
                 previous.handle.abort();
             }
+            drop(guard);
 
             RunnerResult::accepted(TaskStatus::Running)
         })

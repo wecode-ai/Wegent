@@ -10,7 +10,9 @@ use crate::local::session::{
     LocalSessionHandler, SessionResult, SessionStartRequest, SessionType, UnixSessionPtyManager,
 };
 
-pub(super) fn default_session_handler() -> LocalSessionHandler {
+pub(super) fn default_session_handler(
+    configured_workspace_root: Option<PathBuf>,
+) -> LocalSessionHandler {
     let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", true);
     let public_base_url = env::var("DEVICE_PUBLIC_BASE_URL")
         .ok()
@@ -22,12 +24,7 @@ pub(super) fn default_session_handler() -> LocalSessionHandler {
         .and_then(|value| value.trim().parse::<u16>().ok())
         .filter(|port| *port > 0)
         .unwrap_or(18080);
-    let workspace_root = env::var("LOCAL_WORKSPACE_ROOT")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".wegent-executor").join("workspace"));
+    let workspace_root = configured_workspace_root.unwrap_or_else(default_workspace_root);
     LocalSessionHandler::new(
         &public_base_url,
         gateway_enabled,
@@ -35,6 +32,15 @@ pub(super) fn default_session_handler() -> LocalSessionHandler {
         workspace_root,
         Arc::new(UnixSessionPtyManager),
     )
+}
+
+fn default_workspace_root() -> PathBuf {
+    env::var("LOCAL_WORKSPACE_ROOT")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".wegent-executor").join("workspace"))
 }
 
 pub(super) fn session_start_request(

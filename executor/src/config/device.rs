@@ -322,12 +322,14 @@ fn default_device_name(device_id: &str) -> String {
         "windows" => "Windows",
         other => other,
     };
-    let suffix = if device_id.len() >= 12 {
-        &device_id[device_id.len() - 12..]
-    } else {
-        device_id
-    };
+    let suffix = last_chars(device_id, 12);
     format!("{os_name}-Device-{suffix}")
+}
+
+fn last_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars().rev().take(max_chars).collect::<Vec<_>>();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 fn non_empty_str(value: &str) -> Option<&str> {

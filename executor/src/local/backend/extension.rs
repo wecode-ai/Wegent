@@ -178,6 +178,9 @@ fn validate_name(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{field} is required"))?;
+    if matches!(value, "." | "..") {
+        return Err(format!("Invalid {field}: {value}"));
+    }
     if value.chars().all(validator) {
         Ok(value.to_owned())
     } else {

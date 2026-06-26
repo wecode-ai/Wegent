@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    cell::RefCell,
     collections::BTreeMap,
     env, fs,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,8 +23,8 @@ use wegent_executor::{
     protocol::ExecutionRequest,
 };
 
-#[test]
-fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill() {
+#[tokio::test]
+async fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill() {
     let temp = TempRoot::new("capability-sync-skill");
     let skills_dir = temp.path().join(".claude/skills");
     let codex_skills_dir = temp.path().join(".codex/skills");
@@ -72,6 +74,7 @@ fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill() {
                 "server": {"type": "streamable-http", "url": "https://example.com/mcp"},
             }],
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["success"], true);
@@ -104,8 +107,8 @@ fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill() {
     assert!(manifest["skills"].get("old-managed").is_none());
 }
 
-#[test]
-fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts() {
+#[tokio::test]
+async fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts() {
     let temp = TempRoot::new("capability-sync-broken-skill");
     let skills_dir = temp.path().join(".claude/skills");
     let codex_skills_dir = temp.path().join(".codex/skills");
@@ -159,6 +162,7 @@ fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts() {
             "plugins": [],
             "mcps": [],
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["success"], false);
@@ -180,8 +184,8 @@ fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts() {
     assert!(!skills_dir.join("browser").is_symlink());
 }
 
-#[test]
-fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claude_metadata() {
+#[tokio::test]
+async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claude_metadata() {
     let temp = TempRoot::new("capability-sync-plugin");
     let skills_dir = temp.path().join("skills");
     let plugins_dir = temp.path().join(".claude/plugins");
@@ -244,6 +248,7 @@ fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claude_meta
             }],
             "mcps": [],
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["success"], true);
@@ -281,8 +286,8 @@ fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claude_meta
     );
 }
 
-#[test]
-fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_store() {
+#[tokio::test]
+async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_store() {
     let temp = TempRoot::new("capability-sync-uploaded-plugin");
     let skills_dir = temp.path().join("skills");
     let plugins_dir = temp.path().join(".claude/plugins");
@@ -339,6 +344,7 @@ fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_st
             ],
             "mcps": [],
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["success"], true);
@@ -422,8 +428,8 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
     assert!(!install_path.join("old.txt").exists());
 }
 
-#[test]
-fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin() {
+#[tokio::test]
+async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin() {
     let temp = TempRoot::new("capability-sync-remove-plugin");
     let skills_dir = temp.path().join("skills");
     let plugins_dir = temp.path().join("plugins");
@@ -486,6 +492,7 @@ fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin() {
             "plugins": [{"name": "keep-plugin", "marketplace": "market", "version": "1.0.0"}],
             "mcps": [],
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["success"], true);
@@ -785,8 +792,8 @@ fn global_capability_helpers_match_project_and_device_config_contract() {
 struct StaticPackageProvider {
     skills: BTreeMap<String, String>,
     plugins: BTreeMap<String, Vec<u8>>,
-    skill_calls: RefCell<Vec<String>>,
-    plugin_calls: RefCell<Vec<String>>,
+    skill_calls: Mutex<Vec<String>>,
+    plugin_calls: Mutex<Vec<String>>,
 }
 
 impl StaticPackageProvider {
@@ -802,23 +809,40 @@ impl StaticPackageProvider {
 }
 
 impl CapabilityPackageProvider for StaticPackageProvider {
-    fn stage_skill(&self, spec: &SkillSyncSpec, target: &Path) -> Result<(), CapabilitySyncError> {
-        self.skill_calls.borrow_mut().push(spec.name.clone());
-        let content = self.skills.get(&spec.name).ok_or_else(|| {
-            CapabilitySyncError::invalid_payload(format!("missing test skill {}", spec.name))
-        })?;
-        fs::create_dir_all(target)?;
-        fs::write(target.join("SKILL.md"), content)?;
-        Ok(())
+    fn stage_skill<'a>(
+        &'a self,
+        spec: &'a SkillSyncSpec,
+        target: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        let result = {
+            self.skill_calls.lock().unwrap().push(spec.name.clone());
+            match self.skills.get(&spec.name) {
+                Some(content) => fs::create_dir_all(target)
+                    .and_then(|()| fs::write(target.join("SKILL.md"), content))
+                    .map_err(CapabilitySyncError::from),
+                None => Err(CapabilitySyncError::invalid_payload(format!(
+                    "missing test skill {}",
+                    spec.name
+                ))),
+            }
+        };
+        Box::pin(std::future::ready(result))
     }
 
-    fn download_plugin(&self, download_path: &str) -> Result<Vec<u8>, CapabilitySyncError> {
-        self.plugin_calls
-            .borrow_mut()
-            .push(download_path.to_owned());
-        self.plugins.get(download_path).cloned().ok_or_else(|| {
-            CapabilitySyncError::invalid_payload(format!("missing test plugin {download_path}"))
-        })
+    fn download_plugin<'a>(
+        &'a self,
+        download_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        let result = {
+            self.plugin_calls
+                .lock()
+                .unwrap()
+                .push(download_path.to_owned());
+            self.plugins.get(download_path).cloned().ok_or_else(|| {
+                CapabilitySyncError::invalid_payload(format!("missing test plugin {download_path}"))
+            })
+        };
+        Box::pin(std::future::ready(result))
     }
 }
 

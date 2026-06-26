@@ -128,6 +128,22 @@ where
         }
     }
 
+    pub(super) fn with_service_arc(
+        client: LocalBackendClient<T>,
+        task_controller: Option<Arc<dyn LocalTaskController>>,
+        update_config: UpdateConfig,
+        service: Arc<dyn LocalUpgradeService>,
+    ) -> Self {
+        Self {
+            client,
+            task_controller,
+            update_config,
+            service,
+            restart_scheduler: Arc::new(NoopRestartScheduler),
+            in_progress: Arc::new(Mutex::new(false)),
+        }
+    }
+
     pub(super) fn with_service_and_restart<S, R>(
         client: LocalBackendClient<T>,
         task_controller: Option<Arc<dyn LocalTaskController>>,
@@ -199,7 +215,22 @@ where
         if !running_task_ids.is_empty() {
             if let Some(controller) = &self.task_controller {
                 for task_id in running_task_ids {
-                    let _ = controller.cancel_task(task_id, None).await;
+                    if !controller.cancel_task(task_id, None).await {
+                        self.emit_status(
+                            "error",
+                            "Failed to stop running tasks",
+                            None,
+                            None,
+                            Some("Failed to stop running tasks"),
+                            None,
+                        )
+                        .await;
+                        return json!({
+                            "success": false,
+                            "status": "error",
+                            "error": "Failed to stop running tasks",
+                        });
+                    }
                 }
                 self.client
                     .set_running_task_ids(controller.running_task_ids());

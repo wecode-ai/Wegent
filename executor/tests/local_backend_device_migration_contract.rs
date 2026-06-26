@@ -5,22 +5,28 @@
 use std::{
     collections::VecDeque,
     future::Future,
+    io::{Cursor, Write},
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use serde_json::{json, Value};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
 use wegent_executor::{
     config::device::UpdateConfig,
     emitter::EventEnvelope,
     local::{
         backend::{
             CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceUpgradeHandler, EventHandler,
-            LocalBackendClient, LocalBackendConfig, LocalBackendRunner, LocalBackendTransport,
-            LocalRunningTaskTracker, LocalTaskController, LocalUpgradeService,
-            ManagedLocalTaskRunner,
+            HttpPackageProvider, LocalBackendClient, LocalBackendConfig, LocalBackendRunner,
+            LocalBackendTransport, LocalRunningTaskTracker, LocalTaskController,
+            LocalUpgradeService, ManagedLocalTaskRunner,
         },
+        capabilities::{CapabilityPackageProvider, SkillSyncSpec},
         session::{LocalSessionHandler, PtySpawnRequest, SessionPtyManager, TerminalPty},
     },
     process::{CommandSpec, StreamProcessEngine},
@@ -159,6 +165,89 @@ async fn default_local_backend_runner_wires_capability_sync_and_code_server_sess
         .as_str()
         .unwrap()
         .contains("code-default"));
+}
+
+#[tokio::test]
+async fn http_capability_provider_encodes_namespace_and_rejects_external_package_urls() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend_url = serve_one_http_response(skill_zip_bytes(), Arc::clone(&requests)).await;
+    let provider = HttpPackageProvider::new(backend_url, "secret-token");
+    let target = std::env::temp_dir().join(format!(
+        "wegent-http-capability-skill-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&target);
+
+    provider
+        .stage_skill(
+            &SkillSyncSpec {
+                name: "browser".to_owned(),
+                skill_id: 42,
+                namespace: "team a&x=y#z".to_owned(),
+                is_public: false,
+            },
+            &target,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        "# Skill"
+    );
+    let request = requests.lock().unwrap().first().cloned().unwrap();
+    assert!(
+        request.starts_with(
+            "GET /api/v1/kinds/skills/42/download?namespace=team+a%26x%3Dy%23z HTTP/1.1"
+        ),
+        "{request}"
+    );
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer secret-token"),
+        "{request}"
+    );
+
+    let error = provider
+        .download_plugin("https://example.com/not-backend.zip")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("backend origin"));
+}
+
+#[tokio::test]
+async fn default_session_handler_uses_configured_workspace_root_for_relative_paths() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "wegent-configured-session-root-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&workspace_root);
+    let transport = RecordingTransport::default();
+    let mut config = local_backend_config();
+    config.local_workspace_root = workspace_root.clone();
+    let runner = LocalBackendRunner::new(config, transport.clone());
+    runner.register_handlers();
+
+    let ack = transport
+        .handler("device:start_code_server_session")
+        .unwrap()(json!({
+        "type": "code_server",
+        "session_id": "code-config-root",
+        "project_id": 123,
+        "path": "project-a",
+        "access_token": "secret",
+        "create_if_missing": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(
+        ack["path"],
+        workspace_root.join("project-a").display().to_string()
+    );
+    assert!(workspace_root.join("project-a").is_dir());
 }
 
 #[tokio::test]
@@ -395,6 +484,65 @@ async fn default_upgrade_event_force_stops_tasks_and_runs_updater() {
     );
 }
 
+#[tokio::test]
+async fn upgrade_service_uses_task_controller_even_when_builder_order_is_reversed() {
+    let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
+    let controller = RecordingTaskController::with_running_tasks([21]);
+    let upgrade = RecordingUpgradeService::latest();
+    let runner = LocalBackendRunner::with_task_runner(
+        local_backend_config(),
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_upgrade_service(upgrade.clone())
+    .with_task_controller(controller.clone());
+    runner.register_handlers();
+
+    let ack = transport.handler("device:upgrade").unwrap()(json!({
+        "force_stop_tasks": true,
+        "auto_confirm": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(controller.cancelled(), vec![(21, None)]);
+    assert_eq!(upgrade.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn upgrade_force_stop_aborts_when_task_cancellation_fails() {
+    let transport = RecordingTransport::default();
+    let controller = FailingCancelTaskController::with_running_tasks([31]);
+    let upgrade = RecordingUpgradeService::latest();
+    let runner = LocalBackendRunner::with_task_runner(
+        local_backend_config(),
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_task_controller(controller.clone())
+    .with_upgrade_service(upgrade.clone());
+    runner.register_handlers();
+
+    let ack = transport.handler("device:upgrade").unwrap()(json!({
+        "force_stop_tasks": true,
+        "auto_confirm": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], false, "{ack}");
+    assert_eq!(ack["status"], "error");
+    assert_eq!(controller.cancelled(), vec![(31, None)]);
+    assert!(upgrade.calls().is_empty());
+    let statuses: Vec<_> = transport
+        .emits()
+        .into_iter()
+        .map(|call| call.payload["status"].clone())
+        .collect();
+    assert_eq!(statuses, vec![json!("error")]);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn default_extension_event_runs_skill_script_with_payload_environment() {
@@ -460,6 +608,31 @@ async fn default_extension_event_rejects_script_path_escape() {
         .as_str()
         .unwrap()
         .contains("Invalid script_path"));
+}
+
+#[tokio::test]
+async fn default_extension_event_rejects_path_meta_extension_names() {
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    runner.register_handlers();
+
+    for extension_name in [".", ".."] {
+        let ack = transport.handler("device:run_extension").unwrap()(json!({
+            "extension_name": extension_name,
+            "action": "render",
+            "task_id": 123,
+            "script_path": "run.sh",
+            "payload": {}
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(ack["success"], false, "{ack}");
+        assert!(ack["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid extension_name"));
+    }
 }
 
 #[cfg(unix)]
@@ -737,6 +910,52 @@ impl LocalTaskController for RecordingTaskController {
     }
 }
 
+#[derive(Clone)]
+struct FailingCancelTaskController {
+    cancelled: CancelRecords,
+    running: TaskIds,
+}
+
+impl FailingCancelTaskController {
+    fn with_running_tasks<I>(task_ids: I) -> Self
+    where
+        I: IntoIterator<Item = i64>,
+    {
+        Self {
+            cancelled: Arc::new(Mutex::new(Vec::new())),
+            running: Arc::new(Mutex::new(task_ids.into_iter().collect())),
+        }
+    }
+
+    fn cancelled(&self) -> Vec<(i64, Option<i64>)> {
+        self.cancelled.lock().unwrap().clone()
+    }
+}
+
+impl LocalTaskController for FailingCancelTaskController {
+    fn cancel_task<'a>(
+        &'a self,
+        task_id: i64,
+        subtask_id: Option<i64>,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            self.cancelled.lock().unwrap().push((task_id, subtask_id));
+            false
+        })
+    }
+
+    fn close_task_session<'a>(
+        &'a self,
+        _task_id: i64,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async { true })
+    }
+
+    fn running_task_ids(&self) -> Vec<i64> {
+        self.running.lock().unwrap().clone()
+    }
+}
+
 #[derive(Clone, Default)]
 struct RecordingCapabilitySync {
     payloads: Arc<Mutex<Vec<Value>>>,
@@ -904,6 +1123,36 @@ fn test_session_handler_with_terminal(
         workspace_root,
         Arc::new(RecordingPtyManager::new(terminal)),
     )
+}
+
+async fn serve_one_http_response(body: Vec<u8>, requests: Arc<Mutex<Vec<String>>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = vec![0; 8192];
+        let read = stream.read(&mut buffer).await.unwrap();
+        requests
+            .lock()
+            .unwrap()
+            .push(String::from_utf8_lossy(&buffer[..read]).to_string());
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(header.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
+    });
+    format!("http://{address}")
+}
+
+fn skill_zip_bytes() -> Vec<u8> {
+    let cursor = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    let options = zip::write::FileOptions::default();
+    writer.start_file("browser/SKILL.md", options).unwrap();
+    writer.write_all(b"# Skill").unwrap();
+    writer.finish().unwrap().into_inner()
 }
 
 struct RecordingPtyManager {

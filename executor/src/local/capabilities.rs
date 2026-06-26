@@ -4,8 +4,11 @@
 
 use std::{
     collections::BTreeSet,
-    env, fs, io,
+    env, fs,
+    future::Future,
+    io,
     path::{Path, PathBuf},
+    pin::Pin,
 };
 
 use serde_json::{json, Map, Value};
@@ -44,26 +47,42 @@ impl CapabilitySyncError {
 }
 
 pub trait CapabilityPackageProvider {
-    fn stage_skill(&self, spec: &SkillSyncSpec, target: &Path) -> Result<(), CapabilitySyncError>;
+    fn stage_skill<'a>(
+        &'a self,
+        spec: &'a SkillSyncSpec,
+        target: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
 
-    fn download_plugin(&self, download_path: &str) -> Result<Vec<u8>, CapabilitySyncError>;
+    fn download_plugin<'a>(
+        &'a self,
+        download_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopPackageProvider;
 
 impl CapabilityPackageProvider for NoopPackageProvider {
-    fn stage_skill(&self, spec: &SkillSyncSpec, _target: &Path) -> Result<(), CapabilitySyncError> {
-        Err(CapabilitySyncError::invalid_payload(format!(
+    fn stage_skill<'a>(
+        &'a self,
+        spec: &'a SkillSyncSpec,
+        _target: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        let result = Err(CapabilitySyncError::invalid_payload(format!(
             "No package provider configured for skill {}",
             spec.name
-        )))
+        )));
+        Box::pin(std::future::ready(result))
     }
 
-    fn download_plugin(&self, download_path: &str) -> Result<Vec<u8>, CapabilitySyncError> {
-        Err(CapabilitySyncError::invalid_payload(format!(
+    fn download_plugin<'a>(
+        &'a self,
+        download_path: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        let result = Err(CapabilitySyncError::invalid_payload(format!(
             "No package provider configured for plugin download {download_path}",
-        )))
+        )));
+        Box::pin(std::future::ready(result))
     }
 }
 
@@ -425,7 +444,7 @@ where
         &self.auth_token
     }
 
-    pub fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+    pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
         let mut manifest = self.store.manifest.load()?;
         let mode = payload
             .get("mode")
@@ -453,14 +472,14 @@ where
             self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
         }
 
-        let skill_results = skill_specs
-            .iter()
-            .map(|spec| self.sync_skill(spec, &mut manifest))
-            .collect::<Vec<_>>();
-        let plugin_results = plugin_specs
-            .iter()
-            .map(|spec| self.sync_plugin(spec, &mut manifest))
-            .collect::<Vec<_>>();
+        let mut skill_results = Vec::with_capacity(skill_specs.len());
+        for spec in &skill_specs {
+            skill_results.push(self.sync_skill(spec, &mut manifest).await);
+        }
+        let mut plugin_results = Vec::with_capacity(plugin_specs.len());
+        for spec in &plugin_specs {
+            plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
+        }
         self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         self.store.manifest.save_with_revision_bump(manifest)?;
         let success = skill_results
@@ -483,8 +502,8 @@ where
         extract_plugin_zip(package, install_path)
     }
 
-    fn sync_skill(&self, spec: &SkillSyncSpec, manifest: &mut Value) -> Value {
-        match self.try_sync_skill(spec, manifest) {
+    async fn sync_skill(&self, spec: &SkillSyncSpec, manifest: &mut Value) -> Value {
+        match self.try_sync_skill(spec, manifest).await {
             Ok(()) => json!({"id": spec.skill_id, "name": spec.name, "status": "synced"}),
             Err(error) => json!({
                 "id": spec.skill_id,
@@ -495,7 +514,7 @@ where
         }
     }
 
-    fn try_sync_skill(
+    async fn try_sync_skill(
         &self,
         spec: &SkillSyncSpec,
         manifest: &mut Value,
@@ -514,7 +533,7 @@ where
 
         if !store_path.join("SKILL.md").is_file() {
             remove_existing_path(&store_path)?;
-            self.package_provider.stage_skill(spec, &store_path)?;
+            self.package_provider.stage_skill(spec, &store_path).await?;
         }
         link_or_copy_dir(&store_path, &runtime_link)?;
         link_or_copy_dir(&store_path, &codex_link)?;
@@ -537,8 +556,8 @@ where
         Ok(())
     }
 
-    fn sync_plugin(&self, spec: &PluginSyncSpec, manifest: &mut Value) -> Value {
-        match self.try_sync_plugin(spec, manifest) {
+    async fn sync_plugin(&self, spec: &PluginSyncSpec, manifest: &mut Value) -> Value {
+        match self.try_sync_plugin(spec, manifest).await {
             Ok(()) => match spec.installed_plugin_id {
                 Some(id) => json!({"id": id, "name": spec.name, "status": "synced"}),
                 None => json!({"name": spec.name, "status": "synced"}),
@@ -559,7 +578,7 @@ where
         }
     }
 
-    fn try_sync_plugin(
+    async fn try_sync_plugin(
         &self,
         spec: &PluginSyncSpec,
         manifest: &mut Value,
@@ -601,7 +620,7 @@ where
 
         if should_download {
             let download_path = spec.download_path.as_deref().unwrap_or_default();
-            let package = self.package_provider.download_plugin(download_path)?;
+            let package = self.package_provider.download_plugin(download_path).await?;
             if let Some(expected) = &spec.checksum {
                 let actual = sha256_digest(&package);
                 if &actual != expected {

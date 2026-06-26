@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use tokio::time::sleep;
 
 use crate::{
-    agents::{AgentCommandPlanner, AgentProcessEngine},
+    agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
     config::device::{DeviceConfig, UpdateConfig},
     emitter::EventEnvelope,
     local::{
@@ -341,6 +341,7 @@ pub struct LocalBackendRunner<
     capability_sync_handler: Option<Arc<dyn CapabilitySyncRpcHandler>>,
     session_handler: Option<Arc<Mutex<LocalSessionHandler>>>,
     upgrade_handler: Option<Arc<dyn DeviceUpgradeHandler>>,
+    upgrade_service: Option<Arc<dyn LocalUpgradeService>>,
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
     cancellations: LocalCancellationRegistry,
 }
@@ -367,12 +368,14 @@ where
         backend.task_controller = Some(Arc::new(runner));
         backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::new(
             backend.client.config.device_id.clone(),
-            default_codex_binary(),
+            resolve_codex_binary(),
         )));
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
         )));
-        backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler())));
+        backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler(Some(
+            backend.client.config.local_workspace_root.clone(),
+        )))));
         backend.upgrade_handler = Some(Arc::new(default_upgrade_handler(
             backend.client.clone(),
             backend.task_controller.clone(),
@@ -405,6 +408,7 @@ where
             capability_sync_handler: None,
             session_handler: None,
             upgrade_handler: None,
+            upgrade_service: None,
             extension_handler: None,
             cancellations: LocalCancellationRegistry::default(),
         }
@@ -444,6 +448,7 @@ where
         H: DeviceUpgradeHandler,
     {
         self.upgrade_handler = Some(Arc::new(handler));
+        self.upgrade_service = None;
         self
     }
 
@@ -451,12 +456,8 @@ where
     where
         S: LocalUpgradeService,
     {
-        self.upgrade_handler = Some(Arc::new(LocalDeviceUpgradeHandler::with_service(
-            self.client.clone(),
-            self.task_controller.clone(),
-            self.client.config.update.clone(),
-            service,
-        )));
+        self.upgrade_handler = None;
+        self.upgrade_service = Some(Arc::new(service));
         self
     }
 
@@ -762,7 +763,16 @@ where
     }
 
     fn upgrade_handler(&self) -> EventHandler {
-        let upgrade_handler = self.upgrade_handler.clone();
+        let upgrade_handler = self.upgrade_handler.clone().or_else(|| {
+            self.upgrade_service.as_ref().map(|service| {
+                Arc::new(LocalDeviceUpgradeHandler::with_service_arc(
+                    self.client.clone(),
+                    self.task_controller.clone(),
+                    self.client.config.update.clone(),
+                    Arc::clone(service),
+                )) as Arc<dyn DeviceUpgradeHandler>
+            })
+        });
         Arc::new(move |payload| {
             let upgrade_handler = upgrade_handler.clone();
             Box::pin(async move {
@@ -969,15 +979,6 @@ fn default_device_name() -> String {
         .or_else(|_| env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "local".to_owned());
     format!("{} - {host}", env::consts::OS)
-}
-
-fn default_codex_binary() -> String {
-    env::var("CODEX_BINARY_PATH")
-        .ok()
-        .or_else(|| env::var("CODEX_BIN").ok())
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "codex".to_owned())
 }
 
 fn home_dir() -> PathBuf {

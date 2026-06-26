@@ -62,6 +62,21 @@ fn missing_config_creates_stable_local_device_identity() {
 }
 
 #[test]
+fn unicode_device_id_override_builds_default_name_without_byte_slicing() {
+    let _lock = lock_env();
+    let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _device_name = EnvGuard::remove("DEVICE_NAME");
+    let _device_id = EnvGuard::set("DEVICE_ID", "设备-abcdefghi");
+    let path = temp_path("unicode-device-config.json");
+    fs::write(&path, "{}").unwrap();
+
+    let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+
+    assert_eq!(config.device_id, "设备-abcdefghi");
+    assert!(config.device_name.ends_with("设备-abcdefghi"));
+}
+
+#[test]
 fn config_file_can_select_docker_mode() {
     let _lock = lock_env();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
