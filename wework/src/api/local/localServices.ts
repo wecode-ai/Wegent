@@ -1,4 +1,5 @@
 import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import { createExecutorClientFromApis } from '@/api/executorAccess'
 import type {
   DeviceCommandResponse,
   DeviceInfo,
@@ -769,6 +770,95 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       normalizeLocalDeviceRecord({ deviceId, ...data }, await getLocalDeviceId())
     )
 
+  const deviceApi: WorkbenchServices['deviceApi'] = {
+    async listDevices() {
+      try {
+        return [localDeviceFromStatus(await ensureStatus())]
+      } catch (error) {
+        const fallback = {
+          ...localExecutorErrorStatus(error),
+          deviceId: localDeviceIdFromStatus(lastStatus),
+        }
+        return [localDeviceFromStatus(fallback)]
+      }
+    },
+    async getHomeDirectory(deviceId: string) {
+      const response = await executeCommand(deviceId, {
+        command_key: 'home_dir',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      })
+      assertCommandSuccess(response, 'Failed to resolve home directory')
+      return commandText(response)
+    },
+    async getProjectWorkspaceRoot(deviceId: string) {
+      const response = await executeCommand(deviceId, {
+        command_key: 'project_workspace_root',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      })
+      assertCommandSuccess(response, 'Failed to resolve project directory')
+      return commandText(response)
+    },
+    async listDirectories(deviceId: string, path: string) {
+      const response = await executeCommand(deviceId, {
+        command_key: 'ls_dirs',
+        path,
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 64,
+      })
+      assertCommandSuccess(response, 'Failed to list directories')
+      return commandStringList(response)
+    },
+    async createDirectory(deviceId: string, path: string) {
+      const response = await executeCommand(deviceId, {
+        command_key: 'mkdir_p',
+        args: [path],
+        timeout_seconds: 15,
+        max_output_bytes: 4096,
+      })
+      assertCommandSuccess(response, 'Failed to create directory')
+    },
+    executeCommand,
+    upgradeDevice: () => cloudConnectionRequired('upgradeDevice'),
+    async listSkills(deviceId: string) {
+      const response = await executeCommand(deviceId, {
+        command_key: 'ls_skills',
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 256,
+      })
+      assertCommandSuccess(response, 'Failed to list skills')
+      return commandSkills(response)
+    },
+    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_tree',
+        path: normalizedPath,
+        timeout_seconds: 15,
+        max_output_bytes: 1024 * 512,
+      })
+      assertCommandSuccess(response, 'Failed to list workspace files')
+      return normalizeWorkspaceTree(response.stdout, normalizedPath)
+    },
+    async readWorkspaceTextFile(
+      deviceId: string,
+      filePath: string
+    ): Promise<WorkspaceTextFileResponse> {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_read_text_file',
+        path: parentPath,
+        args: [fileName],
+        timeout_seconds: 15,
+        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+      })
+      assertCommandSuccess(response, 'Failed to read workspace file')
+      return normalizeWorkspaceTextFile(response.stdout, filePath)
+    },
+  }
+  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId)
+
   return {
     teamApi: {
       listTeams: async () => [LOCAL_WORKBENCH_TEAM],
@@ -792,100 +882,13 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       getTurnFileChangesDiff: () => cloudConnectionRequired('getTurnFileChangesDiff'),
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
-    deviceApi: {
-      async listDevices() {
-        try {
-          return [localDeviceFromStatus(await ensureStatus())]
-        } catch (error) {
-          const fallback = {
-            ...localExecutorErrorStatus(error),
-            deviceId: localDeviceIdFromStatus(lastStatus),
-          }
-          return [localDeviceFromStatus(fallback)]
-        }
-      },
-      async getHomeDirectory(deviceId: string) {
-        const response = await executeCommand(deviceId, {
-          command_key: 'home_dir',
-          timeout_seconds: 10,
-          max_output_bytes: 4096,
-        })
-        assertCommandSuccess(response, 'Failed to resolve home directory')
-        return commandText(response)
-      },
-      async getProjectWorkspaceRoot(deviceId: string) {
-        const response = await executeCommand(deviceId, {
-          command_key: 'project_workspace_root',
-          timeout_seconds: 10,
-          max_output_bytes: 4096,
-        })
-        assertCommandSuccess(response, 'Failed to resolve project directory')
-        return commandText(response)
-      },
-      async listDirectories(deviceId: string, path: string) {
-        const response = await executeCommand(deviceId, {
-          command_key: 'ls_dirs',
-          path,
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 64,
-        })
-        assertCommandSuccess(response, 'Failed to list directories')
-        return commandStringList(response)
-      },
-      async createDirectory(deviceId: string, path: string) {
-        const response = await executeCommand(deviceId, {
-          command_key: 'mkdir_p',
-          args: [path],
-          timeout_seconds: 15,
-          max_output_bytes: 4096,
-        })
-        assertCommandSuccess(response, 'Failed to create directory')
-      },
-      executeCommand,
-      upgradeDevice: () => cloudConnectionRequired('upgradeDevice'),
-      async listSkills(deviceId: string) {
-        const response = await executeCommand(deviceId, {
-          command_key: 'ls_skills',
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 256,
-        })
-        assertCommandSuccess(response, 'Failed to list skills')
-        return commandSkills(response)
-      },
-      async listWorkspaceEntries(
-        deviceId: string,
-        path: string
-      ): Promise<WorkspaceTreeResponse> {
-        const normalizedPath = normalizeAbsoluteWorkspacePath(
-          path,
-          'Workspace path must be absolute'
-        )
-        const response = await executeCommand(deviceId, {
-          command_key: 'workspace_tree',
-          path: normalizedPath,
-          timeout_seconds: 15,
-          max_output_bytes: 1024 * 512,
-        })
-        assertCommandSuccess(response, 'Failed to list workspace files')
-        return normalizeWorkspaceTree(response.stdout, normalizedPath)
-      },
-      async readWorkspaceTextFile(
-        deviceId: string,
-        filePath: string
-      ): Promise<WorkspaceTextFileResponse> {
-        const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-        const response = await executeCommand(deviceId, {
-          command_key: 'workspace_read_text_file',
-          path: parentPath,
-          args: [fileName],
-          timeout_seconds: 15,
-          max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
-        })
-        assertCommandSuccess(response, 'Failed to read workspace file')
-        return normalizeWorkspaceTextFile(response.stdout, filePath)
-      },
-    },
-    runtimeWorkApi: createRuntimeWorkApi(request, getLocalDeviceId),
+    deviceApi,
+    runtimeWorkApi,
+    executorClient: createExecutorClientFromApis({
+      transportKind: 'local-ipc',
+      deviceApi,
+      runtimeWorkApi,
+    }),
     userApi: {
       updateCurrentUser: async (data: { preferences?: User['preferences'] }) => ({
         ...LOCAL_USER,
