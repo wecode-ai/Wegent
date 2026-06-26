@@ -345,6 +345,13 @@ describe('DesktopWorkbenchLayout', () => {
       error: null,
     },
     messages: [],
+    workspaceFileApi: {
+      listWorkspaceEntries: vi.fn().mockResolvedValue({
+        path: '/workspace/project',
+        entries: [],
+      }),
+      readWorkspaceTextFile: vi.fn(),
+    },
     onNewChat: vi.fn(),
     onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
@@ -2668,15 +2675,14 @@ describe('DesktopWorkbenchLayout', () => {
       path: '/workspace/projects/abc/Wegent',
       entries: [],
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          listWorkspaceEntries,
+        }}
         state={{
           ...baseProps.state,
           currentProject: workspaceProject,
@@ -2861,16 +2867,14 @@ describe('DesktopWorkbenchLayout', () => {
       size: 11,
       modifiedAt: null,
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-        readWorkspaceTextFile,
-      }) as never
-    )
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -2906,19 +2910,18 @@ describe('DesktopWorkbenchLayout', () => {
       size: 22,
       modifiedAt: null,
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries: vi.fn().mockResolvedValue({
-          path: '/workspace/project',
-          entries: [],
-        }),
-        readWorkspaceTextFile,
-      }) as never
-    )
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [],
+    })
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -3034,15 +3037,13 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
-
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          listWorkspaceEntries,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -3126,16 +3127,14 @@ describe('DesktopWorkbenchLayout', () => {
     const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) =>
       path.endsWith('README.md') ? readmeFile.promise : notesFile.promise
     )
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-        readWorkspaceTextFile,
-      }) as never
-    )
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -3227,15 +3226,13 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
-
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          listWorkspaceEntries,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -3333,15 +3330,13 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
-
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          listWorkspaceEntries,
+        }}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -3375,13 +3370,12 @@ describe('DesktopWorkbenchLayout', () => {
       path: '/workspace/project',
       entries: [],
     })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
     const layoutProps = {
       ...baseProps,
+      workspaceFileApi: {
+        ...baseProps.workspaceFileApi,
+        listWorkspaceEntries,
+      },
       state: {
         ...baseProps.state,
         ...workspacePanelState,

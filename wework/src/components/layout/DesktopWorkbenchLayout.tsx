@@ -35,7 +35,7 @@ import type {
 import type { EnvironmentInfo } from '@/types/environment'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
@@ -65,6 +65,7 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning?: boolean
   isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
@@ -178,6 +179,7 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  workspaceFileApi,
   currentRuntimeTaskRunning = false,
   isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
@@ -774,6 +776,7 @@ export function DesktopWorkbenchLayout({
           runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
           workspaceTarget={workspaceTarget}
+          workspaceFileApi={workspaceFileApi}
           workspaceTargetError={workspaceTargetError}
           devices={state.devices}
           upgradingDevices={upgradingDevices}

@@ -123,10 +123,12 @@ fn collect_forbidden_python_runtime_files_inner(path: &Path, files: &mut Vec<Str
 
     for entry in entries.flatten() {
         let entry_path = entry.path();
-        if entry_path
-            .components()
-            .any(|component| component.as_os_str() == "target")
-        {
+        if entry_path.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("target" | ".venv" | "venv" | ".venv-x86_64")
+            )
+        }) {
             continue;
         }
 

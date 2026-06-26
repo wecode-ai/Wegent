@@ -89,7 +89,7 @@ import type {
 } from '@/types/api'
 import type { DeviceUpgradeState, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
   MessageSource,
@@ -308,10 +308,7 @@ function trimConversationWorkspaceName(name: string): string {
 function joinDevicePath(root: string, ...segments: string[]): string {
   const trimmedRoot = root.trim()
   const normalizedRoot = trimmedRoot === '/' ? '' : trimmedRoot.replace(/\/+$/g, '')
-  const joined = [
-    normalizedRoot,
-    ...segments.map(segment => segment.replace(/^\/+|\/+$/g, '')),
-  ]
+  const joined = [normalizedRoot, ...segments.map(segment => segment.replace(/^\/+|\/+$/g, ''))]
     .filter(Boolean)
     .join('/')
   return trimmedRoot.startsWith('/') ? `/${joined.replace(/^\/+/g, '')}` : joined
@@ -323,6 +320,7 @@ export interface WorkbenchContextValue {
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts: CodeCommentContext[]
+  workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning: boolean
   isAwaitingAssistantStart: boolean
   isRuntimeTranscriptLoading: boolean
@@ -3236,12 +3234,21 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     return skills
   }, [activeDeviceId, resolvedServices.deviceApi])
 
+  const workspaceFileApi = useMemo(
+    () => ({
+      listWorkspaceEntries: resolvedServices.deviceApi.listWorkspaceEntries,
+      readWorkspaceTextFile: resolvedServices.deviceApi.readWorkspaceTextFile,
+    }),
+    [resolvedServices.deviceApi]
+  )
+
   const value: WorkbenchContextValue = {
     state,
     messages,
     queuedMessages: queuedSends,
     guidanceMessages,
     codeCommentContexts,
+    workspaceFileApi,
     currentRuntimeTaskRunning,
     isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,

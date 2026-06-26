@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    workspaceFileApi,
     currentRuntimeTaskRunning,
     isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
@@ -113,6 +114,7 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      workspaceFileApi={workspaceFileApi}
       currentRuntimeTaskRunning={currentRuntimeTaskRunning}
       isAwaitingAssistantStart={isAwaitingAssistantStart}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}

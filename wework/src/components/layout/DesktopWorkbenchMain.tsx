@@ -35,6 +35,7 @@ import type {
 } from '@/types/workbench'
 import type {
   CodeCommentContext,
+  WorkspaceFileApi,
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
@@ -149,6 +150,7 @@ interface DesktopWorkbenchMainProps {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
+  workspaceFileApi: WorkspaceFileApi
   workspaceTargetError?: string | null
   devices: DeviceInfo[]
   upgradingDevices: Record<string, DeviceUpgradeState>
@@ -212,6 +214,7 @@ export function DesktopWorkbenchMain({
   runtimeWork,
   currentProject,
   workspaceTarget,
+  workspaceFileApi,
   workspaceTargetError,
   devices,
   upgradingDevices,
@@ -916,6 +919,7 @@ export function DesktopWorkbenchMain({
             activeView={rightPanelView}
             openTabs={rightPanelTabs}
             workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
             openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}

@@ -8,6 +8,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
+  WorkspaceFileApi,
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
@@ -49,6 +50,7 @@ interface RightWorkspacePanelProps {
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   workspaceTarget: WorkspaceTarget | null
+  workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
@@ -67,6 +69,7 @@ export function RightWorkspacePanel({
   activeView,
   openTabs,
   workspaceTarget,
+  workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
   review,
@@ -328,6 +331,7 @@ export function RightWorkspacePanel({
                 workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'
               }
               target={workspaceTarget}
+              workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}
             />
