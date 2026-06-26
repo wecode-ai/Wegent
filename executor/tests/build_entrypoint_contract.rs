@@ -123,12 +123,7 @@ fn collect_forbidden_python_runtime_files_inner(path: &Path, files: &mut Vec<Str
 
     for entry in entries.flatten() {
         let entry_path = entry.path();
-        if entry_path.components().any(|component| {
-            matches!(
-                component.as_os_str().to_str(),
-                Some("target" | ".venv" | "venv" | ".venv-x86_64")
-            )
-        }) {
+        if entry_path.components().any(is_generated_runtime_component) {
             continue;
         }
 
@@ -150,4 +145,11 @@ fn collect_forbidden_python_runtime_files_inner(path: &Path, files: &mut Vec<Str
             files.push(entry_path.display().to_string());
         }
     }
+}
+
+fn is_generated_runtime_component(component: std::path::Component<'_>) -> bool {
+    matches!(
+        component.as_os_str().to_str(),
+        Some("target" | ".venv" | "venv" | ".venv-x86_64" | "__pycache__")
+    )
 }

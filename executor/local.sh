@@ -94,13 +94,13 @@ start_executor() {
         exit 1
     fi
 
-    : > "$RUN_LOG"
-
     echo "Starting local executor. Log: $RUN_LOG"
     (
         cd "$ROOT_DIR"
         export WEGENT_FILE_EDIT_HOOK_COMMAND="${WEGENT_FILE_EDIT_HOOK_COMMAND:-$DEFAULT_FILE_EDIT_HOOK_COMMAND}"
-        nohup "$BINARY_PATH" >> "$RUN_LOG" 2>&1 &
+        export WEGENT_EXECUTOR_LOG_DIR="$PID_DIR"
+        export WEGENT_EXECUTOR_LOG_FILE="$(basename "$RUN_LOG")"
+        nohup "$BINARY_PATH" >/dev/null 2>&1 &
         echo $! > "$PID_FILE"
     )
 

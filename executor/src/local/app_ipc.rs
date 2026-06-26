@@ -24,6 +24,7 @@ use tokio::{
 use crate::{
     agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
 };
@@ -425,6 +426,10 @@ impl AppIpcServer {
             )
         })?;
         set_socket_permissions(&socket_path);
+        write_executor_log_line(&app_ipc_listening_log_line(
+            &self.device_id,
+            &socket_path.display().to_string(),
+        ));
 
         loop {
             let (stream, _) = listener.accept().await.map_err(|error| {
@@ -518,6 +523,16 @@ impl AppIpcServer {
         serde_json::to_value(apply_post_processor(result, command.post_processor))
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()))
     }
+}
+
+pub fn app_ipc_listening_log_line(device_id: &str, socket_path: &str) -> String {
+    format_executor_log(
+        "app IPC listening",
+        &[
+            ("device_id", device_id.to_owned()),
+            ("socket_path", socket_path.to_owned()),
+        ],
+    )
 }
 
 pub fn app_ipc_socket_path() -> PathBuf {
