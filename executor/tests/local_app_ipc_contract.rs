@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    fs,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
@@ -132,6 +133,121 @@ async fn app_ipc_resolves_configured_device_command() {
 }
 
 #[tokio::test]
+async fn app_ipc_lists_and_reads_workspace_files_locally() {
+    let workspace = unique_dir("workspace-files");
+    fs::create_dir_all(workspace.join("src")).unwrap();
+    fs::write(workspace.join("README.md"), "hello").unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let server = AppIpcServer::new();
+
+    let tree_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-tree",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "workspace_tree",
+                    "path": workspace.display().to_string(),
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 4096
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(tree_response["ok"], true);
+    assert_eq!(tree_response["result"]["success"], true);
+    assert_eq!(
+        tree_response["result"]["stdout"]["path"],
+        json!(workspace.display().to_string())
+    );
+    assert_eq!(
+        tree_response["result"]["stdout"]["entries"][0]["name"],
+        json!("src")
+    );
+
+    let file_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-file",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "workspace_read_text_file",
+                    "path": workspace.display().to_string(),
+                    "args": ["README.md"],
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 4096
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(file_response["ok"], true);
+    assert_eq!(file_response["result"]["success"], true);
+    assert_eq!(file_response["result"]["stdout"]["content"], json!("hello"));
+
+    let _ = fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn app_ipc_resolves_review_and_git_device_commands() {
+    let command_handler = CaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let git_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_diff",
+                    "path": "/tmp/project"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(git_response["ok"], true);
+    assert_eq!(
+        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
+        "bash"
+    );
+
+    let review_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-review",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "turn_file_changes_review",
+                    "path": "/tmp/project",
+                    "args": ["turn-file-changes/0/1"]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(review_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "python3");
+    assert_eq!(request.argv[3], "review");
+    assert_eq!(request.argv[4], "turn-file-changes/0/1");
+}
+
+#[tokio::test]
 async fn app_ipc_unknown_method_returns_protocol_error() {
     let server = AppIpcServer::new();
 
@@ -223,6 +339,13 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
 
     task.abort();
     let _ = std::fs::remove_file(socket_path);
+}
+
+fn unique_dir(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "wegent-executor-local-app-ipc-{label}-{}",
+        std::process::id()
+    ))
 }
 
 struct RuntimeHandler;

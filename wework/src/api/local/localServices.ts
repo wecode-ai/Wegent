@@ -12,6 +12,11 @@ import type {
   UnifiedModel,
   User,
 } from '@/types/api'
+import type {
+  WorkspaceFileEntry,
+  WorkspaceTextFileResponse,
+  WorkspaceTreeResponse,
+} from '@/types/workspace-files'
 import {
   ensureLocalExecutorStarted,
   requestLocalExecutor,
@@ -28,6 +33,7 @@ const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
+const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -221,6 +227,134 @@ function isNonEmptyString(value: string | null): value is string {
   return Boolean(value)
 }
 
+function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): string {
+  const normalizedSegments: string[] = []
+  const normalizedPath = path.trim().replace(/\/+/g, '/')
+  if (!normalizedPath.startsWith('/')) {
+    throw new Error(errorMessage)
+  }
+
+  for (const segment of normalizedPath.split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (normalizedSegments.length === 0) {
+        throw new Error(errorMessage)
+      }
+      normalizedSegments.pop()
+      continue
+    }
+    normalizedSegments.push(segment)
+  }
+
+  return `/${normalizedSegments.join('/')}`
+}
+
+function isWorkspacePathWithin(path: string, rootPath: string): boolean {
+  return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
+}
+
+function requireWorkspacePathWithin(path: string, rootPath: string, errorMessage: string) {
+  if (!isWorkspacePathWithin(path, rootPath)) {
+    throw new Error(errorMessage)
+  }
+}
+
+function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string') return value
+  throw new Error(errorMessage)
+}
+
+function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFileEntry {
+  const record = recordValue(value)
+  if (
+    typeof record.name !== 'string' ||
+    typeof record.path !== 'string' ||
+    typeof record.is_directory !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace tree response')
+  }
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
+  requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
+  return {
+    name: record.name,
+    path,
+    isDirectory: record.is_directory,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
+  }
+}
+
+function normalizeWorkspaceTree(output: unknown, requestedPath: string): WorkspaceTreeResponse {
+  const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
+    requestedPath,
+    'Workspace path must be absolute'
+  )
+  const record = recordValue(output)
+  if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
+    throw new Error('Invalid workspace tree response')
+  }
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
+  if (path !== normalizedRequestedPath) {
+    throw new Error('Invalid workspace tree response')
+  }
+  return {
+    path,
+    entries: record.entries.map(entry => normalizeWorkspaceEntry(entry, path)),
+  }
+}
+
+function normalizeWorkspaceTextFile(
+  output: unknown,
+  requestedFilePath: string
+): WorkspaceTextFileResponse {
+  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
+    requestedFilePath,
+    'Workspace file path must be absolute'
+  )
+  const record = recordValue(output)
+  if (
+    typeof record.path !== 'string' ||
+    typeof record.name !== 'string' ||
+    typeof record.content !== 'string' ||
+    typeof record.truncated !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace text file response')
+  }
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace text file response')
+  if (path !== normalizedRequestedFilePath) {
+    throw new Error('Invalid workspace text file response')
+  }
+  return {
+    path,
+    name: record.name,
+    content: record.content,
+    truncated: record.truncated,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
+  }
+}
+
+function splitAbsoluteWorkspaceFilePath(filePath: string): {
+  parentPath: string
+  fileName: string
+} {
+  const normalizedFilePath = normalizeAbsoluteWorkspacePath(
+    filePath,
+    'Workspace file path must be absolute'
+  )
+  const separatorIndex = normalizedFilePath.lastIndexOf('/')
+  const parentPath = separatorIndex > 0 ? normalizedFilePath.slice(0, separatorIndex) : '/'
+  const fileName =
+    separatorIndex >= 0 ? normalizedFilePath.slice(separatorIndex + 1) : normalizedFilePath
+  if (!fileName) {
+    throw new Error('Workspace file name is required')
+  }
+  return { parentPath, fileName }
+}
+
 function createLocalExecutionRequest(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string
@@ -372,7 +506,14 @@ function adaptRuntimeWorkListResponse(
     return normalizeRuntimeWorkDeviceId(response as RuntimeWorkListResponse, localDeviceId)
   }
 
-  const workspaces = Array.isArray(record.workspaces) ? record.workspaces : []
+  const workspaces = Array.isArray(record.workspaces)
+    ? record.workspaces
+    : recordValue(record.workspaces)
+      ? Object.entries(recordValue(record.workspaces)).map(([workspacePath, workspace]) => ({
+          ...recordValue(workspace),
+          workspacePath,
+        }))
+      : []
   const projects: RuntimeWorkListResponse['projects'] = []
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalLocalTasks = 0
@@ -380,7 +521,12 @@ function adaptRuntimeWorkListResponse(
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
     const workspacePath =
-      stringValue(workspace.workspacePath) ?? stringValue(workspace.workspace_path)
+      stringValue(workspace.workspacePath) ??
+      stringValue(workspace.workspace_path) ??
+      stringValue(workspace.projectWorkspacePath) ??
+      stringValue(workspace.project_workspace_path) ??
+      stringValue(workspace.cwd) ??
+      stringValue(workspace.path)
     if (!workspacePath) continue
 
     const rawTasks = Array.isArray(workspace.localTasks)
@@ -395,7 +541,14 @@ function adaptRuntimeWorkListResponse(
       if (!localTaskId) {
         return items
       }
-      const taskWorkspacePath = stringValue(taskRecord.workspacePath) ?? workspacePath
+      const taskWorkspacePath =
+        stringValue(taskRecord.workspacePath) ??
+        stringValue(taskRecord.workspace_path) ??
+        stringValue(taskRecord.projectWorkspacePath) ??
+        stringValue(taskRecord.project_workspace_path) ??
+        stringValue(taskRecord.cwd) ??
+        stringValue(taskRecord.path) ??
+        workspacePath
       items.push({
         ...taskRecord,
         localTaskId,
@@ -698,6 +851,38 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         })
         assertCommandSuccess(response, 'Failed to list skills')
         return commandSkills(response)
+      },
+      async listWorkspaceEntries(
+        deviceId: string,
+        path: string
+      ): Promise<WorkspaceTreeResponse> {
+        const normalizedPath = normalizeAbsoluteWorkspacePath(
+          path,
+          'Workspace path must be absolute'
+        )
+        const response = await executeCommand(deviceId, {
+          command_key: 'workspace_tree',
+          path: normalizedPath,
+          timeout_seconds: 15,
+          max_output_bytes: 1024 * 512,
+        })
+        assertCommandSuccess(response, 'Failed to list workspace files')
+        return normalizeWorkspaceTree(response.stdout, normalizedPath)
+      },
+      async readWorkspaceTextFile(
+        deviceId: string,
+        filePath: string
+      ): Promise<WorkspaceTextFileResponse> {
+        const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+        const response = await executeCommand(deviceId, {
+          command_key: 'workspace_read_text_file',
+          path: parentPath,
+          args: [fileName],
+          timeout_seconds: 15,
+          max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+        })
+        assertCommandSuccess(response, 'Failed to read workspace file')
+        return normalizeWorkspaceTextFile(response.stdout, filePath)
       },
     },
     runtimeWorkApi: createRuntimeWorkApi(request, getLocalDeviceId),

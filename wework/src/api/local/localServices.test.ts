@@ -301,4 +301,130 @@ describe('createLocalAppServices', () => {
       totalLocalTasks: 2,
     })
   })
+
+  test('adapts map-shaped executor runtime workspace list', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: {
+        '/Users/me/project': {
+          label: 'Project',
+          local_tasks: [
+            {
+              local_task_id: 'task-1',
+              project_workspace_path: '/Users/me/project',
+              title: 'Build',
+              runtime: 'codex',
+            },
+          ],
+        },
+      },
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(response?.projects[0].deviceWorkspaces[0]).toEqual(
+      expect.objectContaining({
+        deviceId: 'device-uuid',
+        workspacePath: '/Users/me/project',
+        localTasks: [
+          expect.objectContaining({
+            localTaskId: 'task-1',
+            workspacePath: '/Users/me/project',
+          }),
+        ],
+      })
+    )
+  })
+
+  test('routes workspace file APIs through local executor commands', async () => {
+    const request = vi.fn().mockImplementation(async (method: string, data: Record<string, unknown>) => {
+      if (method !== 'device.execute_command') return {}
+      if (data.command_key === 'workspace_tree') {
+        return {
+          success: true,
+          stdout: {
+            path: '/Users/me/project',
+            entries: [
+              {
+                name: 'src',
+                path: '/Users/me/project/src',
+                is_directory: true,
+                size: 0,
+                modified_at: '2026-06-20T01:00:00Z',
+              },
+            ],
+          },
+          stderr: '',
+          exit_code: 0,
+        }
+      }
+      if (data.command_key === 'workspace_read_text_file') {
+        return {
+          success: true,
+          stdout: {
+            path: '/Users/me/project/README.md',
+            name: 'README.md',
+            content: 'hello',
+            truncated: false,
+            size: 5,
+            modified_at: '2026-06-20T01:00:00Z',
+          },
+          stderr: '',
+          exit_code: 0,
+        }
+      }
+      return { success: false, error: 'unexpected command', stderr: '', exit_code: 1 }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.deviceApi.listWorkspaceEntries('local-device', '/Users/me/project')
+    ).resolves.toEqual({
+      path: '/Users/me/project',
+      entries: [
+        {
+          name: 'src',
+          path: '/Users/me/project/src',
+          isDirectory: true,
+          size: 0,
+          modifiedAt: '2026-06-20T01:00:00Z',
+        },
+      ],
+    })
+    await expect(
+      services.deviceApi.readWorkspaceTextFile('local-device', '/Users/me/project/README.md')
+    ).resolves.toEqual({
+      path: '/Users/me/project/README.md',
+      name: 'README.md',
+      content: 'hello',
+      truncated: false,
+      size: 5,
+      modifiedAt: '2026-06-20T01:00:00Z',
+    })
+
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_tree',
+      path: '/Users/me/project',
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 512,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_read_text_file',
+      path: '/Users/me/project',
+      args: ['README.md'],
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
 })

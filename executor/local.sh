@@ -69,6 +69,9 @@ build_executor() {
         mkdir -p dist
         cp target/release/wegent-executor dist/wegent-executor
         chmod 0755 dist/wegent-executor
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            codesign --force --sign - --options runtime dist/wegent-executor >/dev/null 2>&1 || true
+        fi
         if [[ -n "$version_arg" ]]; then
             echo "Building with version: $version_arg"
             WEGENT_EXECUTOR_VERSION="$version_arg" dist/wegent-executor --version

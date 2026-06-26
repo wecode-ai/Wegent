@@ -256,6 +256,8 @@ export interface WorkbenchServices {
     | 'executeCommand'
     | 'upgradeDevice'
     | 'listSkills'
+    | 'listWorkspaceEntries'
+    | 'readWorkspaceTextFile'
   >
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
