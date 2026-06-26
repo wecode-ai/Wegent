@@ -17,7 +17,7 @@ from .task_id import (
     is_new_task_id,
     validate_slot,
 )
-from .uuid_factory.user_scoped_id_factory import uid_from_id
+from .uuid_factory.user_scoped_id_factory import UID_MASK, uid_from_id
 
 SHARD_COUNT = task_sharding_settings.WECODE_TASK_SHARD_COUNT
 LEGACY_SHARD_KEY = None
@@ -39,7 +39,7 @@ def shard_index(slot: int) -> int:
 
 
 def task_table_name(user_id: int) -> str:
-    return _task_table_name_for_slot((user_id & 0xFFFF) % SLOT_COUNT)
+    return _task_table_name_for_slot(_slot_from_user_id(user_id))
 
 
 def subtask_table_name_by_task_id(task_id: int) -> str:
@@ -53,7 +53,7 @@ def task_model_for_user(user_id: int) -> type:
 
 
 def subtask_model_for_owner(owner_user_id: int) -> type:
-    return _subtask_model_for_slot((owner_user_id & 0xFFFF) % SLOT_COUNT)
+    return _subtask_model_for_slot(_slot_from_user_id(owner_user_id))
 
 
 def task_model_for_task_id(task_id: int) -> type:
@@ -88,6 +88,14 @@ def _slot_from_new_id(encoded_id: int) -> int:
     """Extract routing slot from a new-format (uid+reserved+seq) ID."""
     uid = uid_from_id(encoded_id)
     return uid % SLOT_COUNT
+
+
+def _slot_from_user_id(user_id: int) -> int:
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        raise ValueError("user_id must be an integer")
+    if user_id < 0 or user_id > UID_MASK:
+        raise ValueError(f"user_id must be 0–{UID_MASK}, got {user_id}")
+    return user_id % SLOT_COUNT
 
 
 def _task_model_for_slot(slot: int) -> type:

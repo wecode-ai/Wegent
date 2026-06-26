@@ -3,19 +3,22 @@ from __future__ import annotations
 import socket
 from urllib.parse import unquote, urlparse
 
+USER_SCOPED_SEQUENCE_SCRIPT = (
+    "redis.call('SETNX', KEYS[1], ARGV[1]); " "return redis.call('INCR', KEYS[1])"
+)
+
 
 class RedisIdFactory:
-    """Global sequence counter backed by Redis INCR.
+    """Sequence counter backed by Redis INCR.
 
-    Every call to next_seq() atomically increments a single Redis key and
-    returns the new value.  The counter is shared across all users so seq
-    values are globally unique and monotonically increasing.
+    When user_id is provided, each user gets an independent Redis key.
     """
 
     def __init__(
         self,
         server: str | tuple[str, int],
         key: str = "task_global_seq",
+        initial_sequence: int = 150_000,
         connect_timeout: float = 1.0,
         timeout: float = 1.0,
     ):
@@ -42,12 +45,16 @@ class RedisIdFactory:
 
         if not key or not key.strip():
             raise ValueError("key must not be empty")
+        if initial_sequence < 0:
+            raise ValueError("initial_sequence must not be negative")
         self._key = key
+        self._initial_sequence = initial_sequence
         self._connect_timeout = connect_timeout
         self._timeout = timeout
 
-    def next_seq(self) -> int:
-        """Return next globally unique sequence number via Redis INCR."""
+    def next_seq(self, user_id: int | None = None) -> int:
+        """Return next sequence number via Redis INCR."""
+        key = self._key_for_user(user_id)
         commands = []
         if self._password is not None:
             auth_args = (
@@ -58,12 +65,33 @@ class RedisIdFactory:
             commands.append(self._encode_command(auth_args))
         if self._database is not None:
             commands.append(self._encode_command(["SELECT", str(self._database)]))
-        commands.append(self._encode_command(["INCR", self._key]))
+        if user_id is not None:
+            commands.append(
+                self._encode_command(
+                    [
+                        "EVAL",
+                        USER_SCOPED_SEQUENCE_SCRIPT,
+                        "1",
+                        key,
+                        str(self._initial_sequence),
+                    ]
+                )
+            )
+        else:
+            commands.append(self._encode_command(["INCR", key]))
 
         responses = self._send_commands(commands)
-        for response in responses[:-1]:
+        setup_response_count = len(responses) - 1
+        for response in responses[:setup_response_count]:
             self._parse_status_response(response)
         return self._parse_integer_response(responses[-1])
+
+    def _key_for_user(self, user_id: int | None) -> str:
+        if user_id is None:
+            return self._key
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            raise ValueError("user_id must be an integer")
+        return f"{self._key}_{user_id}"
 
     def _send_commands(self, commands: list[bytes]) -> list[bytes]:
         responses: list[bytes] = []

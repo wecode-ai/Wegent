@@ -41,6 +41,11 @@ def configure_redis_settings(monkeypatch) -> None:
         "WECODE_TASK_SEQ_REDIS_KEY",
         "wecode_task_global_seq",
     )
+    monkeypatch.setattr(
+        task_sharding_settings,
+        "WECODE_TASK_SEQ_INITIAL_SEQUENCE",
+        250_000,
+    )
 
 
 def test_task_sharding_startup_patch_installs_all_global_stores(monkeypatch):
@@ -81,6 +86,12 @@ def test_task_sharding_startup_patch_installs_all_global_stores(monkeypatch):
     assert (
         task_stores.subtask_store.global_id_allocator
         is patch_module._global_id_allocator
+    )
+    assert (
+        patch_module._global_id_allocator.user_scoped_factory._seq_source.kwargs[
+            "initial_sequence"
+        ]
+        == 250_000
     )
 
     patch_module.shutdown_task_sharding_store_patch()

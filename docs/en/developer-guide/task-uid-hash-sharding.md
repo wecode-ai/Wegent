@@ -59,8 +59,11 @@ subtask_id = UserScopedIdFactory.next_id(owner_user_id)
 
 Constraints:
 
-- The global sequence owns uniqueness. The high UID bits carry routing information.
-- `task_id` and `subtask_id` share one UUID sequence so their ID spaces cannot collide.
+- `user_id` must fit in the 16-bit uid field. Out-of-range values fail instead of being masked.
+- Each uid uses an independent Redis sequence key: `wecode_task_global_seq_{uid}`.
+- New uid keys default to `150000`, so the first allocated sequence is `150001`; override it with `WECODE_TASK_SEQ_INITIAL_SEQUENCE`.
+- Within one uid, the incrementing sequence owns uniqueness. The high UID bits carry routing information.
+- Within one uid, `task_id` and `subtask_id` share one sequence key so their ID spaces cannot collide.
 - Business code only calls `allocate_task_id()` and `allocate_subtask_id()`.
 - Replacing the allocator later must not require changes to task/subtask store callers.
 - New data does not maintain `task_uid_index` / `subtask_uid_index` route tables.
