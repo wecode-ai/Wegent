@@ -31,7 +31,7 @@ use crate::{
         app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
     },
-    logging::format_executor_log,
+    logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
     protocol::ExecutionRequest,
     runner::{BackgroundTaskRunner, EventSink},
     server::TaskRunner,
@@ -383,21 +383,26 @@ where
     pub async fn run_forever(self) -> Result<(), String> {
         self.register_handlers();
         let mut retry_delay = self.client.config.reconnect_delay;
+        write_executor_log_line(&local_backend_starting_log_line(
+            &self.client.config.backend_url,
+            &self.client.config.device_id,
+        ));
 
         loop {
             match self.connect_and_register().await {
                 Ok(()) => {
+                    write_executor_log_line(&local_backend_registered_log_line(
+                        &self.client.config.backend_url,
+                        &self.client.config.device_id,
+                    ));
                     retry_delay = self.client.config.reconnect_delay;
                     self.heartbeat_until_reconnect().await;
                 }
                 Err(error) => {
-                    eprintln!(
-                        "{}",
-                        local_backend_connection_failure_log_line(
-                            &self.client.config.backend_url,
-                            &error
-                        )
-                    );
+                    write_executor_error_line(&local_backend_connection_failure_log_line(
+                        &self.client.config.backend_url,
+                        &error,
+                    ));
                     sleep(retry_delay).await;
                     retry_delay = retry_delay
                         .saturating_mul(2)
@@ -547,6 +552,26 @@ pub fn local_backend_connection_failure_log_line(backend_url: &str, error: &str)
         &[
             ("backend_url", backend_url.to_owned()),
             ("error", error.to_owned()),
+        ],
+    )
+}
+
+pub fn local_backend_starting_log_line(backend_url: &str, device_id: &str) -> String {
+    format_executor_log(
+        "local backend runner starting",
+        &[
+            ("backend_url", backend_url.to_owned()),
+            ("device_id", device_id.to_owned()),
+        ],
+    )
+}
+
+pub fn local_backend_registered_log_line(backend_url: &str, device_id: &str) -> String {
+    format_executor_log(
+        "local backend registered",
+        &[
+            ("backend_url", backend_url.to_owned()),
+            ("device_id", device_id.to_owned()),
         ],
     )
 }

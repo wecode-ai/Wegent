@@ -4,11 +4,12 @@
 
 pub mod cli;
 
-use crate::config::device::{load_device_config, RuntimeMode};
+use crate::config::device::{load_device_config, DeviceConfig, RuntimeMode};
 use crate::local::{
     app_ipc::{normalize_device_id, serve_app_ipc_sidecar},
     backend::serve_local_backend_sidecar,
 };
+use crate::logging::init_executor_logging;
 use crate::server::{self, ServerConfig};
 use crate::version::get_version;
 use cli::CliArgs;
@@ -120,7 +121,9 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
         return Err(AppError::NotImplemented("executor self-upgrade"));
     }
 
+    init_executor_logging(&DeviceConfig::default());
     let config = load_device_config(args.config_path.as_deref())?;
+    init_executor_logging(&config);
     match startup_plan_for_config(&config)? {
         plan @ StartupPlan::DockerServer { .. } => server::serve(plan.server_config()?)
             .await
