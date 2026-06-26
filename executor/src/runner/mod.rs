@@ -26,6 +26,7 @@ pub trait EventSink: Clone + Send + Sync + 'static {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutionOutcome {
     Completed { content: String },
+    WaitingForUserInput { stop_reason: String },
     Failed { message: String },
     Running,
     Cancelled { message: String },
@@ -95,6 +96,9 @@ async fn run_in_background<E, S>(
 
     let event = match outcome {
         ExecutionOutcome::Completed { content } => builder.response_completed(&content),
+        ExecutionOutcome::WaitingForUserInput { stop_reason } => {
+            builder.response_waiting_for_user_input(&stop_reason)
+        }
         ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
         ExecutionOutcome::Cancelled { message } => builder.error(&message, "cancelled"),
         ExecutionOutcome::Running => return,
@@ -125,6 +129,7 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
 fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
     match outcome {
         ExecutionOutcome::Completed { .. } => "completed",
+        ExecutionOutcome::WaitingForUserInput { .. } => "waiting_for_user_input",
         ExecutionOutcome::Failed { .. } => "failed",
         ExecutionOutcome::Running => "running",
         ExecutionOutcome::Cancelled { .. } => "cancelled",

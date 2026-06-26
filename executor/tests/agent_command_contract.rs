@@ -254,6 +254,62 @@ fn claude_command_resumes_saved_task_session() {
 }
 
 #[test]
+fn claude_command_sends_interactive_form_answer_as_tool_result_query() {
+    let _lock = env_lock();
+    let executor_home = unique_dir("claude-interactive-answer-home");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let session_dir = executor_home.join("sessions/77");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(
+        session_dir.join(".claude_session_id_987"),
+        "interactive-session\n",
+    )
+    .unwrap();
+    let request = ExecutionRequest {
+        task_id: 77,
+        prompt: json!("ignored when answering interactive form"),
+        bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
+        extra: serde_json::Map::from_iter([(
+            "interactive_form_answer".to_owned(),
+            json!({
+                "type": "interactive_form_question",
+                "tool_use_id": "toolu_123",
+                "task_id": 77,
+                "subtask_id": 88,
+                "answers": [{"id": "name", "value": "Wegent"}],
+                "success": true,
+                "status": "answered",
+                "ask_id": "ignored"
+            }),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let query: serde_json::Value = serde_json::from_str(spec.stdin_input().unwrap().trim())
+        .expect("interactive form answer should be sent as a JSON tool_result query");
+
+    assert!(spec.args().contains(&"--resume".to_owned()));
+    assert!(spec.args().contains(&"interactive-session".to_owned()));
+    assert!(spec.args().contains(&"--input-format".to_owned()));
+    assert!(spec.args().contains(&"stream-json".to_owned()));
+    assert!(!spec
+        .args()
+        .contains(&"ignored when answering interactive form".to_owned()));
+    assert_eq!(query["type"], "user");
+    assert_eq!(query["message"]["content"][0]["type"], "tool_result");
+    assert_eq!(query["message"]["content"][0]["tool_use_id"], "toolu_123");
+    assert_eq!(query["message"]["content"][0]["is_error"], false);
+    let payload_text = query["message"]["content"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(payload_text).unwrap();
+    assert_eq!(payload["task_id"], 77);
+    assert_eq!(payload["subtask_id"], 88);
+    assert!(payload.get("ask_id").is_none());
+}
+
+#[test]
 fn claude_command_prefers_workspace_task_session_over_executor_home() {
     let _lock = env_lock();
     let executor_home = unique_dir("claude-session-home-fallback");
@@ -542,10 +598,30 @@ fn command_planner_routes_claudecode_requests_to_claude_binary() {
 }
 
 #[test]
-fn command_planner_routes_openai_responses_requests_to_codex_app_server() {
+fn command_planner_keeps_claudecode_requests_on_claude_binary_for_openai_responses_model() {
     let planner = AgentCommandPlanner::new("claude", "codex");
     let request = ExecutionRequest {
+        prompt: json!("hello"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = planner.command_for(&request).unwrap();
+
+    assert_eq!(spec.program(), "claude");
+    assert_eq!(spec.args()[0], "-p");
+}
+
+#[test]
+fn command_planner_routes_codex_requests_to_codex_app_server() {
+    let planner = AgentCommandPlanner::new("claude", "codex");
+    let request = ExecutionRequest {
+        bot: json!([{"shell_type": "Codex"}]),
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5",

@@ -142,24 +142,7 @@ pub fn build_pre_tool_use_defer_response() -> Value {
 }
 
 pub fn is_deferred_user_input_result(result: &Value) -> bool {
-    result
-        .get("content")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items.iter().any(|item| {
-                item.get("type").and_then(Value::as_str) == Some("text")
-                    && item
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .and_then(|text| serde_json::from_str::<Value>(text).ok())
-                        .and_then(|payload| {
-                            payload
-                                .get("__deferred_user_input__")
-                                .and_then(Value::as_bool)
-                        })
-                        == Some(true)
-            })
-        })
+    contains_waiting_for_user_payload(result)
 }
 
 pub fn build_deferred_mcp_proxy_request(
@@ -168,8 +151,7 @@ pub fn build_deferred_mcp_proxy_request(
 ) -> Result<DeferredMcpProxyRequest, InteractiveMcpError> {
     let parsed = parse_mcp_tool_name(&deferred_tool_use.name)
         .ok_or(InteractiveMcpError::InvalidMcpToolName)?;
-    let server = mcp_servers
-        .get(&parsed.server_name)
+    let server = resolve_mcp_server_config(mcp_servers, &parsed.server_name)
         .ok_or(InteractiveMcpError::MissingServerConfig)?;
     let server_url = server
         .get("url")
@@ -336,6 +318,8 @@ pub fn build_interactive_form_answer_payload(answer: &Value) -> Value {
     for key in [
         "type",
         "tool_use_id",
+        "task_id",
+        "subtask_id",
         "answers",
         "success",
         "status",
@@ -453,4 +437,76 @@ fn collect_text_content(result: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn contains_waiting_for_user_payload(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            is_waiting_for_user_payload(object)
+                || object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(text_contains_waiting_for_user_payload)
+                || object
+                    .get("content")
+                    .is_some_and(contains_waiting_for_user_payload)
+                || object
+                    .get("result")
+                    .is_some_and(contains_waiting_for_user_payload)
+        }
+        Value::Array(items) => items.iter().any(contains_waiting_for_user_payload),
+        Value::String(text) => text_contains_waiting_for_user_payload(text),
+        _ => false,
+    }
+}
+
+fn is_waiting_for_user_payload(object: &Map<String, Value>) -> bool {
+    object
+        .get("__deferred_user_input__")
+        .and_then(Value::as_bool)
+        == Some(true)
+        && object.get("success").and_then(Value::as_bool) == Some(true)
+        && object.get("status").and_then(Value::as_str) == Some("waiting_for_user_response")
+}
+
+fn text_contains_waiting_for_user_payload(text: &str) -> bool {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .is_some_and(|value| contains_waiting_for_user_payload(&value))
+}
+
+fn resolve_mcp_server_config<'a>(mcp_servers: &'a Value, server_name: &str) -> Option<&'a Value> {
+    match mcp_servers {
+        Value::Object(object) => {
+            for key in ["mcpServers", "mcp_servers"] {
+                if let Some(server) = object
+                    .get(key)
+                    .and_then(|nested| resolve_mcp_server_config(nested, server_name))
+                {
+                    return Some(server);
+                }
+            }
+
+            object.get(server_name).or_else(|| {
+                let normalized_target = normalize_mcp_server_name(server_name);
+                object.iter().find_map(|(name, config)| {
+                    (config.is_object() && normalize_mcp_server_name(name) == normalized_target)
+                        .then_some(config)
+                })
+            })
+        }
+        Value::Array(items) => {
+            let normalized_target = normalize_mcp_server_name(server_name);
+            items.iter().find(|item| {
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| normalize_mcp_server_name(name) == normalized_target)
+            })
+        }
+        _ => None,
+    }
+}
+
+fn normalize_mcp_server_name(name: &str) -> String {
+    name.replace('_', "-")
 }

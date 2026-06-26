@@ -660,6 +660,7 @@ impl RuntimeWorkRpcHandler {
             Ok(turn) => {
                 let status = match &turn.outcome {
                     ExecutionOutcome::Completed { .. } => "done",
+                    ExecutionOutcome::WaitingForUserInput { .. } => "done",
                     ExecutionOutcome::Cancelled { .. } => "cancelled",
                     ExecutionOutcome::Failed { .. } => "failed",
                     ExecutionOutcome::Running => "running",
@@ -673,6 +674,19 @@ impl RuntimeWorkRpcHandler {
                         local_task_id,
                         request,
                         json!({"value": content}),
+                    ),
+                    ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
+                        &self.event_tx,
+                        &self.device_id,
+                        "response.completed",
+                        local_task_id,
+                        request,
+                        json!({
+                            "value": "",
+                            "stop_reason": stop_reason,
+                            "silent_exit": true,
+                            "silent_exit_reason": "waiting_for_user_input"
+                        }),
                     ),
                     ExecutionOutcome::Cancelled { message } => emit_response_event(
                         &self.event_tx,

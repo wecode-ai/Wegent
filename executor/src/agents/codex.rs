@@ -305,6 +305,7 @@ pub async fn run_codex_app_server_turn(
 fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
     match outcome {
         ExecutionOutcome::Completed { .. } => "completed",
+        ExecutionOutcome::WaitingForUserInput { .. } => "waiting_for_user_input",
         ExecutionOutcome::Failed { .. } => "failed",
         ExecutionOutcome::Running => "running",
         ExecutionOutcome::Cancelled { .. } => "cancelled",

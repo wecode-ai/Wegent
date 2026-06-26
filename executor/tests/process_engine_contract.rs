@@ -46,6 +46,20 @@ async fn process_engine_maps_success_stdout_to_completed_outcome() {
 }
 
 #[tokio::test]
+async fn process_engine_writes_configured_stdin_to_child() {
+    let engine = ProcessEngine::new(CommandSpec::new("cat").stdin("from stdin"));
+
+    let outcome = engine.run(ExecutionRequest::default()).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "from stdin".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
 async fn process_engine_maps_nonzero_exit_to_failed_outcome() {
     let engine = ProcessEngine::new(
         CommandSpec::new("sh")

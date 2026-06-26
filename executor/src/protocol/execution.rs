@@ -113,7 +113,6 @@ impl ExecutionRequest {
         };
 
         match shell_type.as_str() {
-            "claudecode" if is_codex_compatible_model(&self.model_config) => AgentKind::CodeX,
             "claudecode" => AgentKind::ClaudeCode,
             "codex" => AgentKind::CodeX,
             "agno" => AgentKind::Agno,
@@ -154,21 +153,6 @@ impl ExecutionRequest {
     }
 }
 
-pub fn is_codex_compatible_model(model_config: &Value) -> bool {
-    let provider_is_openai = get_string(model_config, "model")
-        .is_some_and(|provider| provider.eq_ignore_ascii_case("openai"));
-    let uses_responses_api = get_string(model_config, "api_format")
-        .is_some_and(|value| value.eq_ignore_ascii_case("responses"))
-        || get_string(model_config, "apiFormat")
-            .is_some_and(|value| value.eq_ignore_ascii_case("responses"))
-        || get_string(model_config, "protocol")
-            .is_some_and(|value| value.eq_ignore_ascii_case("openai-responses"))
-        || get_string(model_config, "wire_api")
-            .is_some_and(|value| value.eq_ignore_ascii_case("responses"));
-
-    provider_is_openai && uses_responses_api
-}
-
 fn extract_shell_type(bot: &Value) -> Option<String> {
     let candidate = match bot {
         Value::Object(object) => object.get("shell_type"),
@@ -181,10 +165,6 @@ fn extract_shell_type(bot: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase)
-}
-
-fn get_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.as_object()?.get(key)?.as_str()
 }
 
 fn value_path_string(root: &Map<String, Value>, path: &[&str]) -> Option<String> {
