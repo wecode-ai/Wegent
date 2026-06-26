@@ -1,7 +1,74 @@
+import type { CodeViewItem } from '@pierre/diffs'
+import { CodeView } from '@pierre/diffs/react'
 import { MessageSquare } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
+
+const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
+  :host {
+    --diffs-font-size: 12px;
+    --diffs-line-height: 20px;
+    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --diffs-header-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    --diffs-light-bg: rgb(255 255 255);
+    --diffs-light: rgb(26 26 26);
+    --diffs-fg-number-override: rgb(140 140 140);
+    --diffs-bg-context-override: rgb(255 255 255);
+    --diffs-bg-context-gutter-override: rgb(247 247 248);
+    --diffs-bg-hover-override: rgb(247 247 248);
+    --diffs-scrollbar-gutter-override: 5px;
+    --diffs-min-number-column-width: 3ch;
+    background: rgb(255 255 255) !important;
+  }
+  [data-diffs-header],
+  [data-diffs-header="default"] {
+    min-height: 36px;
+    padding-inline: 12px;
+    border-bottom: 1px solid rgb(224 224 224);
+    font-size: 13px;
+  }
+  [data-file],
+  pre,
+  [data-code] {
+    background: rgb(255 255 255);
+  }
+  [data-code] {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(224 224 224 / 0.55) transparent;
+  }
+  [data-code]::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  [data-code]::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  [data-code]::-webkit-scrollbar-thumb {
+    background-color: rgb(224 224 224 / 0.55);
+    border-radius: 999px;
+  }
+  [data-gutter] {
+    border-right: 1px solid rgb(224 224 224);
+    background: rgb(247 247 248);
+  }
+  [data-column-number] {
+    min-width: 2.75rem;
+    padding-left: 0;
+    padding-right: 0.5rem;
+  }
+  [data-line-number-content] {
+    min-width: 3ch;
+  }
+  [data-line] {
+    padding-left: 0.5rem;
+    padding-right: 0.75rem;
+  }
+  [data-line][data-hovered],
+  [data-column-number][data-hovered] {
+    background: rgb(247 247 248);
+  }
+`
 
 interface WorkspaceFilePreviewProps {
   file: WorkspaceTextFileResponse | null
@@ -23,40 +90,20 @@ interface CommentState {
   value: string
 }
 
+interface WorkspaceCodeViewLineSelection {
+  id: string
+  range: {
+    start: number
+    end: number
+  }
+}
+
 interface WorkspaceFilePreviewContentProps {
   file: WorkspaceTextFileResponse
   onAddCodeComment: (context: CodeCommentContext) => void
 }
 
-function elementFromSelectionNode(node: Node): Element | null {
-  return node.nodeType === Node.ELEMENT_NODE
-    ? node as Element
-    : node.parentElement
-}
-
-function lineNumberFromSelectionNode(node: Node): number | null {
-  const element = elementFromSelectionNode(node)
-  const lineRow = element?.closest<HTMLElement>('[data-workspace-file-line]')
-  const line = lineRow?.dataset.workspaceFileLine
-  return line ? Number(line) : null
-}
-
-function lineRangeForSelection(
-  range: Range,
-): Pick<SelectionState, 'startLine' | 'endLine'> | null {
-  const startLine = lineNumberFromSelectionNode(range.startContainer)
-  const endLine = lineNumberFromSelectionNode(range.endContainer)
-  if (!startLine || !endLine) return null
-  return {
-    startLine: Math.min(startLine, endLine),
-    endLine: Math.max(startLine, endLine),
-  }
-}
-
-function WorkspaceFilePreviewContent({
-  file,
-  onAddCodeComment,
-}: WorkspaceFilePreviewContentProps) {
+function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePreviewContentProps) {
   const { t } = useTranslation('common')
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
@@ -64,26 +111,50 @@ function WorkspaceFilePreviewContent({
     value: '',
   })
   const lines = useMemo(() => file.content.split('\n'), [file.content])
+  const codeViewItems = useMemo<CodeViewItem[]>(
+    () => [
+      {
+        id: file.path,
+        type: 'file',
+        file: {
+          name: file.path || file.name,
+          contents: file.content,
+          cacheKey: `${file.path}:${file.content.length}`,
+        },
+        version: file.content.length,
+      },
+    ],
+    [file.content, file.name, file.path]
+  )
   const activeSelection = selection?.filePath === file.path ? selection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
+  const selectedLines = activeSelection
+    ? {
+        id: file.path,
+        range: {
+          start: activeSelection.startLine,
+          end: activeSelection.endLine,
+        },
+      }
+    : null
 
-  const captureSelection = () => {
-    const browserSelection = window.getSelection()
-    const selectedText = browserSelection?.toString().trim() ?? ''
+  const captureLineSelection = (selectionRange: WorkspaceCodeViewLineSelection | null) => {
+    if (!selectionRange || selectionRange.id !== file.path) {
+      setSelection(null)
+      return
+    }
+    const { range } = selectionRange
+    const startLine = Math.min(range.start, range.end)
+    const endLine = Math.max(range.start, range.end)
+    const selectedText = lines
+      .slice(startLine - 1, endLine)
+      .join('\n')
+      .trim()
     if (!selectedText) {
       setSelection(null)
       return
     }
-    if (!browserSelection || browserSelection.rangeCount === 0) {
-      setSelection(null)
-      return
-    }
-    const range = lineRangeForSelection(browserSelection.getRangeAt(0))
-    if (!range) {
-      setSelection(null)
-      return
-    }
-    setSelection({ filePath: file.path, selectedText, ...range })
+    setSelection({ filePath: file.path, selectedText, startLine, endLine })
     setCommentState({ filePath: file.path, value: '' })
   }
 
@@ -108,30 +179,33 @@ function WorkspaceFilePreviewContent({
       data-testid="workspace-file-preview"
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      <header className="shrink-0 border-b border-border px-4 py-3">
-        <p className="truncate text-sm font-medium text-text-primary">{file.name}</p>
-        <p className="truncate text-xs text-text-muted">{file.path}</p>
-        {file.truncated && (
-          <p className="mt-1 text-xs text-amber-700">
-            {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
-          </p>
-        )}
-      </header>
-      <div className="min-h-0 flex-1 overflow-auto" onMouseUp={captureSelection}>
-        <pre className="m-0 min-w-max p-0 font-mono text-[13px] leading-5">
-          {lines.map((line, index) => (
-            <div
-              key={index}
-              data-workspace-file-line={index + 1}
-              className="grid grid-cols-[4rem_minmax(0,1fr)]"
-            >
-              <span className="select-none border-r border-border bg-surface pr-3 text-right text-text-muted">
-                {index + 1}
+      <div data-testid="workspace-file-preview-code-view" className="min-h-0 flex-1 bg-background">
+        <CodeView
+          key={file.path}
+          items={codeViewItems}
+          selectedLines={selectedLines}
+          onSelectedLinesChange={captureLineSelection}
+          options={{
+            disableFileHeader: false,
+            enableLineSelection: true,
+            lineHoverHighlight: 'both',
+            overflow: 'scroll',
+            stickyHeaders: true,
+            layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+            theme: { dark: 'pierre-dark', light: 'pierre-light' },
+            themeType: 'light',
+            unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
+          }}
+          renderHeaderMetadata={() =>
+            file.truncated ? (
+              <span className="text-xs text-amber-700">
+                {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
               </span>
-              <code className="whitespace-pre px-3 text-text-primary">{line || ' '}</code>
-            </div>
-          ))}
-        </pre>
+            ) : null
+          }
+          className="h-full min-h-0 w-full scrollbar-soft"
+          style={{ height: '100%', overflow: 'auto' }}
+        />
       </div>
       {activeSelection && (
         <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-background p-3 shadow-xl">
@@ -142,10 +216,12 @@ function WorkspaceFilePreviewContent({
           <textarea
             data-testid="workspace-file-comment-input"
             value={comment}
-            onChange={event => setCommentState({
-              filePath: file.path,
-              value: event.target.value,
-            })}
+            onChange={event =>
+              setCommentState({
+                filePath: file.path,
+                value: event.target.value,
+              })
+            }
             placeholder={t('workbench.workspace_file_comment_placeholder', '请输入评论')}
             className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none"
           />
@@ -219,10 +295,6 @@ export function WorkspaceFilePreview({
   }
 
   return (
-    <WorkspaceFilePreviewContent
-      key={file.path}
-      file={file}
-      onAddCodeComment={onAddCodeComment}
-    />
+    <WorkspaceFilePreviewContent key={file.path} file={file} onAddCodeComment={onAddCodeComment} />
   )
 }

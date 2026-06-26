@@ -75,9 +75,11 @@ def test_encode_rejects_seq_out_of_range():
 class FakeSeqSource:
     def __init__(self, values: list[int]):
         self._values = list(values)
+        self.user_ids: list[int] = []
         self.closed = False
 
-    def next_seq(self) -> int:
+    def next_seq(self, user_id: int) -> int:
+        self.user_ids.append(user_id)
         return self._values.pop(0)
 
     def close(self) -> None:
@@ -90,18 +92,24 @@ def test_user_scoped_factory_encodes_uid_and_seq():
     id2 = factory.next_id(user_id=3)
     uid1, _, seq1 = decode_user_scoped_id(id1)
     uid2, _, seq2 = decode_user_scoped_id(id2)
-    assert uid1 == 3 & UID_MASK
-    assert uid2 == 3 & UID_MASK
+    assert uid1 == 3
+    assert uid2 == 3
     assert seq1 == 1
     assert seq2 == 2
 
 
-def test_user_scoped_factory_takes_uid_low_16_bits():
+def test_user_scoped_factory_passes_full_uid_to_sequence_source():
     factory = UserScopedIdFactory(FakeSeqSource([1]))
-    large_user_id = 3_853_506_976
-    encoded = factory.next_id(user_id=large_user_id)
+    encoded = factory.next_id(user_id=1024)
     uid, _, _ = decode_user_scoped_id(encoded)
-    assert uid == large_user_id & UID_MASK
+    assert uid == 1024
+    assert factory._seq_source.user_ids == [1024]
+
+
+def test_user_scoped_factory_rejects_uid_out_of_range():
+    factory = UserScopedIdFactory(FakeSeqSource([1]))
+    with pytest.raises(ValueError, match="user_id"):
+        factory.next_id(user_id=UID_MASK + 1)
 
 
 def test_user_scoped_factory_close_delegates():
@@ -158,6 +166,25 @@ def test_redis_factory_parses_incr_response(monkeypatch):
     factory = make_redis_factory(sock, monkeypatch)
     assert factory.next_seq() == 42
     assert sock.sent == [b"*2\r\n$4\r\nINCR\r\n$15\r\ntask_global_seq\r\n"]
+
+
+def test_redis_factory_uses_user_scoped_key_initialized_from_150000(monkeypatch):
+    sock = FakeSocket(b":150001\r\n")
+    factory = make_redis_factory(sock, monkeypatch)
+
+    assert factory.next_seq(1024) == 150001
+    assert len(sock.sent) == 1
+    assert b"$4\r\nEVAL\r\n" in sock.sent[0]
+    assert b"task_global_seq_1024" in sock.sent[0]
+    assert b"150000" in sock.sent[0]
+
+
+def test_redis_factory_accepts_existing_user_scoped_key(monkeypatch):
+    sock = FakeSocket(b":150002\r\n")
+    factory = make_redis_factory(sock, monkeypatch)
+
+    assert factory.next_seq(1024) == 150002
+    assert len(sock.sent) == 1
 
 
 def test_redis_factory_supports_password_url_and_database(monkeypatch):

@@ -14,6 +14,7 @@ def _build_global_id_allocator() -> UserScopedGlobalIdAllocator:
     redis_factory = RedisIdFactory(
         server=task_sharding_settings.WECODE_TASK_SEQ_REDIS_SERVER,
         key=task_sharding_settings.WECODE_TASK_SEQ_REDIS_KEY,
+        initial_sequence=task_sharding_settings.WECODE_TASK_SEQ_INITIAL_SEQUENCE,
     )
     return UserScopedGlobalIdAllocator(UserScopedIdFactory(redis_factory))
 

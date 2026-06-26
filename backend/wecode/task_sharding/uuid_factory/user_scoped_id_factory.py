@@ -21,7 +21,7 @@ class UserScopedIdFactory:
         bit 52 .. 37   bit 36 .. 33   bit 32 .. 0
         [ 16 uid    ]  [ 4 rsvd   ]   [  33 seq  ]
 
-    uid      = user_id & 0xFFFF  (routing hint, not globally unique)
+    uid      = user_id, constrained to 16 bits
     reserved = 0 (reserved for future use)
     seq      = globally incrementing counter from an external source
     """
@@ -34,11 +34,14 @@ class UserScopedIdFactory:
         self._seq_source = seq_source
 
     def next_id(self, user_id: int) -> int:
-        uid = user_id & UID_MASK
-        seq = self._seq_source.next_seq()
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            raise ValueError("user_id must be an integer")
+        if user_id < 0 or user_id > UID_MASK:
+            raise ValueError(f"user_id must be 0–{UID_MASK}, got {user_id}")
+        seq = self._seq_source.next_seq(user_id)
         if seq <= 0 or seq > MAX_SEQ:
             raise ValueError(f"seq out of range: {seq}")
-        return encode_user_scoped_id(uid, seq)
+        return encode_user_scoped_id(user_id, seq)
 
     def close(self) -> None:
         close = getattr(self._seq_source, "close", None)

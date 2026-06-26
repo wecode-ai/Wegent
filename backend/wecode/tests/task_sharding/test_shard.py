@@ -19,6 +19,7 @@ from wecode.task_sharding.shard import (
 )
 from wecode.task_sharding.task_id import SLOT_COUNT
 from wecode.task_sharding.uuid_factory.user_scoped_id_factory import (
+    UID_MASK,
     encode_user_scoped_id,
 )
 
@@ -38,6 +39,11 @@ def test_physical_shard_for_slot_rejects_invalid_slot(slot):
 
 def test_task_table_name_uses_four_digit_physical_shard_suffix():
     assert task_table_name(SHARD_COUNT + 1) == "tasks_0001"
+
+
+def test_task_table_name_rejects_uid_out_of_range():
+    with pytest.raises(ValueError, match="user_id"):
+        task_table_name(UID_MASK + 1)
 
 
 def test_new_task_id_routes_to_sharded_task_model():

@@ -12,7 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -37,6 +37,7 @@ from app.services.device.command_service import (
     DeviceCommandUnknownKeyError,
     execute_configured_device_command,
 )
+from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
 from app.services.runtime_work_kind_store import list_device_workspace_kinds
 
@@ -46,6 +47,7 @@ router = APIRouter()
 
 WORKSPACE_FILE_COMMAND_KEYS = {"workspace_tree", "workspace_read_text_file"}
 WORKSPACE_ROOTS_ENV = "WEGENT_WORKSPACE_ROOTS"
+WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS = 5
 
 
 # ==================== Request/Response Schemas ====================
@@ -150,14 +152,23 @@ def _wework_local_workspace_roots_for_command(
         if (
             not config.execution
             or not config.workspace
-            or config.workspace.source != "local_path"
             or config.execution.deviceId != device_id
-            or not config.workspace.localPath
         ):
             continue
-        root = _normalize_device_path(config.workspace.localPath)
-        if _is_device_path_within(path, root):
-            roots.append(root)
+        workspace_paths: list[str] = []
+        if config.workspace.source == "local_path" and config.workspace.localPath:
+            workspace_paths.append(config.workspace.localPath)
+        elif (
+            config.workspace.source == "git"
+            and config.workspace.checkoutPath
+            and posixpath.isabs(config.workspace.checkoutPath)
+        ):
+            workspace_paths.append(config.workspace.checkoutPath)
+
+        for workspace_path in workspace_paths:
+            root = _normalize_device_path(workspace_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
 
     return _dedupe_paths(roots)
 
@@ -183,7 +194,67 @@ def _runtime_device_workspace_roots_for_command(
     return _dedupe_paths(roots)
 
 
-def _device_command_env(
+def _runtime_workspace_roots_from_rpc_result(
+    result: dict[str, Any], path: str
+) -> list[str]:
+    roots: list[str] = []
+    raw_workspaces = result.get("workspaces")
+    if not isinstance(raw_workspaces, list):
+        return roots
+
+    for raw_workspace in raw_workspaces:
+        if not isinstance(raw_workspace, dict):
+            continue
+        workspace_path = raw_workspace.get("workspacePath") or raw_workspace.get(
+            "workspace_path"
+        )
+        if isinstance(workspace_path, str) and workspace_path.strip():
+            root = _normalize_device_path(workspace_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
+
+        raw_tasks = (
+            raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
+        )
+        if not isinstance(raw_tasks, list):
+            continue
+        for raw_task in raw_tasks:
+            if not isinstance(raw_task, dict):
+                continue
+            task_path = raw_task.get("workspacePath") or raw_task.get("workspace_path")
+            if not isinstance(task_path, str) or not task_path.strip():
+                continue
+            root = _normalize_device_path(task_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
+async def _runtime_local_task_workspace_roots_for_command(
+    *,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError:
+        return []
+
+    return _runtime_workspace_roots_from_rpc_result(result, path)
+
+
+async def _device_command_env(
     *,
     db: Session,
     user_id: int,
@@ -209,6 +280,12 @@ def _device_command_env(
         path=path,
     )
     roots = _dedupe_paths(roots)
+    if not roots:
+        roots = await _runtime_local_task_workspace_roots_for_command(
+            user_id=user_id,
+            device_id=device_id,
+            path=path,
+        )
     if roots:
         env[WORKSPACE_ROOTS_ENV] = os.pathsep.join(roots)
     return env
@@ -528,7 +605,7 @@ async def execute_device_command(
             command_key=request.command_key,
             path=request.path or request.cwd,
             args=request.args,
-            env=_device_command_env(
+            env=await _device_command_env(
                 db=db,
                 user_id=user_id,
                 device_id=device_id,

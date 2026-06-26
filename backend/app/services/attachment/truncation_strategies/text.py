@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Text and Markdown truncation strategy using head + uniform sampling + tail approach.
+Text and Markdown truncation strategy using head + tail (contiguous, middle dropped) approach.
 """
 
 import re
@@ -26,7 +26,7 @@ class TextTruncationStrategy(BaseTruncationStrategy):
     3. Uniformly samples middle sections
     4. Keeps tail content (conclusion, summary)
 
-    For plain text, uses line-based head + uniform sampling + tail strategy.
+    For plain text, uses line-based head + tail (contiguous, middle dropped) strategy.
     """
 
     # Markdown heading patterns (# to ######)
@@ -37,7 +37,7 @@ class TextTruncationStrategy(BaseTruncationStrategy):
         Truncate text/markdown with structure-aware strategy.
 
         For markdown: Preserves headings and uses section-based truncation.
-        For plain text: Uses line-based head + uniform sampling + tail.
+        For plain text: Uses line-based head + tail (contiguous).
 
         Args:
             text: The text content
@@ -159,7 +159,9 @@ class TextTruncationStrategy(BaseTruncationStrategy):
             middle_count = 0
             middle_available = 0
 
-        # Sample middle sections uniformly
+        # Sample middle sections uniformly. Only reached when MIDDLE_RATIO > 0;
+        # with the default MIDDLE_RATIO = 0 the middle folds into head
+        # (contiguous head + tail), so this branch is inactive by default.
         if middle_count > 0 and middle_available > 0:
             if middle_count >= middle_available:
                 middle_indices = list(range(middle_available))
@@ -249,7 +251,7 @@ class TextTruncationStrategy(BaseTruncationStrategy):
             "total_kept": head_count + len(middle_section_indices) + tail_count,
             "omitted_sections": total_sections
             - (head_count + len(middle_section_indices) + tail_count),
-            "sampling_method": "head_uniform_tail",
+            "sampling_method": "head_tail_contiguous",
             "structure_preserved": "markdown_headings",
         }
         info.summary_message = (
@@ -269,7 +271,7 @@ class TextTruncationStrategy(BaseTruncationStrategy):
         info: SmartTruncationInfo,
     ) -> Tuple[str, SmartTruncationInfo]:
         """
-        Truncate plain text with line-based head + uniform sampling + tail strategy.
+        Truncate plain text with line-based head + tail (contiguous, middle dropped) strategy.
         """
         total_lines = len(lines)
         original_length = len(text)
@@ -315,7 +317,9 @@ class TextTruncationStrategy(BaseTruncationStrategy):
             )
         )
 
-        # Sample middle section uniformly
+        # Sample middle section uniformly. Only reached when MIDDLE_RATIO > 0;
+        # with the default MIDDLE_RATIO = 0 the middle folds into head
+        # (contiguous head + tail), so this branch is inactive by default.
         if middle_count > 0 and middle_available > 0:
             if middle_count >= middle_available:
                 middle_indices = list(range(middle_available))
@@ -387,10 +391,10 @@ class TextTruncationStrategy(BaseTruncationStrategy):
             "total_kept": head_count + len(middle_section) + len(tail_section),
             "omitted_lines": total_lines
             - (head_count + len(middle_section) + len(tail_section)),
-            "sampling_method": "head_uniform_tail",
+            "sampling_method": "head_tail_contiguous",
         }
         info.summary_message = (
-            f"[Smart Truncation Applied - Head + Uniform Sampling + Tail]\n"
+            f"[Smart Truncation Applied - Head + Tail (contiguous)]\n"
             f"Total: {total_lines} lines\n"
             f"Kept: {head_count} head + {len(middle_section)} middle (sampled) + {len(tail_section)} tail lines\n"
             f"Omitted: {total_lines - (head_count + len(middle_section) + len(tail_section))} lines"

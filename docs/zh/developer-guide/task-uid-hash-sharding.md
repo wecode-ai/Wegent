@@ -59,8 +59,11 @@ subtask_id = UserScopedIdFactory.next_id(owner_user_id)
 
 约束：
 
-- 全局递增 seq 负责唯一性，ID 高位 uid 负责路由。
-- `task_id` 和 `subtask_id` 共用同一个 UUID 序列，避免两个 ID 空间冲突。
+- `user_id` 必须在 16-bit uid 范围内，超出范围直接报错，不做 mask 截断。
+- 每个 uid 使用独立 Redis sequence key：`wecode_task_global_seq_{uid}`。
+- 新 uid key 默认使用 `150000` 作为初始值，第一次发号返回 `150001`；可通过 `WECODE_TASK_SEQ_INITIAL_SEQUENCE` 调整。
+- 同一 uid 下递增 seq 负责唯一性，ID 高位 uid 负责路由。
+- 同一 uid 下 `task_id` 和 `subtask_id` 共用同一个 sequence key，避免两个 ID 空间冲突。
 - 业务代码只调用 `allocate_task_id()` 和 `allocate_subtask_id()`。
 - 后期替换发号实现时，不改 task/subtask store 的调用方式。
 - 新建数据不维护 `task_uid_index` / `subtask_uid_index` 路由表。

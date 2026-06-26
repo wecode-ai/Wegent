@@ -1,8 +1,22 @@
 import '@/i18n'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
+
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+function getRenderedDiffText() {
+  return Array.from(document.querySelectorAll('diffs-container'))
+    .map(container => container.shadowRoot?.textContent ?? '')
+    .join('\n')
+}
 
 const twoFileDiff = [
   'diff --git a/src/alpha.ts b/src/alpha.ts',
@@ -79,21 +93,28 @@ describe('FileChangesReviewPanel', () => {
     expect(within(toolbar).getByText('human/dingo-20260624-023038')).toBeInTheDocument()
     expect(within(toolbar).getByText('origin/main')).toBeInTheDocument()
 
-    const options = screen.getAllByTestId('file-changes-review-file-option')
-    expect(options).toHaveLength(2)
-    expect(options[0]).toHaveAttribute('aria-selected', 'true')
-    expect(options[1]).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByTestId('file-changes-review-diff')).toHaveTextContent('new alpha')
-    expect(screen.getByTestId('file-changes-review-diff')).toHaveTextContent('new beta')
-    expect(screen.getByTestId('file-changes-review-diff')).not.toHaveTextContent('diff --git')
-    expect(screen.getByTestId('file-changes-review-diff')).not.toHaveTextContent('@@ -1 +1 @@')
+    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(getRenderedDiffText()).toContain('new alpha')
+      expect(getRenderedDiffText()).toContain('new beta')
+    })
 
-    await userEvent.click(options[1])
+    const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
+    expect(fileToggles).toHaveLength(2)
 
-    expect(options[0]).toHaveAttribute('aria-selected', 'false')
-    expect(options[1]).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('file-changes-review-diff')).toHaveTextContent('new alpha')
-    expect(screen.getByTestId('file-changes-review-diff')).toHaveTextContent('new beta')
+    await userEvent.click(fileToggles[0])
+    expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => {
+      expect(getRenderedDiffText()).not.toContain('new alpha')
+      expect(getRenderedDiffText()).toContain('new beta')
+    })
+
+    await userEvent.click(fileToggles[0])
+    expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => {
+      expect(getRenderedDiffText()).toContain('new alpha')
+      expect(getRenderedDiffText()).toContain('new beta')
+    })
   })
 
   test('renders changed files as a tree on the right side', async () => {
@@ -104,37 +125,23 @@ describe('FileChangesReviewPanel', () => {
     expect(content.children[1]).toHaveAttribute('data-testid', 'file-changes-review-file-tree')
 
     const tree = screen.getByTestId('file-changes-review-file-tree')
-    expect(within(tree).getByText('wework')).toBeInTheDocument()
-    expect(within(tree).getByText('src')).toBeInTheDocument()
-    expect(within(tree).getByText('components')).toBeInTheDocument()
-    expect(within(tree).getByText('chat')).toBeInTheDocument()
-    expect(within(tree).getByText('i18n')).toBeInTheDocument()
-    expect(within(tree).getByText('locales')).toBeInTheDocument()
-    expect(within(tree).getByText('zh-CN')).toBeInTheDocument()
+    expect(within(tree).getByTestId('file-changes-review-file-search-input')).toBeInTheDocument()
+    expect(within(tree).getByTestId('pierre-file-tree')).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByRole('tab', {
-        name: /wework\/src\/i18n\/locales\/zh-CN\/chat\.json/,
-      })
-    )
-
-    const selectedFile = screen.getByRole('tab', {
-      name: /wework\/src\/i18n\/locales\/zh-CN\/chat\.json/,
+    await waitFor(() => {
+      const diffText = getRenderedDiffText()
+      expect(diffText).toContain('new test')
+      expect(diffText).toContain('new component')
+      expect(diffText).toContain('new english')
+      expect(diffText).toContain('new chinese')
+      expect(diffText.indexOf('new test')).toBeLessThan(diffText.indexOf('new component'))
+      expect(diffText.indexOf('new component')).toBeLessThan(diffText.indexOf('new english'))
+      expect(diffText.indexOf('new english')).toBeLessThan(diffText.indexOf('new chinese'))
     })
-    expect(selectedFile).toHaveAttribute('aria-selected', 'true')
-
-    const diffText = screen.getByTestId('file-changes-review-diff').textContent ?? ''
-    expect(diffText).toContain('new test')
-    expect(diffText).toContain('new component')
-    expect(diffText).toContain('new english')
-    expect(diffText).toContain('new chinese')
-    expect(diffText.indexOf('new test')).toBeLessThan(diffText.indexOf('new component'))
-    expect(diffText.indexOf('new component')).toBeLessThan(diffText.indexOf('new english'))
-    expect(diffText.indexOf('new english')).toBeLessThan(diffText.indexOf('new chinese'))
   })
 
   test('shows only the selected file when the diff is large', async () => {
-    render(
+    const { rerender } = render(
       <FileChangesReviewPanel
         loading={false}
         diff={largeDiff}
@@ -148,19 +155,29 @@ describe('FileChangesReviewPanel', () => {
     expect(screen.queryByTestId('file-changes-review-file-tree')).not.toBeInTheDocument()
 
     const diff = screen.getByTestId('file-changes-review-diff')
-    expect(diff).toHaveTextContent('new 1')
-    expect(diff).not.toHaveTextContent('new 2')
-    expect(screen.getByText('new 1').closest('div')).toHaveClass('w-max', 'min-w-full')
+    await waitFor(() => {
+      expect(diff).toBeInTheDocument()
+      expect(getRenderedDiffText()).toContain('new 1')
+      expect(getRenderedDiffText()).not.toContain('new 2')
+    })
 
     await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
-    await userEvent.click(
-      screen.getByRole('tab', {
-        name: /src\/file-13\.ts/,
-      })
+    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
+
+    rerender(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={largeDiff}
+        reviewTitle="上轮对话"
+        defaultFileTreeVisible={false}
+        focusFilePath="src/file-13.ts"
+      />
     )
 
-    expect(diff).not.toHaveTextContent('new 2')
-    expect(diff).toHaveTextContent('new 13')
+    await waitFor(() => {
+      expect(getRenderedDiffText()).not.toContain('new 2')
+      expect(getRenderedDiffText()).toContain('new 13')
+    })
   })
 
   test('merges multiple diff blocks for the same file into one section', async () => {
@@ -181,13 +198,14 @@ describe('FileChangesReviewPanel', () => {
 
     render(<FileChangesReviewPanel loading={false} diff={duplicatePathDiff} />)
 
-    expect(screen.getAllByTestId('file-changes-review-file-option')).toHaveLength(1)
-    expect(screen.getAllByTestId('file-changes-review-file-diff-section')).toHaveLength(1)
+    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
 
     const diff = screen.getByTestId('file-changes-review-diff')
-    expect(diff).toHaveTextContent('new staged')
-    expect(diff).toHaveTextContent('new unstaged')
-    expect(diff).not.toHaveTextContent('diff --git')
+    await waitFor(() => {
+      expect(diff).toBeInTheDocument()
+      expect(getRenderedDiffText()).toContain('new staged')
+      expect(getRenderedDiffText()).toContain('new unstaged')
+    })
   })
 
   test('keeps the review toolbar available when the selected view has no diff', async () => {
@@ -250,19 +268,11 @@ describe('FileChangesReviewPanel', () => {
       'true'
     )
 
-    await userEvent.click(
-      screen.getByRole('tab', {
-        name: /wework\/src\/components\/chat\/FileChangesReviewPanel\.tsx/,
-      })
-    )
-    expect(screen.getAllByTestId('file-changes-review-hunk')).toHaveLength(5)
-
     await userEvent.click(screen.getByTestId('collapse-all-diff-hunks-button'))
-    expect(screen.queryByText('new test')).not.toBeInTheDocument()
-    expect(screen.queryByText('new component')).not.toBeInTheDocument()
-    expect(screen.queryByText('new second hunk')).not.toBeInTheDocument()
-    expect(screen.queryByText('new english')).not.toBeInTheDocument()
-    expect(screen.queryByText('new chinese')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collapse-all-diff-hunks-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
 
     await userEvent.click(screen.getByTestId('copy-git-apply-command-button'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("git apply <<'PATCH'"))
