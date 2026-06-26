@@ -16,6 +16,20 @@ from app.services.auth import create_task_token
 DEFAULT_RUNTIME_AES_KEY = "12345678901234567890123456789012"
 
 
+def test_patched_current_user_keeps_fastapi_signature(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+) -> None:
+    response = test_client.get(
+        "/api/users/me",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_name"] == test_user.user_name
+
+
 def test_patched_wegent_runtime_user_uses_weibo_uid_and_employee_id(
     test_client: TestClient,
     test_user: User,

@@ -16,6 +16,7 @@ class TaskShardingSettings(BaseSettings):
     WECODE_TASK_SHARD_COUNT: int = 16
     WECODE_TASK_SEQ_REDIS_SERVER: str = "redis://127.0.0.1:6379/0"
     WECODE_TASK_SEQ_REDIS_KEY: str = "wecode_task_global_seq"
+    WECODE_TASK_SEQ_INITIAL_SEQUENCE: int = 150_000
 
     @field_validator("WECODE_TASK_SHARD_COUNT")
     @classmethod
@@ -24,6 +25,13 @@ class TaskShardingSettings(BaseSettings):
             raise ValueError(
                 "WECODE_TASK_SHARD_COUNT must be a power of two between 1 and 1024"
             )
+        return v
+
+    @field_validator("WECODE_TASK_SEQ_INITIAL_SEQUENCE")
+    @classmethod
+    def validate_wecode_task_seq_initial_sequence(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("WECODE_TASK_SEQ_INITIAL_SEQUENCE must not be negative")
         return v
 
     class Config:

@@ -10,6 +10,8 @@ Monkey-patch app.api.endpoints.users endpoints to avoid modifying open-source fi
 - No changes to app/ code; patch is auto-applied on import from wecode.api.__init__
 """
 
+import functools
+import inspect
 import json
 from typing import Any, Dict, List, Optional
 
@@ -129,6 +131,17 @@ def _patch_wegent_runtime_route(route: Any) -> None:
     if getattr(route, "dependant", None) is not None:
         route.dependant.call = _patched_wegent_runtime_user
     route.app = request_response(route.get_route_handler())
+
+
+def _wrap_current_user_endpoint(endpoint: Any) -> Any:
+    @functools.wraps(endpoint)
+    async def patched_endpoint(*args, **kwargs):
+        current_user = await endpoint(*args, **kwargs)
+        return _replace_placeholders(current_user)
+
+    patched_endpoint.__signature__ = inspect.signature(endpoint)  # type: ignore[attr-defined]
+    setattr(patched_endpoint, "_wecode_patched", True)
+    return patched_endpoint
 
 
 def _load_users_module() -> Any:
@@ -263,13 +276,7 @@ def apply_patch() -> None:
                         and callable(endpoint)
                         and not getattr(endpoint, "_wecode_patched", False)
                     ):
-                        orig_endpoint = endpoint
-
-                        async def patched_endpoint(*args, **kwargs):
-                            current_user = await orig_endpoint(*args, **kwargs)
-                            return _replace_placeholders(current_user)
-
-                        setattr(patched_endpoint, "_wecode_patched", True)
+                        patched_endpoint = _wrap_current_user_endpoint(endpoint)
                         route.endpoint = patched_endpoint
                         if getattr(route, "dependant", None) is not None:
                             route.dependant.call = patched_endpoint
