@@ -109,7 +109,7 @@ def test_resolve_task_skills_uses_batched_kind_loading_for_bots_and_ghosts():
             side_effect=[ghost_crd_a, ghost_crd_b],
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {
@@ -230,7 +230,7 @@ def test_resolve_task_skills_returns_refs_for_ghost_task_and_subscription_source
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -346,7 +346,7 @@ def test_resolve_task_skills_includes_user_default_refs_without_preloading(
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -440,7 +440,7 @@ def test_resolve_task_skills_adds_force_preloaded_user_default_skills_to_preload
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -525,7 +525,7 @@ def test_resolve_task_skills_passes_context_to_user_default_skill_refs(
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -638,7 +638,7 @@ def test_resolve_task_skills_prefers_requested_skill_refs_over_subscription_and_
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
