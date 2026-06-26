@@ -224,7 +224,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
         bind_shell: "claudecode".to_owned(),
         connection: wegent_executor::config::device::ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
-            auth_token: "Bearer wg-token".to_owned(),
+            auth_token: "bEaReR\twg-token".to_owned(),
         },
         ..DeviceConfig::default()
     };

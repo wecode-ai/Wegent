@@ -4,10 +4,12 @@
 
 use std::{
     env,
-    net::{IpAddr, UdpSocket},
+    net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     time::Duration,
 };
+
+use reqwest::Url;
 
 use crate::{
     config::device::{DeviceConfig, UpdateConfig},
@@ -43,7 +45,13 @@ pub struct LocalBackendConfig {
 
 impl LocalBackendConfig {
     pub fn from_device_config(config: DeviceConfig) -> Self {
-        let client_ip = detect_client_ip();
+        let backend_url = config
+            .connection
+            .backend_url
+            .trim()
+            .trim_end_matches('/')
+            .to_owned();
+        let client_ip = detect_client_ip(&backend_url);
         let runtime_transfer_host = env::var("RUNTIME_TRANSFER_HOST")
             .ok()
             .map(|value| value.trim().to_owned())
@@ -51,12 +59,7 @@ impl LocalBackendConfig {
             .unwrap_or_else(|| client_ip.clone());
 
         Self {
-            backend_url: config
-                .connection
-                .backend_url
-                .trim()
-                .trim_end_matches('/')
-                .to_owned(),
+            backend_url,
             auth_token: normalize_token(&config.connection.auth_token),
             device_id: normalize_nonempty(config.device_id, "local-device"),
             device_name: normalize_nonempty(config.device_name, &default_device_name()),
@@ -116,11 +119,13 @@ fn is_unusable_ip(address: IpAddr) -> bool {
 
 fn normalize_token(token: &str) -> String {
     let token = token.trim();
-    token
-        .strip_prefix("Bearer ")
-        .or_else(|| token.strip_prefix("bearer "))
-        .unwrap_or(token)
-        .to_owned()
+    if let Some(separator) = token.find(char::is_whitespace) {
+        let (scheme, value) = token.split_at(separator);
+        if scheme.eq_ignore_ascii_case("bearer") {
+            return value.trim().to_owned();
+        }
+    }
+    token.to_owned()
 }
 
 fn normalize_nonempty(value: String, default: &str) -> String {
@@ -141,16 +146,34 @@ fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
         .unwrap_or_else(|| Duration::from_secs(default_seconds))
 }
 
-fn detect_client_ip() -> String {
-    UdpSocket::bind("0.0.0.0:0")
-        .and_then(|socket| {
-            socket.connect("8.8.8.8:80")?;
-            socket.local_addr()
-        })
-        .ok()
-        .map(|address| address.ip().to_string())
-        .filter(|ip| is_usable_device_ip(ip))
-        .unwrap_or_else(|| "127.0.0.1".to_owned())
+fn detect_client_ip(backend_url: &str) -> String {
+    detect_route_source_ip(backend_url).unwrap_or_else(|| "127.0.0.1".to_owned())
+}
+
+fn detect_route_source_ip(backend_url: &str) -> Option<String> {
+    let backend_addr = backend_socket_addr(backend_url)?;
+    let bind_addr = match backend_addr {
+        SocketAddr::V4(_) => "0.0.0.0:0",
+        SocketAddr::V6(_) => "[::]:0",
+    };
+    let socket = UdpSocket::bind(bind_addr).ok()?;
+    socket.connect(backend_addr).ok()?;
+    let source_ip = socket.local_addr().ok()?.ip();
+    is_valid_source_ip(source_ip).then(|| source_ip.to_string())
+}
+
+fn backend_socket_addr(backend_url: &str) -> Option<SocketAddr> {
+    let url = Url::parse(backend_url).ok()?;
+    let host = url.host_str()?;
+    let port = url.port_or_known_default()?;
+    (host, port).to_socket_addrs().ok()?.next()
+}
+
+fn is_valid_source_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => !address.is_unspecified() && !address.is_multicast(),
+        IpAddr::V6(address) => !address.is_unspecified() && !address.is_multicast(),
+    }
 }
 
 fn default_device_name() -> String {
@@ -165,4 +188,22 @@ fn home_dir() -> PathBuf {
         .or_else(|_| env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_client_ip, normalize_token};
+
+    #[test]
+    fn normalize_token_strips_bearer_scheme_case_insensitively() {
+        assert_eq!(normalize_token("Bearer wg-token"), "wg-token");
+        assert_eq!(normalize_token("bEaReR\t  wg-token  "), "wg-token");
+        assert_eq!(normalize_token("Token wg-token"), "Token wg-token");
+        assert_eq!(normalize_token("wg-token"), "wg-token");
+    }
+
+    #[test]
+    fn detect_client_ip_uses_backend_route_source_address() {
+        assert_eq!(detect_client_ip("http://127.0.0.1:8000"), "127.0.0.1");
+    }
 }
