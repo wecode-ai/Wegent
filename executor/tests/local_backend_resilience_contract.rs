@@ -14,8 +14,9 @@ use serde_json::{json, Value};
 use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig, UpdateConfig},
     local::backend::{
-        EventHandler, LocalBackendClient, LocalBackendConfig, LocalBackendRunner,
-        LocalBackendTransport,
+        local_backend_connection_failure_log_line, local_backend_registered_log_line,
+        local_backend_starting_log_line, EventHandler, LocalBackendClient, LocalBackendConfig,
+        LocalBackendRunner, LocalBackendTransport,
     },
 };
 
@@ -71,6 +72,33 @@ async fn send_heartbeat_propagates_transport_error() {
         .unwrap_err();
 
     assert_eq!(error, "socket closed");
+}
+
+#[test]
+fn local_backend_connection_failure_log_line_includes_backend_url() {
+    assert_eq!(
+        local_backend_connection_failure_log_line(
+            "http://localhost:8000",
+            "device:register timed out",
+        ),
+        "Wegent executor local backend connection failed backend_url=http://localhost:8000 error=\"device:register timed out\""
+    );
+}
+
+#[test]
+fn local_backend_starting_log_line_includes_backend_url_and_device() {
+    assert_eq!(
+        local_backend_starting_log_line("http://localhost:8000", "device-1"),
+        "Wegent executor local backend runner starting backend_url=http://localhost:8000 device_id=device-1"
+    );
+}
+
+#[test]
+fn local_backend_registered_log_line_includes_backend_url_and_device() {
+    assert_eq!(
+        local_backend_registered_log_line("http://localhost:8000", "device-1"),
+        "Wegent executor local backend registered backend_url=http://localhost:8000 device_id=device-1"
+    );
 }
 
 #[tokio::test]

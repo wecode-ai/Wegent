@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, future::Future, io::Write, net::SocketAddr};
+use std::{env, future::Future, net::SocketAddr};
 
 mod config;
 
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use crate::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, task_fields, write_executor_log_line},
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
 };
@@ -81,8 +81,7 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|error| format!("failed to bind executor server at {bind_addr}: {error}"))?;
-    println!("{}", startup_log_line(bind_addr));
-    let _ = std::io::stdout().flush();
+    write_executor_log_line(&startup_log_line(bind_addr));
 
     axum::serve(listener, create_docker_router_from_env()?)
         .await

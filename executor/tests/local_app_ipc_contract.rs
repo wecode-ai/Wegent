@@ -10,7 +10,10 @@ use std::{
 
 use serde_json::{json, Value};
 use wegent_executor::local::{
-    app_ipc::{app_ipc_socket_path, AppIpcError, AppIpcServer, RuntimeWorkHandler},
+    app_ipc::{
+        app_ipc_listening_log_line, app_ipc_socket_path, AppIpcError, AppIpcServer,
+        RuntimeWorkHandler,
+    },
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
 
@@ -162,6 +165,14 @@ fn app_ipc_socket_path_can_be_overridden() {
     );
 
     assert_eq!(app_ipc_socket_path(), socket_path);
+}
+
+#[test]
+fn app_ipc_listening_log_line_includes_device_and_socket_path() {
+    assert_eq!(
+        app_ipc_listening_log_line("device-1", "/tmp/wegent executor/app-ipc.sock"),
+        "Wegent executor app IPC listening device_id=device-1 socket_path=\"/tmp/wegent executor/app-ipc.sock\""
+    );
 }
 
 #[cfg(unix)]
