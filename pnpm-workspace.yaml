@@ -2,3 +2,10 @@ packages:
   - frontend
   - wework
   - packages/*
+allowBuilds:
+  core-js: true
+  esbuild: true
+  msw: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
