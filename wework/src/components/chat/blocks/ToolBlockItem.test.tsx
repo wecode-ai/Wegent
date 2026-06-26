@@ -86,6 +86,37 @@ describe('ToolBlockItem', () => {
     )
   })
 
+  test('renders web search tools without raw JSON details', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'web-search-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'web_search',
+          toolInput: {
+            type: 'search',
+            query: 'Beijing weather today June 17 2026 temperature rain',
+          },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('web-search-block-detail')).toHaveTextContent(
+      'Beijing weather today June 17 2026 temperature rain'
+    )
+    expect(screen.queryByText(/"query"/)).not.toBeInTheDocument()
+  })
+
   test('renders process text code blocks with shared syntax highlighting', () => {
     render(
       <ToolBlockItem

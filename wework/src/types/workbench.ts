@@ -16,6 +16,7 @@ import type {
   WorkbenchMessage as CoreWorkbenchMessage,
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
+  WorkbenchFileChangesBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
@@ -36,13 +37,19 @@ export type ThinkingBlock = WorkbenchThinkingBlock
 
 export type TextBlock = WorkbenchTextBlock
 
-export type ProcessingBlock = WorkbenchProcessingBlock
+export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
+
+export type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
 
 export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
 
 export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
 
-export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary> & {
+export type WorkbenchMessage = Omit<
+  CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>,
+  'blocks'
+> & {
+  blocks?: ProcessingBlock[]
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null

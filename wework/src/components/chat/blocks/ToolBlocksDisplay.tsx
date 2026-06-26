@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, TransitionEvent } from 'react'
 import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
 import {
   buildProcessingDisplayRows,
   isCommandToolName,
+  isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -20,6 +24,7 @@ interface ToolBlocksDisplayProps {
   startedAt?: number
   forceExpanded?: boolean
   showSummary?: boolean
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }
 
@@ -29,10 +34,13 @@ export function ToolBlocksDisplay({
   startedAt,
   forceExpanded = false,
   showSummary = true,
+  stateKey,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
+    stateKey ? `${stateKey}:processing` : undefined
+  )
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -84,12 +92,18 @@ export function ToolBlocksDisplay({
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
         {rows.map(row =>
           row.type === 'activity_group' ? (
-            <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+            <ToolActivityGroup
+              key={row.id}
+              row={row}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
           ) : (
             <ToolBlockItem
               key={row.id}
               block={row.block}
               forceExpanded={isRunning && row.block.type === 'tool'}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )
@@ -97,7 +111,7 @@ export function ToolBlocksDisplay({
         {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
       </div>
     ),
-    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows]
+    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
   )
 
   if (blocks.length === 0 && !isStreaming) return null
@@ -119,7 +133,7 @@ export function ToolBlocksDisplay({
           >
             <span>{duration}</span>
             <svg
-              className="h-3 w-3 -rotate-90"
+              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -130,7 +144,7 @@ export function ToolBlocksDisplay({
           </button>
         </div>
       ) : null}
-      <CollapsibleProcessingContent expanded={expanded}>
+      <CollapsibleProcessingContent expanded={expanded} keepMounted>
         {processingContent}
       </CollapsibleProcessingContent>
     </div>
@@ -140,21 +154,83 @@ export function ToolBlocksDisplay({
 function CollapsibleProcessingContent({
   expanded,
   children,
+  keepMounted = false,
+  testId = 'processing-collapse-content',
 }: {
   expanded: boolean
   children: ReactNode
+  keepMounted?: boolean
+  testId?: string
 }) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const previousExpandedRef = useRef(expanded)
+  const [isRendered, setIsRendered] = useState(() => expanded || keepMounted)
+  const [maxHeight, setMaxHeight] = useState(() => (expanded ? 'none' : '0px'))
+  const shouldRender = expanded || keepMounted || isRendered
+
+  if (expanded && !isRendered) {
+    setIsRendered(true)
+  }
+
+  useLayoutEffect(() => {
+    if (!shouldRender) return
+
+    const content = contentRef.current
+    if (!content) return
+
+    const wasExpanded = previousExpandedRef.current
+    let frame: number | undefined
+
+    if (expanded) {
+      setMaxHeight(wasExpanded ? 'none' : `${content.scrollHeight}px`)
+    } else {
+      if (wasExpanded) {
+        setMaxHeight(`${content.scrollHeight}px`)
+        frame = requestAnimationFrame(() => setMaxHeight('0px'))
+      } else {
+        setMaxHeight('0px')
+      }
+    }
+
+    previousExpandedRef.current = expanded
+
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [expanded, shouldRender])
+
+  const handleTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.propertyName !== 'max-height') return
+    if (expanded) {
+      setMaxHeight('none')
+      return
+    }
+    if (!keepMounted) setIsRendered(false)
+  }
+
   return (
     <div
-      data-testid="processing-collapse-content"
+      data-testid={testId}
       aria-hidden={!expanded}
       inert={!expanded ? true : undefined}
+      onTransitionEnd={handleTransitionEnd}
       className={[
-        'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
-        expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0',
+        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
       ].join(' ')}
+      style={{ maxHeight }}
     >
-      <div className="min-h-0 overflow-hidden">{children}</div>
+      {shouldRender ? (
+        <div
+          ref={contentRef}
+          className={[
+            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            expanded ? 'translate-y-0' : '-translate-y-1',
+          ].join(' ')}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -164,9 +240,11 @@ function ToolActivityGroup({
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
   const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
 
   return (
@@ -185,15 +263,36 @@ function ToolActivityGroup({
           strokeWidth={2}
         />
       </button>
-      {expanded && (
-        <div className="mt-2 flex min-w-0 flex-col gap-3 border-l border-border pl-4">
-          {row.blocks.map(block => (
-            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          ))}
+      <CollapsibleProcessingContent expanded={expanded} testId="processing-activity-group-content">
+        <div
+          className={[
+            'mt-2 flex min-w-0 flex-col gap-3',
+            isWebSearchGroup ? '' : 'border-l border-border pl-4',
+          ].join(' ')}
+        >
+          {isWebSearchGroup ? (
+            <WebSearchActivityDetails blocks={row.blocks} />
+          ) : (
+            row.blocks.map(block => (
+              <ToolBlockItem
+                key={block.id}
+                block={block}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            ))
+          )}
         </div>
-      )}
+      </CollapsibleProcessingContent>
     </div>
   )
+}
+
+function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
+  const items = getWebSearchActivityItems(blocks)
+
+  if (items.length === 0) return null
+
+  return <WebSearchActivityRows items={items} />
 }
 
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {

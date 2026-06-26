@@ -1,4 +1,4 @@
-import type { CodexReference } from '@/types/api'
+import type { CodexReference, TurnFileChangesSummary } from '@/types/api'
 import { classifyMarkdownLink, splitMarkdownFileLineSuffix } from './assistantMarkdownLinks'
 
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g
@@ -20,12 +20,17 @@ const CODEX_REFERENCE_DOCUMENT_EXTENSIONS = new Set([
 
 export function getAssistantReferences(
   references: CodexReference[] | null | undefined,
-  content: string
+  content: string,
+  fileChanges?: TurnFileChangesSummary | null
 ): CodexReference[] {
   const explicitReferences =
     references?.filter(reference => reference.path && reference.path.trim()) ?? []
   return filterCodexDocumentReferences(
-    uniqueCodexReferences([...explicitReferences, ...extractAssistantFileReferences(content)])
+    uniqueCodexReferences([
+      ...explicitReferences,
+      ...extractFileChangeReferences(fileChanges),
+      ...extractAssistantFileReferences(content),
+    ])
   )
 }
 
@@ -52,6 +57,18 @@ function extractAssistantFileReferences(content: string): CodexReference[] {
   return uniqueCodexReferences(references)
 }
 
+function extractFileChangeReferences(
+  fileChanges: TurnFileChangesSummary | null | undefined
+): CodexReference[] {
+  if (!fileChanges) return []
+  return fileChanges.files
+    .filter(file => isCodexDocumentReferencePath(file.path))
+    .map(file => ({
+      path: file.path,
+      title: basename(file.path),
+    }))
+}
+
 function unwrapMarkdownHref(rawHref: string | undefined): string | undefined {
   const value = rawHref?.trim()
   if (!value) return undefined
@@ -73,18 +90,35 @@ function normalizeCodexReference(reference: CodexReference): CodexReference | nu
 }
 
 function uniqueCodexReferences(references: CodexReference[]): CodexReference[] {
-  const seen = new Set<string>()
   const uniqueReferences: CodexReference[] = []
   for (const reference of references) {
     const normalizedReference = normalizeCodexReference(reference)
     if (!normalizedReference) continue
 
-    const key = normalizedReference.path
-    if (seen.has(key)) continue
-    seen.add(key)
+    if (
+      uniqueReferences.some(existingReference =>
+        referencePathsMatch(existingReference.path, normalizedReference.path)
+      )
+    ) {
+      continue
+    }
     uniqueReferences.push(normalizedReference)
   }
   return uniqueReferences
+}
+
+function referencePathsMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeReferencePath(left)
+  const normalizedRight = normalizeReferencePath(right)
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.endsWith(`/${normalizedRight}`) ||
+    normalizedRight.endsWith(`/${normalizedLeft}`)
+  )
+}
+
+function normalizeReferencePath(path: string): string {
+  return path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
 }
 
 function filterCodexDocumentReferences(references: CodexReference[]): CodexReference[] {

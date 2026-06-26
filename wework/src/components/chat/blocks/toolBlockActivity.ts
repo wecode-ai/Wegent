@@ -65,6 +65,10 @@ export function buildProcessingDisplayRows(
 }
 
 export function summarizeToolBlocks(blocks: ToolBlock[]): string {
+  if (isWebSearchActivityGroup(blocks)) {
+    return '已搜索网页'
+  }
+
   const stats = getActivityStats(blocks)
   const parts: string[] = []
   const exploreParts: string[] = []
@@ -158,6 +162,14 @@ function isCompletedToolBlock(block: ToolBlock): boolean {
 
 export function isCommandToolName(name: string): boolean {
   return COMMAND_TOOLS.has(name.toLowerCase())
+}
+
+export function isWebSearchToolName(name: string): boolean {
+  return name.toLowerCase() === 'web_search'
+}
+
+export function isWebSearchActivityGroup(blocks: ToolBlock[]): boolean {
+  return blocks.length > 0 && blocks.every(block => isWebSearchToolName(block.toolName))
 }
 
 function getToolGroupId(blocks: ToolBlock[]): string {
