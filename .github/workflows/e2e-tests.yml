@@ -704,6 +704,18 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
+      - name: Warm frontend E2E routes
+        working-directory: ./frontend
+        run: |
+          for url in \
+            "http://localhost:3000/chat?teamId=0" \
+            "http://localhost:3000/chat?agent=code&teamId=0" \
+            "http://localhost:3000/devices/chat?deviceId=e2e-claudecode-device&teamId=0"
+          do
+            curl -fsS --max-time 120 "$url" > /dev/null \
+              || (cat next-dev.log && exit 1)
+          done
+
       - name: Run Executor E2E tests
         working-directory: ./frontend
         env:
