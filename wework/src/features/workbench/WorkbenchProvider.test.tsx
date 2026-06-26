@@ -309,6 +309,17 @@ function BootstrapProbe() {
   )
 }
 
+function CloudWorkStatusProbe() {
+  const { cloudWorkStatus } = useWorkbench()
+  return (
+    <div>
+      <span data-testid="cloud-work-availability">{cloudWorkStatus.availability}</span>
+      <span data-testid="cloud-work-devices-check">{cloudWorkStatus.checks.devices}</span>
+      <span data-testid="cloud-work-error">{cloudWorkStatus.error ?? ''}</span>
+    </div>
+  )
+}
+
 function DeviceStatusProbe() {
   const workbench = useWorkbench()
   return <span data-testid="device-status">{workbench.state.devices[0]?.status ?? 'missing'}</span>
@@ -657,6 +668,24 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('marks successful empty cloud devices as empty instead of unavailable', async () => {
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
+      },
+    })
+
+    renderWorkbench(<CloudWorkStatusProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('empty')
+    )
+    expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
+    expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
   test('applies device online events immediately when refresh falls back would be stale', async () => {

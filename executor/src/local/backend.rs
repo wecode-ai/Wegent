@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -67,6 +68,12 @@ const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
+const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
+/// Number of consecutive heartbeat failures tolerated before tearing down the
+/// connection and reconnecting. A single transient failure (timeout or socket
+/// hiccup) should not force a full reconnect, so we only reconnect once the
+/// failures persist past this threshold.
+const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 3;
 
 pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -602,19 +609,33 @@ where
     }
 
     async fn heartbeat_until_reconnect(&self) {
-        let mut consecutive_failures = 0usize;
+        let mut consecutive_failures = 0_u32;
         loop {
             sleep(self.client.config.heartbeat_interval).await;
-            match self
+            // Treat both a rejected ack and a transport error as a heartbeat
+            // failure. A single transient failure should not tear down the
+            // connection, so we only reconnect after the failures persist past
+            // MAX_CONSECUTIVE_HEARTBEAT_FAILURES. The outer run_forever loop then
+            // keeps reconnecting until registration succeeds again.
+            let failure = match self
                 .client
                 .send_heartbeat(self.client.config.heartbeat_timeout)
                 .await
             {
-                Ok(true) => consecutive_failures = 0,
-                Ok(false) | Err(_) => consecutive_failures += 1,
-            }
+                Ok(true) => {
+                    consecutive_failures = 0;
+                    continue;
+                }
+                Ok(false) => "heartbeat was rejected by backend".to_owned(),
+                Err(error) => error,
+            };
 
-            if consecutive_failures >= 3 {
+            consecutive_failures += 1;
+            write_executor_error_line(&local_backend_heartbeat_failure_log_line(
+                &self.client.config.backend_url,
+                &failure,
+            ));
+            if consecutive_failures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES {
                 let _ = self.client.disconnect().await;
                 return;
             }
@@ -652,18 +673,36 @@ pub fn local_backend_registered_log_line(backend_url: &str, device_id: &str) -> 
     )
 }
 
+pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) -> String {
+    format_executor_log(
+        "local backend heartbeat failed",
+        &[
+            ("backend_url", backend_url.to_owned()),
+            ("error", error.to_owned()),
+        ],
+    )
+}
+
 pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
-    let device_id = backend_config.device_id.clone();
+    let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
 
-    let ipc_task = tokio::spawn(async move { serve_app_ipc_sidecar(device_id).await });
+    let ipc_task = tokio::spawn(async move { serve_app_ipc_sidecar(app_ipc_device_id).await });
     let backend_task = tokio::spawn(async move { runner.run_forever().await });
 
     tokio::select! {
         result = ipc_task => task_result("app IPC sidecar", result),
         result = backend_task => task_result("local backend runner", result),
     }
+}
+
+fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {
+    env::var(APP_IPC_DEVICE_ID_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| config.device_id.clone())
 }
 
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
@@ -698,4 +737,79 @@ fn runtime_error_response(error: AppIpcError) -> Value {
         "code": error.code,
         "error": error.message,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::device::UpdateConfig;
+    use std::{
+        ffi::OsString,
+        path::PathBuf,
+        sync::{Mutex as TestMutex, MutexGuard, OnceLock},
+        time::Duration,
+    };
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| TestMutex::new(()))
+            .lock()
+            .expect("env lock should be available")
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            env::set_var(key, value);
+        } else {
+            env::remove_var(key);
+        }
+    }
+
+    fn backend_config(device_id: &str) -> LocalBackendConfig {
+        LocalBackendConfig {
+            backend_url: "https://backend.example.com".to_string(),
+            auth_token: "token".to_string(),
+            device_id: device_id.to_string(),
+            device_name: "Cloud Device".to_string(),
+            device_type: "remote".to_string(),
+            app_device_id: String::new(),
+            bind_shell: "claudecode".to_string(),
+            executor_version: "1.0.0".to_string(),
+            client_ip: "127.0.0.1".to_string(),
+            runtime_transfer_host: "127.0.0.1".to_string(),
+            heartbeat_interval: Duration::from_secs(30),
+            heartbeat_timeout: Duration::from_secs(10),
+            registration_timeout: Duration::from_secs(10),
+            reconnect_delay: Duration::from_secs(1),
+            reconnect_delay_max: Duration::from_secs(30),
+            configured_capabilities: Vec::new(),
+            runtime_auth_home: PathBuf::from("/tmp/auth"),
+            local_workspace_root: PathBuf::from("/tmp/workspace"),
+            update: UpdateConfig::default(),
+        }
+    }
+
+    #[test]
+    fn app_ipc_sidecar_device_id_uses_explicit_app_device_id() {
+        let _guard = env_lock();
+        let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
+        env::set_var(APP_IPC_DEVICE_ID_ENV, "local-app-device");
+
+        let device_id = app_ipc_sidecar_device_id(&backend_config("local-app-device-cloud"));
+
+        restore_env(APP_IPC_DEVICE_ID_ENV, previous);
+        assert_eq!(device_id, "local-app-device");
+    }
+
+    #[test]
+    fn app_ipc_sidecar_device_id_falls_back_to_backend_device_id() {
+        let _guard = env_lock();
+        let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
+        env::remove_var(APP_IPC_DEVICE_ID_ENV);
+
+        let device_id = app_ipc_sidecar_device_id(&backend_config("remote-device"));
+
+        restore_env(APP_IPC_DEVICE_ID_ENV, previous);
+        assert_eq!(device_id, "remote-device");
+    }
 }

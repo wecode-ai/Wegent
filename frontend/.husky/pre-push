@@ -4,6 +4,13 @@
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT" || exit 1
 
+# Run Wework tests before allowing a push.
+if [ -d "wework" ]; then
+    echo "🧪 Running wework tests before push..."
+    pnpm --dir wework exec vitest run --coverage --passWithNoTests || exit $?
+    echo "✅ Wework tests passed"
+fi
+
 # Run AI push gate script
 if [ -f "scripts/hooks/ai-push-gate.sh" ]; then
     bash scripts/hooks/ai-push-gate.sh "$@"

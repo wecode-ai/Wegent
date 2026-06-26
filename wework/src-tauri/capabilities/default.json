@@ -30,6 +30,10 @@
     {
       "identifier": "http:default",
       "allow": [
+        { "url": "https://*/*" },
+        { "url": "http://*/*" },
+        { "url": "https://*:*/*" },
+        { "url": "http://*:*/*" },
         { "url": "http://localhost:*/*" },
         { "url": "http://127.0.0.1:*/*" }
       ]

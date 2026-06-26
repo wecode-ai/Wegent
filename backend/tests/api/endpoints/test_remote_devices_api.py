@@ -11,7 +11,6 @@ import pytest
 from app.api.endpoints import remote_devices
 from app.models.api_key import APIKey
 from app.models.kind import Kind
-from app.schemas.device import DeviceType
 
 
 class _FakeRequest:
@@ -24,12 +23,12 @@ class _FakeRequest:
 
 
 @pytest.mark.asyncio
-async def test_create_docker_start_command_creates_remote_device_crd(
+async def test_create_docker_start_command_creates_credentials_without_device_crd(
     monkeypatch,
     test_db,
     test_user,
 ):
-    """Docker onboarding should pre-register a remote Device CRD with a new API key."""
+    """Docker onboarding should create credentials without adding an offline device."""
     monkeypatch.setattr(
         remote_devices.settings,
         "BACKEND_INTERNAL_URL",
@@ -54,16 +53,10 @@ async def test_create_docker_start_command_creates_remote_device_crd(
             Kind.name == response.device_id,
             Kind.is_active == True,
         )
-        .one()
+        .one_or_none()
     )
-    spec = device.json["spec"]
-    assert spec["deviceType"] == DeviceType.REMOTE.value
-    assert spec["remoteConfig"]["provider"] == "docker"
-    assert spec["remoteConfig"]["image"] == "ghcr.io/wecode-ai/wegent-device:latest"
-    assert spec["remoteConfig"]["backendUrl"] == "https://backend.current.example"
-    assert spec["remoteConfig"]["publicBaseUrl"] == "http://localhost:17888"
+    assert device is None
     assert response.env["WEGENT_AUTH_TOKEN"].startswith("wg-")
-    assert response.env["WEGENT_AUTH_TOKEN"] not in str(spec["remoteConfig"])
     assert response.env["DEVICE_TYPE"] == "remote"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
@@ -71,6 +64,15 @@ async def test_create_docker_start_command_creates_remote_device_crd(
     assert "DEVICE_TYPE=remote" in response.command
     assert f"WEGENT_AUTH_TOKEN={response.env['WEGENT_AUTH_TOKEN']}" in response.command
     assert "<host-ip>" not in response.command
+    assert [command.kind for command in response.commands] == ["docker", "process"]
+    assert response.commands[0].command == response.command
+    assert "local_executor_install.sh" in response.commands[1].command
+    assert 'curl -fsSL "$INSTALL_URL" | bash' in response.commands[1].command
+    assert 'nohup "$EXECUTOR_BIN"' in response.commands[1].command
+    assert "$EXECUTOR_HOME/bin/wegent-executor" in response.commands[1].command
+    assert (
+        "DEVICE_PUBLIC_BASE_URL=http://localhost:17888" in response.commands[1].command
+    )
 
     api_key = (
         test_db.query(APIKey)

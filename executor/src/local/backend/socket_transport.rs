@@ -33,12 +33,8 @@ impl LocalBackendTransport for SocketIoTransport {
                 .namespace(NAMESPACE)
                 .auth(json!({ "token": config.auth_token }))
                 .transport_type(TransportType::Websocket)
-                .reconnect(true)
-                .reconnect_on_disconnect(true)
-                .reconnect_delay(
-                    duration_to_millis(config.reconnect_delay),
-                    duration_to_millis(config.reconnect_delay_max),
-                )
+                .reconnect(false)
+                .reconnect_on_disconnect(false)
                 .on("error", |payload: Payload, _socket: Client| {
                     async move {
                         eprintln!("local backend socket error: {payload:?}");
@@ -144,10 +140,6 @@ impl LocalBackendTransport for SocketIoTransport {
             .expect("handler lock")
             .push((event.to_owned(), handler));
     }
-}
-
-fn duration_to_millis(duration: Duration) -> u64 {
-    duration.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[allow(deprecated)]

@@ -16,6 +16,7 @@ export function WorkbenchPage() {
     codeCommentContexts,
     workspaceFileApi,
     currentRuntimeTaskRunning,
+    cloudWorkStatus,
     isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore,
@@ -44,6 +45,7 @@ export function WorkbenchPage() {
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
+    getRemoteDeviceStartupCommand,
     refreshWorkLists,
     upgradeDevice,
     createProject,
@@ -116,6 +118,7 @@ export function WorkbenchPage() {
       codeCommentContexts={codeCommentContexts}
       workspaceFileApi={workspaceFileApi}
       currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+      cloudWorkStatus={cloudWorkStatus}
       isAwaitingAssistantStart={isAwaitingAssistantStart}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
@@ -139,6 +142,7 @@ export function WorkbenchPage() {
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onOpenStandaloneWorkspace={openStandaloneWorkspace}
+      onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}

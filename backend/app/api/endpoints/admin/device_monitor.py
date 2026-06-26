@@ -75,7 +75,7 @@ class AdminDeviceInfo(BaseModel):
     name: str = Field(..., description="Device name")
     status: DeviceStatusEnum = Field(..., description="Device online status")
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local or cloud)"
+        DeviceType.LOCAL, description="Device type (local, app, cloud, or remote)"
     )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE, description="Shell runtime binding"
@@ -105,7 +105,7 @@ class AdminDeviceStats(BaseModel):
         ..., description="Count by status (online, offline, busy)"
     )
     by_device_type: Dict[str, int] = Field(
-        ..., description="Count by device type (local, cloud)"
+        ..., description="Count by device type (local, app, cloud, remote)"
     )
     by_bind_shell: Dict[str, int] = Field(
         ..., description="Count by bind shell (claudecode, openclaw)"
@@ -123,7 +123,7 @@ def _build_device_query(
 
     Args:
         db: Database session
-        device_type: Filter by device type (local/cloud)
+        device_type: Filter by device type (local/app/cloud/remote)
         bind_shell: Filter by bind shell (claudecode/openclaw)
         search: Search by device name or device ID
         search_user_ids: User IDs matching the search term (for username search)
@@ -339,7 +339,7 @@ async def get_all_devices(
     Args:
         page: Page number (1-indexed)
         limit: Items per page
-        device_type: Filter by device type (local/cloud)
+        device_type: Filter by device type (local/app/cloud/remote)
         bind_shell: Filter by bind shell (claudecode/openclaw)
         search: Search by device name, device ID or username
         db: Database session
@@ -482,6 +482,7 @@ async def get_device_stats(
     }
     by_device_type: Dict[str, int] = {
         DeviceType.LOCAL.value: 0,
+        DeviceType.APP.value: 0,
         DeviceType.CLOUD.value: 0,
         DeviceType.REMOTE.value: 0,
     }

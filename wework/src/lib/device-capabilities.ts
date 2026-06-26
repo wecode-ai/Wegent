@@ -48,6 +48,10 @@ export function isRemoteDevice(device: Pick<DeviceInfo, 'device_type'>): boolean
   return device.device_type === 'remote'
 }
 
+export function isAppDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
+  return device.device_type === 'app'
+}
+
 export function isUsableDevice(device: Pick<DeviceInfo, 'status'>): boolean {
   return device.status === 'online' || device.status === 'busy'
 }

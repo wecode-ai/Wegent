@@ -98,7 +98,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type?: 'local' | 'cloud' | string
+  device_type?: 'local' | 'app' | 'cloud' | 'remote' | string
   capabilities?: string[] | null
   slot_used?: number
   slot_max?: number
@@ -111,6 +111,7 @@ export interface DeviceInfo {
   bind_shell?: 'claudecode' | 'openclaw' | string
   client_ip?: string | null
   runtime_transfer_host?: string | null
+  app_device_id?: string | null
 }
 
 export interface DeviceRunningTask {

@@ -217,6 +217,54 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('scrolls to the bottom after a conversation finishes loading', () => {
+    const message = {
+      id: 'loaded-message',
+      role: 'assistant' as const,
+      content: '加载后的历史消息',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[message]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 180,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.scroll(scroller)
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[]} loading />
+    )
+
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[message]} />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 600,
+      behavior: 'auto',
+    })
+  })
+
   test('does not pull the user back down when they have scrolled up', () => {
     const initialMessage = {
       id: '1',

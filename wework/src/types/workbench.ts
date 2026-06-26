@@ -76,6 +76,17 @@ export interface GuidanceWorkbenchMessage {
   error?: string
 }
 
+export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
+export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+
+export interface CloudWorkStatus {
+  availability: CloudWorkAvailability
+  checks: Record<CloudWorkCheckKey, CloudWorkCheckStatus>
+  error: string | null
+  updatedAt: string | null
+}
+
 export interface WorkbenchState {
   user: User | null
   defaultTeam: Team | null

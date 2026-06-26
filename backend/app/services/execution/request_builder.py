@@ -669,7 +669,7 @@ class TaskRequestBuilder:
     ) -> str:
         """Build a concise execution environment label for web guidance."""
         if has_device_id:
-            if device_type == "local":
+            if device_type in {"local", "app"}:
                 return "local device selected in Wegent"
             if device_type == "cloud":
                 return "cloud device or remote sandbox selected in Wegent"

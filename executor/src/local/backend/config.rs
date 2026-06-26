@@ -28,6 +28,7 @@ pub struct LocalBackendConfig {
     pub device_id: String,
     pub device_name: String,
     pub device_type: String,
+    pub app_device_id: String,
     pub bind_shell: String,
     pub executor_version: String,
     pub client_ip: String,
@@ -64,6 +65,7 @@ impl LocalBackendConfig {
             device_id: normalize_nonempty(config.device_id, "local-device"),
             device_name: normalize_nonempty(config.device_name, &default_device_name()),
             device_type: normalize_nonempty(config.device_type, "local"),
+            app_device_id: normalize_optional_env("WEGENT_APP_IPC_DEVICE_ID"),
             bind_shell: normalize_nonempty(config.bind_shell, "claudecode").to_ascii_lowercase(),
             executor_version: get_version(),
             client_ip,
@@ -135,6 +137,14 @@ fn normalize_nonempty(value: String, default: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+fn normalize_optional_env(name: &str) -> String {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
 }
 
 fn duration_from_env(name: &str, default_seconds: u64) -> Duration {

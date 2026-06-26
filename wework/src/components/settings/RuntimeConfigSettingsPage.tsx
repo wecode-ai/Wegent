@@ -11,16 +11,29 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
+import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
-import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/devices'
 
-function createRuntimeSettingsApis() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  const client = createHttpClient({ baseUrl: apiBaseUrl })
+interface CloudRuntimeSettingsConnection {
+  isConnected: boolean
+  apiBaseUrl?: string
+  token: string | null
+}
+
+function createRuntimeSettingsApis(connection: CloudRuntimeSettingsConnection) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  const client = createHttpClient({
+    baseUrl: connection.apiBaseUrl,
+    getToken: () => connection.token,
+    redirectOnUnauthorized: false,
+  })
   return {
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
@@ -62,12 +75,111 @@ function validateAuthJsonContent(content: string, invalidMessage: string) {
   }
 }
 
+function LocalCodexAuthStatusCard({
+  status,
+  loading,
+  error,
+  onRefresh,
+}: {
+  status: LocalRuntimeAuthStatus | null
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}) {
+  const { t } = useTranslation('common')
+  const exists = status?.exists === true
+  return (
+    <section
+      data-testid="local-codex-auth-status"
+      className="rounded-lg border border-border bg-background p-5"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+            <KeyRound className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.local_codex_auth_title', '本机 Codex auth.json')}
+              </h2>
+              <span
+                data-testid="local-codex-auth-status-pill"
+                className={`rounded-full px-2 py-0.5 text-xs ${
+                  exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+                }`}
+              >
+                {exists
+                  ? t('workbench.local_codex_auth_exists', '已找到')
+                  : t('workbench.local_codex_auth_missing', '未找到')}
+              </span>
+            </div>
+            <p className="mt-1 text-sm leading-6 text-text-secondary">
+              {t(
+                'workbench.local_codex_auth_description',
+                '本机运行 Codex 时会继续读取本机文件；这里不会展示明文，也不会默认上传。'
+              )}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          data-testid="local-codex-auth-refresh-button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-surface text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={t('workbench.runtime_config_refresh', '刷新')}
+          title={t('workbench.runtime_config_refresh', '刷新')}
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+        </button>
+      </div>
+      <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+        <div className="rounded-lg bg-surface px-3 py-2">
+          <div className="text-xs text-text-muted">
+            {t('workbench.runtime_config_target_path', '目标路径')}
+          </div>
+          <div className="mt-1 break-all font-mono text-xs text-text-primary">
+            {t('workbench.local_codex_auth_path_value', {
+              defaultValue: '本机 {{path}}',
+              path: status?.targetPath ?? '~/.codex/auth.json',
+            })}
+          </div>
+        </div>
+        <div className="rounded-lg bg-surface px-3 py-2">
+          <div className="text-xs text-text-muted">
+            {t('workbench.runtime_config_updated_at', '更新时间')}
+          </div>
+          <div className="mt-1 text-xs text-text-primary">
+            {formatRuntimeDate(status?.updatedAt) ||
+              t('workbench.runtime_config_never_updated', '从未更新')}
+          </div>
+        </div>
+        <div className="rounded-lg bg-surface px-3 py-2 sm:col-span-2">
+          <div className="flex items-center gap-1.5 text-xs text-text-muted">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            {status?.sha256
+              ? `SHA-256 ${shortDigest(status.sha256)}`
+              : t('workbench.local_codex_auth_no_digest', '没有可显示的摘要')}
+          </div>
+          {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 interface RuntimeConfigSettingsPageProps {
   runtime: UserRuntime
 }
 
 export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPageProps) {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [config, setConfig] = useState<UserRuntimeConfig | null>(null)
   const [devices, setDevices] = useState<DeviceInfo[]>([])
@@ -80,47 +192,79 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
   const [proxyUpdating, setProxyUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [localAuthStatus, setLocalAuthStatus] = useState<LocalRuntimeAuthStatus | null>(null)
+  const [localAuthLoading, setLocalAuthLoading] = useState(true)
+  const [localAuthError, setLocalAuthError] = useState<string | null>(null)
 
   const onlineDevices = useMemo(
     () => devices.filter(device => device.status === 'online' && isClaudeCodeDevice(device)),
-    [devices],
+    [devices]
   )
   const selectedImportDevice = useMemo(
     () =>
       onlineDevices.find(device => device.device_id === selectedImportDeviceId) ??
       onlineDevices[0] ??
       null,
-    [onlineDevices, selectedImportDeviceId],
+    [onlineDevices, selectedImportDeviceId]
   )
   const effectiveImportDeviceId = selectedImportDevice?.device_id ?? ''
 
-  const loadRuntimeConfig = useCallback(async (refresh = false) => {
-    if (refresh) {
-      setRefreshing(true)
-    } else {
-      setLoading(true)
-    }
-    setError(null)
+  const loadLocalAuthStatus = useCallback(async () => {
+    setLocalAuthLoading(true)
+    setLocalAuthError(null)
     try {
-      const { deviceApi, userApi } = createRuntimeSettingsApis()
-      const [nextConfig, nextDevices] = await Promise.all([
-        userApi.getRuntimeConfig(runtime),
-        deviceApi.getAllDevices(),
-      ])
-      setConfig(nextConfig)
-      setDevices(nextDevices.filter(isClaudeCodeDevice))
-    } catch (loadError) {
-      setError(
+      setLocalAuthStatus(await getLocalCodexAuthStatus())
+    } catch (statusError) {
+      setLocalAuthError(
         getErrorMessage(
-          loadError,
-          t('workbench.runtime_config_load_failed', '加载运行时配置失败'),
-        ),
+          statusError,
+          t('workbench.local_codex_auth_load_failed', '读取本机 Codex auth 状态失败')
+        )
       )
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      setLocalAuthLoading(false)
     }
-  }, [runtime, t])
+  }, [t])
+
+  useEffect(() => {
+    void Promise.resolve().then(loadLocalAuthStatus)
+  }, [loadLocalAuthStatus])
+
+  const loadRuntimeConfig = useCallback(
+    async (refresh = false) => {
+      if (!cloudConnection.isConnected) {
+        setLoading(false)
+        setRefreshing(false)
+        return
+      }
+      if (refresh) {
+        setRefreshing(true)
+      } else {
+        setLoading(true)
+      }
+      setError(null)
+      try {
+        const { deviceApi, userApi } = createRuntimeSettingsApis(cloudConnection)
+        const [nextConfig, nextDevices] = await Promise.all([
+          userApi.getRuntimeConfig(runtime),
+          deviceApi.getAllDevices(),
+        ])
+        setConfig(nextConfig)
+        setDevices(nextDevices.filter(isClaudeCodeDevice))
+      } catch (loadError) {
+        setError(
+          getErrorMessage(
+            loadError,
+            t('workbench.runtime_config_load_failed', '加载运行时配置失败')
+          )
+        )
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+      }
+    },
+    [cloudConnection, runtime, t]
+  )
 
   useEffect(() => {
     void Promise.resolve().then(() => loadRuntimeConfig())
@@ -132,7 +276,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
     setError(null)
     setNotice(null)
     try {
-      const { userApi } = createRuntimeSettingsApis()
+      const { userApi } = createRuntimeSettingsApis(cloudConnection)
       const nextConfig = await userApi.updateRuntimeConfig(runtime, {
         use_user_config: !config.use_user_config,
       })
@@ -141,8 +285,8 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       setError(
         getErrorMessage(
           updateError,
-          t('workbench.runtime_config_save_failed', '保存运行时配置失败'),
-        ),
+          t('workbench.runtime_config_save_failed', '保存运行时配置失败')
+        )
       )
     } finally {
       setUpdating(false)
@@ -160,19 +304,14 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
     setError(null)
     setNotice(null)
     try {
-      const { userApi } = createRuntimeSettingsApis()
+      const { userApi } = createRuntimeSettingsApis(cloudConnection)
       const nextConfig = await userApi.updateRuntimeConfig(runtime, {
         use_user_config: config.use_user_config,
         use_proxy: !config.use_proxy,
       })
       setConfig(nextConfig)
     } catch (proxyError) {
-      setError(
-        getErrorMessage(
-          proxyError,
-          t('workbench.runtime_config_proxy_toggle_failed'),
-        ),
-      )
+      setError(getErrorMessage(proxyError, t('workbench.runtime_config_proxy_toggle_failed')))
     } finally {
       setProxyUpdating(false)
     }
@@ -190,9 +329,9 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       const content = await file.text()
       validateAuthJsonContent(
         content,
-        t('workbench.runtime_config_invalid_json', 'auth.json 必须是有效 JSON 对象'),
+        t('workbench.runtime_config_invalid_json', 'auth.json 必须是有效 JSON 对象')
       )
-      const { userApi } = createRuntimeSettingsApis()
+      const { userApi } = createRuntimeSettingsApis(cloudConnection)
       const nextConfig = await userApi.uploadRuntimeAuthJson(runtime, content)
       setConfig(nextConfig)
       setNotice(t('workbench.runtime_config_upload_success', 'auth.json 已保存'))
@@ -200,8 +339,8 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       setError(
         getErrorMessage(
           uploadError,
-          t('workbench.runtime_config_upload_failed', '上传 auth.json 失败'),
-        ),
+          t('workbench.runtime_config_upload_failed', '上传 auth.json 失败')
+        )
       )
     } finally {
       setUploading(false)
@@ -214,19 +353,13 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
     setError(null)
     setNotice(null)
     try {
-      const { userApi } = createRuntimeSettingsApis()
-      const nextConfig = await userApi.importRuntimeAuthJson(
-        runtime,
-        effectiveImportDeviceId,
-      )
+      const { userApi } = createRuntimeSettingsApis(cloudConnection)
+      const nextConfig = await userApi.importRuntimeAuthJson(runtime, effectiveImportDeviceId)
       setConfig(nextConfig)
       setNotice(t('workbench.runtime_config_import_success', '已从设备导入 auth.json'))
     } catch (importError) {
       setError(
-        getErrorMessage(
-          importError,
-          t('workbench.runtime_config_import_failed', '从设备导入失败'),
-        ),
+        getErrorMessage(importError, t('workbench.runtime_config_import_failed', '从设备导入失败'))
       )
     } finally {
       setImporting(false)
@@ -241,6 +374,53 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
     : 'bg-muted text-text-muted'
   const updatedAt = formatRuntimeDate(config?.auth_json_updated_at)
   const activeDeviceName = selectedImportDevice?.name
+
+  if (!cloudConnection.isConnected) {
+    return (
+      <div data-testid="runtime-config-settings-page" className="mx-auto w-full max-w-[820px]">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
+            {t('workbench.runtime_config_title', 'Codex 认证')}
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            {t(
+              'workbench.runtime_config_cloud_required',
+              '本机 Codex 会继续使用本机 auth.json。连接云端后，才能上传或从设备导入 auth.json 并同步到云设备。'
+            )}
+          </p>
+        </div>
+        <div className="mt-8">
+          <LocalCodexAuthStatusCard
+            status={localAuthStatus}
+            loading={localAuthLoading}
+            error={localAuthError}
+            onRefresh={() => void loadLocalAuthStatus()}
+          />
+        </div>
+        <section
+          data-testid="runtime-config-cloud-required"
+          className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+              <KeyRound className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.cloud_connection_cloud_features', '连接云端后')}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">
+                {t(
+                  'workbench.runtime_config_cloud_required_desc',
+                  '云端 Codex 认证不会默认上传本机文件；只有你明确上传或从设备导入后，才会保存到服务端。'
+                )}
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div data-testid="runtime-config-settings-page" className="mx-auto w-full max-w-[820px]">
@@ -271,6 +451,15 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       </div>
 
       <div className="mt-8">
+        <LocalCodexAuthStatusCard
+          status={localAuthStatus}
+          loading={localAuthLoading}
+          error={localAuthError}
+          onRefresh={() => void loadLocalAuthStatus()}
+        />
+      </div>
+
+      <div className="mt-8">
         {loading ? (
           <div className="py-8 text-center text-sm text-text-secondary">
             {t('common.loading', '加载中...')}
@@ -297,7 +486,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                   <p className="mt-1 text-sm leading-6 text-text-secondary">
                     {t(
                       'workbench.runtime_config_codex_description',
-                      '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。',
+                      '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。'
                     )}
                   </p>
                 </div>
@@ -343,7 +532,10 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
               <div className="rounded-lg bg-surface px-3 py-2 sm:col-span-2">
                 <div className="flex items-center gap-1.5 text-xs text-text-muted">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  {t('workbench.runtime_config_secret_stored', '认证信息会加密保存，不会在页面展示明文。')}
+                  {t(
+                    'workbench.runtime_config_secret_stored',
+                    '认证信息会加密保存，不会在页面展示明文。'
+                  )}
                 </div>
                 {config?.auth_json_sha256 && (
                   <div className="mt-1 font-mono text-xs text-text-secondary">
@@ -385,9 +577,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                   role="switch"
                   aria-checked={config?.use_proxy ?? false}
                   onClick={handleToggleUseProxy}
-                  disabled={
-                    proxyUpdating || (!config?.proxy_configured && !config?.use_proxy)
-                  }
+                  disabled={proxyUpdating || (!config?.proxy_configured && !config?.use_proxy)}
                   className={[
                     'inline-flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-full px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50',
                     config?.use_proxy
@@ -429,7 +619,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.runtime_config_device_description',
-                    '从一台在线 Claude Code 设备读取 auth.json，系统校验后加密保存。',
+                    '从一台在线 Claude Code 设备读取 auth.json，系统校验后加密保存。'
                   )}
                 </p>
 
@@ -444,7 +634,10 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                   >
                     {onlineDevices.length === 0 ? (
                       <option value="">
-                        {t('workbench.runtime_config_no_online_devices', '没有在线 Claude Code 设备')}
+                        {t(
+                          'workbench.runtime_config_no_online_devices',
+                          '没有在线 Claude Code 设备'
+                        )}
                       </option>
                     ) : (
                       onlineDevices.map(device => (
@@ -492,7 +685,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.runtime_config_upload_description',
-                    '选择本机的 auth.json，系统会校验 JSON 后加密保存。',
+                    '选择本机的 auth.json，系统会校验 JSON 后加密保存。'
                   )}
                 </p>
                 <input

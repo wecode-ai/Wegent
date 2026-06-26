@@ -19,6 +19,7 @@ export function PluginsPage() {
   const isMobile = useIsMobile()
   const {
     state,
+    cloudWorkStatus,
     selectProject,
     startNewChat,
     startStandaloneChat,
@@ -29,7 +30,9 @@ export function PluginsPage() {
     archiveProjectConversations,
     archiveProjectsConversations,
     archiveChatConversations,
+    selectStandaloneDevice,
     openStandaloneWorkspace,
+    getRemoteDeviceStartupCommand,
     refreshDevices,
     refreshWorkLists,
     createProject,
@@ -96,6 +99,7 @@ export function PluginsPage() {
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          cloudWorkStatus={cloudWorkStatus}
           standaloneDeviceId={state.standaloneDeviceId}
           standaloneWorkspacePath={state.standaloneWorkspacePath}
           preferredDeviceId={
@@ -112,6 +116,8 @@ export function PluginsPage() {
           onArchiveProjectsConversations={archiveProjectsConversations}
           onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
+          onSelectStandaloneDevice={selectStandaloneDevice}
+          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}

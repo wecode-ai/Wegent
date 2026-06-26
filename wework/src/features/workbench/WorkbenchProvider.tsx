@@ -16,9 +16,10 @@ import {
   type EnvironmentDiffMode,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
-import { ApiError, createHttpClient } from '@/api/http'
+import { ApiError } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
 import { createLocalAppServices } from '@/api/local/localServices'
+import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -26,8 +27,10 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
-import { getToken } from '@/api/auth'
+import { createBackendWorkbenchServices, WEWORK_CLIENT_ORIGIN } from '@/api/backend/backendServices'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { resolveModelExecutionSelection } from '@/features/cloud-connection/modelExecution'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
@@ -93,9 +96,13 @@ import type {
   User,
 } from '@/types/api'
 import type { DeviceUpgradeState, DeviceUpgradeStatusPayload } from '@/types/device-events'
+import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
+  CloudWorkCheckKey,
+  CloudWorkCheckStatus,
+  CloudWorkStatus,
   GuidanceWorkbenchMessage,
   MessageSource,
   ProcessingBlock,
@@ -103,11 +110,7 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import {
-  createSocketClient,
-  normalizeWorkbenchBlockStatus,
-  reduceWorkbenchMessages,
-} from '@wegent/chat-core'
+import { normalizeWorkbenchBlockStatus, reduceWorkbenchMessages } from '@wegent/chat-core'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
@@ -116,7 +119,6 @@ import { normalizeTurnFileChanges } from './turnFileChanges'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { WorkbenchContext } from './useWorkbench'
 
-const WEWORK_CLIENT_ORIGIN = 'wework'
 const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
 const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
@@ -148,6 +150,80 @@ const EMPTY_RUNTIME_WORK: RuntimeWorkListResponse = {
   projects: [],
   chats: [],
   totalLocalTasks: 0,
+}
+const CLOUD_WORK_CHECK_KEYS: CloudWorkCheckKey[] = ['teams', 'devices', 'runtimeWork']
+const EMPTY_CLOUD_WORK_STATUS: CloudWorkStatus = {
+  availability: 'idle',
+  checks: {
+    teams: 'idle',
+    devices: 'idle',
+    runtimeWork: 'idle',
+  },
+  error: null,
+  updatedAt: null,
+}
+
+function cloudWorkAvailability(
+  checks: Record<CloudWorkCheckKey, CloudWorkCheckStatus>
+): CloudWorkStatus['availability'] {
+  const activeStatuses = CLOUD_WORK_CHECK_KEYS.map(key => checks[key]).filter(
+    status => status !== 'idle'
+  )
+  if (activeStatuses.length === 0) return 'idle'
+  if (activeStatuses.includes('syncing')) return 'syncing'
+  if (activeStatuses.includes('unavailable')) return 'unavailable'
+  if (checks.devices === 'empty') return 'empty'
+  return 'available'
+}
+
+function cloudWorkErrorMessage(
+  label: string,
+  result: PromiseSettledResult<unknown>
+): string | null {
+  if (result.status === 'fulfilled') return null
+  if (result.reason instanceof Error) return `${label}: ${result.reason.message}`
+  return `${label}: ${String(result.reason || 'failed')}`
+}
+
+function startCloudWorkSync(keys: CloudWorkCheckKey[]): CloudWorkStatus {
+  const checks = { ...EMPTY_CLOUD_WORK_STATUS.checks }
+  keys.forEach(key => {
+    checks[key] = 'syncing'
+  })
+  return {
+    availability: cloudWorkAvailability(checks),
+    checks,
+    error: null,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function finishCloudWorkCheck(
+  current: CloudWorkStatus,
+  key: CloudWorkCheckKey,
+  label: string,
+  result: PromiseSettledResult<unknown>,
+  options?: {
+    isEmpty?: (value: unknown) => boolean
+  }
+): CloudWorkStatus {
+  const status =
+    result.status === 'rejected'
+      ? 'unavailable'
+      : options?.isEmpty?.(result.value)
+        ? 'empty'
+        : 'available'
+  const checks = {
+    ...current.checks,
+    [key]: status,
+  }
+  const nextError = cloudWorkErrorMessage(label, result)
+  return {
+    availability: cloudWorkAvailability(checks),
+    checks,
+    error: nextError ?? (status === 'available' || status === 'empty' ? current.error : null),
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function getModelLabel(model?: UnifiedModel | null): string {
@@ -214,6 +290,30 @@ function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
   return devices
 }
 
+function mergeDeviceLists(
+  primaryDevices: DeviceInfo[],
+  secondaryDevices: DeviceInfo[]
+): DeviceInfo[] {
+  const merged = new Map<string, DeviceInfo>()
+  primaryDevices.forEach(device => merged.set(device.device_id, device))
+  secondaryDevices.forEach(device => {
+    const existing = merged.get(device.device_id)
+    merged.set(device.device_id, existing ? { ...existing, ...device } : device)
+  })
+  return Array.from(merged.values())
+}
+
+function mergeRuntimeWorkLists(
+  primaryWork: RuntimeWorkListResponse,
+  secondaryWork: RuntimeWorkListResponse
+): RuntimeWorkListResponse {
+  return {
+    projects: [...primaryWork.projects, ...secondaryWork.projects],
+    chats: [...primaryWork.chats, ...secondaryWork.chats],
+    totalLocalTasks: primaryWork.totalLocalTasks + secondaryWork.totalLocalTasks,
+  }
+}
+
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   runtimeAddress?: RuntimeTaskAddress
   attachments?: Attachment[]
@@ -263,13 +363,23 @@ export interface WorkbenchServices {
     | 'listSkills'
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
-  >
+  > & {
+    createDockerRemoteDeviceCommand?: ReturnType<
+      typeof createDeviceApi
+    >['createDockerRemoteDeviceCommand']
+  }
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   chatStream: ReturnType<typeof createChatStream>
+  cloudBackgroundApi?: {
+    listTeams?: ReturnType<typeof createTeamApi>['listTeams']
+    getDefaultWorkbenchTeam?: ReturnType<typeof createTeamApi>['getDefaultWorkbenchTeam']
+    listDevices?: () => Promise<DeviceInfo[]>
+    listRuntimeWork?: () => Promise<RuntimeWorkListResponse>
+  }
 }
 
 async function createConversationWorkspace(
@@ -329,6 +439,7 @@ export interface WorkbenchContextValue {
   codeCommentContexts: CodeCommentContext[]
   workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning: boolean
+  cloudWorkStatus: CloudWorkStatus
   isAwaitingAssistantStart: boolean
   isRuntimeTranscriptLoading: boolean
   runtimeTranscriptHasMoreBefore: boolean
@@ -399,6 +510,7 @@ export interface WorkbenchContextValue {
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
+  getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (
     data: CreateProjectRequest,
@@ -469,45 +581,6 @@ interface WorkbenchProviderProps {
   onStartupReadyChange?: (ready: boolean) => void
 }
 
-function createBackendServices(): WorkbenchServices {
-  const { apiBaseUrl, socketBaseUrl, socketPath } = getRuntimeConfig()
-  const client = createHttpClient({ baseUrl: apiBaseUrl })
-  const deviceApi = createDeviceApi(client)
-  const runtimeWorkApi = createRuntimeWorkApi(client)
-  const taskApi = createTaskApi(client)
-  const socketClient = createSocketClient({
-    socketBaseUrl: () => socketBaseUrl,
-    path: socketPath,
-    namespace: '/chat',
-    getToken,
-    auth: { client_origin: WEWORK_CLIENT_ORIGIN },
-    logger: console,
-  })
-
-  return {
-    teamApi: createTeamApi(client),
-    modelApi: createModelApi(client),
-    skillApi: createSkillApi(client),
-    projectApi: createProjectApi(client),
-    gitApi: createGitApi(client),
-    taskApi,
-    deviceApi,
-    imSessionApi: createImSessionApi(client),
-    runtimeWorkApi,
-    executorClient: createExecutorClientFromApis({
-      transportKind: 'backend-relay',
-      deviceApi,
-      runtimeWorkApi,
-      reviewApi: {
-        loadTurnFileChangesDiff: taskApi.getTurnFileChangesDiff,
-      },
-    }),
-    userApi: createUserApi(client),
-    socketClient,
-    chatStream: createChatStream(socketClient.socket),
-  }
-}
-
 function createExecutorClientFromWorkbenchServices(
   services: WorkbenchServices,
   transportKind: ExecutorTransportKind
@@ -525,13 +598,40 @@ function createExecutorClientFromWorkbenchServices(
   })
 }
 
-function createDefaultServices(): WorkbenchServices {
+interface CloudConnectionServicesSnapshot {
+  isConnected: boolean
+  backendUrl?: string
+  apiBaseUrl?: string
+  socketBaseUrl?: string
+  socketPath?: string
+  token: string | null
+}
+
+function createDefaultServices(
+  cloudConnection?: CloudConnectionServicesSnapshot
+): WorkbenchServices {
   const { runtimeMode } = getRuntimeConfig()
   if (runtimeMode === 'local-first' && isTauriRuntime()) {
+    if (
+      cloudConnection?.isConnected &&
+      cloudConnection.backendUrl &&
+      cloudConnection.apiBaseUrl &&
+      cloudConnection.socketBaseUrl &&
+      cloudConnection.socketPath &&
+      cloudConnection.token
+    ) {
+      return createHybridWorkbenchServices({
+        backendUrl: cloudConnection.backendUrl,
+        apiBaseUrl: cloudConnection.apiBaseUrl,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        socketPath: cloudConnection.socketPath,
+        token: cloudConnection.token,
+      })
+    }
     return createLocalAppServices()
   }
 
-  return createBackendServices()
+  return createBackendWorkbenchServices()
 }
 
 function getCurrentAppPath(): string {
@@ -631,6 +731,32 @@ function isCurrentLocalTaskEvent(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
+  return {
+    deviceId: address.deviceId,
+    localTaskId: address.localTaskId,
+    workspacePath: address.workspacePath ?? null,
+  }
+}
+
+function runtimeTranscriptDebug(response: unknown): Record<string, unknown> {
+  if (!isRecord(response)) {
+    return { responseType: Array.isArray(response) ? 'array' : typeof response }
+  }
+  const messages = response.messages
+  return {
+    keys: Object.keys(response).slice(0, 20),
+    success: response.success,
+    error: response.error,
+    runtime: response.runtime,
+    hasMessages: 'messages' in response,
+    messagesType: Array.isArray(messages) ? 'array' : typeof messages,
+    messageCount: Array.isArray(messages) ? messages.length : null,
+    hasMoreBefore: response.hasMoreBefore,
+    beforeCursor: response.beforeCursor,
+  }
 }
 
 function isDeviceStatus(value: unknown): value is DeviceInfo['status'] {
@@ -1073,13 +1199,57 @@ function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']):
   return `${prefix}-${randomId}`
 }
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+async function timedWorkbenchBootstrapRequest<T>(
+  label: string,
+  request: Promise<T>
+): Promise<PromiseSettledResult<T>> {
+  const startedAt = nowMs()
+  try {
+    const value = await request
+    const elapsedMs = Math.round(nowMs() - startedAt)
+    if (elapsedMs > 5000) {
+      console.warn(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
+    }
+    return { status: 'fulfilled', value }
+  } catch (reason) {
+    const elapsedMs = Math.round(nowMs() - startedAt)
+    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, reason)
+    return { status: 'rejected', reason }
+  }
+}
+
 export function WorkbenchProvider({
   children,
   user,
   services,
   onStartupReadyChange,
 }: WorkbenchProviderProps) {
-  const resolvedServices = useMemo(() => services ?? createDefaultServices(), [services])
+  const cloudConnection = useOptionalCloudConnection()
+  const resolvedServices = useMemo(
+    () =>
+      services ??
+      createDefaultServices({
+        isConnected: cloudConnection.isConnected,
+        backendUrl: cloudConnection.backendUrl,
+        apiBaseUrl: cloudConnection.apiBaseUrl,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        socketPath: cloudConnection.socketPath,
+        token: cloudConnection.token,
+      }),
+    [
+      cloudConnection.apiBaseUrl,
+      cloudConnection.backendUrl,
+      cloudConnection.isConnected,
+      cloudConnection.socketBaseUrl,
+      cloudConnection.socketPath,
+      cloudConnection.token,
+      services,
+    ]
+  )
   const executorClient = useMemo(() => {
     if (resolvedServices.executorClient) return resolvedServices.executorClient
     const { runtimeMode } = getRuntimeConfig()
@@ -1093,6 +1263,7 @@ export function WorkbenchProvider({
     [] as WorkbenchMessage[]
   )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
+  const [cloudWorkStatus, setCloudWorkStatus] = useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
@@ -1135,6 +1306,12 @@ export function WorkbenchProvider({
   const isRuntimeTranscriptLoading =
     Boolean(currentRuntimeTaskKey) && runtimeTranscriptLoadingKey === currentRuntimeTaskKey
   const currentUser = state.user ?? user
+
+  useEffect(() => {
+    if (!resolvedServices.cloudBackgroundApi) {
+      setCloudWorkStatus(EMPTY_CLOUD_WORK_STATUS)
+    }
+  }, [resolvedServices.cloudBackgroundApi])
   const activeProject = state.currentProject
   const activeDeviceId =
     state.currentRuntimeTask?.deviceId ??
@@ -1285,12 +1462,13 @@ export function WorkbenchProvider({
     teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
   })
+  const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    !state.isBootstrapping && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
 
   useEffect(() => {
-    onStartupReadyChange?.(isStartupReady)
-  }, [isStartupReady, onStartupReadyChange])
+    onStartupReadyChange?.(isWorkbenchShellReady)
+  }, [isWorkbenchShellReady, onStartupReadyChange])
 
   const attachmentSelection = useWorkbenchAttachments()
   const addCodeCommentContext = useCallback((context: CodeCommentContext) => {
@@ -1303,20 +1481,127 @@ export function WorkbenchProvider({
     setCodeCommentContexts([])
   }, [])
 
+  const refreshCloudBackgroundData = useCallback(
+    async (
+      baseDevices: DeviceInfo[],
+      baseRuntimeWork: RuntimeWorkListResponse,
+      options?: {
+        projects: ProjectWithTasks[]
+        standaloneDeviceId: string | null
+        isCancelled?: () => boolean
+      }
+    ) => {
+      const backgroundApi = resolvedServices.cloudBackgroundApi
+      const activeChecks: CloudWorkCheckKey[] = []
+      if (backgroundApi?.listTeams) activeChecks.push('teams')
+      if (backgroundApi?.listDevices) activeChecks.push('devices')
+      if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
+
+      if (activeChecks.length === 0) {
+        return
+      }
+
+      setCloudWorkStatus(startCloudWorkSync(activeChecks))
+
+      if (backgroundApi?.listTeams) {
+        void timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams()).then(
+          result => {
+            if (options?.isCancelled?.()) return
+            setCloudWorkStatus(current =>
+              finishCloudWorkCheck(current, 'teams', '云端团队', result)
+            )
+          }
+        )
+      }
+
+      const [devicesResult, runtimeWorkResult] = await Promise.all([
+        backgroundApi?.listDevices
+          ? timedWorkbenchBootstrapRequest('cloudDevices', backgroundApi.listDevices())
+          : Promise.resolve({ status: 'fulfilled', value: [] } as PromiseFulfilledResult<
+              DeviceInfo[]
+            >),
+        backgroundApi?.listRuntimeWork
+          ? timedWorkbenchBootstrapRequest('cloudRuntimeWork', backgroundApi.listRuntimeWork())
+          : Promise.resolve({
+              status: 'fulfilled',
+              value: EMPTY_RUNTIME_WORK,
+            } as PromiseFulfilledResult<RuntimeWorkListResponse>),
+      ])
+
+      if (options?.isCancelled?.()) {
+        return
+      }
+
+      if (backgroundApi?.listDevices) {
+        setCloudWorkStatus(current =>
+          finishCloudWorkCheck(current, 'devices', '云端设备', devicesResult, {
+            isEmpty: value => Array.isArray(value) && value.length === 0,
+          })
+        )
+      }
+      if (backgroundApi?.listRuntimeWork) {
+        setCloudWorkStatus(current =>
+          finishCloudWorkCheck(current, 'runtimeWork', '云端任务列表', runtimeWorkResult)
+        )
+      }
+
+      const devices = resolveDeviceListWithCache(
+        mergeDeviceLists(
+          baseDevices,
+          devicesResult.status === 'fulfilled' ? devicesResult.value : []
+        )
+      )
+      const runtimeWork =
+        runtimeWorkResult.status === 'fulfilled'
+          ? mergeRuntimeWorkLists(baseRuntimeWork, runtimeWorkResult.value)
+          : baseRuntimeWork
+
+      dispatch({
+        type: 'lists_refreshed',
+        projects: options?.projects ?? [],
+        devices,
+        runtimeWork,
+        standaloneDeviceId: getPreferredStandaloneDeviceId(
+          devices,
+          options?.standaloneDeviceId ?? null
+        ),
+      })
+    },
+    [resolvedServices.cloudBackgroundApi]
+  )
+
   useEffect(() => {
     let cancelled = false
+    const startedAt = nowMs()
+    const slowTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        console.warn('[Wework] Workbench shell bootstrap is still running after 5000ms.')
+      }
+    }, 5000)
 
     async function bootstrap() {
-      const [defaultTeamResult, devicesResult, runtimeWorkResult] = await Promise.allSettled([
-        resolvedServices.teamApi.getDefaultWorkbenchTeam(),
-        executorClient.commands.listDevices(),
-        executorClient.runtime.listRuntimeWork(),
+      const [defaultTeamResult, devicesResult] = await Promise.all([
+        timedWorkbenchBootstrapRequest(
+          'defaultTeam',
+          resolvedServices.teamApi.getDefaultWorkbenchTeam()
+        ),
+        timedWorkbenchBootstrapRequest('devices', executorClient.commands.listDevices()),
       ])
 
       if (cancelled) return
+      window.clearTimeout(slowTimer)
+
+      const elapsedMs = Math.round(nowMs() - startedAt)
+      if (elapsedMs > 5000) {
+        console.warn(`[Wework] Workbench shell bootstrap completed slowly in ${elapsedMs}ms.`, {
+          defaultTeam: defaultTeamResult.status,
+          devices: devicesResult.status,
+        })
+      }
 
       const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
       const devices = resolveDeviceListWithCache(rawDevices)
+      const standaloneDeviceId = getRememberedStandaloneDeviceId(user, devices)
 
       dispatch({
         type: 'bootstrapped',
@@ -1324,11 +1609,28 @@ export function WorkbenchProvider({
         defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
         projects: [],
         devices,
-        runtimeWork:
-          runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value : EMPTY_RUNTIME_WORK,
+        runtimeWork: EMPTY_RUNTIME_WORK,
         currentProject: null,
-        standaloneDeviceId: getRememberedStandaloneDeviceId(user, devices),
+        standaloneDeviceId,
       })
+
+      void timedWorkbenchBootstrapRequest(
+        'runtimeWork',
+        executorClient.runtime.listRuntimeWork()
+      ).then(runtimeWorkResult => {
+        if (cancelled) return
+        const runtimeWork =
+          runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value : EMPTY_RUNTIME_WORK
+        if (runtimeWorkResult.status === 'fulfilled') {
+          dispatch({ type: 'runtime_work_refreshed', runtimeWork })
+        }
+        void refreshCloudBackgroundData(devices, runtimeWork, {
+          projects: [],
+          standaloneDeviceId,
+          isCancelled: () => cancelled,
+        }).catch(() => undefined)
+      })
+
       if (defaultTeamResult.status === 'rejected') {
         dispatch({
           type: 'error_set',
@@ -1343,8 +1645,9 @@ export function WorkbenchProvider({
     bootstrap()
     return () => {
       cancelled = true
+      window.clearTimeout(slowTimer)
     }
-  }, [executorClient, resolvedServices.teamApi, user])
+  }, [executorClient, refreshCloudBackgroundData, resolvedServices.teamApi, user])
 
   const refreshWorkLists = useCallback(async () => {
     const [devicesResult, runtimeWorkResult] = await Promise.all([
@@ -1356,17 +1659,28 @@ export function WorkbenchProvider({
       executorClient.runtime.listRuntimeWork().catch(() => undefined),
     ])
     const devices = resolveDeviceListWithCache(devicesResult)
+    const runtimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
       devices,
-      runtimeWork: runtimeWorkResult,
+      runtimeWork,
       standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
     })
-  }, [executorClient, state.projects, state.standaloneDeviceId])
+    void refreshCloudBackgroundData(devices, runtimeWork, {
+      projects: state.projects,
+      standaloneDeviceId: state.standaloneDeviceId,
+    }).catch(() => undefined)
+  }, [
+    executorClient,
+    refreshCloudBackgroundData,
+    state.projects,
+    state.runtimeWork,
+    state.standaloneDeviceId,
+  ])
 
-  const refreshDevices = useCallback(
-    async (options?: { useCacheFallback?: boolean }) => {
+  const loadDevicesForRefresh = useCallback(
+    async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {
       let devices: DeviceInfo[]
       try {
         devices = await executorClient.commands.listDevices()
@@ -1381,15 +1695,41 @@ export function WorkbenchProvider({
           throw error
         }
       }
-      devices = resolveDeviceListWithCache(devices)
+      return resolveDeviceListWithCache(devices)
+    },
+    [executorClient]
+  )
+
+  const refreshDevices = useCallback(
+    async (options?: { useCacheFallback?: boolean }) => {
+      const devices = await loadDevicesForRefresh(options)
       dispatch({
         type: 'devices_refreshed',
         devices,
         standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
       })
+      void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
+        projects: state.projects,
+        standaloneDeviceId: state.standaloneDeviceId,
+      }).catch(() => undefined)
     },
-    [executorClient, state.standaloneDeviceId]
+    [
+      loadDevicesForRefresh,
+      refreshCloudBackgroundData,
+      state.projects,
+      state.runtimeWork,
+      state.standaloneDeviceId,
+    ]
   )
+
+  const getRemoteDeviceStartupCommand =
+    useCallback(async (): Promise<DockerRemoteDeviceCommandResponse> => {
+      const createCommand = resolvedServices.deviceApi.createDockerRemoteDeviceCommand
+      if (!createCommand) {
+        throw new Error('当前连接不支持生成云设备启动脚本')
+      }
+      return createCommand({ client_origin: window.location.origin })
+    }, [resolvedServices.deviceApi])
 
   const clearUpgradeStateTimer = useCallback((deviceId: string) => {
     const timer = upgradeClearTimersRef.current[deviceId]
@@ -1890,11 +2230,25 @@ export function WorkbenchProvider({
       navigateTo(buildRuntimeTaskRoute(address))
 
       try {
+        console.info('[Wework] Runtime transcript open request', {
+          address: runtimeAddressDebug(address),
+          loadingKey,
+        })
         const transcript = await executorClient.runtime.getRuntimeTranscript({
           ...address,
           limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
         })
         if (runtimeOpenRequestIdRef.current !== requestId) return
+        console.info('[Wework] Runtime transcript open response', {
+          address: runtimeAddressDebug(address),
+          response: runtimeTranscriptDebug(transcript),
+        })
+        if (!Array.isArray(transcript.messages)) {
+          console.error('[Wework] Runtime transcript response missing messages array', {
+            address: runtimeAddressDebug(address),
+            response: runtimeTranscriptDebug(transcript),
+          })
+        }
 
         dispatchMessages({
           type: 'reset',
@@ -1905,6 +2259,14 @@ export function WorkbenchProvider({
           beforeCursor: transcript.beforeCursor ?? null,
           loadingMore: false,
         })
+      } catch (error) {
+        if (runtimeOpenRequestIdRef.current === requestId) {
+          console.error('[Wework] Runtime transcript open failed', {
+            address: runtimeAddressDebug(address),
+            loadingKey,
+            error,
+          })
+        }
       } finally {
         if (runtimeOpenRequestIdRef.current === requestId) {
           setRuntimeTranscriptLoadingKey(null)
@@ -2076,6 +2438,10 @@ export function WorkbenchProvider({
     setRuntimeTranscriptPage(previous => ({ ...previous, loadingMore: true }))
 
     try {
+      console.info('[Wework] Runtime transcript load-more request', {
+        address: runtimeAddressDebug(address),
+        beforeCursor,
+      })
       const transcript = await executorClient.runtime.getRuntimeTranscript({
         ...address,
         limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
@@ -2083,6 +2449,16 @@ export function WorkbenchProvider({
       })
       const currentAddress = currentRuntimeTaskRef.current
       if (!currentAddress || getRuntimeTaskRouteKey(currentAddress) !== requestKey) return
+      console.info('[Wework] Runtime transcript load-more response', {
+        address: runtimeAddressDebug(address),
+        response: runtimeTranscriptDebug(transcript),
+      })
+      if (!Array.isArray(transcript.messages)) {
+        console.error('[Wework] Runtime transcript load-more response missing messages array', {
+          address: runtimeAddressDebug(address),
+          response: runtimeTranscriptDebug(transcript),
+        })
+      }
 
       const olderMessages = runtimeMessagesToWorkbenchMessages(address, transcript.messages)
       dispatchMessages({
@@ -2094,6 +2470,15 @@ export function WorkbenchProvider({
         beforeCursor: transcript.beforeCursor ?? null,
         loadingMore: false,
       })
+    } catch (error) {
+      const currentAddress = currentRuntimeTaskRef.current
+      if (currentAddress && getRuntimeTaskRouteKey(currentAddress) === requestKey) {
+        console.error('[Wework] Runtime transcript load-more failed', {
+          address: runtimeAddressDebug(address),
+          beforeCursor,
+          error,
+        })
+      }
     } finally {
       const currentAddress = currentRuntimeTaskRef.current
       if (currentAddress && getRuntimeTaskRouteKey(currentAddress) === requestKey) {
@@ -2459,8 +2844,9 @@ export function WorkbenchProvider({
       }
 
       if (selectedModel) {
-        payload.force_override_bot_model = selectedModel.name
-        payload.force_override_bot_model_type = selectedModel.type
+        const executionModel = resolveModelExecutionSelection(selectedModel)
+        payload.force_override_bot_model = executionModel.modelName
+        payload.force_override_bot_model_type = executionModel.modelType
         if (
           modelSelection.selectedModel &&
           Object.keys(modelSelection.selectedModelOptions).length > 0
@@ -3253,6 +3639,7 @@ export function WorkbenchProvider({
     codeCommentContexts,
     workspaceFileApi,
     currentRuntimeTaskRunning,
+    cloudWorkStatus,
     isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore: runtimeTranscriptPage.hasMoreBefore,
@@ -3310,6 +3697,7 @@ export function WorkbenchProvider({
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
+    getRemoteDeviceStartupCommand,
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,

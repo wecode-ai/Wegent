@@ -6,6 +6,8 @@ export const LOCAL_EXECUTOR_COMMANDS = {
   status: 'local_executor_status',
   request: 'local_executor_request',
   restart: 'local_executor_restart',
+  connectBackend: 'local_executor_connect_backend',
+  disconnectBackend: 'local_executor_disconnect_backend',
 } as const
 
 export const LOCAL_EXECUTOR_EVENT = 'local-executor:event'
@@ -23,6 +25,11 @@ export interface LocalExecutorEvent {
   payload: Record<string, unknown>
 }
 
+export interface LocalExecutorBackendConnection {
+  backendUrl: string
+  authToken: string
+}
+
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
 }
@@ -33,6 +40,19 @@ export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
 
 export function restartLocalExecutor(): Promise<LocalExecutorStatus> {
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.restart)
+}
+
+export function connectLocalExecutorToBackend(
+  connection: LocalExecutorBackendConnection
+): Promise<LocalExecutorStatus> {
+  return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.connectBackend, {
+    backendUrl: connection.backendUrl,
+    authToken: connection.authToken,
+  })
+}
+
+export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatus> {
+  return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.disconnectBackend)
 }
 
 export function requestLocalExecutor<T = unknown>(

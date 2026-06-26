@@ -23,6 +23,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
         let turn_file_changes = file_changes(turn);
         let turn_id = item_id(turn, "turn");
         let subtask_id = turn_subtask_id(turn, &turn_id);
+        let has_final_assistant_message = turn_has_final_assistant_message(turn);
+        let interrupted_without_final = turn_interrupted(turn) && !has_final_assistant_message;
         let fold_commentary = turn_should_fold_commentary(turn);
         let mut blocks = Vec::new();
         let mut pending_file_changes = turn_file_changes.clone();
@@ -150,6 +152,11 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 context_events: &context_events,
                 assistant_parts: &assistant_parts,
                 memory_citations: &memory_citations,
+                status: if interrupted_without_final {
+                    "cancelled"
+                } else {
+                    "done"
+                },
             }));
         }
     }
@@ -211,7 +218,46 @@ fn turn_subtask_id(turn: &Value, turn_id: &str) -> i64 {
 }
 
 fn turn_should_fold_commentary(turn: &Value) -> bool {
-    !turn_interrupted(turn) && (turn_running(turn) || turn_has_final_assistant_message(turn))
+    if turn_has_final_assistant_message(turn) || turn_running(turn) {
+        return true;
+    }
+    // An interrupted turn only folds commentary into process blocks when it also
+    // produced substantive output (file changes, tool calls, reasoning, etc.).
+    // When the turn was interrupted before producing anything else, the commentary
+    // is the only thing the agent said, so surface it as the visible content.
+    turn_interrupted(turn) && turn_has_substantive_process(turn)
+}
+
+fn turn_has_substantive_process(turn: &Value) -> bool {
+    turn.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|item| {
+            let item_type = item_type(item);
+            is_substantive_process_item_type(&item_type)
+                || (item_type == "message"
+                    && !string_field(item, "role")
+                        .unwrap_or_default()
+                        .eq_ignore_ascii_case("user")
+                    && !is_agent_message(item))
+        })
+}
+
+fn is_agent_message(item: &Value) -> bool {
+    matches!(
+        item_type(item).as_str(),
+        "agentmessage" | "agentmessageevent"
+    )
+}
+
+fn is_substantive_process_item_type(item_type: &str) -> bool {
+    is_tool_item_type(item_type)
+        || is_tool_output_item_type(item_type)
+        || matches!(
+            item_type,
+            "reasoning" | "filechange" | "patchapplyend" | "contextcompaction"
+        )
 }
 
 fn turn_interrupted(turn: &Value) -> bool {
@@ -385,6 +431,7 @@ struct AssistantMessageDraft<'a> {
     context_events: &'a [Value],
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
+    status: &'a str,
 }
 
 fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
@@ -392,7 +439,7 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "id": format!("assistant-{}", draft.turn_id),
         "role": "assistant",
         "content": draft.assistant_parts.join("\n\n"),
-        "status": "done",
+        "status": draft.status,
         "subtaskId": draft.subtask_id,
         "subtask_id": draft.subtask_id,
         "createdAt": draft.created_at,
@@ -1124,4 +1171,80 @@ fn memory_citation(item: &Value) -> Option<Value> {
         .or_else(|| item.get("memory_citation"))
         .filter(|value| value.is_object())
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_turn_without_final_keeps_process_blocks() {
+        let thread = json!({
+            "cwd": "/workspace/app",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "status": "interrupted",
+                    "startedAt": 1_000,
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "user-1",
+                            "content": [
+                                {"type": "text", "text": "修一下"}
+                            ]
+                        },
+                        {
+                            "type": "agentMessage",
+                            "id": "assistant-commentary-1",
+                            "phase": "commentary",
+                            "message": "我先改文件。"
+                        },
+                        {
+                            "type": "fileChange",
+                            "id": "file-change-1",
+                            "status": "completed",
+                            "changes": [
+                                {
+                                    "path": "/workspace/app/src/main.ts",
+                                    "kind": {"type": "update"},
+                                    "diff": "@@ -1 +1 @@\n-old\n+new\n"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        assert_eq!(messages.len(), 2);
+
+        let assistant = &messages[1];
+        assert_eq!(
+            assistant.get("role").and_then(Value::as_str),
+            Some("assistant")
+        );
+        assert_eq!(
+            assistant.get("status").and_then(Value::as_str),
+            Some("cancelled")
+        );
+        assert_eq!(assistant.get("content").and_then(Value::as_str), Some(""));
+        assert!(assistant.get("fileChanges").is_some());
+
+        let blocks = assistant
+            .get("blocks")
+            .and_then(Value::as_array)
+            .expect("assistant should include process blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].get("type").and_then(Value::as_str), Some("text"));
+        assert_eq!(
+            blocks[0].get("content").and_then(Value::as_str),
+            Some("我先改文件。")
+        );
+        assert_eq!(
+            blocks[1].get("type").and_then(Value::as_str),
+            Some("file_changes")
+        );
+    }
 }

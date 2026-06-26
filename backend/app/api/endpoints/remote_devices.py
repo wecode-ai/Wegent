@@ -8,21 +8,18 @@ import logging
 import os
 import shlex
 import uuid
-from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 from urllib.parse import urlparse, urlunparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
-from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.device import DeviceConnectionMode, DeviceType
+from app.schemas.device import DeviceType
 from app.services.api_key_service import create_api_key_for_remote_device
 
 logger = logging.getLogger(__name__)
@@ -36,6 +33,10 @@ DEFAULT_REMOTE_DEVICE_IMAGE = os.getenv(
 DEFAULT_REMOTE_DEVICE_BACKEND_URL = os.getenv("REMOTE_DEVICE_BACKEND_URL", "")
 DEFAULT_REMOTE_DEVICE_CONTAINER_NAME = "wegent-remote-device"
 DEFAULT_REMOTE_DEVICE_PUBLIC_BASE_URL = "http://localhost:17888"
+DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = os.getenv(
+    "REMOTE_DEVICE_EXECUTOR_INSTALL_URL",
+    "https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh",
+)
 DEVICE_SESSION_GATEWAY_PORT = 17888
 
 
@@ -54,14 +55,24 @@ class CreateDockerRemoteDeviceRequest(BaseModel):
     )
 
 
+class RemoteDeviceStartupCommand(BaseModel):
+    """A generated startup command for a remote device."""
+
+    kind: Literal["docker", "process"]
+    label: str
+    description: str
+    command: str
+
+
 class DockerRemoteDeviceCommandResponse(BaseModel):
-    """Generated Docker remote device startup command."""
+    """Generated remote device startup commands."""
 
     device_id: str
     name: str
     image: str
     env: Dict[str, str]
     command: str
+    commands: list[RemoteDeviceStartupCommand] = Field(default_factory=list)
 
 
 def _get_backend_url(request: Request) -> str:
@@ -170,81 +181,6 @@ def _resolve_public_base_url(
     return _validate_generated_url(public_base_url, "public_base_url")
 
 
-def _is_first_remote_device(db: Session, user_id: int) -> bool:
-    """Return whether this user has no active remote devices."""
-    devices = (
-        db.query(Kind)
-        .filter(
-            and_(
-                Kind.user_id == user_id,
-                Kind.kind == "Device",
-                Kind.namespace == "default",
-                Kind.is_active == True,
-            )
-        )
-        .all()
-    )
-    return not any(
-        device.json.get("spec", {}).get("deviceType") == DeviceType.REMOTE.value
-        for device in devices
-    )
-
-
-def _create_remote_device_crd(
-    *,
-    db: Session,
-    user_id: int,
-    device_id: str,
-    device_name: str,
-    image: str,
-    provider: str,
-    backend_url: str,
-    public_base_url: str,
-) -> Kind:
-    """Create a Device CRD for a user-managed remote device."""
-    device_json = {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Device",
-        "metadata": {
-            "name": device_id,
-            "namespace": "default",
-            "displayName": device_name,
-        },
-        "spec": {
-            "deviceId": device_id,
-            "displayName": device_name,
-            "deviceType": DeviceType.REMOTE.value,
-            "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
-            "bindShell": "claudecode",
-            "isDefault": _is_first_remote_device(db, user_id),
-            "capabilities": None,
-            "remoteConfig": {
-                "provider": provider,
-                "image": image,
-                "deviceId": device_id,
-                "deviceName": device_name,
-                "backendUrl": backend_url,
-                "publicBaseUrl": public_base_url,
-                "createdAt": datetime.now().isoformat(),
-            },
-        },
-        "status": {
-            "state": "Available",
-        },
-    }
-    device_kind = Kind(
-        user_id=user_id,
-        kind="Device",
-        name=device_id,
-        namespace="default",
-        json=device_json,
-    )
-    db.add(device_kind)
-    db.commit()
-    db.refresh(device_kind)
-    return device_kind
-
-
 def _build_docker_run_command(
     *,
     container_name: str,
@@ -272,6 +208,50 @@ def _build_docker_run_command(
     return "\n".join(lines)
 
 
+def _build_process_start_command(env: Dict[str, str]) -> str:
+    """Build a copy-ready process startup script from environment variables."""
+    env_lines = [f"export {key}={shlex.quote(value)}" for key, value in env.items()]
+    install_url = shlex.quote(DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL.strip())
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        f"INSTALL_URL={install_url}",
+        'EXECUTOR_HOME="${WEGENT_EXECUTOR_HOME:-$HOME/.wegent-executor}"',
+        'EXECUTOR_BIN="${WEGENT_EXECUTOR_BIN:-$EXECUTOR_HOME/bin/wegent-executor}"',
+        'LOG_DIR="${WEGENT_EXECUTOR_LOG_DIR:-$EXECUTOR_HOME/logs}"',
+        'mkdir -p "$LOG_DIR"',
+        "",
+        'if [ ! -x "$EXECUTOR_BIN" ]; then',
+        "  if command -v curl >/dev/null 2>&1; then",
+        '    curl -fsSL "$INSTALL_URL" | bash',
+        "  elif command -v wget >/dev/null 2>&1; then",
+        '    wget -qO- "$INSTALL_URL" | bash',
+        "  else",
+        '    echo "curl or wget is required to install wegent-executor." >&2',
+        "    exit 1",
+        "  fi",
+        "fi",
+        "",
+        *env_lines,
+        'export DEVICE_SESSION_GATEWAY_ENABLED="${DEVICE_SESSION_GATEWAY_ENABLED:-true}"',
+        'export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"',
+        'export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"',
+        'export WEGENT_EXECUTOR_LOG_DIR="$LOG_DIR"',
+        'export WEGENT_EXECUTOR_LOG_FILE="${WEGENT_EXECUTOR_LOG_FILE:-executor.log}"',
+        "",
+        'if ! command -v "$EXECUTOR_BIN" >/dev/null 2>&1 && [ ! -x "$EXECUTOR_BIN" ]; then',
+        '  echo "wegent-executor not found after installation. Set WEGENT_EXECUTOR_BIN=/path/to/wegent-executor." >&2',
+        "  exit 1",
+        "fi",
+        "",
+        'nohup "$EXECUTOR_BIN" >>"$LOG_DIR/$WEGENT_EXECUTOR_LOG_FILE" 2>&1 &',
+        'echo "wegent-executor started with PID $!"',
+        'echo "Log: $LOG_DIR/$WEGENT_EXECUTOR_LOG_FILE"',
+    ]
+    return "\n".join(lines)
+
+
 @router.post(
     "/docker/start-command",
     response_model=DockerRemoteDeviceCommandResponse,
@@ -282,7 +262,7 @@ async def create_docker_start_command(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> DockerRemoteDeviceCommandResponse:
-    """Pre-register a Docker remote device and return its startup command."""
+    """Create connection credentials and return remote device startup commands."""
     body = body or CreateDockerRemoteDeviceRequest()
     image = DEFAULT_REMOTE_DEVICE_IMAGE.strip()
     if not image:
@@ -301,17 +281,6 @@ async def create_docker_start_command(
         current_user.user_name,
     )
 
-    _create_remote_device_crd(
-        db=db,
-        user_id=current_user.id,
-        device_id=device_id,
-        device_name=device_name,
-        image=image,
-        provider="docker",
-        backend_url=backend_url,
-        public_base_url=public_base_url,
-    )
-
     env = {
         "DEVICE_TYPE": DeviceType.REMOTE.value,
         "DEVICE_ID": device_id,
@@ -326,6 +295,7 @@ async def create_docker_start_command(
         env=env,
         add_host_gateway=urlparse(backend_url).hostname == "host.docker.internal",
     )
+    process_command = _build_process_start_command(env)
 
     logger.info(
         "[RemoteDevice] Docker command generated: user_id=%s, device_id=%s",
@@ -339,4 +309,18 @@ async def create_docker_start_command(
         image=image,
         env=env,
         command=command,
+        commands=[
+            RemoteDeviceStartupCommand(
+                kind="docker",
+                label="Docker",
+                description="Run a managed container with the executor and session gateway.",
+                command=command,
+            ),
+            RemoteDeviceStartupCommand(
+                kind="process",
+                label="Process",
+                description="Run an installed wegent-executor process directly on this machine.",
+                command=process_command,
+            ),
+        ],
     )

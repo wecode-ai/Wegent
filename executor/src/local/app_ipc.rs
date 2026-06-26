@@ -121,6 +121,47 @@ print(
     )
 )
 "#;
+const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def iso_mtime(path_stat):
+    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
+
+
+target = Path.home() / ".codex" / "auth.json"
+result = {
+    "runtime": "codex",
+    "target_path": str(target),
+    "exists": target.exists(),
+    "updated_at": None,
+    "sha256": None,
+    "size_bytes": None,
+    "error": None,
+}
+
+if target.exists() and target.is_file():
+    try:
+        target_stat = target.stat()
+        digest = hashlib.sha256()
+        with target.open("rb") as auth_file:
+            for chunk in iter(lambda: auth_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        result.update(
+            {
+                "updated_at": iso_mtime(target_stat),
+                "sha256": digest.hexdigest(),
+                "size_bytes": target_stat.st_size,
+            }
+        )
+    except OSError as exc:
+        result["error"] = str(exc)
+
+print(json.dumps(result, ensure_ascii=False))
+"#;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
@@ -331,12 +372,16 @@ impl AppIpcServer {
                 };
 
                 match request_from_message(&message) {
-                    Ok((method, params)) => match self.dispatch(&method, params).await {
-                        Ok(result) => {
-                            response_message(request_id.as_deref().unwrap_or_default(), result)
+                    Ok((method, params, accept_compressed_result)) => {
+                        match self.dispatch(&method, params).await {
+                            Ok(result) => response_message(
+                                request_id.as_deref().unwrap_or_default(),
+                                result,
+                                accept_compressed_result,
+                            ),
+                            Err(error) => error_message(request_id.as_deref(), &error),
                         }
-                        Err(error) => error_message(request_id.as_deref(), &error),
-                    },
+                    }
                     Err(error) => error_message(request_id.as_deref(), &error),
                 }
             }
@@ -594,6 +639,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["python3", "-c", WORKSPACE_READ_TEXT_FILE_SCRIPT],
             Some(PostProcessor::Json),
         )),
+        "runtime_auth_status" => Some(command_definition(
+            "python3 -c <runtime_auth_status>",
+            &["python3", "-c", RUNTIME_AUTH_STATUS_SCRIPT],
+            Some(PostProcessor::Json),
+        )),
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
         "git_branch" => Some(command_definition(
@@ -682,7 +732,7 @@ fn command_definition(
 
 fn request_from_message(
     message: &serde_json::Map<String, Value>,
-) -> Result<(String, Value), AppIpcError> {
+) -> Result<(String, Value, bool), AppIpcError> {
     if message.get("type").and_then(Value::as_str) != Some("request") {
         return Err(AppIpcError::new(
             "invalid_request",
@@ -706,7 +756,13 @@ fn request_from_message(
         ));
     }
 
-    Ok((method, params))
+    let accept_compressed_result = message
+        .get("acceptCompressedRuntimeResult")
+        .or_else(|| message.get("accept_compressed_runtime_result"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    Ok((method, params, accept_compressed_result))
 }
 
 fn request_id_from(message: &serde_json::Map<String, Value>) -> Result<String, AppIpcError> {
@@ -718,12 +774,16 @@ fn request_id_from(message: &serde_json::Map<String, Value>) -> Result<String, A
         .ok_or_else(|| AppIpcError::new("invalid_request", "Request id is required"))
 }
 
-fn response_message(request_id: &str, result: Value) -> Value {
+fn response_message(request_id: &str, result: Value, accept_compressed_result: bool) -> Value {
     json!({
         "type": "response",
         "id": request_id,
         "ok": true,
-        "result": encode_large_runtime_result(result),
+        "result": if accept_compressed_result {
+            encode_large_runtime_result(result)
+        } else {
+            result
+        },
     })
 }
 
@@ -929,4 +989,32 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_message_respects_uncompressed_client_preference() {
+        let large_text = "x".repeat(RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES + 1024);
+        let response = response_message(
+            "req-1",
+            json!({
+                "messages": [
+                    {
+                        "id": "message-1",
+                        "content": large_text,
+                    }
+                ],
+            }),
+            false,
+        );
+
+        let result = response
+            .get("result")
+            .expect("response should contain result");
+        assert_eq!(result.get("__runtimeRpcEncoding"), None);
+        assert!(result.get("messages").and_then(Value::as_array).is_some());
+    }
 }

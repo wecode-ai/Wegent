@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CloudWorkStatus,
   GuidanceWorkbenchMessage,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
@@ -32,6 +33,7 @@ import type {
   RuntimeWorkSearchResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
+import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -67,6 +69,7 @@ interface DesktopWorkbenchLayoutProps {
   codeCommentContexts?: CodeCommentContext[]
   workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning?: boolean
+  cloudWorkStatus?: CloudWorkStatus
   isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
@@ -95,6 +98,7 @@ interface DesktopWorkbenchLayoutProps {
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
@@ -181,6 +185,7 @@ export function DesktopWorkbenchLayout({
   codeCommentContexts = [],
   workspaceFileApi,
   currentRuntimeTaskRunning = false,
+  cloudWorkStatus,
   isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
@@ -204,6 +209,7 @@ export function DesktopWorkbenchLayout({
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
   onOpenStandaloneWorkspace,
+  onGetRemoteDeviceStartupCommand,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
@@ -717,6 +723,7 @@ export function DesktopWorkbenchLayout({
           user={state.user}
           projects={state.projects}
           devices={state.devices}
+          cloudWorkStatus={cloudWorkStatus}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
           standaloneDeviceId={state.standaloneDeviceId}
@@ -743,6 +750,8 @@ export function DesktopWorkbenchLayout({
             openImNotificationTargetDialog({ type: 'global' })
           }
           onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onUpdateProjectName={onUpdateProjectName}
