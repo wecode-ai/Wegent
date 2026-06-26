@@ -3,10 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    env,
     future::Future,
-    net::{IpAddr, UdpSocket},
-    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -17,22 +14,21 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
-    config::device::{DeviceConfig, UpdateConfig},
-    emitter::EventEnvelope,
+    config::device::DeviceConfig,
     local::{
         app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         session::{LocalSessionHandler, SessionType},
     },
     protocol::ExecutionRequest,
-    runner::EventSink,
     runtime_work::RuntimeWorkRpcHandler,
     server::TaskRunner,
-    version::get_version,
 };
 
 mod cancellation;
 mod capability;
+mod client;
+mod config;
 mod extension;
 mod session_events;
 mod socket_transport;
@@ -41,6 +37,8 @@ mod upgrade;
 
 pub use cancellation::LocalCancellationSnapshot;
 pub use capability::{CapabilityReportProvider, CapabilitySyncRpcHandler, HttpPackageProvider};
+pub use client::{build_runtime_auth_file_report, LocalBackendClient, LocalBackendEventSink};
+pub use config::{is_usable_device_ip, LocalBackendConfig};
 pub use extension::{DeviceExtensionHandler, DeviceExtensionRunner};
 pub use socket_transport::SocketIoTransport;
 pub use tasks::{LocalRunningTaskTracker, LocalTaskController, ManagedLocalTaskRunner};
@@ -54,8 +52,6 @@ use session_events::{
 };
 use upgrade::default_upgrade_handler;
 
-const REGISTER_EVENT: &str = "device:register";
-const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const TASK_EXECUTE_EVENT: &str = "task:execute";
 const TASK_CANCEL_EVENT: &str = "task:cancel";
 const TASK_CLOSE_SESSION_EVENT: &str = "task:close-session";
@@ -70,11 +66,6 @@ const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
-const DEFAULT_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
-const DEFAULT_HEARTBEAT_TIMEOUT_SECONDS: u64 = 10;
-const DEFAULT_RECONNECT_DELAY_SECONDS: u64 = 1;
-const DEFAULT_RECONNECT_MAX_DELAY_SECONDS: u64 = 30;
-const CODEX_AUTH_TARGET_PATH: &str = "~/.codex/auth.json";
 
 pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -99,230 +90,6 @@ pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
     ) -> TransportFuture<'a, Value>;
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()>;
     fn on(&self, event: &str, handler: EventHandler);
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalBackendConfig {
-    pub backend_url: String,
-    pub auth_token: String,
-    pub device_id: String,
-    pub device_name: String,
-    pub device_type: String,
-    pub bind_shell: String,
-    pub executor_version: String,
-    pub client_ip: String,
-    pub runtime_transfer_host: String,
-    pub heartbeat_interval: Duration,
-    pub heartbeat_timeout: Duration,
-    pub registration_timeout: Duration,
-    pub reconnect_delay: Duration,
-    pub reconnect_delay_max: Duration,
-    pub configured_capabilities: Vec<String>,
-    pub runtime_auth_home: PathBuf,
-    pub local_workspace_root: PathBuf,
-    pub update: UpdateConfig,
-}
-
-impl LocalBackendConfig {
-    pub fn from_device_config(config: DeviceConfig) -> Self {
-        let client_ip = detect_client_ip();
-        let runtime_transfer_host = env::var("RUNTIME_TRANSFER_HOST")
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| client_ip.clone());
-
-        Self {
-            backend_url: config
-                .connection
-                .backend_url
-                .trim()
-                .trim_end_matches('/')
-                .to_owned(),
-            auth_token: normalize_token(&config.connection.auth_token),
-            device_id: normalize_nonempty(config.device_id, "local-device"),
-            device_name: normalize_nonempty(config.device_name, &default_device_name()),
-            device_type: normalize_nonempty(config.device_type, "local"),
-            bind_shell: normalize_nonempty(config.bind_shell, "claudecode").to_ascii_lowercase(),
-            executor_version: get_version(),
-            client_ip,
-            runtime_transfer_host,
-            heartbeat_interval: duration_from_env(
-                "LOCAL_HEARTBEAT_INTERVAL",
-                DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
-            ),
-            heartbeat_timeout: duration_from_env(
-                "LOCAL_HEARTBEAT_CALL_TIMEOUT",
-                DEFAULT_HEARTBEAT_TIMEOUT_SECONDS,
-            ),
-            registration_timeout: Duration::from_secs(10),
-            reconnect_delay: duration_from_env(
-                "LOCAL_RECONNECT_DELAY",
-                DEFAULT_RECONNECT_DELAY_SECONDS,
-            ),
-            reconnect_delay_max: duration_from_env(
-                "LOCAL_RECONNECT_MAX_DELAY",
-                DEFAULT_RECONNECT_MAX_DELAY_SECONDS,
-            ),
-            configured_capabilities: config.capabilities,
-            runtime_auth_home: home_dir(),
-            local_workspace_root: config.local_workspace_root,
-            update: config.update,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct LocalBackendClient<T>
-where
-    T: LocalBackendTransport,
-{
-    config: Arc<LocalBackendConfig>,
-    transport: T,
-    running_tasks: LocalRunningTaskTracker,
-    capability_reporter: Arc<dyn CapabilityReportProvider>,
-}
-
-impl<T> LocalBackendClient<T>
-where
-    T: LocalBackendTransport,
-{
-    pub fn new(config: LocalBackendConfig, transport: T) -> Self {
-        Self::with_capability_reporter(config, transport, DefaultCapabilityReporter::new())
-    }
-
-    pub fn with_capability_reporter<R>(
-        config: LocalBackendConfig,
-        transport: T,
-        capability_reporter: R,
-    ) -> Self
-    where
-        R: CapabilityReportProvider,
-    {
-        Self::with_capability_reporter_and_tracker(
-            config,
-            transport,
-            capability_reporter,
-            LocalRunningTaskTracker::default(),
-        )
-    }
-
-    pub fn with_capability_reporter_and_tracker<R>(
-        config: LocalBackendConfig,
-        transport: T,
-        capability_reporter: R,
-        running_tasks: LocalRunningTaskTracker,
-    ) -> Self
-    where
-        R: CapabilityReportProvider,
-    {
-        Self {
-            config: Arc::new(config),
-            transport,
-            running_tasks,
-            capability_reporter: Arc::new(capability_reporter),
-        }
-    }
-
-    pub async fn connect(&self) -> Result<(), String> {
-        if self.config.backend_url.trim().is_empty() {
-            return Err("WEGENT_BACKEND_URL is required for local backend mode".to_owned());
-        }
-        if self.config.auth_token.trim().is_empty() {
-            return Err("WEGENT_AUTH_TOKEN is required for local backend mode".to_owned());
-        }
-        self.transport.connect(&self.config).await
-    }
-
-    pub async fn disconnect(&self) -> Result<(), String> {
-        self.transport.disconnect().await
-    }
-
-    pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
-        let response = self
-            .transport
-            .call(REGISTER_EVENT, self.registration_payload(), timeout)
-            .await?;
-        Ok(ack_success(&response))
-    }
-
-    pub async fn send_heartbeat(&self, timeout: Duration) -> Result<bool, String> {
-        let response = self
-            .transport
-            .call(HEARTBEAT_EVENT, self.heartbeat_payload(), timeout)
-            .await?;
-        Ok(ack_success(&response))
-    }
-
-    pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
-        let event_type = event.event_type.clone();
-        let payload = serde_json::to_value(event).map_err(|error| error.to_string())?;
-        self.transport.emit(&event_type, payload).await
-    }
-
-    pub async fn emit_raw_event(&self, event: &str, payload: Value) -> Result<(), String> {
-        self.transport.emit(event, payload).await
-    }
-
-    pub fn set_running_task_ids<I>(&self, task_ids: I)
-    where
-        I: IntoIterator<Item = i64>,
-    {
-        self.running_tasks.set(task_ids);
-    }
-
-    fn registration_payload(&self) -> Value {
-        json!({
-            "device_id": self.config.device_id,
-            "name": self.config.device_name,
-            "device_type": self.config.device_type,
-            "bind_shell": self.config.bind_shell,
-            "executor_version": self.config.executor_version,
-            "client_ip": self.config.client_ip,
-            "runtime_transfer_host": self.config.runtime_transfer_host,
-        })
-    }
-
-    fn heartbeat_payload(&self) -> Value {
-        let running_task_ids = self.running_tasks.running_task_ids();
-        json!({
-            "device_id": self.config.device_id,
-            "running_task_ids": running_task_ids,
-            "executor_version": self.config.executor_version,
-            "capabilities": self.capability_reporter.build_report(),
-            "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
-            "runtime_transfer_host": self.config.runtime_transfer_host,
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct LocalBackendEventSink<T>
-where
-    T: LocalBackendTransport,
-{
-    client: LocalBackendClient<T>,
-}
-
-impl<T> LocalBackendEventSink<T>
-where
-    T: LocalBackendTransport,
-{
-    pub fn new(client: LocalBackendClient<T>) -> Self {
-        Self { client }
-    }
-}
-
-impl<T> EventSink for LocalBackendEventSink<T>
-where
-    T: LocalBackendTransport,
-{
-    type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
-
-    fn send(&self, event: EventEnvelope) -> Self::SendFuture {
-        let client = self.client.clone();
-        Box::pin(async move { client.emit_event(event).await })
-    }
 }
 
 #[derive(Clone)]
@@ -857,39 +624,6 @@ pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), Str
     }
 }
 
-pub fn build_runtime_auth_file_report(home: &Path) -> Value {
-    json!({
-        "codex": {
-            "target_path": CODEX_AUTH_TARGET_PATH,
-            "exists": home.join(".codex").join("auth.json").is_file(),
-        }
-    })
-}
-
-pub fn is_usable_device_ip(value: &str) -> bool {
-    match value.trim().parse::<IpAddr>() {
-        Ok(address) => !is_unusable_ip(address),
-        Err(_) => false,
-    }
-}
-
-fn is_unusable_ip(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(address) => {
-            address.is_loopback()
-                || address.is_unspecified()
-                || address.is_multicast()
-                || address.is_link_local()
-        }
-        IpAddr::V6(address) => {
-            address.is_loopback()
-                || address.is_unspecified()
-                || address.is_multicast()
-                || (address.segments()[0] & 0xffc0) == 0xfe80
-        }
-    }
-}
-
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
     if request
         .auth_token
@@ -922,68 +656,4 @@ fn runtime_error_response(error: AppIpcError) -> Value {
         "code": error.code,
         "error": error.message,
     })
-}
-
-fn ack_success(response: &Value) -> bool {
-    if response.get("success").and_then(Value::as_bool) == Some(true) {
-        return true;
-    }
-
-    response
-        .as_array()
-        .map(|values| values.iter().any(ack_success))
-        .unwrap_or(false)
-}
-
-fn normalize_token(token: &str) -> String {
-    let token = token.trim();
-    token
-        .strip_prefix("Bearer ")
-        .or_else(|| token.strip_prefix("bearer "))
-        .unwrap_or(token)
-        .to_owned()
-}
-
-fn normalize_nonempty(value: String, default: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        default.to_owned()
-    } else {
-        value.to_owned()
-    }
-}
-
-fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map(Duration::from_secs)
-        .unwrap_or_else(|| Duration::from_secs(default_seconds))
-}
-
-fn detect_client_ip() -> String {
-    UdpSocket::bind("0.0.0.0:0")
-        .and_then(|socket| {
-            socket.connect("8.8.8.8:80")?;
-            socket.local_addr()
-        })
-        .ok()
-        .map(|address| address.ip().to_string())
-        .filter(|ip| is_usable_device_ip(ip))
-        .unwrap_or_else(|| "127.0.0.1".to_owned())
-}
-
-fn default_device_name() -> String {
-    let host = env::var("HOSTNAME")
-        .or_else(|_| env::var("COMPUTERNAME"))
-        .unwrap_or_else(|_| "local".to_owned());
-    format!("{} - {host}", env::consts::OS)
-}
-
-fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
 }
