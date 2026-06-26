@@ -27,8 +27,9 @@ The executor image uses `docker/executor/Dockerfile`.
 docker build -f docker/executor/Dockerfile -t executor:latest .
 ```
 
-The runtime image copies only the Rust binary to `/app/wegent-executor` and runs
-it as the container entrypoint:
+The runtime image copies only the Rust binary to `/app/executor`, matching the
+stable path used by executor manager binary extraction and custom base image
+mounts:
 
 ```bash
 docker run -p 10001:10001 -e EXECUTOR_MODE=docker -e PORT=10001 executor:latest

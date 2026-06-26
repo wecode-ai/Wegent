@@ -6,12 +6,14 @@ use std::{
     collections::HashMap,
     env, fs,
     future::Future,
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine};
+use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -29,6 +31,7 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -449,7 +452,7 @@ fn response_message(request_id: &str, result: Value) -> Value {
         "type": "response",
         "id": request_id,
         "ok": true,
-        "result": result,
+        "result": encode_large_runtime_result(result),
     })
 }
 
@@ -587,6 +590,27 @@ fn stdout_string(result: &CommandResult) -> String {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| result.stdout.to_string())
+}
+
+fn encode_large_runtime_result(result: Value) -> Value {
+    let Ok(bytes) = serde_json::to_vec(&result) else {
+        return result;
+    };
+    if bytes.len() <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES {
+        return result;
+    }
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if encoder.write_all(&bytes).is_err() {
+        return result;
+    }
+    let Ok(compressed) = encoder.finish() else {
+        return result;
+    };
+    json!({
+        "__runtimeRpcEncoding": "gzip+base64+json",
+        "payload": STANDARD.encode(compressed),
+    })
 }
 
 fn expand_home(path: &str) -> PathBuf {

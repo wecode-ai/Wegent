@@ -23,7 +23,7 @@ pub(crate) fn emit_response_event(
     let Some(event_tx) = event_tx else {
         return;
     };
-    let _ = event_tx.send(json!({
+    let mut payload = json!({
         "type": "event",
         "event": event,
         "payload": {
@@ -35,7 +35,13 @@ pub(crate) fn emit_response_event(
             "local_task_id": local_task_id,
             "runtime": "codex",
         },
-    }));
+    });
+    if let Some(source) = request.extra.get("source") {
+        if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
+            payload_object.insert("source".to_owned(), source.clone());
+        }
+    }
+    let _ = event_tx.send(payload);
 }
 
 pub(crate) fn map_codex_notification(

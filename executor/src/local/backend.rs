@@ -41,6 +41,7 @@ const NAMESPACE: &str = "/local-executor";
 const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const TASK_EXECUTE_EVENT: &str = "task:execute";
+const TASK_CANCEL_EVENT: &str = "task:cancel";
 const CHAT_MESSAGE_EVENT: &str = "chat:message";
 const DEVICE_EXECUTE_COMMAND_EVENT: &str = "device:execute_command";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
@@ -261,15 +262,78 @@ where
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalCancellationSnapshot {
+    pub pending_task_ids: Vec<i64>,
+    pub pending_subtask_ids: Vec<i64>,
+    pub cancel_requested_task_ids: Vec<i64>,
+}
+
+#[derive(Clone, Default)]
+struct LocalCancellationRegistry {
+    inner: Arc<Mutex<LocalCancellationState>>,
+}
+
+#[derive(Default)]
+struct LocalCancellationState {
+    registered_task_ids: BTreeSet<i64>,
+    pending_task_ids: BTreeSet<i64>,
+    pending_subtask_ids: BTreeSet<i64>,
+    cancel_requested_task_ids: BTreeSet<i64>,
+}
+
+impl LocalCancellationRegistry {
+    fn register_task(&self, request: &ExecutionRequest) {
+        let mut state = self.inner.lock().expect("cancellation state lock");
+        state.registered_task_ids.insert(request.task_id);
+        let task_cancelled = state.pending_task_ids.remove(&request.task_id);
+        let subtask_cancelled = state.pending_subtask_ids.remove(&request.subtask_id);
+        if task_cancelled || subtask_cancelled {
+            state.cancel_requested_task_ids.insert(request.task_id);
+        }
+    }
+
+    fn cancel_task(&self, task_id: i64, subtask_id: Option<i64>) {
+        let mut state = self.inner.lock().expect("cancellation state lock");
+        if state.registered_task_ids.contains(&task_id) {
+            state.cancel_requested_task_ids.insert(task_id);
+        } else if let Some(subtask_id) = subtask_id {
+            state.pending_subtask_ids.insert(subtask_id);
+        } else {
+            state.pending_task_ids.insert(task_id);
+        }
+    }
+
+    fn is_cancel_requested(&self, task_id: i64, subtask_id: Option<i64>) -> bool {
+        let state = self.inner.lock().expect("cancellation state lock");
+        state.cancel_requested_task_ids.contains(&task_id)
+            || state.pending_task_ids.contains(&task_id)
+            || subtask_id.is_some_and(|subtask_id| state.pending_subtask_ids.contains(&subtask_id))
+    }
+
+    fn snapshot(&self) -> LocalCancellationSnapshot {
+        let state = self.inner.lock().expect("cancellation state lock");
+        LocalCancellationSnapshot {
+            pending_task_ids: state.pending_task_ids.iter().copied().collect(),
+            pending_subtask_ids: state.pending_subtask_ids.iter().copied().collect(),
+            cancel_requested_task_ids: state.cancel_requested_task_ids.iter().copied().collect(),
+        }
+    }
+}
+
 #[derive(Clone)]
-pub struct LocalBackendRunner<T>
-where
+pub struct LocalBackendRunner<
+    T,
+    R = BackgroundTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
+> where
     T: LocalBackendTransport,
+    R: TaskRunner,
 {
     client: LocalBackendClient<T>,
-    runner: BackgroundTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
+    runner: R,
     command_handler: Arc<dyn DeviceCommandHandler>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    cancellations: LocalCancellationRegistry,
 }
 
 impl<T> LocalBackendRunner<T>
@@ -283,12 +347,36 @@ where
             AgentProcessEngine::new(AgentCommandPlanner::from_env()),
             sink,
         );
+        Self::from_client_and_runner(client, runner)
+    }
+}
+
+impl<T, R> LocalBackendRunner<T, R>
+where
+    T: LocalBackendTransport,
+    R: TaskRunner,
+{
+    pub fn with_task_runner(config: LocalBackendConfig, transport: T, runner: R) -> Self {
+        let client = LocalBackendClient::new(config, transport);
+        Self::from_client_and_runner(client, runner)
+    }
+
+    fn from_client_and_runner(client: LocalBackendClient<T>, runner: R) -> Self {
         Self {
             client,
             runner,
             command_handler: Arc::new(CommandHandler),
             runtime_work_handler: None,
+            cancellations: LocalCancellationRegistry::default(),
         }
+    }
+
+    pub fn cancellation_snapshot(&self) -> LocalCancellationSnapshot {
+        self.cancellations.snapshot()
+    }
+
+    pub fn is_cancel_requested(&self, task_id: i64, subtask_id: Option<i64>) -> bool {
+        self.cancellations.is_cancel_requested(task_id, subtask_id)
     }
 
     pub async fn run_forever(self) -> Result<(), String> {
@@ -318,6 +406,9 @@ where
             .on(TASK_EXECUTE_EVENT, self.task_handler());
         self.client
             .transport
+            .on(TASK_CANCEL_EVENT, self.cancel_handler());
+        self.client
+            .transport
             .on(CHAT_MESSAGE_EVENT, self.task_handler());
         self.client
             .transport
@@ -330,15 +421,31 @@ where
     fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
+        let cancellations = self.cancellations.clone();
         Arc::new(move |payload| {
             let runner = runner.clone();
             let config = Arc::clone(&config);
+            let cancellations = cancellations.clone();
             Box::pin(async move {
                 let Ok(mut request) = serde_json::from_value::<ExecutionRequest>(payload) else {
                     return None;
                 };
                 normalize_local_task_request(&mut request, &config);
+                cancellations.register_task(&request);
                 let _ = runner.submit(request).await;
+                None
+            })
+        })
+    }
+
+    fn cancel_handler(&self) -> EventHandler {
+        let cancellations = self.cancellations.clone();
+        Arc::new(move |payload| {
+            let cancellations = cancellations.clone();
+            Box::pin(async move {
+                let task_id = payload.get("task_id").and_then(Value::as_i64)?;
+                let subtask_id = payload.get("subtask_id").and_then(Value::as_i64);
+                cancellations.cancel_task(task_id, subtask_id);
                 None
             })
         })

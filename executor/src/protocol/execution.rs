@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub const FULL_KB_TOOL_ACCESS_MODE: &str = "full";
 
@@ -55,6 +55,8 @@ pub struct ExecutionRequest {
     pub user_name: Option<String>,
     pub auth_token: Option<String>,
     pub skill_identity_token: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 impl Default for ExecutionRequest {
@@ -87,6 +89,7 @@ impl Default for ExecutionRequest {
             user_name: None,
             auth_token: None,
             skill_identity_token: None,
+            extra: Map::new(),
         }
     }
 }
@@ -126,6 +129,29 @@ impl ExecutionRequest {
             .map(str::trim)
             .filter(|value| !value.is_empty())
     }
+
+    pub fn variable_context(&self) -> Value {
+        let mut value = serde_json::to_value(self).unwrap_or_else(|_| Value::Object(Map::new()));
+        let Value::Object(object) = &mut value else {
+            return Value::Object(Map::new());
+        };
+        if let Some(task_type) = &self.task_type {
+            object.insert("type".to_owned(), Value::String(task_type.clone()));
+        }
+        if let Some(auth_token) = &self.auth_token {
+            object.insert("task_token".to_owned(), Value::String(auth_token.clone()));
+        }
+        value
+    }
+
+    pub fn git_url(&self) -> Option<String> {
+        value_string(self.extra.get("git_url"))
+            .or_else(|| value_string(self.extra.get("gitUrl")))
+            .or_else(|| value_path_string(&self.extra, &["workspace", "repository", "gitUrl"]))
+            .or_else(|| value_path_string(&self.extra, &["workspace", "repository", "git_url"]))
+            .or_else(|| value_path_string(&self.extra, &["repository", "gitUrl"]))
+            .or_else(|| value_path_string(&self.extra, &["repository", "git_url"]))
+    }
 }
 
 pub fn is_codex_compatible_model(model_config: &Value) -> bool {
@@ -159,4 +185,20 @@ fn extract_shell_type(bot: &Value) -> Option<String> {
 
 fn get_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.as_object()?.get(key)?.as_str()
+}
+
+fn value_path_string(root: &Map<String, Value>, path: &[&str]) -> Option<String> {
+    let mut current = root.get(*path.first()?)?;
+    for key in &path[1..] {
+        current = current.as_object()?.get(*key)?;
+    }
+    value_string(Some(current))
+}
+
+fn value_string(value: Option<&Value>) -> Option<String> {
+    value?
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }

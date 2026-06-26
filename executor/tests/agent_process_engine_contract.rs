@@ -147,6 +147,108 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_process_engine_runs_pre_execute_hook_before_claude() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("claude-hook-workspace-root");
+    let marker_dir = unique_dir("claude-hook-marker");
+    fs::create_dir_all(&marker_dir).unwrap();
+    let marker = marker_dir.join("hook-ran");
+    let hook_script = write_fake_executable(
+        "pre-execute-hook",
+        &format!(
+            r#"#!/bin/sh
+if [ ! -d "$WEGENT_TASK_DIR" ]; then exit 10; fi
+if [ "$WEGENT_TASK_ID" != "83" ]; then exit 11; fi
+if [ "$WEGENT_GIT_URL" != "https://github.com/wecode-ai/Wegent.git" ]; then exit 12; fi
+printf hook > "{}"
+exit 0
+"#,
+            marker.display()
+        ),
+    );
+    let fake_claude = write_fake_executable(
+        "fake-claude-hook",
+        &format!(
+            r#"#!/bin/sh
+if [ ! -f "{}" ]; then exit 13; fi
+printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hook first"}}]}}}}'
+"#,
+            marker.display()
+        ),
+    );
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _hook = EnvGuard::set(
+        "WEGENT_HOOK_PRE_EXECUTE",
+        &hook_script.display().to_string(),
+    );
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 83,
+        prompt: json!("run with hook"),
+        bot: json!([{"id": 323, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        extra: serde_json::Map::from_iter([(
+            "git_url".to_owned(),
+            json!("https://github.com/wecode-ai/Wegent.git"),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "hook first".to_owned()
+        }
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_process_engine_keeps_running_when_pre_execute_hook_is_nonzero() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("claude-hook-nonzero-workspace-root");
+    let hook_script = write_fake_executable(
+        "pre-execute-hook-nonzero",
+        r#"#!/bin/sh
+exit 42
+"#,
+    );
+    let fake_claude = write_fake_executable(
+        "fake-claude-after-hook-nonzero",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"continued"}]}}'
+"#,
+    );
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _hook = EnvGuard::set(
+        "WEGENT_HOOK_PRE_EXECUTE",
+        &hook_script.display().to_string(),
+    );
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 84,
+        prompt: json!("continue after hook"),
+        bot: json!([{"id": 324, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "continued".to_owned()
+        }
+    );
+}
+
 fn write_fake_executable(name: &str, content: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
     fs::write(&path, content).unwrap();

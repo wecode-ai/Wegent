@@ -67,8 +67,8 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
     fc-cache -f -v
 
 
-# Copy only the Rust executor binary from builder
-COPY --from=builder /app/executor/target/release/wegent-executor /app/wegent-executor
+# Copy the Rust executor binary to the stable path expected by executor_manager.
+COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
@@ -76,4 +76,4 @@ ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 
 # Run the Rust executor binary
-CMD ["/app/wegent-executor"]
+CMD ["/app/executor"]

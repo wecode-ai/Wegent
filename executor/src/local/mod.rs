@@ -4,4 +4,7 @@
 
 pub mod app_ipc;
 pub mod backend;
+pub mod capabilities;
 pub mod command;
+pub mod pty;
+pub mod session;

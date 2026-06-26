@@ -94,6 +94,7 @@ impl OpenAIResponsesRequest {
                 .or_else(|| metadata_user_string(&metadata, "user_name")),
             auth_token: get_string(&metadata, "auth_token"),
             skill_identity_token: get_string(&metadata, "skill_identity_token"),
+            extra: extra_metadata(&metadata),
         }
     }
 }
@@ -226,6 +227,40 @@ fn object_field(value: &Value, key: &str) -> Map<String, Value> {
         .cloned()
         .unwrap_or_default()
 }
+
+fn extra_metadata(metadata: &Map<String, Value>) -> Map<String, Value> {
+    metadata
+        .iter()
+        .filter(|(key, _)| !KNOWN_METADATA_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+const KNOWN_METADATA_KEYS: &[&str] = &[
+    "task_id",
+    "subtask_id",
+    "team_namespace",
+    "bot",
+    "knowledge_base_scopes",
+    "kb_tool_access_mode",
+    "skip_git_clone",
+    "new_session",
+    "fork_runtime",
+    "inherited_sessions",
+    "type",
+    "workspace_source",
+    "project_workspace_path",
+    "workspace",
+    "device_id",
+    "message_id",
+    "executor_name",
+    "executor_namespace",
+    "backend_url",
+    "validation_params",
+    "user_name",
+    "auth_token",
+    "skill_identity_token",
+];
 
 fn get_i64(object: &Map<String, Value>, key: &str, default: i64) -> i64 {
     object.get(key).and_then(read_i64_value).unwrap_or(default)

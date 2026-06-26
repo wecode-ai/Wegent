@@ -2,26 +2,30 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, env, future::Future, path::PathBuf, pin::Pin};
+use std::{collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 mod agno;
+mod claude_options;
 mod codex;
 mod dify;
 mod image_validator;
+pub mod interactive_mcp;
 
 use crate::{
     claude_session,
+    hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
     process::{CommandSpec, StreamProcessEngine},
     protocol::{AgentKind, ExecutionRequest},
     runner::{AgentEngine, ExecutionOutcome},
 };
 
 pub use agno::build_agno_options;
+pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
     request_codex_app_server, run_codex_app_server_turn, CodexAppServerEngine, CodexAppServerTurn,
-    CodexNotificationSender,
+    CodexCancellationState, CodexNotificationSender, CodexTurnInterrupter,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
@@ -91,7 +95,12 @@ impl AgentEngine for AgentProcessEngine {
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
                 _ => match planner.command_for(&request) {
-                    Ok(spec) => StreamProcessEngine::new(spec).run(request).await,
+                    Ok(spec) => {
+                        if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                            run_pre_execute_hook(&request, &spec).await;
+                        }
+                        StreamProcessEngine::new(spec).run(request).await
+                    }
                     Err(message) => ExecutionOutcome::Failed { message },
                 },
             }
@@ -99,10 +108,33 @@ impl AgentEngine for AgentProcessEngine {
     }
 }
 
+async fn run_pre_execute_hook(request: &ExecutionRequest, spec: &CommandSpec) {
+    let hook = PreExecuteHook::from_env();
+    if !hook.enabled() {
+        return;
+    }
+
+    let task_dir = spec
+        .current_dir()
+        .cloned()
+        .or_else(|| request.cwd().map(PathBuf::from))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let _ = fs::create_dir_all(&task_dir);
+
+    let _ = hook
+        .execute(PreExecuteContext {
+            task_dir,
+            task_id: (request.task_id > 0).then_some(request.task_id),
+            git_url: request.git_url(),
+        })
+        .await;
+}
+
 pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> CommandSpec {
     let mut spec = CommandSpec::new(binary)
         .arg("-p")
-        .arg(prompt_text(&request.prompt))
+        .arg(claude_prompt_text(request))
         .arg("--output-format")
         .arg("stream-json")
         .arg("--verbose")
@@ -122,9 +154,11 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
     }
 
     spec = apply_model_environment(spec, request);
+    spec = apply_task_identity_environment(spec, request);
+    spec = apply_claude_header_environment(spec, request);
 
     let task_dir = claude_task_dir(request);
-    spec = apply_claude_workspace_environment(spec, task_dir.as_ref());
+    spec = apply_claude_workspace_environment(spec, request, task_dir.as_ref());
     if let Some(task_dir) = task_dir {
         spec = spec.cwd(task_dir);
     }
@@ -143,13 +177,51 @@ pub(crate) fn prompt_text(prompt: &Value) -> String {
     }
 }
 
+fn claude_prompt_text(request: &ExecutionRequest) -> String {
+    let prompt = kb_meta_prompt(request)
+        .map(|kb_meta_prompt| {
+            crate::prompt_enrichment::inject_kb_meta_prompt(
+                &request.prompt,
+                kb_meta_prompt,
+                is_user_selected_kb(request),
+                request.task_type.as_deref(),
+            )
+        })
+        .unwrap_or_else(|| request.prompt.clone());
+    prompt_text(&prompt)
+}
+
+fn kb_meta_prompt(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("kb_meta_prompt")
+        .or_else(|| request.extra.get("kbMetaPrompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn is_user_selected_kb(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("is_user_selected_kb")
+        .or_else(|| request.extra.get("isUserSelectedKb"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn execution_system_prompt(request: &ExecutionRequest) -> Option<String> {
     let prompt = request.system_prompt.trim();
-    if prompt.is_empty() {
-        None
-    } else {
-        Some(prompt.to_owned())
+    if !prompt.is_empty() {
+        return Some(prompt.to_owned());
     }
+
+    primary_bot(request)
+        .and_then(|bot| bot.get("system_prompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub(crate) fn model_id(request: &ExecutionRequest) -> Option<String> {
@@ -179,24 +251,88 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
     spec
 }
 
+fn apply_task_identity_environment(
+    mut spec: CommandSpec,
+    request: &ExecutionRequest,
+) -> CommandSpec {
+    if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
+        spec = spec.env("AUTH_TOKEN", auth_token);
+    }
+    if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
+        spec = spec.env("WEGENT_SKILL_IDENTITY_TOKEN", token);
+    }
+    if let Some(user_name) = non_empty(request.user_name.as_deref()) {
+        spec = spec.env("WEGENT_SKILL_USER_NAME", user_name);
+    }
+    spec
+}
+
+fn apply_claude_header_environment(
+    mut spec: CommandSpec,
+    request: &ExecutionRequest,
+) -> CommandSpec {
+    let process_custom_headers = env::var("ANTHROPIC_CUSTOM_HEADERS").unwrap_or_default();
+    let runtime_custom_headers = spec
+        .envs()
+        .get("ANTHROPIC_CUSTOM_HEADERS")
+        .cloned()
+        .unwrap_or_default();
+    let mut custom_headers = merge_anthropic_custom_headers([
+        process_custom_headers.as_str(),
+        runtime_custom_headers.as_str(),
+    ]);
+
+    let mut default_headers = extract_default_headers(request);
+    if let Some(project_id) = project_id(request) {
+        default_headers = merge_missing_header_map(
+            default_headers,
+            vec![
+                ("wecode-action".to_owned(), "wegent".to_owned()),
+                ("wecode-source".to_owned(), "wegent-local".to_owned()),
+                ("wecode-executor".to_owned(), "claudecode".to_owned()),
+            ],
+        );
+        default_headers = merge_header_map(
+            default_headers,
+            vec![("wecode-project".to_owned(), project_id)],
+        );
+    }
+
+    if !default_headers.is_empty() {
+        let serialized_default_headers = serde_json::to_string(&headers_to_json(&default_headers))
+            .expect("header map should serialize");
+        spec = spec
+            .env("DEFAULT_HEADERS", serialized_default_headers.clone())
+            .env("default_headers", serialized_default_headers);
+        custom_headers = merge_missing_header_map(custom_headers, default_headers);
+    }
+
+    if !custom_headers.is_empty() {
+        spec = spec.env(
+            "ANTHROPIC_CUSTOM_HEADERS",
+            headers_to_anthropic_custom_headers(&custom_headers),
+        );
+    }
+
+    spec
+}
+
 fn apply_claude_workspace_environment(
     mut spec: CommandSpec,
+    request: &ExecutionRequest,
     task_dir: Option<&PathBuf>,
 ) -> CommandSpec {
-    let Some(task_dir) = task_dir else {
+    let Some(config_dir) = claude_config_dir(request, task_dir) else {
         return spec;
     };
 
     if !spec.envs().contains_key("CLAUDE_CONFIG_DIR") {
-        spec = spec.env(
-            "CLAUDE_CONFIG_DIR",
-            task_dir.join(".claude").display().to_string(),
-        );
+        spec = spec.env("CLAUDE_CONFIG_DIR", config_dir.display().to_string());
     }
     if !spec.envs().contains_key("SKILLS_DIR") {
         spec = spec.env(
             "SKILLS_DIR",
-            task_dir.join(".claude/skills").display().to_string(),
+            config_dir.join("skills").display().to_string(),
         );
     }
 
@@ -208,6 +344,25 @@ fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
         .cwd()
         .map(PathBuf::from)
         .or_else(|| claude_session::preferred_task_dir(request))
+}
+
+fn claude_config_dir(request: &ExecutionRequest, task_dir: Option<&PathBuf>) -> Option<PathBuf> {
+    if project_id(request).is_some() {
+        return Some(home_claude_dir());
+    }
+    task_dir.map(|task_dir| task_dir.join(".claude"))
+}
+
+fn home_claude_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("~"))
+        .join(".claude")
+}
+
+fn project_id(request: &ExecutionRequest) -> Option<String> {
+    let value = crate::local::capabilities::get_project_id(request);
+    (!value.is_empty()).then_some(value)
 }
 
 fn model_string(request: &ExecutionRequest, key: &str) -> Option<String> {
@@ -250,6 +405,14 @@ fn collect_single_bot_agent_env(bot: &Value, values: &mut BTreeMap<String, Strin
     );
 }
 
+fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
+    match &request.bot {
+        Value::Array(bots) => bots.first(),
+        Value::Object(_) => Some(&request.bot),
+        _ => None,
+    }
+}
+
 fn collect_string_fields(
     fields: Option<&serde_json::Map<String, Value>>,
     values: &mut BTreeMap<String, String>,
@@ -273,4 +436,161 @@ fn is_process_env_key(key: &str) -> bool {
     key.chars().all(|character| {
         character.is_ascii_uppercase() || character == '_' || character.is_ascii_digit()
     })
+}
+
+type HeaderMap = Vec<(String, String)>;
+
+fn extract_default_headers(request: &ExecutionRequest) -> HeaderMap {
+    for key in ["DEFAULT_HEADERS", "default_headers"] {
+        let Some(value) = model_env_value(request, key) else {
+            continue;
+        };
+        let headers = parse_header_map(&value);
+        if !headers.is_empty() {
+            return headers;
+        }
+    }
+    Vec::new()
+}
+
+fn model_env_value(request: &ExecutionRequest, key: &str) -> Option<Value> {
+    let mut value = None;
+    collect_bot_agent_env_value(&request.bot, key, &mut value);
+    if let Some(candidate) = request.model_config.get(key) {
+        value = Some(candidate.clone());
+    }
+    if let Some(candidate) = request.model_config.get("env").and_then(|env| env.get(key)) {
+        value = Some(candidate.clone());
+    }
+    value
+}
+
+fn collect_bot_agent_env_value(bot: &Value, key: &str, value: &mut Option<Value>) {
+    match bot {
+        Value::Object(_) => collect_single_bot_agent_env_value(bot, key, value),
+        Value::Array(bots) => {
+            for bot in bots {
+                collect_single_bot_agent_env_value(bot, key, value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_single_bot_agent_env_value(bot: &Value, key: &str, value: &mut Option<Value>) {
+    if let Some(candidate) = bot
+        .get("agent_config")
+        .and_then(|config| config.get("env"))
+        .and_then(|env| env.get(key))
+    {
+        *value = Some(candidate.clone());
+    }
+}
+
+fn parse_header_map(value: &Value) -> HeaderMap {
+    match value {
+        Value::Object(object) => parse_header_object(object),
+        Value::String(text) => parse_header_text(text),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_header_object(object: &Map<String, Value>) -> HeaderMap {
+    object
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            header_value_string(value).map(|value| (key.to_owned(), value))
+        })
+        .collect()
+}
+
+fn parse_header_text(text: &str) -> HeaderMap {
+    let stripped = text.trim();
+    if stripped.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(Value::Object(object)) = serde_json::from_str::<Value>(stripped) {
+        return parse_header_object(&object);
+    }
+    parse_header_lines(stripped)
+}
+
+fn parse_header_lines(text: &str) -> HeaderMap {
+    text.lines()
+        .filter_map(|line| {
+            let stripped = line.trim();
+            let (key, value) = stripped.split_once(':')?;
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            Some((key.to_owned(), value.trim().to_owned()))
+        })
+        .collect()
+}
+
+fn header_value_string(value: &Value) -> Option<String> {
+    match value {
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+        Value::String(value) => Some(value.clone()),
+        Value::Bool(_) | Value::Number(_) => Some(value.to_string()),
+    }
+}
+
+fn merge_anthropic_custom_headers<'a>(header_sets: impl IntoIterator<Item = &'a str>) -> HeaderMap {
+    header_sets
+        .into_iter()
+        .filter(|headers| !headers.trim().is_empty())
+        .fold(Vec::new(), |merged, headers| {
+            merge_header_map(merged, parse_header_text(headers))
+        })
+}
+
+fn merge_header_map(mut existing: HeaderMap, new_headers: HeaderMap) -> HeaderMap {
+    for (key, value) in new_headers {
+        existing.retain(|(existing_key, _)| !headers_match(existing_key, &key));
+        existing.push((key, value));
+    }
+    existing
+}
+
+fn merge_missing_header_map(mut existing: HeaderMap, default_headers: HeaderMap) -> HeaderMap {
+    for (key, value) in default_headers {
+        if existing
+            .iter()
+            .any(|(existing_key, _)| headers_match(existing_key, &key))
+        {
+            continue;
+        }
+        existing.push((key, value));
+    }
+    existing
+}
+
+fn headers_match(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+fn headers_to_json(headers: &HeaderMap) -> Value {
+    let mut object = Map::new();
+    for (key, value) in headers {
+        object.insert(key.clone(), Value::String(value.clone()));
+    }
+    Value::Object(object)
+}
+
+fn headers_to_anthropic_custom_headers(headers: &HeaderMap) -> String {
+    headers
+        .iter()
+        .map(|(key, value)| format!("{key}: {value}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }

@@ -12,7 +12,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::response::RuntimeTaskLink;
+use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
 
 const INDEX_VERSION: u64 = 1;
 
@@ -27,6 +27,7 @@ pub(crate) struct RuntimeWorkStore {
 struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
+    workspaces: HashMap<String, RuntimeWorkspaceLink>,
 }
 
 impl RuntimeWorkStore {
@@ -100,11 +101,13 @@ impl RuntimeWorkStore {
             return RuntimeWorkIndex {
                 version: INDEX_VERSION,
                 tasks: HashMap::new(),
+                workspaces: HashMap::new(),
             };
         };
         serde_json::from_str::<RuntimeWorkIndex>(&content).unwrap_or_else(|_| RuntimeWorkIndex {
             version: INDEX_VERSION,
             tasks: HashMap::new(),
+            workspaces: HashMap::new(),
         })
     }
 
@@ -115,6 +118,7 @@ impl RuntimeWorkStore {
         let payload = serde_json::to_vec_pretty(&RuntimeWorkIndex {
             version: INDEX_VERSION,
             tasks: index.tasks.clone(),
+            workspaces: index.workspaces.clone(),
         });
         if let Ok(payload) = payload {
             let _ = fs::write(&self.index_path, payload);

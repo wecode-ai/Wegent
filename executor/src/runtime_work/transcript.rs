@@ -5,8 +5,8 @@
 use serde_json::{json, Value};
 
 use super::util::{
-    extract_text, integer_field, item_id, item_type, now_ms, raw_string_field, reasoning_content,
-    string_field,
+    extract_text, item_id, item_type, now_ms, raw_string_field, reasoning_content, string_field,
+    timestamp_ms_field,
 };
 
 pub(crate) fn transcript_messages(thread: &Value) -> Vec<Value> {
@@ -17,7 +17,8 @@ pub(crate) fn transcript_messages(thread: &Value) -> Vec<Value> {
         .into_iter()
         .flatten()
     {
-        let created_at = integer_field(turn, "createdAt").unwrap_or_else(now_ms);
+        let created_at = timestamp_ms_field(turn, "createdAt").unwrap_or_else(now_ms);
+        let turn_file_changes = file_changes(turn);
         let mut blocks = Vec::new();
         for item in turn
             .get("items")
@@ -30,7 +31,13 @@ pub(crate) fn transcript_messages(thread: &Value) -> Vec<Value> {
                 "reasoning" => push_reasoning_block(&mut blocks, item, created_at),
                 "commandexecution" => blocks.push(command_block(item, created_at)),
                 "agentmessage" | "message" => {
-                    push_assistant_message(&mut messages, item, created_at, &blocks);
+                    push_assistant_message(
+                        &mut messages,
+                        item,
+                        created_at,
+                        &blocks,
+                        file_changes(item).or_else(|| turn_file_changes.clone()),
+                    );
                     blocks.clear();
                 }
                 _ => {}
@@ -101,16 +108,23 @@ fn push_assistant_message(
     item: &Value,
     created_at: i64,
     blocks: &[Value],
+    file_changes: Option<Value>,
 ) {
     if let Some(content) = extract_text(item) {
-        messages.push(json!({
+        let mut message = json!({
             "id": item_id(item, "assistant"),
             "role": "assistant",
             "content": content,
             "status": "done",
             "createdAt": created_at,
             "blocks": blocks,
-        }));
+        });
+        if let Some(file_changes) = file_changes {
+            if let Some(object) = message.as_object_mut() {
+                object.insert("fileChanges".to_owned(), file_changes);
+            }
+        }
+        messages.push(message);
     }
 }
 
@@ -143,4 +157,12 @@ fn command_output(item: &Value) -> String {
     raw_string_field(item, "aggregatedOutput")
         .or_else(|| raw_string_field(item, "output"))
         .unwrap_or_default()
+}
+
+fn file_changes(value: &Value) -> Option<Value> {
+    value
+        .get("fileChanges")
+        .or_else(|| value.get("file_changes"))
+        .filter(|value| value.is_object())
+        .cloned()
 }

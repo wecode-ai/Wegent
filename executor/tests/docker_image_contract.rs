@@ -16,7 +16,10 @@ fn executor_dockerfile_builds_and_runs_rust_binary() {
     assert!(dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(dockerfile.contains("cargo build --release --locked"));
     assert!(dockerfile.contains("/app/executor/target/release/wegent-executor"));
-    assert!(dockerfile.contains("CMD [\"/app/wegent-executor\"]"));
+    assert!(dockerfile.contains(
+        "COPY --from=builder /app/executor/target/release/wegent-executor /app/executor"
+    ));
+    assert!(dockerfile.contains("CMD [\"/app/executor\"]"));
     assert!(!dockerfile.to_ascii_lowercase().contains("pyinstaller"));
     assert!(!dockerfile.contains("uvicorn main:app"));
 }

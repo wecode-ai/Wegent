@@ -75,12 +75,49 @@ impl Default for LoggingConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct UpdateConfig {
-    #[serde(default, alias = "url")]
     pub registry: String,
-    #[serde(default, alias = "token")]
     pub registry_token: String,
+}
+
+impl<'de> Deserialize<'de> for UpdateConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Default, Deserialize)]
+        struct RawUpdateConfig {
+            #[serde(default)]
+            registry: Option<String>,
+            #[serde(default)]
+            url: Option<String>,
+            #[serde(default)]
+            registry_token: Option<String>,
+            #[serde(default)]
+            token: Option<String>,
+        }
+
+        let raw = RawUpdateConfig::deserialize(deserializer)?;
+        Ok(Self {
+            registry: raw.registry.or(raw.url).unwrap_or_default(),
+            registry_token: raw.registry_token.or(raw.token).unwrap_or_default(),
+        })
+    }
+}
+
+impl UpdateConfig {
+    pub fn is_registry(&self) -> bool {
+        !self.registry.trim().is_empty()
+    }
+
+    pub fn registry_url(&self) -> Option<&str> {
+        non_empty_str(&self.registry)
+    }
+
+    pub fn token(&self) -> Option<&str> {
+        non_empty_str(&self.registry_token)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,6 +241,15 @@ fn set_from_env(target: &mut String, name: &str) {
         if !trimmed.is_empty() {
             *target = trimmed.to_owned();
         }
+    }
+}
+
+fn non_empty_str(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 

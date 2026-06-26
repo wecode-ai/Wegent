@@ -47,6 +47,13 @@ impl Drop for EnvGuard {
     }
 }
 
+fn set_temp_codex_home(prefix: &str) -> EnvGuard {
+    EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path(prefix, "dir").display().to_string(),
+    )
+}
+
 #[tokio::test]
 async fn app_runtime_lists_codex_threads_through_app_server() {
     let _lock = env_lock().await;
@@ -56,6 +63,7 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-codex-home");
     let log_path = temp_path("wegent-app-runtime-list-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let server = AppIpcServer::new()
@@ -107,6 +115,7 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-codex-home");
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-transcript-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -158,6 +167,7 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-store-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -209,6 +219,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-archive-codex-home");
     let log_path = temp_path("wegent-app-runtime-archive-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -276,6 +287,7 @@ async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-delete-codex-home");
     let log_path = temp_path("wegent-app-runtime-delete-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -320,6 +332,7 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-rename-codex-home");
     let log_path = temp_path("wegent-app-runtime-rename-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -368,6 +381,7 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-search-codex-home");
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -415,6 +429,7 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
             .display()
             .to_string(),
     );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-search-archive-codex-home");
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-archive-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
