@@ -31,6 +31,7 @@ use crate::{
         app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
     },
+    logging::format_executor_log,
     protocol::ExecutionRequest,
     runner::{BackgroundTaskRunner, EventSink},
     server::TaskRunner,
@@ -390,7 +391,13 @@ where
                     self.heartbeat_until_reconnect().await;
                 }
                 Err(error) => {
-                    eprintln!("local backend connection failed: {error}");
+                    eprintln!(
+                        "{}",
+                        local_backend_connection_failure_log_line(
+                            &self.client.config.backend_url,
+                            &error
+                        )
+                    );
                     sleep(retry_delay).await;
                     retry_delay = retry_delay
                         .saturating_mul(2)
@@ -532,6 +539,16 @@ where
             }
         }
     }
+}
+
+pub fn local_backend_connection_failure_log_line(backend_url: &str, error: &str) -> String {
+    format_executor_log(
+        "local backend connection failed",
+        &[
+            ("backend_url", backend_url.to_owned()),
+            ("error", error.to_owned()),
+        ],
+    )
 }
 
 #[derive(Clone, Default)]
