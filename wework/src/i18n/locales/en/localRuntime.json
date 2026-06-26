@@ -1,9 +1,18 @@
 {
-  "starting_title": "Starting local executor",
-  "starting_description": "Connecting to the local daemon. First startup may take a few seconds.",
-  "failed_title": "Local executor failed to start",
-  "failed_description": "Check whether the executor can start correctly, or inspect the log and retry.",
-  "log_label": "Log file",
+  "starting_title": "Setting up your workspace",
+  "starting_description": "Preparing files, conversations, and your local workspace. This should only take a moment.",
+  "starting_status": "Laying out the workspace",
+  "animation_project": "Project",
+  "animation_files": "Files",
+  "animation_chat": "Chat",
+  "step_workspace": "Arranging workspace",
+  "step_files": "Preparing files",
+  "step_assistant": "Waking assistant",
+  "failed_title": "Workspace is not ready",
+  "failed_description": "Retry once. If it still fails, share the diagnostic log with the team.",
+  "log_label": "Diagnostic log",
   "retry": "Retry",
-  "fallback_error": "Local executor is unavailable"
+  "fallback_error": "Workspace is unavailable",
+  "error_not_running": "The local workspace service is not running",
+  "error_not_ready": "The local workspace service is not ready"
 }

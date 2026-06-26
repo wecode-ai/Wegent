@@ -1,9 +1,18 @@
 {
-  "starting_title": "正在启动本地执行器",
-  "starting_description": "正在连接本机 daemon。首次启动可能需要几秒。",
-  "failed_title": "本地执行器启动失败",
-  "failed_description": "请检查 executor 是否能正常启动，或查看日志后重试。",
-  "log_label": "日志位置",
-  "retry": "重试",
-  "fallback_error": "本地执行器不可用"
+  "starting_title": "正在整理你的工作台",
+  "starting_description": "我们在准备文件、会话和本机工作环境。马上就可以开始。",
+  "starting_status": "铺好工作台中",
+  "animation_project": "项目",
+  "animation_files": "文件",
+  "animation_chat": "对话",
+  "step_workspace": "整理工作台",
+  "step_files": "准备文件",
+  "step_assistant": "唤醒助手",
+  "failed_title": "工作台没准备好",
+  "failed_description": "可以重试一次；如果还不行，再把下面的诊断日志发给开发同学。",
+  "log_label": "诊断日志",
+  "retry": "再试一次",
+  "fallback_error": "工作台暂时不可用",
+  "error_not_running": "本机工作台服务还没有启动",
+  "error_not_ready": "本机工作台服务还没有准备好"
 }
