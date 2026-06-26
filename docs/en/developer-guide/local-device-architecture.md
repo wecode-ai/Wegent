@@ -123,6 +123,28 @@ After a remote Docker device starts, it sends `device:register` with `device_typ
 | `task:progress`    | Device → Backend | Task progress       |
 | `task:complete`    | Device → Backend | Task completion     |
 
+### Rust Executor Local Event Coverage
+
+The Rust executor Backend channel must remain event-compatible with the legacy
+Python local device runner. In addition to task execution and heartbeat events,
+the local device currently registers and handles:
+
+- `task:cancel`, `task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`, `device:start_code_server_session`
+- `terminal:input`, `terminal:resize`, `terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+The migration coverage matrix is tracked in
+`executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local
+device event, add coverage to
+`executor/tests/local_backend_device_migration_contract.rs` first, then update
+that migration matrix.
+
 ### Message Format
 
 ```json
@@ -239,6 +261,8 @@ Backend can send desired global capability state to an online local device throu
 
 In `replace` mode, the executor only removes capabilities marked as `managed` in the Wegent manifest and missing from the desired state. Plugins installed directly by the user on the local machine are not removed by a Wegent sync.
 
+Capability package downloads are constrained to the configured Backend origin. The executor resolves relative package paths against `connection.backend_url`, rejects package URLs from other origins, and only attaches the device bearer token to same-origin Backend requests. Skill download URLs are built with encoded query parameters, and package extraction uses a per-sync staging directory before replacing the managed skill directory.
+
 When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
@@ -318,6 +342,8 @@ flowchart LR
 | **Token Expiration**   | 7-day expiry, requires periodic refresh         |
 | **User Isolation**     | Devices can only execute tasks from their owner |
 | **Hardware Binding**   | Device ID generated from hardware identifiers   |
+
+Backend-triggered terminal and code-server sessions resolve relative paths under the configured local workspace root. Backend-triggered upgrades must stop running local tasks before restarting the executor: if `force_stop_tasks` is not set, the upgrade is rejected as busy; if forced cancellation fails for any task, the upgrade is aborted and an error status is emitted instead of proceeding to restart.
 
 ### Local Executor Connection Configuration
 

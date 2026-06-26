@@ -4,7 +4,14 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use wegent_executor::app::{cli::CliArgs, startup_plan, StartupPlan};
+use axum::{routing::get, Json, Router};
+use serde_json::json;
+use tokio::net::TcpListener;
+use wegent_executor::{
+    app::{cli::CliArgs, run, startup_plan, StartupPlan},
+    services::updater::binary_name_for,
+    version::get_version,
+};
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -66,18 +73,23 @@ fn local_mode_without_backend_plans_app_ipc_sidecar() {
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
     let _device_id = EnvGuard::remove("DEVICE_ID");
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", unique_home("no-backend").as_str());
+    let home = unique_home("no-backend");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
 
     let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
     let plan = startup_plan(args).unwrap();
 
-    assert_eq!(
-        plan,
+    match plan {
         StartupPlan::LocalSidecar {
-            backend_enabled: false,
-            device_id: "local-device".to_owned()
+            backend_enabled,
+            device_id,
+        } => {
+            assert!(!backend_enabled);
+            assert!(device_id.starts_with("device-"), "{device_id}");
+            assert_ne!(device_id, "local-device");
         }
-    );
+        other => panic!("expected local sidecar plan, got {other:?}"),
+    }
 }
 
 #[test]
@@ -86,7 +98,8 @@ fn local_mode_with_backend_plans_sidecar_plus_backend_runner() {
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", unique_home("backend").as_str());
+    let home = unique_home("backend");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
 
     let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
     let plan = startup_plan(args).unwrap();
@@ -100,12 +113,62 @@ fn local_mode_with_backend_plans_sidecar_plus_backend_runner() {
     );
 }
 
-fn unique_home(label: &str) -> String {
-    std::env::temp_dir()
-        .join(format!(
-            "wegent-executor-app-startup-{label}-{}",
-            std::process::id()
-        ))
-        .display()
-        .to_string()
+#[tokio::test]
+async fn upgrade_flag_runs_update_check_without_starting_runtime() {
+    let current_version = get_version();
+    let (registry_url, _server) = registry_server(&current_version).await;
+    let config_path = unique_home("upgrade").join("device-config.json");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        json!({
+            "mode": "local",
+            "device_id": "upgrade-device",
+            "update": {
+                "registry": registry_url,
+                "registry_token": "registry-token"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let args = CliArgs::parse_from([
+        "wegent-executor",
+        "--upgrade",
+        "--yes",
+        "--config",
+        config_path.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    run(args).await.unwrap();
+}
+
+async fn registry_server(version: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let route = format!(
+        "/{}/update.json",
+        binary_name_for(std::env::consts::OS, std::env::consts::ARCH)
+    );
+    let response = json!({
+        "version": version,
+        "url": "https://example.com/download"
+    });
+    let app = Router::new().route(&route, get(move || async move { Json(response) }));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (base_url, server)
+}
+
+fn unique_home(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "wegent-executor-app-startup-{label}-{}-{nanos}",
+        std::process::id()
+    ))
 }

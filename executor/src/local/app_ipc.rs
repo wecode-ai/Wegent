@@ -22,6 +22,7 @@ use tokio::{
 };
 
 use crate::{
+    agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
@@ -362,15 +363,9 @@ pub fn app_ipc_socket_path() -> PathBuf {
 }
 
 pub async fn serve_app_ipc_sidecar(device_id: String) -> Result<(), String> {
-    let codex_binary = env::var("CODEX_BINARY_PATH")
-        .ok()
-        .or_else(|| env::var("CODEX_BIN").ok())
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "codex".to_owned());
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
-        .with_local_runtime_work_handler(codex_binary);
+        .with_local_runtime_work_handler(resolve_codex_binary());
     server.serve_forever(app_ipc_socket_path()).await
 }
 

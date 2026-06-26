@@ -11,6 +11,7 @@ use std::{
 
 use serde_json::{json, Value};
 use wegent_executor::{
+    config::device::UpdateConfig,
     local::backend::{EventHandler, LocalBackendConfig, LocalBackendRunner, LocalBackendTransport},
     protocol::{ExecutionRequest, TaskStatus},
     server::{RunnerResult, TaskRunner},
@@ -203,5 +204,8 @@ fn local_backend_config() -> LocalBackendConfig {
         configured_capabilities: Vec::new(),
         runtime_auth_home: std::env::temp_dir()
             .join(format!("wegent-dispatch-contract-{}", std::process::id())),
+        local_workspace_root: std::env::temp_dir()
+            .join(format!("wegent-dispatch-workspace-{}", std::process::id())),
+        update: UpdateConfig::default(),
     }
 }

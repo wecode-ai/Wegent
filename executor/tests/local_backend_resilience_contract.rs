@@ -12,7 +12,7 @@ use std::{
 
 use serde_json::{json, Value};
 use wegent_executor::{
-    config::device::{ConnectionConfig, DeviceConfig},
+    config::device::{ConnectionConfig, DeviceConfig, UpdateConfig},
     local::backend::{
         local_backend_connection_failure_log_line, local_backend_registered_log_line,
         local_backend_starting_log_line, EventHandler, LocalBackendClient, LocalBackendConfig,
@@ -260,6 +260,11 @@ fn local_backend_config() -> LocalBackendConfig {
         configured_capabilities: Vec::new(),
         runtime_auth_home: std::env::temp_dir()
             .join(format!("wegent-resilience-contract-{}", std::process::id())),
+        local_workspace_root: std::env::temp_dir().join(format!(
+            "wegent-resilience-workspace-{}",
+            std::process::id()
+        )),
+        update: UpdateConfig::default(),
     }
 }
 
