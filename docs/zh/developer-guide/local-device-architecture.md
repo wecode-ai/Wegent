@@ -123,6 +123,22 @@ sequenceDiagram
 | `task:progress`    | 设备 → 后端 | 任务进度 |
 | `task:complete`    | 设备 → 后端 | 任务完成 |
 
+### Rust executor 本地事件覆盖
+
+Rust executor 的本地 Backend 通道需要与旧 Python 本地设备 runner 保持事件级兼容。除任务执行和心跳外，当前本地设备还注册并处理：
+
+- `task:cancel`、`task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`、`device:start_code_server_session`
+- `terminal:input`、`terminal:resize`、`terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+迁移覆盖关系记录在 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`。新增本地设备事件时，应先补 `executor/tests/local_backend_device_migration_contract.rs`，再更新该迁移矩阵。
+
 ### 消息格式
 
 ```json
@@ -239,6 +255,8 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 `replace` 模式只会清理由 Wegent manifest 标记为 `managed` 且不在期望状态中的能力。用户直接在本机安装的 plugin 不会因为一次 Wegent 同步被删除。
 
+能力包下载被限制在当前配置的 Backend 同源地址内。executor 会将相对下载路径解析到 `connection.backend_url`，拒绝其它 origin 的包地址，并且只对同源 Backend 请求附加设备 bearer token。Skill 下载 URL 使用编码后的 query 参数构造，包解压会先写入单次同步唯一的 staging 目录，再替换 Wegent 管理的 skill 目录。
+
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
@@ -318,6 +336,8 @@ flowchart LR
 | **Token 有效期** | 7 天过期，需定期刷新         |
 | **用户隔离**     | 设备只能执行其所有者的任务   |
 | **硬件绑定**     | 设备 ID 基于硬件标识生成     |
+
+后端触发的 terminal 与 code-server session 会把相对路径解析到配置中的本地 workspace root 下。后端触发的升级必须在重启 executor 前停止运行中的本地任务：未设置 `force_stop_tasks` 时升级会以 busy 状态拒绝；如果强制停止任一任务失败，升级会立即中止并上报 error 状态，不会继续进入重启流程。
 
 ### 本地执行器连接配置
 

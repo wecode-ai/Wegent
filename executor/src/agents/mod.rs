@@ -47,10 +47,7 @@ impl AgentCommandPlanner {
     }
 
     pub fn from_env() -> Self {
-        Self::new(
-            read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude"),
-            read_binary("CODEX_BINARY_PATH", "CODEX_BIN", "codex"),
-        )
+        Self::new(resolve_claude_binary(), resolve_codex_binary())
     }
 
     pub fn command_for(&self, request: &ExecutionRequest) -> Result<CommandSpec, String> {
@@ -60,6 +57,14 @@ impl AgentCommandPlanner {
             agent_kind => Err(format!("unsupported agent kind: {agent_kind:?}")),
         }
     }
+}
+
+pub fn resolve_codex_binary() -> String {
+    read_binary("CODEX_BINARY_PATH", "CODEX_BIN", "codex")
+}
+
+fn resolve_claude_binary() -> String {
+    read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude")
 }
 
 fn read_binary(primary: &str, secondary: &str, default: &str) -> String {

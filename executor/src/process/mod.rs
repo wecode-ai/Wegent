@@ -204,10 +204,18 @@ async fn run_prepared_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn()?;
-    if let Some(mut child_stdin) = child.stdin.take() {
-        child_stdin.write_all(input.as_bytes()).await?;
+    let writer = child.stdin.take().map(|mut child_stdin| {
+        tokio::spawn(async move { child_stdin.write_all(input.as_bytes()).await })
+    });
+    let output = child.wait_with_output().await;
+    if let Some(writer) = writer {
+        if let Ok(Err(error)) = writer.await {
+            if output.is_ok() {
+                return Err(error);
+            }
+        }
     }
-    child.wait_with_output().await
+    output
 }
 
 fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutcome {

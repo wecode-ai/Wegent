@@ -5,6 +5,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -145,6 +146,45 @@ impl ProcessManager {
             return false;
         }
         self.wait_until_dead(pid, Duration::from_millis(100))
+    }
+
+    pub fn spawn_restart(&self, plan: &RestartPlan) -> bool {
+        let Some(program) = plan.command.first() else {
+            return false;
+        };
+        let mut command = Command::new(program);
+        command.args(plan.command.iter().skip(1));
+        command.stdin(Stdio::null());
+
+        if let Some(log_file) = &plan.log_file {
+            if let Some(parent) = log_file.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            match fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file)
+            {
+                Ok(file) => {
+                    let stderr = file.try_clone().ok();
+                    command.stdout(Stdio::from(file));
+                    if let Some(stderr) = stderr {
+                        command.stderr(Stdio::from(stderr));
+                    } else {
+                        command.stderr(Stdio::null());
+                    }
+                }
+                Err(_) => {
+                    command.stdout(Stdio::null());
+                    command.stderr(Stdio::null());
+                }
+            }
+        } else {
+            command.stdout(Stdio::null());
+            command.stderr(Stdio::null());
+        }
+
+        command.spawn().is_ok()
     }
 
     fn wait_until_dead(&self, pid: u32, timeout: Duration) -> bool {

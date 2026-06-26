@@ -16,11 +16,12 @@ use std::{fs, os::unix::fs::PermissionsExt};
 use serde_json::{json, Value};
 use tokio::time::timeout;
 use wegent_executor::{
-    config::device::DeviceConfig,
+    config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
     local::backend::{
-        build_runtime_auth_file_report, is_usable_device_ip, LocalBackendClient,
-        LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner, LocalBackendTransport,
+        build_runtime_auth_file_report, is_usable_device_ip, CapabilityReportProvider,
+        LocalBackendClient, LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner,
+        LocalBackendTransport,
     },
     runner::EventSink,
 };
@@ -29,7 +30,11 @@ use wegent_executor::{
 async fn local_backend_registers_device_with_python_compatible_payload() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let config = local_backend_config();
-    let client = LocalBackendClient::new(config, transport.clone());
+    let client = LocalBackendClient::with_capability_reporter(
+        config,
+        transport.clone(),
+        StaticCapabilityReporter,
+    );
 
     let registered = client
         .register_device(Duration::from_secs(2))
@@ -73,7 +78,11 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let mut config = local_backend_config();
     config.runtime_auth_home = home;
-    let client = LocalBackendClient::new(config, transport.clone());
+    let client = LocalBackendClient::with_capability_reporter(
+        config,
+        transport.clone(),
+        StaticCapabilityReporter,
+    );
     client.set_running_task_ids([10, 20]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
@@ -189,21 +198,21 @@ async fn local_backend_execute_command_handler_returns_backend_call_ack_payload(
 }
 
 #[tokio::test]
-async fn local_backend_runtime_rpc_handler_acknowledges_unavailable_runtime() {
+async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
 
     let handler = transport.handler("runtime:rpc").unwrap();
     let ack = handler(json!({
-        "method": "runtime.tasks.transcript",
-        "payload": {"localTaskId": "codex-1"}
+        "method": "runtime.tasks.list",
+        "payload": {}
     }))
     .await
     .unwrap();
 
-    assert_eq!(ack["success"], false);
-    assert_eq!(ack["code"], "runtime_unavailable");
+    assert_eq!(ack["success"], true, "{ack}");
+    assert!(ack["workspaces"].is_array(), "{ack}");
 }
 
 #[test]
@@ -215,7 +224,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
         bind_shell: "claudecode".to_owned(),
         connection: wegent_executor::config::device::ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
-            auth_token: "Bearer wg-token".to_owned(),
+            auth_token: "bEaReR\twg-token".to_owned(),
         },
         ..DeviceConfig::default()
     };
@@ -382,6 +391,8 @@ fn local_backend_config() -> LocalBackendConfig {
         reconnect_delay_max: Duration::from_secs(30),
         configured_capabilities: Vec::new(),
         runtime_auth_home: temp_home("runtime-auth"),
+        local_workspace_root: temp_home("workspace"),
+        update: UpdateConfig::default(),
     }
 }
 
@@ -390,6 +401,22 @@ fn temp_home(label: &str) -> std::path::PathBuf {
         "wegent-executor-local-backend-{label}-{}",
         std::process::id()
     ))
+}
+
+struct StaticCapabilityReporter;
+
+impl CapabilityReportProvider for StaticCapabilityReporter {
+    fn build_report(&self) -> Value {
+        json!({
+            "revision": 0,
+            "digest": "sha256:empty",
+            "full": true,
+            "skills": [],
+            "plugins": [],
+            "mcps": [],
+            "last_sync_at": null,
+        })
+    }
 }
 
 #[cfg(unix)]
