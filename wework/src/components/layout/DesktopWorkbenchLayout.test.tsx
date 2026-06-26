@@ -1306,14 +1306,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(usagePanel).toHaveTextContent('剩余 0.26 元')
     expect(usagePanel).not.toHaveTextContent('使用率')
     expect(usagePanel).not.toHaveTextContent('总额度')
+    expect(usagePanel).not.toHaveTextContent('额度与计费说明')
     expect(usagePanel).not.toHaveClass('pl-12')
     expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
-    const quotaLink = await screen.findByRole('link', {
-      name: '额度与计费说明',
-    })
-    expect(quotaLink).toHaveAttribute('href', 'https://space.intra.weibo.com/develop/model-quota')
-    expect(quotaLink).toHaveClass('text-text-secondary')
-    expect(quotaLink).not.toHaveClass('text-primary')
   })
 
   test('opens the project create menu from the sidebar project create button', async () => {

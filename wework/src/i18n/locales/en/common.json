@@ -398,7 +398,6 @@
     "personal_account": "Personal account",
     "remaining_usage": "Remaining usage",
     "quota_load_failed": "Failed to fetch quota info",
-    "quota_billing_link": "Quota & Billing Details",
     "quota_model_label": "Model Quota",
     "quota_remaining_label": "remaining",
     "quota_unit_yuan": "Yuan",

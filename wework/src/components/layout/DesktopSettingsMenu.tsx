@@ -2,7 +2,6 @@ import {
   ChevronDown,
   Clock,
   Download,
-  ExternalLink,
   Loader2,
   LogOut,
   Settings,
@@ -17,8 +16,6 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
-
-const QUOTA_BILLING_URL = 'https://space.intra.weibo.com/develop/model-quota'
 
 function getQuotaUsagePercent(quota: QuotaData): number {
   const rawPercent = quota.usage_rate * 100
@@ -217,17 +214,6 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
                   className="h-full rounded-full bg-primary"
                   style={{ width: `${quotaUsagePercent}%` }}
                 />
-              </div>
-              <div>
-                <a
-                  href={QUOTA_BILLING_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex h-6 items-center gap-1 whitespace-nowrap text-text-secondary hover:text-text-primary hover:underline"
-                >
-                  {t('workbench.quota_billing_link', '额度与计费说明')}
-                  <ExternalLink className="h-3 w-3 text-text-muted" />
-                </a>
               </div>
             </div>
           ) : null}
