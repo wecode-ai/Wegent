@@ -21,7 +21,7 @@ import { useToast } from '@/hooks/use-toast'
 import { taskMemberApi, TaskMember } from '@/apis/task-member'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AddMembersDialog } from './AddMembersDialog'
-import TaskKnowledgeBindingPanel from './TaskKnowledgeBindingPanel'
+import TaskKnowledgeBindingPanel from './task-knowledge-binding-panel'
 import { cn } from '@/lib/utils'
 
 interface TaskMembersPanelProps {

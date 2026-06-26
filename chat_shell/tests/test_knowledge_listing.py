@@ -358,6 +358,12 @@ class TestKnowledgeListDocumentsTool:
                 "status_code": 503,
             }
         ]
+        assert any(
+            source["provider"] == "demo"
+            and source["source_id"] == "demo-kb-1"
+            and source["document_count"] == 0
+            for source in result["selected_sources"]
+        )
 
     def test_description_prefers_unified_listing_over_kb_ls(self) -> None:
         """Tool metadata should route file-list requests away from internal-only kb_ls."""
@@ -403,9 +409,10 @@ class TestKnowledgeListDocumentsTool:
                 {
                     "provider": "demo",
                     "id": "demo-kb-1",
-                    "name": "api-reference.md",
+                    "name": "External Demo",
                     "target_type": "document",
                     "document_id": "doc-1",
+                    "target_name": "api-reference.md",
                 }
             ],
             user_id=2,

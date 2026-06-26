@@ -5,7 +5,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import TaskKnowledgeBindingPanel from '@/features/tasks/components/group-chat/TaskKnowledgeBindingPanel'
+import TaskKnowledgeBindingPanel from '@/features/tasks/components/group-chat/task-knowledge-binding-panel'
 
 const mockGetBoundKnowledgeBases = jest.fn()
 const mockGetBoundExternalKnowledgeRefs = jest.fn()
@@ -15,15 +15,15 @@ const mockToast = jest.fn()
 
 const mockT = (key: string, params?: Record<string, unknown>) => {
   if (key === 'knowledgeBinding.count') return `${params?.count ?? 0} bound`
-  if (key === 'knowledgeBinding.externalKnowledge') return 'External knowledge base'
-  if (key === 'knowledgeBinding.title') return 'Knowledge Bases'
-  if (key === 'knowledgeBinding.empty') return 'No knowledge bases bound'
-  if (key === 'knowledgeBinding.loadFailed') return 'Failed to load knowledge bases'
+  if (key === 'knowledgeBinding.externalKnowledge') return 'External knowledge source'
+  if (key === 'knowledgeBinding.title') return 'Knowledge Sources'
+  if (key === 'knowledgeBinding.empty') return 'No knowledge sources bound'
+  if (key === 'knowledgeBinding.loadFailed') return 'Failed to load knowledge sources'
   if (key === 'knowledgeBinding.externalLoadFailed')
-    return 'External knowledge bases could not be loaded. Internal knowledge bases remain available.'
+    return 'External knowledge sources could not be loaded. Internal knowledge bases remain available.'
   if (key === 'knowledgeBinding.remove') return `Remove ${params?.name ?? ''}`
   if (key === 'knowledgeBinding.removeSuccess') return `Removed ${params?.name ?? ''}`
-  if (key === 'knowledgeBinding.removeFailed') return 'Failed to remove knowledge base'
+  if (key === 'knowledgeBinding.removeFailed') return 'Failed to remove knowledge source'
   if (key === 'groupChat.knowledge.add') return 'Add'
   if (key === 'groupChat.knowledge.boundBy') return `Bound by ${params?.name ?? ''}`
   if (key === 'common:actions.done') return 'Done'
@@ -115,7 +115,7 @@ describe('TaskKnowledgeBindingPanel', () => {
     expect(await screen.findByText('测试mcp')).toBeInTheDocument()
     expect(screen.getByText('测试1111')).toBeInTheDocument()
     expect(screen.getByText('AP')).toBeInTheDocument()
-    expect(screen.getByText('External knowledge base')).toBeInTheDocument()
+    expect(screen.getByText('External knowledge source')).toBeInTheDocument()
   })
 
   it('removes an internal knowledge binding through the existing task KB API', async () => {
@@ -165,7 +165,7 @@ describe('TaskKnowledgeBindingPanel', () => {
       expect(await screen.findByText('测试mcp')).toBeInTheDocument()
       expect(
         screen.getByText(
-          'External knowledge bases could not be loaded. Internal knowledge bases remain available.'
+          'External knowledge sources could not be loaded. Internal knowledge bases remain available.'
         )
       ).toBeInTheDocument()
       expect(screen.queryByText('测试1111')).not.toBeInTheDocument()

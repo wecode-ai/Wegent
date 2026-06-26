@@ -415,15 +415,15 @@
     "started_over_20m": "任务已运行超过 20 分钟，请关注执行状态，建议停止后重试"
   },
   "knowledgeBinding": {
-    "title": "知识库",
+    "title": "知识来源",
     "count": "已绑定 {{count}} 个",
-    "externalKnowledge": "外部知识库",
-    "empty": "暂未绑定知识库",
-    "loadFailed": "加载知识库失败",
-    "externalLoadFailed": "外部知识库加载失败，内部知识库仍可管理。",
+    "externalKnowledge": "外部知识来源",
+    "empty": "暂未绑定知识来源",
+    "loadFailed": "加载知识来源失败",
+    "externalLoadFailed": "外部知识来源加载失败，内部知识库仍可管理。",
     "remove": "移除 {{name}}",
     "removeSuccess": "已移除「{{name}}」",
-    "removeFailed": "移除知识库失败"
+    "removeFailed": "移除知识来源失败"
   },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",

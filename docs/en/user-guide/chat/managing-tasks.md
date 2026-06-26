@@ -27,8 +27,8 @@ In Wegent, a conversation is the primary way users interact with AI agents. Each
 
 **Core Concept**:
 
-```
-Conversation = User Message + Agent + Context + Conversation History
+```text
+Conversation = User Message + Agent + Context + Status
 ```
 
 ### Conversation Components

@@ -277,6 +277,44 @@ def test_remove_task_external_knowledge_ref_removes_only_matching_target() -> No
     db.commit.assert_not_called()
 
 
+def test_remove_task_external_knowledge_ref_removes_last_binding_field() -> None:
+    db = Mock()
+    task = Mock(spec=TaskResource)
+    task.json = {
+        "spec": {
+            "externalKnowledgeRefs": [
+                {
+                    "provider": "demo-source",
+                    "mode": "explicit",
+                    "id": "kb-1",
+                    "name": "Demo source",
+                }
+            ],
+            "otherField": "kept",
+        }
+    }
+
+    with patch(
+        "app.services.chat.external_knowledge_refs.task_stores.task_store.update_json"
+    ) as update_json:
+        next_refs = remove_task_external_knowledge_ref(
+            db,
+            task,
+            {
+                "provider": "demo-source",
+                "mode": "explicit",
+                "id": "kb-1",
+            },
+        )
+
+    assert next_refs == []
+    update_json.assert_called_once()
+    payload = update_json.call_args.kwargs["payload"]
+    assert "externalKnowledgeRefs" not in payload["spec"]
+    assert payload["spec"]["otherField"] == "kept"
+    db.commit.assert_not_called()
+
+
 def test_sync_external_contexts_raises_validation_errors_without_syncing() -> None:
     db = Mock()
     task = Mock(spec=TaskResource)

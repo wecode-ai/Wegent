@@ -127,24 +127,36 @@ export default function TaskKnowledgeBindingPanel({
     setLoading(true)
     setError(null)
     setExternalError(null)
+
+    const [internalResult, externalResult] = await Promise.allSettled([
+      taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId),
+      taskKnowledgeBaseApi.getBoundExternalKnowledgeRefs(taskId),
+    ])
+
     try {
-      const internalResponse = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId)
+      if (internalResult.status !== 'fulfilled') {
+        throw internalResult.reason
+      }
+      const internalResponse = internalResult.value
       setInternalKnowledgeBases(internalResponse.items)
       setMaxInternalLimit(internalResponse.max_limit)
     } catch (err) {
       console.error('Failed to fetch internal task knowledge bindings:', err)
       setError(t('knowledgeBinding.loadFailed'))
-    } finally {
-      setLoading(false)
     }
 
     try {
-      const externalResponse = await taskKnowledgeBaseApi.getBoundExternalKnowledgeRefs(taskId)
+      if (externalResult.status !== 'fulfilled') {
+        throw externalResult.reason
+      }
+      const externalResponse = externalResult.value
       setExternalRefs(externalResponse.items)
     } catch (err) {
       console.warn('Failed to fetch external task knowledge bindings:', err)
       setExternalRefs([])
       setExternalError(t('knowledgeBinding.externalLoadFailed'))
+    } finally {
+      setLoading(false)
     }
   }, [taskId, t])
 
