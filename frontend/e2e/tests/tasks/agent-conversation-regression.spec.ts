@@ -722,8 +722,7 @@ test.describe('Agent conversation regression', () => {
     )
 
     const separator = path.includes('?') ? '&' : '?'
-    await page.goto(`${path}${separator}teamId=${teamId}`)
-    await page.waitForLoadState('domcontentloaded')
+    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
     await dismissOnboardingTour(page)
     await ensureMessageInputReady(page)
   }

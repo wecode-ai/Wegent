@@ -34,6 +34,194 @@ const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
+const WORKSPACE_TREE_SCRIPT: &str = r#"
+import json
+import os
+import stat as stat_module
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def iso_mtime(path_stat):
+    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
+
+
+root = Path.cwd().resolve()
+entries = []
+for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+    if child.name in {'.', '..'}:
+        continue
+    try:
+        child_stat = child.lstat()
+    except OSError:
+        continue
+    is_directory = stat_module.S_ISDIR(child_stat.st_mode)
+    entries.append(
+        {
+            "name": child.name,
+            "path": str(child),
+            "is_directory": is_directory,
+            "size": 0 if is_directory else child_stat.st_size,
+            "modified_at": iso_mtime(child_stat),
+        }
+    )
+
+entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
+print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
+"#;
+const WORKSPACE_READ_TEXT_FILE_SCRIPT: &str = r#"
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAX_BYTES = 262144
+
+
+def fail(message, code=64):
+    print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
+    raise SystemExit(code)
+
+
+def is_relative_to(path, root):
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+if len(sys.argv) != 2:
+    fail("file name is required")
+
+root = Path.cwd().resolve()
+target = (root / sys.argv[1]).resolve()
+if not is_relative_to(target, root):
+    fail("file path is outside workspace")
+if not target.is_file():
+    fail("file does not exist")
+
+with target.open("rb") as target_file:
+    data = target_file.read(MAX_BYTES + 1)
+truncated = len(data) > MAX_BYTES
+content = data[:MAX_BYTES].decode("utf-8", errors="replace")
+stat = target.stat()
+print(
+    json.dumps(
+        {
+            "success": True,
+            "path": str(target),
+            "name": target.name,
+            "content": content,
+            "truncated": truncated,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    )
+)
+"#;
+const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
+const TURN_FILE_CHANGES_SCRIPT: &str = r#"
+import gzip
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_PATCH_BYTES = 20 * 1024 * 1024
+ARTIFACT_PATTERN = re.compile(r"turn-file-changes/([0-9]+)/([0-9]+)")
+
+
+def finish(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    sys.exit(code)
+
+
+def fail(message, code=64, status=None):
+    payload = {"success": False, "error": message}
+    if status:
+        payload["status"] = status
+    finish(payload, code)
+
+
+if len(sys.argv) != 3:
+    fail("mode and artifact id are required")
+
+mode = sys.argv[1]
+artifact_id = sys.argv[2]
+if mode not in {"review", "revert"}:
+    fail("invalid mode")
+
+match = ARTIFACT_PATTERN.fullmatch(artifact_id)
+if not match:
+    fail("invalid artifact id")
+
+task_id = int(match.group(1))
+subtask_id = int(match.group(2))
+executor_home = Path(os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")).expanduser()
+artifact_root = (executor_home / "artifacts").resolve()
+artifact_dir = (artifact_root / artifact_id).resolve()
+if artifact_root not in artifact_dir.parents:
+    fail("invalid artifact id")
+
+metadata_path = artifact_dir / "metadata.json"
+patch_path = artifact_dir / "changes.patch.gz"
+if not metadata_path.is_file() or not patch_path.is_file():
+    finish({"success": False, "status": "artifact_missing", "error": "turn file changes artifact is missing"})
+
+try:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    fail(f"invalid artifact metadata: {exc}", code=65)
+
+if not isinstance(metadata, dict):
+    fail("invalid artifact metadata", code=65)
+if metadata.get("task_id") != task_id or metadata.get("subtask_id") != subtask_id:
+    fail("artifact metadata id mismatch", code=65)
+
+workspace = Path.cwd().resolve()
+try:
+    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
+except (KeyError, OSError):
+    fail("invalid artifact workspace", code=65)
+if metadata_workspace != workspace:
+    fail("artifact workspace mismatch", code=65)
+
+try:
+    with gzip.open(patch_path, "rb") as patch_file:
+        patch = patch_file.read(MAX_PATCH_BYTES + 1)
+except (OSError, gzip.BadGzipFile) as exc:
+    fail(f"failed to read artifact patch: {exc}", code=65)
+if len(patch) > MAX_PATCH_BYTES:
+    fail("artifact patch exceeds size limit", code=65)
+if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
+    fail("artifact patch checksum mismatch", code=65)
+
+if mode == "review":
+    finish({"success": True, "diff": patch.decode("utf-8", errors="replace")})
+
+temp_path = None
+try:
+    with tempfile.NamedTemporaryFile(prefix="wegent-validated-turn-", suffix=".patch", delete=False) as temp_file:
+        temp_file.write(patch)
+        temp_path = Path(temp_file.name)
+
+    check = subprocess.run(["git", "apply", "--reverse", "--check", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
+    if check.returncode != 0:
+        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
+    apply_result = subprocess.run(["git", "apply", "--reverse", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
+    if apply_result.returncode != 0:
+        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
+    finish({"success": True, "status": "reverted"})
+finally:
+    if temp_path is not None:
+        temp_path.unlink(missing_ok=True)
+"#;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -396,11 +584,84 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["ls", "-a", "-p"],
             Some(PostProcessor::DirectoryList),
         )),
+        "workspace_tree" => Some(command_definition(
+            "python3 -c <workspace_tree>",
+            &["python3", "-c", WORKSPACE_TREE_SCRIPT],
+            Some(PostProcessor::Json),
+        )),
+        "workspace_read_text_file" => Some(command_definition(
+            "python3 -c <workspace_read_text_file>",
+            &["python3", "-c", WORKSPACE_READ_TEXT_FILE_SCRIPT],
+            Some(PostProcessor::Json),
+        )),
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
+        "git_branch" => Some(command_definition(
+            "git branch --show-current",
+            &["git", "branch", "--show-current"],
+            None,
+        )),
+        "git_branch_list" => Some(command_definition(
+            "git branch --format=%(refname:short)",
+            &["git", "branch", "--format=%(refname:short)"],
+            None,
+        )),
+        "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),
+        "git_checkout_new" => Some(command_definition(
+            "git checkout -b",
+            &["git", "checkout", "-b"],
+            None,
+        )),
+        "git_diff_shortstat" => Some(command_definition(
+            "git diff --shortstat",
+            &["git", "diff", "--shortstat"],
+            None,
+        )),
+        "git_diff" => Some(command_definition(
+            "bash -lc <git_workspace_diff>",
+            &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            None,
+        )),
+        "git_diff_unstaged" => Some(command_definition(
+            "git diff --binary --",
+            &["git", "diff", "--binary", "--"],
+            None,
+        )),
+        "git_diff_staged" => Some(command_definition(
+            "git diff --binary --cached --",
+            &["git", "diff", "--binary", "--cached", "--"],
+            None,
+        )),
+        "git_diff_last_commit" => Some(command_definition(
+            "git diff --binary HEAD~1..HEAD --",
+            &["git", "diff", "--binary", "HEAD~1..HEAD", "--"],
+            None,
+        )),
+        "git_status_porcelain" => Some(command_definition(
+            "git status --porcelain",
+            &["git", "status", "--porcelain"],
+            None,
+        )),
+        "git_remote_url" => Some(command_definition(
+            "git remote get-url origin",
+            &["git", "remote", "get-url", "origin"],
+            None,
+        )),
+        "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
+        "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
         "ls_skills" => Some(command_definition(
             "python3 -c 'import json; print(json.dumps([]))'",
             &["python3", "-c", "import json; print(json.dumps([]))"],
+            Some(PostProcessor::Json),
+        )),
+        "turn_file_changes_review" => Some(command_definition(
+            "python3 -c <turn_file_changes> review",
+            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review"],
+            Some(PostProcessor::Json),
+        )),
+        "turn_file_changes_revert" => Some(command_definition(
+            "python3 -c <turn_file_changes> revert",
+            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "revert"],
             Some(PostProcessor::Json),
         )),
         _ => None,

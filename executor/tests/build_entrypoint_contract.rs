@@ -150,6 +150,6 @@ fn collect_forbidden_python_runtime_files_inner(path: &Path, files: &mut Vec<Str
 fn is_generated_runtime_component(component: std::path::Component<'_>) -> bool {
     matches!(
         component.as_os_str().to_str(),
-        Some("target" | ".venv" | "venv" | "__pycache__")
+        Some("target" | ".venv" | "venv" | ".venv-x86_64" | "__pycache__")
     )
 }
