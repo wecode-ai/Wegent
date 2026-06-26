@@ -2,20 +2,40 @@ import { Check, Cloud, Copy, Plus, Server, X } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createDeviceApi } from '@/api/devices'
-import { getRuntimeConfig } from '@/config/runtime'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
+
+interface CloudDeviceDialogConnection {
+  isConnected: boolean
+  apiBaseUrl?: string
+  token: string | null
+}
 
 interface AddCloudDeviceDialogProps {
   open: boolean
   hasCloudDevice?: boolean
+  cloudConnection: CloudDeviceDialogConnection
   onClose: () => void
   onCreated: () => void
   onCreatingChange?: (creating: boolean) => void
 }
 
+function createCloudDeviceApi(connection: CloudDeviceDialogConnection) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  return createDeviceApi(
+    createHttpClient({
+      baseUrl: connection.apiBaseUrl,
+      getToken: () => connection.token,
+      redirectOnUnauthorized: false,
+    })
+  )
+}
+
 export function AddCloudDeviceDialog({
   open,
   hasCloudDevice = false,
+  cloudConnection,
   onClose,
   onCreated,
   onCreatingChange,
@@ -34,10 +54,7 @@ export function AddCloudDeviceDialog({
     setLoading(true)
     setError(null)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      await deviceApi.createCloudDevice()
+      await createCloudDeviceApi(cloudConnection).createCloudDevice()
       onCreatingChange?.(true)
       onClose()
       onCreated()
@@ -47,17 +64,14 @@ export function AddCloudDeviceDialog({
     } finally {
       setLoading(false)
     }
-  }, [hasCloudDevice, onClose, onCreated, onCreatingChange])
+  }, [cloudConnection, hasCloudDevice, onClose, onCreated, onCreatingChange])
 
   const handleCreateRemoteDocker = useCallback(async () => {
     setRemoteLoading(true)
     setError(null)
     setCopied(false)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      const result = await deviceApi.createDockerRemoteDeviceCommand({
+      const result = await createCloudDeviceApi(cloudConnection).createDockerRemoteDeviceCommand({
         client_origin: window.location.origin,
       })
       setRemoteCommand(result)
@@ -67,7 +81,7 @@ export function AddCloudDeviceDialog({
     } finally {
       setRemoteLoading(false)
     }
-  }, [onCreated])
+  }, [cloudConnection, onCreated])
 
   const handleCopyRemoteCommand = useCallback(async () => {
     if (!remoteCommand) return

@@ -51,7 +51,6 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
     expect(screen.getByText('正在整理你的工作台')).toBeInTheDocument()
-    expect(screen.getByText('铺好工作台中')).toBeInTheDocument()
     expect(screen.queryByText(/执行器|daemon/i)).not.toBeInTheDocument()
     expect(screen.queryByTestId('main-app')).not.toBeInTheDocument()
 

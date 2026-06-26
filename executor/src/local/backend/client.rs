@@ -126,6 +126,7 @@ where
             "executor_version": self.config.executor_version,
             "client_ip": self.config.client_ip,
             "runtime_transfer_host": self.config.runtime_transfer_host,
+            "app_device_id": self.config.app_device_id,
         })
     }
 

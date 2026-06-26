@@ -191,6 +191,32 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unknown> {
+  const address = recordValue(value.address)
+  return {
+    deviceId: stringValue(value.deviceId) ?? stringValue(address.deviceId),
+    localTaskId: stringValue(value.localTaskId) ?? stringValue(address.localTaskId),
+    workspacePath: stringValue(value.workspacePath) ?? stringValue(address.workspacePath),
+  }
+}
+
+function transcriptResponseDebug(response: unknown): Record<string, unknown> {
+  const record = recordValue(response)
+  const messages = record.messages
+  return {
+    responseType: Array.isArray(response) ? 'array' : typeof response,
+    keys: Object.keys(record).slice(0, 20),
+    success: record.success,
+    error: record.error,
+    runtime: record.runtime,
+    hasMessages: 'messages' in record,
+    messagesType: Array.isArray(messages) ? 'array' : typeof messages,
+    messageCount: Array.isArray(messages) ? messages.length : null,
+    hasMoreBefore: record.hasMoreBefore,
+    beforeCursor: record.beforeCursor,
+  }
+}
+
 function workspaceLabel(workspacePath: string, label: unknown): string {
   const explicitLabel = stringValue(label)
   if (explicitLabel) return explicitLabel
@@ -646,7 +672,32 @@ function createRuntimeWorkApi(
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
     data: TRequest
-  ): Promise<TResponse> => request(method, await normalizeRequest(data))
+  ): Promise<TResponse> => {
+    const normalizedData = await normalizeRequest(data)
+    if (method === 'runtime.tasks.transcript') {
+      console.info('[Wework] Local runtime IPC transcript request', {
+        address: runtimeAddressDebug(normalizedData),
+      })
+    }
+    try {
+      const response = await request<TResponse>(method, normalizedData)
+      if (method === 'runtime.tasks.transcript') {
+        console.info('[Wework] Local runtime IPC transcript response', {
+          address: runtimeAddressDebug(normalizedData),
+          response: transcriptResponseDebug(response),
+        })
+      }
+      return response
+    } catch (error) {
+      if (method === 'runtime.tasks.transcript') {
+        console.error('[Wework] Local runtime IPC transcript failed', {
+          address: runtimeAddressDebug(normalizedData),
+          error,
+        })
+      }
+      throw error
+    }
+  }
 
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
@@ -896,7 +947,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
   }
-  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId)
+  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId) as unknown as NonNullable<
+    WorkbenchServices['runtimeWorkApi']
+  >
 
   return {
     teamApi: {

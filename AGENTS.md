@@ -45,6 +45,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/shared-skill-directory.md`](docs/en/developer-guide/shared-skill-directory.md)
 - Runtime local work (Project -> Device Workspace -> LocalTask without DB task rows): [`docs/zh/developer-guide/runtime-local-work.md`](docs/zh/developer-guide/runtime-local-work.md)
 - English version: [`docs/en/developer-guide/runtime-local-work.md`](docs/en/developer-guide/runtime-local-work.md)
+- Wework local-first cloud connection: [`docs/zh/developer-guide/wework-cloud-connection.md`](docs/zh/developer-guide/wework-cloud-connection.md)
+- English version: [`docs/en/developer-guide/wework-cloud-connection.md`](docs/en/developer-guide/wework-cloud-connection.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

@@ -215,7 +215,8 @@ export function ScrollableMessageArea({
       Boolean(
         currentScrollKey &&
           messages.length > 0 &&
-          (conversationChanged || messagesLoaded) &&
+          conversationChanged &&
+          !messagesLoaded &&
           conversationScrollPositions.has(currentScrollKey)
       )
     const shouldForceBottom =

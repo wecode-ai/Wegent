@@ -3,12 +3,26 @@ import { useCallback, useEffect, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
 import type { UserProxyConfig } from '@/api/users'
-import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 
-function createProxySettingsApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createUserApi(createHttpClient({ baseUrl: apiBaseUrl }))
+interface CloudProxySettingsConnection {
+  isConnected: boolean
+  apiBaseUrl?: string
+  token: string | null
+}
+
+function createProxySettingsApi(connection: CloudProxySettingsConnection) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  return createUserApi(
+    createHttpClient({
+      baseUrl: connection.apiBaseUrl,
+      getToken: () => connection.token,
+      redirectOnUnauthorized: false,
+    })
+  )
 }
 
 function formatProxyDate(value?: string | null) {
@@ -30,6 +44,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export function ProxySettingsPage() {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const [config, setConfig] = useState<UserProxyConfig | null>(null)
   const [proxyUrl, setProxyUrl] = useState('')
   const [loading, setLoading] = useState(true)
@@ -38,23 +53,31 @@ export function ProxySettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const loadProxyConfig = useCallback(async (refresh = false) => {
-    if (refresh) {
-      setRefreshing(true)
-    } else {
-      setLoading(true)
-    }
-    setError(null)
-    try {
-      const nextConfig = await createProxySettingsApi().getProxyConfig()
-      setConfig(nextConfig)
-    } catch (loadError) {
-      setError(getErrorMessage(loadError, t('workbench.proxy_config_load_failed')))
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [t])
+  const loadProxyConfig = useCallback(
+    async (refresh = false) => {
+      if (!cloudConnection.isConnected) {
+        setLoading(false)
+        setRefreshing(false)
+        return
+      }
+      if (refresh) {
+        setRefreshing(true)
+      } else {
+        setLoading(true)
+      }
+      setError(null)
+      try {
+        const nextConfig = await createProxySettingsApi(cloudConnection).getProxyConfig()
+        setConfig(nextConfig)
+      } catch (loadError) {
+        setError(getErrorMessage(loadError, t('workbench.proxy_config_load_failed')))
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+      }
+    },
+    [cloudConnection, t]
+  )
 
   useEffect(() => {
     void Promise.resolve().then(() => loadProxyConfig())
@@ -66,8 +89,8 @@ export function ProxySettingsPage() {
     setError(null)
     setNotice(null)
     try {
-      const nextConfig = await createProxySettingsApi().updateProxyConfig(
-        proxyUrl.trim(),
+      const nextConfig = await createProxySettingsApi(cloudConnection).updateProxyConfig(
+        proxyUrl.trim()
       )
       setConfig(nextConfig)
       setProxyUrl('')
@@ -87,6 +110,45 @@ export function ProxySettingsPage() {
     : 'bg-muted text-text-muted'
   const updatedAt = formatProxyDate(config?.proxy_updated_at)
 
+  if (!cloudConnection.isConnected) {
+    return (
+      <div data-testid="proxy-settings-page" className="mx-auto w-full max-w-[820px]">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
+            {t('workbench.proxy_config_title')}
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            {t(
+              'workbench.proxy_config_cloud_required',
+              '代理配置属于云端账号能力。连接云端后，可保存代理并让云端 Codex 认证同步使用。'
+            )}
+          </p>
+        </div>
+        <section
+          data-testid="proxy-config-cloud-required"
+          className="mt-8 rounded-lg border border-dashed border-border bg-surface p-5"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+              <Network className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.cloud_connection_cloud_features', '连接云端后')}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">
+                {t(
+                  'workbench.proxy_config_cloud_required_desc',
+                  '本地模式不会向服务端保存代理。连接云端后再配置，会写入当前云端账号。'
+                )}
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div data-testid="proxy-settings-page" className="mx-auto w-full max-w-[820px]">
       <div className="flex items-center justify-between gap-4">
@@ -94,9 +156,7 @@ export function ProxySettingsPage() {
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
             {t('workbench.proxy_config_title')}
           </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.proxy_config_subtitle')}
-          </p>
+          <p className="mt-2 text-sm text-text-secondary">{t('workbench.proxy_config_subtitle')}</p>
         </div>
         <button
           type="button"
@@ -152,8 +212,7 @@ export function ProxySettingsPage() {
                   {t('workbench.proxy_config_current_proxy')}
                 </div>
                 <div className="mt-1 font-mono text-xs text-text-primary">
-                  {config?.proxy_url_masked ||
-                    t('workbench.proxy_config_no_proxy_value')}
+                  {config?.proxy_url_masked || t('workbench.proxy_config_no_proxy_value')}
                 </div>
               </div>
               <div className="rounded-lg bg-surface px-3 py-2">
@@ -189,9 +248,7 @@ export function ProxySettingsPage() {
                 className="inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {saving
-                  ? t('workbench.proxy_config_saving')
-                  : t('workbench.proxy_config_save')}
+                {saving ? t('workbench.proxy_config_saving') : t('workbench.proxy_config_save')}
               </button>
             </div>
             <p className="mt-2 text-xs leading-5 text-text-muted">

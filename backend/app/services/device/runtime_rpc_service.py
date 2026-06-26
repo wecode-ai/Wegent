@@ -24,6 +24,7 @@ MAX_RUNTIME_RPC_TIMEOUT_SECONDS = 600
 SOCKET_ACK_GRACE_SECONDS = 5
 RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
 RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
+LOCAL_EXECUTOR_NAMESPACE = "/local-executor"
 
 
 class RuntimeRpcError(RuntimeError):
@@ -53,6 +54,18 @@ class RuntimeRpcService:
         if not socket_id:
             raise RuntimeRpcError(f"Device '{device_id}' has no socket information")
 
+        sio = get_sio()
+        if not sio.manager.is_connected(socket_id, LOCAL_EXECUTOR_NAMESPACE):
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC skipped stale socket: user_id=%s device_id=%s method=%s socket_id=%s",
+                user_id,
+                device_id,
+                method,
+                socket_id,
+            )
+            await device_service.set_device_offline(user_id, device_id)
+            raise RuntimeRpcError(f"Device '{device_id}' is disconnected")
+
         request = {"method": method, "payload": payload}
         started_at = time.perf_counter()
         logger.info(
@@ -64,11 +77,11 @@ class RuntimeRpcService:
             sorted(payload.keys()),
         )
         try:
-            result = await get_sio().call(
+            result = await sio.call(
                 "runtime:rpc",
                 request,
                 to=socket_id,
-                namespace="/local-executor",
+                namespace=LOCAL_EXECUTOR_NAMESPACE,
                 timeout=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
             )
         except Exception as exc:

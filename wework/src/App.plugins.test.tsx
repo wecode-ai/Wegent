@@ -9,6 +9,12 @@ vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  connectLocalExecutorToBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  disconnectLocalExecutorFromBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
 const mockViewport = vi.hoisted(() => ({
@@ -95,6 +101,7 @@ const workbenchValue: WorkbenchContextValue = {
   rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
+  getRemoteDeviceStartupCommand: vi.fn(),
   upgradeDevice: vi.fn(),
   createProject: vi.fn(),
   createGitWorkspaceProject: vi.fn(),

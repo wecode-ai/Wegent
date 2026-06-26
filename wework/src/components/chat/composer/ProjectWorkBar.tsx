@@ -126,7 +126,7 @@ function isLocalStandaloneDevice(device: DeviceInfo): boolean {
 }
 
 function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
-  return device?.device_type === 'local'
+  return Boolean(device && isLocalStandaloneDevice(device))
 }
 
 function extractNetworkHost(value?: string | null): string | null {

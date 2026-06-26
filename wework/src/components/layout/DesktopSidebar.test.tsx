@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { CloudWorkStatus } from '@/types/workbench'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -16,6 +17,29 @@ function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     bind_shell: 'claudecode',
     executor_version: '1.8.5',
     ...overrides,
+  }
+}
+
+function cloudWorkStatus(
+  overrides: Partial<CloudWorkStatus> & { checks?: Partial<CloudWorkStatus['checks']> } = {}
+): CloudWorkStatus {
+  const defaultStatus: CloudWorkStatus = {
+    availability: 'available',
+    checks: {
+      teams: 'available',
+      devices: 'available',
+      runtimeWork: 'available',
+    },
+    error: null,
+    updatedAt: '2026-06-26T00:00:00.000Z',
+  }
+  return {
+    ...defaultStatus,
+    ...overrides,
+    checks: {
+      ...defaultStatus.checks,
+      ...overrides.checks,
+    },
   }
 }
 
@@ -53,9 +77,17 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
   return props
 }
 
+function enableTauri() {
+  Object.defineProperty(window, '__TAURI_INTERNALS__', {
+    configurable: true,
+    value: {},
+  })
+}
+
 describe('DesktopSidebar', () => {
   beforeEach(() => {
     localStorage.clear()
+    enableTauri()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -123,6 +155,201 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-search-button'))
 
     expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  test('places the cloud connection entry next to the primary sidebar actions', () => {
+    renderSidebar()
+
+    const searchButton = screen.getByTestId('runtime-search-button')
+    const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+    const projectsHeader = screen.getByTestId('projects-section-toggle')
+
+    expect(searchButton.compareDocumentPosition(cloudButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(cloudButton.compareDocumentPosition(projectsHeader)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
+  test('selects the first available cloud device when cloud is connected', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'cloud-device',
+          name: 'Cloud Box',
+          device_type: 'cloud',
+        }),
+      ],
+      onSelectStandaloneDevice,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-device')
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
+  })
+
+  test('shows cloud work availability on the sidebar entry', () => {
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'cloud-device',
+          name: 'Cloud Box',
+          device_type: 'cloud',
+        }),
+      ],
+      cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+    })
+
+    const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+
+    expect(cloudButton).toHaveTextContent('云端工作')
+    expect(cloudButton).toHaveTextContent('可用')
+  })
+
+  test('shows cloud work unavailable when background cloud reads fail', () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+
+    expect(cloudButton).toHaveTextContent('云端工作')
+    expect(cloudButton).toHaveTextContent('不可用')
+    expect(cloudButton).toHaveAttribute('title', expect.stringContaining('request timed out'))
+  })
+
+  test('opens cloud work error details from the warning icon', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+
+    const detail = screen.getByTestId('sidebar-cloud-error-popover')
+    expect(detail).toHaveTextContent('云端工作不可用')
+    expect(detail).toHaveTextContent('云端设备: request timed out')
+    expect(detail).toHaveTextContent('云端设备')
+    expect(detail).toHaveTextContent('不可用')
+    expect(detail).toHaveTextContent('云端任务列表')
+    expect(detail).toHaveTextContent('可用')
+  })
+
+  test('does not open add-device guidance while cloud work checks are failing', async () => {
+    const onGetRemoteDeviceStartupCommand = vi.fn()
+    renderSidebar({
+      devices: [localDevice()],
+      onGetRemoteDeviceStartupCommand,
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
+
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toHaveTextContent(
+      '云端设备: request timed out'
+    )
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+    expect(onGetRemoteDeviceStartupCommand).not.toHaveBeenCalled()
+  })
+
+  test('treats an empty cloud device list as an add-device state instead of an error', async () => {
+    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'alice-remote-device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {},
+      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      commands: [
+        {
+          kind: 'docker',
+          label: 'Docker',
+          description: 'Run in Docker.',
+          command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+        },
+        {
+          kind: 'process',
+          label: '宿主机启动',
+          description: 'Run as a local process.',
+          command: 'DEVICE_TYPE=remote WEGENT_BACKEND_URL=http://backend wegent-executor',
+        },
+      ],
+    })
+    renderSidebar({
+      devices: [localDevice()],
+      onGetRemoteDeviceStartupCommand,
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'empty',
+        checks: { devices: 'empty' },
+      }),
+    })
+
+    expect(screen.queryByTestId('sidebar-cloud-error-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-cloud-connection-button')).toHaveTextContent('无设备')
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
+    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
+  })
+
+  test('shows Docker and process startup scripts when no cloud device is available', async () => {
+    const onGetRemoteDeviceStartupCommand = vi.fn().mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'alice-remote-device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {},
+      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      commands: [
+        {
+          kind: 'docker',
+          label: 'Docker',
+          description: 'Run in Docker.',
+          command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+        },
+        {
+          kind: 'process',
+          label: '宿主机启动',
+          description: 'Run as a local process.',
+          command: 'DEVICE_TYPE=remote WEGENT_BACKEND_URL=http://backend wegent-executor',
+        },
+      ],
+    })
+    renderSidebar({ onGetRemoteDeviceStartupCommand })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-connection-button'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toHaveTextContent('添加新设备')
+    await waitFor(() => expect(onGetRemoteDeviceStartupCommand).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('remote-device-startup-command')).toHaveTextContent(
+      'docker run'
+    )
+    expect(screen.getByTestId('remote-device-startup-tab-docker')).toBeInTheDocument()
+    expect(screen.getByTestId('remote-device-startup-tab-process')).toHaveTextContent('宿主机启动')
+
+    await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
+
+    expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent(
+      'wegent-executor'
+    )
   })
 
   test('hides plugins navigation while the feature is not released', () => {

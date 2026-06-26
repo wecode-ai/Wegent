@@ -22,13 +22,17 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
+import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
+  type StandaloneRemoteDialogIntent,
   type StandaloneWorkspaceDialogMode,
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
@@ -42,6 +46,8 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
+import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
+import type { CloudWorkStatus } from '@/types/workbench'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -62,6 +68,7 @@ interface DesktopSidebarProps {
   user: UserProfile | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
+  cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
   currentRuntimeTask?: RuntimeTaskAddress | null
   standaloneDeviceId?: string | null
@@ -93,6 +100,8 @@ interface DesktopSidebarProps {
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onSelectStandaloneDevice?: (deviceId: string | null) => void
+  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
@@ -555,7 +564,7 @@ function shouldShowProjectDeviceStatus(
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
   if (!deviceState || devices.length <= 1) return false
-  return deviceState.device?.device_type !== 'local'
+  return Boolean(deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device)))
 }
 
 function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
@@ -1173,6 +1182,7 @@ export function DesktopSidebar({
   user,
   projects,
   devices,
+  cloudWorkStatus,
   runtimeWork,
   currentRuntimeTask,
   standaloneDeviceId,
@@ -1196,6 +1206,8 @@ export function DesktopSidebar({
   onOpenPlugins,
   onRefreshDevices,
   onOpenStandaloneWorkspace,
+  onSelectStandaloneDevice,
+  onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
   onRemoveProject,
   onGetDeviceHomeDirectory,
@@ -1207,6 +1219,7 @@ export function DesktopSidebar({
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const showCloudConnectionEntry = isCloudConnectionUiAvailable()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -1230,6 +1243,8 @@ export function DesktopSidebar({
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
+  const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
+    useState<StandaloneRemoteDialogIntent>('project')
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [projectsExpanded, setProjectsExpanded] = useState(() =>
     readStoredBoolean(projectsExpandedStorageKey, true)
@@ -1505,6 +1520,18 @@ export function DesktopSidebar({
             onClick={onOpenSearch}
           />
         )}
+        {showCloudConnectionEntry && (
+          <CloudConnectionSidebarButton
+            devices={devices}
+            cloudWorkStatus={cloudWorkStatus}
+            onOpenSettings={() => onOpenSettings()}
+            onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
+            onAddDevice={() => {
+              setStandaloneRemoteDialogIntent('add-device')
+              setStandaloneWorkspaceDialogMode('remote')
+            }}
+          />
+        )}
         {SHOW_PLUGINS_NAVIGATION && (
           <SidebarButton
             icon={Sparkles}
@@ -1612,6 +1639,7 @@ export function DesktopSidebar({
                   data-testid="project-create-remote-option"
                   onClick={() => {
                     setProjectCreateMenuOpen(false)
+                    setStandaloneRemoteDialogIntent('project')
                     setStandaloneWorkspaceDialogMode('remote')
                   }}
                   className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
@@ -1829,6 +1857,7 @@ export function DesktopSidebar({
         key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
         open={standaloneWorkspaceDialogMode !== null}
         mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        remoteIntent={standaloneRemoteDialogIntent}
         devices={devices}
         preferredDeviceId={preferredDeviceId}
         onClose={() => setStandaloneWorkspaceDialogMode(null)}
@@ -1836,6 +1865,8 @@ export function DesktopSidebar({
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
+        onRefreshDevices={onRefreshDevices}
       />
       <ArchiveConversationsConfirmDialog
         open={archiveSectionMode !== null}

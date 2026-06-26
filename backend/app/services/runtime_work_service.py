@@ -3020,7 +3020,8 @@ def _device_type(device: Optional[dict[str, Any]]) -> str:
     )
     if hasattr(raw_type, "value"):
         raw_type = raw_type.value
-    return str(raw_type).strip().lower()
+    normalized = str(raw_type).strip().lower()
+    return "local" if normalized == "app" else normalized
 
 
 def _device_address(device: Optional[dict[str, Any]], fallback: str) -> str:

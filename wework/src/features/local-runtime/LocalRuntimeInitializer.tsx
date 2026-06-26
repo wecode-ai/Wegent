@@ -223,12 +223,6 @@ export function LocalRuntimeInitializer({
             ) : (
               <WorkspaceSetupAnimation />
             )}
-            {!failed && (
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text-secondary">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                {t('starting_status')}
-              </div>
-            )}
             <h1 className="text-xl font-semibold">
               {failed ? t('failed_title') : t('starting_title')}
             </h1>

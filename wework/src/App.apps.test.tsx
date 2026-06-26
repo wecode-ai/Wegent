@@ -39,6 +39,12 @@ vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  connectLocalExecutorToBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  disconnectLocalExecutorFromBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({

@@ -248,6 +248,7 @@ fn local_backend_config() -> LocalBackendConfig {
         device_id: "device-1".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
+        app_device_id: String::new(),
         bind_shell: "claudecode".to_owned(),
         executor_version: "test-version".to_owned(),
         client_ip: "192.0.2.10".to_owned(),

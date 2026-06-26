@@ -138,7 +138,7 @@
       },
       "container_error": {
         "title": "执行环境异常",
-        "description": "容器或本地执行器暂时不可用，请稍后重试。"
+        "description": "容器或本地任务服务暂时不可用，请稍后重试。"
       },
       "content_filter": {
         "title": "内容触发安全审核，请修改敏感内容后重试",

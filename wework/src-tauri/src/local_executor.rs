@@ -40,6 +40,7 @@ pub struct LocalExecutorState {
 struct LocalExecutorInner {
     child: Option<LocalExecutorChild>,
     pending: HashMap<String, PendingSender>,
+    backend_connection: Option<LocalExecutorBackendConnection>,
     running: bool,
     ready: bool,
     device_id: Option<String>,
@@ -48,6 +49,12 @@ struct LocalExecutorInner {
     generation: u64,
     #[cfg(unix)]
     stream: Option<UnixStream>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalExecutorBackendConnection {
+    backend_url: String,
+    auth_token: String,
 }
 
 enum LocalExecutorChild {
@@ -329,6 +336,47 @@ fn status_from_state(state: &LocalExecutorState) -> Result<LocalExecutorStatus, 
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     Ok(status_from_inner(&inner))
+}
+
+fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(format!("{name} must not be empty"))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
+    let Some(connection) = &inner.backend_connection else {
+        return Vec::new();
+    };
+    let app_ipc_device_id = inner
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(LOCAL_EXECUTOR_DEVICE_ID)
+        .to_string();
+
+    vec![
+        (
+            "WEGENT_BACKEND_URL".to_string(),
+            connection.backend_url.clone(),
+        ),
+        (
+            "WEGENT_AUTH_TOKEN".to_string(),
+            connection.auth_token.clone(),
+        ),
+        ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
+        (
+            "DEVICE_NAME".to_string(),
+            format!("{app_ipc_device_id} app"),
+        ),
+        ("DEVICE_TYPE".to_string(), "app".to_string()),
+        ("BIND_SHELL".to_string(), "claudecode".to_string()),
+        ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
+    ]
 }
 
 fn response_error(response: ExecutorResponse) -> String {
@@ -619,7 +667,10 @@ fn drain_process_output(
     });
 }
 
-fn spawn_configured_sidecar(path: PathBuf) -> Result<LocalExecutorChild, String> {
+fn spawn_configured_sidecar(
+    path: PathBuf,
+    envs: &[(String, String)],
+) -> Result<LocalExecutorChild, String> {
     if !path.exists() {
         return Err(format!(
             "Configured local executor sidecar does not exist: {}",
@@ -629,6 +680,7 @@ fn spawn_configured_sidecar(path: PathBuf) -> Result<LocalExecutorChild, String>
 
     let mut command = Command::new(&path);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.envs(envs.iter().map(|(key, value)| (key, value)));
     configure_managed_process_group(&mut command);
     let mut child = command.spawn().map_err(|error| {
         format!(
@@ -651,7 +703,7 @@ async fn spawn_sidecar_if_needed(
     app: tauri::AppHandle,
     state: &LocalExecutorState,
 ) -> Result<(), String> {
-    {
+    let envs = {
         let mut inner = state
             .inner
             .lock()
@@ -662,10 +714,11 @@ async fn spawn_sidecar_if_needed(
             }
             inner.child = None;
         }
-    }
+        local_executor_backend_env(&inner)
+    };
 
     if let Some(path) = configured_sidecar_path() {
-        let child = spawn_configured_sidecar(path)?;
+        let child = spawn_configured_sidecar(path, &envs)?;
         let mut inner = state
             .inner
             .lock()
@@ -682,7 +735,8 @@ async fn spawn_sidecar_if_needed(
         .sidecar(LOCAL_EXECUTOR_SIDECAR)
         .map_err(|error| {
             format!("Failed to resolve local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
-        })?;
+        })?
+        .envs(envs.iter().map(|(key, value)| (key, value)));
     let (mut rx, child) = sidecar.spawn().map_err(|error| {
         format!("Failed to start local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
     })?;
@@ -834,6 +888,7 @@ async fn send_executor_request(
         "id": request_id,
         "method": request.method,
         "params": request.params,
+        "acceptCompressedRuntimeResult": false,
     });
     let line = format!(
         "{}\n",
@@ -883,6 +938,47 @@ pub async fn local_executor_restart(
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
     restart_executor(app, &state).await?;
+    status_from_state(&state)
+}
+
+#[tauri::command]
+pub async fn local_executor_connect_backend(
+    app: tauri::AppHandle,
+    state: State<'_, LocalExecutorState>,
+    backend_url: String,
+    auth_token: String,
+) -> Result<LocalExecutorStatus, String> {
+    let backend_url = normalize_command_arg(backend_url, "backend_url")?;
+    let auth_token = normalize_command_arg(auth_token, "auth_token")?;
+    let _guard = state.start_lock.lock().await;
+    {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?;
+        inner.backend_connection = Some(LocalExecutorBackendConnection {
+            backend_url,
+            auth_token,
+        });
+    }
+    restart_executor_unlocked(app, &state).await?;
+    status_from_state(&state)
+}
+
+#[tauri::command]
+pub async fn local_executor_disconnect_backend(
+    app: tauri::AppHandle,
+    state: State<'_, LocalExecutorState>,
+) -> Result<LocalExecutorStatus, String> {
+    let _guard = state.start_lock.lock().await;
+    {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?;
+        inner.backend_connection = None;
+    }
+    restart_executor_unlocked(app, &state).await?;
     status_from_state(&state)
 }
 
@@ -1000,6 +1096,40 @@ mod tests {
         assert_eq!(status.error, None);
     }
 
+    #[test]
+    fn backend_env_marks_current_app_device_without_changing_device_id() {
+        let inner = LocalExecutorInner {
+            backend_connection: Some(LocalExecutorBackendConnection {
+                backend_url: "https://cloud.example.com".to_string(),
+                auth_token: "wg-token".to_string(),
+            }),
+            device_id: Some("local-device-abc".to_string()),
+            ..LocalExecutorInner::default()
+        };
+
+        let envs = local_executor_backend_env(&inner)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            envs.get("WEGENT_BACKEND_URL").map(String::as_str),
+            Some("https://cloud.example.com")
+        );
+        assert_eq!(
+            envs.get("WEGENT_AUTH_TOKEN").map(String::as_str),
+            Some("wg-token")
+        );
+        assert_eq!(
+            envs.get("WEGENT_APP_IPC_DEVICE_ID").map(String::as_str),
+            Some("local-device-abc")
+        );
+        assert_eq!(
+            envs.get("DEVICE_ID").map(String::as_str),
+            Some("local-device-abc")
+        );
+        assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn configured_sidecar_kill_stops_grandchild_process_group() {
@@ -1034,7 +1164,7 @@ wait
         fs::set_permissions(&script_path, permissions)
             .expect("sidecar script should be executable");
 
-        let child = spawn_configured_sidecar(script_path).expect("sidecar should start");
+        let child = spawn_configured_sidecar(script_path, &[]).expect("sidecar should start");
         let grandchild_pid =
             wait_for_pid_file(&pid_path, Duration::from_secs(2)).expect("grandchild pid");
         let _cleanup = ProcessCleanup::new(grandchild_pid);

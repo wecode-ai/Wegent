@@ -137,8 +137,8 @@
         "description": "Start a new conversation to retry, or contact an administrator to increase memory."
       },
       "container_error": {
-        "title": "Executor error",
-        "description": "The container or local executor is temporarily unavailable. Try again later."
+        "title": "Task service error",
+        "description": "The container or local task service is temporarily unavailable. Try again later."
       },
       "content_filter": {
         "title": "Content triggered security review and was rejected",

@@ -309,6 +309,8 @@ pub fn run() {
             in_app_browser::in_app_browser_set_frame,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
+            local_executor::local_executor_connect_backend,
+            local_executor::local_executor_disconnect_backend,
             local_executor::local_executor_ensure_started,
             local_executor::local_executor_request,
             local_executor::local_executor_restart,

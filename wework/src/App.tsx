@@ -17,6 +17,10 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+
+const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -81,9 +85,11 @@ export default function App() {
   return (
     <AppearanceProvider>
       <AppUpdateProvider>
-        <AuthProvider>
-          <AppShell />
-        </AuthProvider>
+        <CloudConnectionProvider>
+          <AuthProvider>
+            <AppShell />
+          </AuthProvider>
+        </CloudConnectionProvider>
       </AppUpdateProvider>
     </AppearanceProvider>
   )
@@ -95,6 +101,22 @@ function AppShell() {
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
+  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+
+  useEffect(() => {
+    if (path === '/login' || path === '/login/oidc' || isLoading || !user || workbenchStartupReady) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      console.warn(
+        `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
+      )
+      setWorkbenchStartupRevealTimedOut(true)
+    }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [activeAppKey, isLoading, path, user, workbenchStartupReady])
 
   // No chrome on login/setup pages
   if (path === '/login' || path === '/login/oidc') {
@@ -114,7 +136,8 @@ function AppShell() {
   }
 
   return (
-    <LocalRuntimeInitializer startupReady={workbenchStartupReady}>
+    <LocalRuntimeInitializer startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}>
+      <LocalExecutorCloudBridge />
       <div className="flex h-screen flex-col overflow-hidden bg-surface">
         {isTauri && (
           <ChromeTitlebar

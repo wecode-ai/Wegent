@@ -60,6 +60,10 @@ export type WorkbenchAction =
       standaloneWorkspacePath?: string | null
     }
   | {
+      type: 'runtime_work_refreshed'
+      runtimeWork: RuntimeWorkListResponse
+    }
+  | {
       type: 'device_status_changed'
       deviceId: string
       status: WorkbenchDeviceStatus
@@ -335,6 +339,16 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             : action.standaloneWorkspacePath,
       }
     }
+    case 'runtime_work_refreshed':
+      return {
+        ...state,
+        runtimeWork: action.runtimeWork,
+        currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
+          state.currentRuntimeTask,
+          state.devices,
+          action.runtimeWork
+        ),
+      }
     case 'device_status_changed':
       return {
         ...state,
