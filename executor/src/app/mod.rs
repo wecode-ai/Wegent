@@ -10,6 +10,7 @@ use crate::local::{
     backend::serve_local_backend_sidecar,
 };
 use crate::server::{self, ServerConfig};
+use crate::services::updater::UpdaterService;
 use crate::version::get_version;
 use cli::CliArgs;
 use std::env;
@@ -23,6 +24,7 @@ pub enum AppError {
     NotImplemented(&'static str),
     Server(String),
     ServerConfig(crate::server::ServerConfigError),
+    Upgrade(String),
 }
 
 impl AppError {
@@ -33,6 +35,7 @@ impl AppError {
             Self::NotImplemented(_) => 2,
             Self::Server(_) => 1,
             Self::ServerConfig(_) => 1,
+            Self::Upgrade(_) => 1,
         }
     }
 }
@@ -50,6 +53,7 @@ impl fmt::Display for AppError {
             }
             Self::Server(error) => write!(formatter, "{error}"),
             Self::ServerConfig(error) => write!(formatter, "{error}"),
+            Self::Upgrade(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -117,7 +121,8 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     }
 
     if args.upgrade {
-        return Err(AppError::NotImplemented("executor self-upgrade"));
+        let config = load_device_config(args.config_path.as_deref())?;
+        return run_upgrade(config.update, args.yes).await;
     }
 
     let config = load_device_config(args.config_path.as_deref())?;
@@ -135,6 +140,33 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
             .await
             .map_err(AppError::Server),
     }
+}
+
+async fn run_upgrade(
+    update_config: crate::config::device::UpdateConfig,
+    auto_confirm: bool,
+) -> Result<(), AppError> {
+    println!("wegent-executor v{}", get_version());
+    println!();
+
+    let result = UpdaterService::new(update_config, auto_confirm)
+        .check_and_update()
+        .await;
+    if result.success {
+        if result.already_latest {
+            println!("Already running the latest version");
+        } else {
+            println!("Update complete!");
+            println!("Please restart the executor:");
+            println!("  wegent-executor");
+        }
+        return Ok(());
+    }
+
+    Err(AppError::Upgrade(format!(
+        "Update failed: {}",
+        result.error.unwrap_or_else(|| "unknown error".to_owned())
+    )))
 }
 
 pub fn startup_plan(args: CliArgs) -> Result<StartupPlan, AppError> {

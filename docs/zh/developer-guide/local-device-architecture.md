@@ -123,6 +123,22 @@ sequenceDiagram
 | `task:progress`    | 设备 → 后端 | 任务进度 |
 | `task:complete`    | 设备 → 后端 | 任务完成 |
 
+### Rust executor 本地事件覆盖
+
+Rust executor 的本地 Backend 通道需要与旧 Python 本地设备 runner 保持事件级兼容。除任务执行和心跳外，当前本地设备还注册并处理：
+
+- `task:cancel`、`task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`、`device:start_code_server_session`
+- `terminal:input`、`terminal:resize`、`terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+迁移覆盖关系记录在 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`。新增本地设备事件时，应先补 `executor/tests/local_backend_device_migration_contract.rs`，再更新该迁移矩阵。
+
 ### 消息格式
 
 ```json

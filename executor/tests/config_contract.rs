@@ -40,14 +40,25 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn missing_config_defaults_to_local_mode() {
+fn missing_config_creates_stable_local_device_identity() {
     let _lock = lock_env();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let path = temp_path("missing-device-config.json");
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+
     assert_eq!(config.runtime_mode(), RuntimeMode::Local);
     assert_eq!(config.device_type, "local");
     assert_eq!(config.bind_shell, "claudecode");
+    assert!(!config.device_id.trim().is_empty());
+    assert_ne!(config.device_id, "local-device");
+    assert!(config
+        .device_name
+        .contains(&config.device_id[config.device_id.len() - 12..]));
+    assert!(path.is_file());
+
+    let reloaded = load_device_config(Some(path.to_str().unwrap())).unwrap();
+    assert_eq!(reloaded.device_id, config.device_id);
+    assert_eq!(reloaded.device_name, config.device_name);
 }
 
 #[test]

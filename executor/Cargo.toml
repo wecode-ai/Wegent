@@ -26,7 +26,7 @@ dev-reload = ["dep:ctrlc", "dep:notify"]
 axum = "0.8"
 base64 = "0.22"
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 futures-util = "0.3"
 flate2 = "1.0"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }

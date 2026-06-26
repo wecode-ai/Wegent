@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -24,6 +26,10 @@ pub enum ConfigError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -40,6 +46,13 @@ impl fmt::Display for ConfigError {
                 write!(
                     formatter,
                     "failed to parse config {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Write { path, source } => {
+                write!(
+                    formatter,
+                    "failed to write config {}: {source}",
                     path.display()
                 )
             }
@@ -202,11 +215,13 @@ impl DeviceConfig {
 }
 
 pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, ConfigError> {
-    let mut config = if let Some(path) = config_path {
-        read_config_path(Path::new(path))?.unwrap_or_default()
+    let path = config_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_config_path);
+    let (mut config, mut should_save) = if let Some(config) = read_config_path(&path)? {
+        (config, false)
     } else {
-        let path = default_config_path();
-        read_config_path(&path)?.unwrap_or_default()
+        (DeviceConfig::default(), true)
     };
 
     if config.executor_home.as_os_str().is_empty() {
@@ -217,6 +232,12 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
     }
 
     config.apply_env_overrides();
+    should_save |= ensure_stable_identity(&mut config);
+
+    if should_save {
+        save_config_path(&path, &config)?;
+    }
+
     Ok(config)
 }
 
@@ -242,6 +263,71 @@ fn set_from_env(target: &mut String, name: &str) {
             *target = trimmed.to_owned();
         }
     }
+}
+
+fn ensure_stable_identity(config: &mut DeviceConfig) -> bool {
+    let mut changed = false;
+    if config.device_id.trim().is_empty() {
+        config.device_id = generate_device_id();
+        changed = true;
+    }
+    if config.device_name.trim().is_empty() {
+        config.device_name = default_device_name(&config.device_id);
+        changed = true;
+    }
+    changed
+}
+
+fn save_config_path(path: &Path, config: &DeviceConfig) -> Result<(), ConfigError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+            path: path.to_owned(),
+            source,
+        })?;
+    }
+    let content = serde_json::to_string_pretty(config).map_err(|source| ConfigError::Parse {
+        path: path.to_owned(),
+        source,
+    })?;
+    fs::write(path, format!("{content}\n")).map_err(|source| ConfigError::Write {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+fn generate_device_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let host = env::var("HOSTNAME")
+        .or_else(|_| env::var("COMPUTERNAME"))
+        .unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(now.to_string().as_bytes());
+    hasher.update(std::process::id().to_string().as_bytes());
+    hasher.update(host.as_bytes());
+    let digest = hasher.finalize();
+    let mut suffix = String::with_capacity(24);
+    for byte in digest.iter().take(12) {
+        suffix.push_str(&format!("{byte:02x}"));
+    }
+    format!("device-{suffix}")
+}
+
+fn default_device_name(device_id: &str) -> String {
+    let os_name = match env::consts::OS {
+        "macos" => "macOS",
+        "linux" => "Linux",
+        "windows" => "Windows",
+        other => other,
+    };
+    let suffix = if device_id.len() >= 12 {
+        &device_id[device_id.len() - 12..]
+    } else {
+        device_id
+    };
+    format!("{os_name}-Device-{suffix}")
 }
 
 fn non_empty_str(value: &str) -> Option<&str> {

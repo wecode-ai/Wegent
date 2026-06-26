@@ -123,6 +123,28 @@ After a remote Docker device starts, it sends `device:register` with `device_typ
 | `task:progress`    | Device → Backend | Task progress       |
 | `task:complete`    | Device → Backend | Task completion     |
 
+### Rust Executor Local Event Coverage
+
+The Rust executor Backend channel must remain event-compatible with the legacy
+Python local device runner. In addition to task execution and heartbeat events,
+the local device currently registers and handles:
+
+- `task:cancel`, `task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`, `device:start_code_server_session`
+- `terminal:input`, `terminal:resize`, `terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+The migration coverage matrix is tracked in
+`executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local
+device event, add coverage to
+`executor/tests/local_backend_device_migration_contract.rs` first, then update
+that migration matrix.
+
 ### Message Format
 
 ```json

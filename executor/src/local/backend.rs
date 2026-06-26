@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeSet,
     env,
-    fmt::Write as _,
     future::Future,
     net::{IpAddr, UdpSocket},
     path::{Path, PathBuf},
@@ -14,46 +12,81 @@ use std::{
     time::Duration,
 };
 
-use futures_util::FutureExt;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use tf_rust_socketio::{
-    asynchronous::{Client, ClientBuilder},
-    Payload, TransportType,
-};
-use tokio::{sync::oneshot, time::sleep};
+use tokio::time::sleep;
 
 use crate::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
-    config::device::DeviceConfig,
+    config::device::{DeviceConfig, UpdateConfig},
     emitter::EventEnvelope,
     local::{
         app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
+        session::{LocalSessionHandler, SessionType},
     },
     protocol::ExecutionRequest,
-    runner::{BackgroundTaskRunner, EventSink},
+    runner::EventSink,
+    runtime_work::RuntimeWorkRpcHandler,
     server::TaskRunner,
     version::get_version,
 };
 
-const NAMESPACE: &str = "/local-executor";
+mod cancellation;
+mod capability;
+mod extension;
+mod session_events;
+mod socket_transport;
+mod tasks;
+mod upgrade;
+
+pub use cancellation::LocalCancellationSnapshot;
+pub use capability::{CapabilityReportProvider, CapabilitySyncRpcHandler, HttpPackageProvider};
+pub use extension::{DeviceExtensionHandler, DeviceExtensionRunner};
+pub use socket_transport::SocketIoTransport;
+pub use tasks::{LocalRunningTaskTracker, LocalTaskController, ManagedLocalTaskRunner};
+pub use upgrade::{LocalDeviceUpgradeHandler, LocalUpgradeService};
+
+use cancellation::LocalCancellationRegistry;
+use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
+use extension::default_extension_handler;
+use session_events::{
+    default_session_handler, session_result_payload, session_start_request, value_string, value_u16,
+};
+use upgrade::default_upgrade_handler;
+
 const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const TASK_EXECUTE_EVENT: &str = "task:execute";
 const TASK_CANCEL_EVENT: &str = "task:cancel";
+const TASK_CLOSE_SESSION_EVENT: &str = "task:close-session";
 const CHAT_MESSAGE_EVENT: &str = "chat:message";
 const DEVICE_EXECUTE_COMMAND_EVENT: &str = "device:execute_command";
+const DEVICE_SYNC_CAPABILITIES_EVENT: &str = "device:sync_capabilities";
+const DEVICE_START_TERMINAL_SESSION_EVENT: &str = "device:start_terminal_session";
+const DEVICE_START_CODE_SERVER_SESSION_EVENT: &str = "device:start_code_server_session";
+const TERMINAL_INPUT_EVENT: &str = "terminal:input";
+const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
+const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
+const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
+const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const DEFAULT_HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_HEARTBEAT_TIMEOUT_SECONDS: u64 = 10;
 const DEFAULT_RECONNECT_DELAY_SECONDS: u64 = 1;
 const DEFAULT_RECONNECT_MAX_DELAY_SECONDS: u64 = 30;
 const CODEX_AUTH_TARGET_PATH: &str = "~/.codex/auth.json";
 
-type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+pub(super) type TransportFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type EventHandler =
     Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Option<Value>> + Send>> + Send + Sync>;
+
+pub trait DeviceUpgradeHandler: Send + Sync + 'static {
+    fn handle_upgrade<'a>(
+        &'a self,
+        payload: Value,
+    ) -> Pin<Box<dyn Future<Output = Value> + Send + 'a>>;
+}
 
 pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()>;
@@ -86,6 +119,8 @@ pub struct LocalBackendConfig {
     pub reconnect_delay_max: Duration,
     pub configured_capabilities: Vec<String>,
     pub runtime_auth_home: PathBuf,
+    pub local_workspace_root: PathBuf,
+    pub update: UpdateConfig,
 }
 
 impl LocalBackendConfig {
@@ -131,6 +166,8 @@ impl LocalBackendConfig {
             ),
             configured_capabilities: config.capabilities,
             runtime_auth_home: home_dir(),
+            local_workspace_root: config.local_workspace_root,
+            update: config.update,
         }
     }
 }
@@ -142,7 +179,8 @@ where
 {
     config: Arc<LocalBackendConfig>,
     transport: T,
-    running_task_ids: Arc<Mutex<BTreeSet<i64>>>,
+    running_tasks: LocalRunningTaskTracker,
+    capability_reporter: Arc<dyn CapabilityReportProvider>,
 }
 
 impl<T> LocalBackendClient<T>
@@ -150,10 +188,39 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
+        Self::with_capability_reporter(config, transport, DefaultCapabilityReporter::new())
+    }
+
+    pub fn with_capability_reporter<R>(
+        config: LocalBackendConfig,
+        transport: T,
+        capability_reporter: R,
+    ) -> Self
+    where
+        R: CapabilityReportProvider,
+    {
+        Self::with_capability_reporter_and_tracker(
+            config,
+            transport,
+            capability_reporter,
+            LocalRunningTaskTracker::default(),
+        )
+    }
+
+    pub fn with_capability_reporter_and_tracker<R>(
+        config: LocalBackendConfig,
+        transport: T,
+        capability_reporter: R,
+        running_tasks: LocalRunningTaskTracker,
+    ) -> Self
+    where
+        R: CapabilityReportProvider,
+    {
         Self {
             config: Arc::new(config),
             transport,
-            running_task_ids: Arc::new(Mutex::new(BTreeSet::new())),
+            running_tasks,
+            capability_reporter: Arc::new(capability_reporter),
         }
     }
 
@@ -193,13 +260,15 @@ where
         self.transport.emit(&event_type, payload).await
     }
 
+    pub async fn emit_raw_event(&self, event: &str, payload: Value) -> Result<(), String> {
+        self.transport.emit(event, payload).await
+    }
+
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
         I: IntoIterator<Item = i64>,
     {
-        let mut running = self.running_task_ids.lock().expect("running task lock");
-        running.clear();
-        running.extend(task_ids);
+        self.running_tasks.set(task_ids);
     }
 
     fn registration_payload(&self) -> Value {
@@ -215,18 +284,12 @@ where
     }
 
     fn heartbeat_payload(&self) -> Value {
-        let running_task_ids: Vec<i64> = self
-            .running_task_ids
-            .lock()
-            .expect("running task lock")
-            .iter()
-            .copied()
-            .collect();
+        let running_task_ids = self.running_tasks.running_task_ids();
         json!({
             "device_id": self.config.device_id,
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
-            "capabilities": build_capability_report(),
+            "capabilities": self.capability_reporter.build_report(),
             "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
             "runtime_transfer_host": self.config.runtime_transfer_host,
         })
@@ -262,69 +325,10 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalCancellationSnapshot {
-    pub pending_task_ids: Vec<i64>,
-    pub pending_subtask_ids: Vec<i64>,
-    pub cancel_requested_task_ids: Vec<i64>,
-}
-
-#[derive(Clone, Default)]
-struct LocalCancellationRegistry {
-    inner: Arc<Mutex<LocalCancellationState>>,
-}
-
-#[derive(Default)]
-struct LocalCancellationState {
-    registered_task_ids: BTreeSet<i64>,
-    pending_task_ids: BTreeSet<i64>,
-    pending_subtask_ids: BTreeSet<i64>,
-    cancel_requested_task_ids: BTreeSet<i64>,
-}
-
-impl LocalCancellationRegistry {
-    fn register_task(&self, request: &ExecutionRequest) {
-        let mut state = self.inner.lock().expect("cancellation state lock");
-        state.registered_task_ids.insert(request.task_id);
-        let task_cancelled = state.pending_task_ids.remove(&request.task_id);
-        let subtask_cancelled = state.pending_subtask_ids.remove(&request.subtask_id);
-        if task_cancelled || subtask_cancelled {
-            state.cancel_requested_task_ids.insert(request.task_id);
-        }
-    }
-
-    fn cancel_task(&self, task_id: i64, subtask_id: Option<i64>) {
-        let mut state = self.inner.lock().expect("cancellation state lock");
-        if state.registered_task_ids.contains(&task_id) {
-            state.cancel_requested_task_ids.insert(task_id);
-        } else if let Some(subtask_id) = subtask_id {
-            state.pending_subtask_ids.insert(subtask_id);
-        } else {
-            state.pending_task_ids.insert(task_id);
-        }
-    }
-
-    fn is_cancel_requested(&self, task_id: i64, subtask_id: Option<i64>) -> bool {
-        let state = self.inner.lock().expect("cancellation state lock");
-        state.cancel_requested_task_ids.contains(&task_id)
-            || state.pending_task_ids.contains(&task_id)
-            || subtask_id.is_some_and(|subtask_id| state.pending_subtask_ids.contains(&subtask_id))
-    }
-
-    fn snapshot(&self) -> LocalCancellationSnapshot {
-        let state = self.inner.lock().expect("cancellation state lock");
-        LocalCancellationSnapshot {
-            pending_task_ids: state.pending_task_ids.iter().copied().collect(),
-            pending_subtask_ids: state.pending_subtask_ids.iter().copied().collect(),
-            cancel_requested_task_ids: state.cancel_requested_task_ids.iter().copied().collect(),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct LocalBackendRunner<
     T,
-    R = BackgroundTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
+    R = ManagedLocalTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
 > where
     T: LocalBackendTransport,
     R: TaskRunner,
@@ -333,6 +337,11 @@ pub struct LocalBackendRunner<
     runner: R,
     command_handler: Arc<dyn DeviceCommandHandler>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    task_controller: Option<Arc<dyn LocalTaskController>>,
+    capability_sync_handler: Option<Arc<dyn CapabilitySyncRpcHandler>>,
+    session_handler: Option<Arc<Mutex<LocalSessionHandler>>>,
+    upgrade_handler: Option<Arc<dyn DeviceUpgradeHandler>>,
+    extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
     cancellations: LocalCancellationRegistry,
 }
 
@@ -341,13 +350,38 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
-        let client = LocalBackendClient::new(config, transport);
+        let running_tasks = LocalRunningTaskTracker::default();
+        let client = LocalBackendClient::with_capability_reporter_and_tracker(
+            config,
+            transport,
+            DefaultCapabilityReporter::new(),
+            running_tasks.clone(),
+        );
         let sink = LocalBackendEventSink::new(client.clone());
-        let runner = BackgroundTaskRunner::new(
+        let runner = ManagedLocalTaskRunner::new(
             AgentProcessEngine::new(AgentCommandPlanner::from_env()),
             sink,
+            running_tasks,
         );
-        Self::from_client_and_runner(client, runner)
+        let mut backend = Self::from_client_and_runner(client, runner.clone());
+        backend.task_controller = Some(Arc::new(runner));
+        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::new(
+            backend.client.config.device_id.clone(),
+            default_codex_binary(),
+        )));
+        backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
+            backend.client.config.as_ref(),
+        )));
+        backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler())));
+        backend.upgrade_handler = Some(Arc::new(default_upgrade_handler(
+            backend.client.clone(),
+            backend.task_controller.clone(),
+            backend.client.config.update.clone(),
+        )));
+        backend.extension_handler = Some(Arc::new(default_extension_handler(
+            backend.client.config.local_workspace_root.clone(),
+        )));
+        backend
     }
 }
 
@@ -361,14 +395,77 @@ where
         Self::from_client_and_runner(client, runner)
     }
 
-    fn from_client_and_runner(client: LocalBackendClient<T>, runner: R) -> Self {
+    pub fn from_client_and_runner(client: LocalBackendClient<T>, runner: R) -> Self {
         Self {
             client,
             runner,
             command_handler: Arc::new(CommandHandler),
             runtime_work_handler: None,
+            task_controller: None,
+            capability_sync_handler: None,
+            session_handler: None,
+            upgrade_handler: None,
+            extension_handler: None,
             cancellations: LocalCancellationRegistry::default(),
         }
+    }
+
+    pub fn with_task_controller<C>(mut self, controller: C) -> Self
+    where
+        C: LocalTaskController,
+    {
+        self.task_controller = Some(Arc::new(controller));
+        self
+    }
+
+    pub fn with_runtime_work_handler<H>(mut self, handler: H) -> Self
+    where
+        H: RuntimeWorkHandler + 'static,
+    {
+        self.runtime_work_handler = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn with_capability_sync_handler<H>(mut self, handler: H) -> Self
+    where
+        H: CapabilitySyncRpcHandler,
+    {
+        self.capability_sync_handler = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn with_session_handler(mut self, handler: LocalSessionHandler) -> Self {
+        self.session_handler = Some(Arc::new(Mutex::new(handler)));
+        self
+    }
+
+    pub fn with_upgrade_handler<H>(mut self, handler: H) -> Self
+    where
+        H: DeviceUpgradeHandler,
+    {
+        self.upgrade_handler = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn with_upgrade_service<S>(mut self, service: S) -> Self
+    where
+        S: LocalUpgradeService,
+    {
+        self.upgrade_handler = Some(Arc::new(LocalDeviceUpgradeHandler::with_service(
+            self.client.clone(),
+            self.task_controller.clone(),
+            self.client.config.update.clone(),
+            service,
+        )));
+        self
+    }
+
+    pub fn with_extension_handler<H>(mut self, handler: H) -> Self
+    where
+        H: DeviceExtensionHandler,
+    {
+        self.extension_handler = Some(Arc::new(handler));
+        self
     }
 
     pub fn cancellation_snapshot(&self) -> LocalCancellationSnapshot {
@@ -409,13 +506,43 @@ where
             .on(TASK_CANCEL_EVENT, self.cancel_handler());
         self.client
             .transport
+            .on(TASK_CLOSE_SESSION_EVENT, self.close_session_handler());
+        self.client
+            .transport
             .on(CHAT_MESSAGE_EVENT, self.task_handler());
         self.client
             .transport
             .on(DEVICE_EXECUTE_COMMAND_EVENT, self.device_command_handler());
+        self.client.transport.on(
+            DEVICE_SYNC_CAPABILITIES_EVENT,
+            self.capability_sync_handler(),
+        );
+        self.client.transport.on(
+            DEVICE_START_TERMINAL_SESSION_EVENT,
+            self.session_start_handler(SessionType::Terminal),
+        );
+        self.client.transport.on(
+            DEVICE_START_CODE_SERVER_SESSION_EVENT,
+            self.session_start_handler(SessionType::CodeServer),
+        );
+        self.client
+            .transport
+            .on(TERMINAL_INPUT_EVENT, self.terminal_input_handler());
+        self.client
+            .transport
+            .on(TERMINAL_RESIZE_EVENT, self.terminal_resize_handler());
+        self.client
+            .transport
+            .on(TERMINAL_CLOSE_EVENT, self.terminal_close_handler());
         self.client
             .transport
             .on(RUNTIME_RPC_EVENT, self.runtime_rpc_handler());
+        self.client
+            .transport
+            .on(DEVICE_UPGRADE_EVENT, self.upgrade_handler());
+        self.client
+            .transport
+            .on(DEVICE_RUN_EXTENSION_EVENT, self.extension_handler());
     }
 
     fn task_handler(&self) -> EventHandler {
@@ -440,13 +567,38 @@ where
 
     fn cancel_handler(&self) -> EventHandler {
         let cancellations = self.cancellations.clone();
+        let task_controller = self.task_controller.clone();
         Arc::new(move |payload| {
             let cancellations = cancellations.clone();
+            let task_controller = task_controller.clone();
             Box::pin(async move {
                 let task_id = payload.get("task_id").and_then(Value::as_i64)?;
                 let subtask_id = payload.get("subtask_id").and_then(Value::as_i64);
                 cancellations.cancel_task(task_id, subtask_id);
+                if let Some(controller) = task_controller {
+                    let _ = controller.cancel_task(task_id, subtask_id).await;
+                }
                 None
+            })
+        })
+    }
+
+    fn close_session_handler(&self) -> EventHandler {
+        let task_controller = self.task_controller.clone();
+        let client = self.client.clone();
+        Arc::new(move |payload| {
+            let task_controller = task_controller.clone();
+            let client = client.clone();
+            Box::pin(async move {
+                let Some(task_id) = payload.get("task_id").and_then(Value::as_i64) else {
+                    return Some(json!({"success": false, "error": "task_id is required"}));
+                };
+                if let Some(controller) = task_controller {
+                    let _ = controller.close_task_session(task_id).await;
+                    client.set_running_task_ids(controller.running_task_ids());
+                }
+                let _ = client.send_heartbeat(client.config.heartbeat_timeout).await;
+                Some(json!({"success": true}))
             })
         })
     }
@@ -494,6 +646,153 @@ where
         })
     }
 
+    fn capability_sync_handler(&self) -> EventHandler {
+        let capability_sync_handler = self.capability_sync_handler.clone();
+        Arc::new(move |payload| {
+            let capability_sync_handler = capability_sync_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = capability_sync_handler else {
+                    return Some(json!({
+                        "success": false,
+                        "error": "Capability sync handler is not available",
+                    }));
+                };
+                Some(handler.handle_sync_capabilities(payload).await)
+            })
+        })
+    }
+
+    fn session_start_handler(&self, session_type: SessionType) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(json!({
+                        "success": false,
+                        "error": "Session handler is not available",
+                    }));
+                };
+                let request = match session_start_request(payload, session_type) {
+                    Ok(request) => request,
+                    Err(error) => return Some(json!({"success": false, "error": error})),
+                };
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_start_session(request);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
+    fn terminal_input_handler(&self) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(
+                        json!({"success": false, "error": "Session handler is not available"}),
+                    );
+                };
+                let Some(session_id) = value_string(payload.get("session_id")) else {
+                    return Some(json!({"success": false, "error": "session_id is required"}));
+                };
+                let Some(data) = payload
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                else {
+                    return Some(json!({"success": false, "error": "data is required"}));
+                };
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_terminal_input(&session_id, &data);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
+    fn terminal_resize_handler(&self) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(
+                        json!({"success": false, "error": "Session handler is not available"}),
+                    );
+                };
+                let Some(session_id) = value_string(payload.get("session_id")) else {
+                    return Some(json!({"success": false, "error": "session_id is required"}));
+                };
+                let rows = value_u16(payload.get("rows")).unwrap_or(24);
+                let cols = value_u16(payload.get("cols")).unwrap_or(80);
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_terminal_resize(&session_id, rows, cols);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
+    fn terminal_close_handler(&self) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(
+                        json!({"success": false, "error": "Session handler is not available"}),
+                    );
+                };
+                let Some(session_id) = value_string(payload.get("session_id")) else {
+                    return Some(json!({"success": false, "error": "session_id is required"}));
+                };
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_terminal_close(&session_id);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
+    fn upgrade_handler(&self) -> EventHandler {
+        let upgrade_handler = self.upgrade_handler.clone();
+        Arc::new(move |payload| {
+            let upgrade_handler = upgrade_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = upgrade_handler else {
+                    return Some(json!({
+                        "success": false,
+                        "error": "Upgrade handler is not available",
+                    }));
+                };
+                Some(handler.handle_upgrade(payload).await)
+            })
+        })
+    }
+
+    fn extension_handler(&self) -> EventHandler {
+        let extension_handler = self.extension_handler.clone();
+        Arc::new(move |payload| {
+            let extension_handler = extension_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = extension_handler else {
+                    return Some(json!({
+                        "success": false,
+                        "message": "Extension handler is not available",
+                    }));
+                };
+                Some(handler.handle_run_extension(payload).await)
+            })
+        })
+    }
+
     pub async fn connect_and_register(&self) -> Result<(), String> {
         self.client.connect().await?;
         match self
@@ -531,133 +830,6 @@ where
                 return;
             }
         }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct SocketIoTransport {
-    client: Arc<tokio::sync::Mutex<Option<Client>>>,
-    handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
-}
-
-impl LocalBackendTransport for SocketIoTransport {
-    fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
-        Box::pin(async move {
-            let handlers = self.handlers.lock().expect("handler lock").clone();
-            let mut builder = ClientBuilder::new(config.backend_url.clone())
-                .namespace(NAMESPACE)
-                .auth(json!({ "token": config.auth_token }))
-                .transport_type(TransportType::Websocket)
-                .reconnect(true)
-                .reconnect_on_disconnect(true)
-                .reconnect_delay(
-                    duration_to_millis(config.reconnect_delay),
-                    duration_to_millis(config.reconnect_delay_max),
-                )
-                .on("error", |payload: Payload, _socket: Client| {
-                    async move {
-                        eprintln!("local backend socket error: {payload:?}");
-                    }
-                    .boxed()
-                });
-
-            for (event, handler) in handlers {
-                builder = builder.on(event, move |payload: Payload, socket: Client| {
-                    let handler = Arc::clone(&handler);
-                    async move {
-                        let ack_id = payload.ack_id();
-                        let value = payload_to_value(payload);
-                        let ack_payload = handler(value).await;
-                        if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                            if let Err(error) = socket.ack_with_id(ack_id, ack_payload).await {
-                                eprintln!("local backend socket ACK failed: {error}");
-                            }
-                        }
-                    }
-                    .boxed()
-                });
-            }
-
-            let socket = builder.connect().await.map_err(|error| error.to_string())?;
-            *self.client.lock().await = Some(socket);
-            Ok(())
-        })
-    }
-
-    fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
-        Box::pin(async move {
-            if let Some(client) = self.client.lock().await.take() {
-                client
-                    .disconnect()
-                    .await
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        })
-    }
-
-    fn call<'a>(
-        &'a self,
-        event: &'a str,
-        payload: Value,
-        timeout: Duration,
-    ) -> TransportFuture<'a, Value> {
-        Box::pin(async move {
-            let client = self
-                .client
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| "Socket.IO client is not connected".to_owned())?;
-            let (sender, receiver) = oneshot::channel();
-            let sender = Arc::new(Mutex::new(Some(sender)));
-            let ack_sender = Arc::clone(&sender);
-
-            client
-                .emit_with_ack(
-                    event.to_owned(),
-                    payload,
-                    timeout,
-                    move |payload: Payload, _socket: Client| {
-                        let ack_sender = Arc::clone(&ack_sender);
-                        async move {
-                            if let Some(sender) = ack_sender.lock().expect("ack lock").take() {
-                                let _ = sender.send(payload_to_value(payload));
-                            }
-                        }
-                        .boxed()
-                    },
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-
-            tokio::time::timeout(timeout, receiver)
-                .await
-                .map_err(|_| format!("{event} timed out"))?
-                .map_err(|_| format!("{event} acknowledgment was dropped"))
-        })
-    }
-
-    fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()> {
-        Box::pin(async move {
-            let client = self
-                .client
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| "Socket.IO client is not connected".to_owned())?;
-            client
-                .emit(event.to_owned(), payload)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn on(&self, event: &str, handler: EventHandler) {
-        self.handlers
-            .lock()
-            .expect("handler lock")
-            .push((event.to_owned(), handler));
     }
 }
 
@@ -753,34 +925,6 @@ fn ack_success(response: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn build_capability_report() -> Value {
-    let details = json!({
-        "skills": [],
-        "plugins": [],
-        "mcps": [],
-    });
-    json!({
-        "revision": 0,
-        "digest": canonical_digest(&details),
-        "full": true,
-        "skills": [],
-        "plugins": [],
-        "mcps": [],
-        "last_sync_at": null,
-    })
-}
-
-fn canonical_digest(value: &Value) -> String {
-    let bytes = serde_json::to_vec(value).unwrap_or_default();
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
 fn normalize_token(token: &str) -> String {
     let token = token.trim();
     token
@@ -808,10 +952,6 @@ fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
         .unwrap_or_else(|| Duration::from_secs(default_seconds))
 }
 
-fn duration_to_millis(duration: Duration) -> u64 {
-    duration.as_millis().try_into().unwrap_or(u64::MAX)
-}
-
 fn detect_client_ip() -> String {
     UdpSocket::bind("0.0.0.0:0")
         .and_then(|socket| {
@@ -831,24 +971,18 @@ fn default_device_name() -> String {
     format!("{} - {host}", env::consts::OS)
 }
 
+fn default_codex_binary() -> String {
+    env::var("CODEX_BINARY_PATH")
+        .ok()
+        .or_else(|| env::var("CODEX_BIN").ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "codex".to_owned())
+}
+
 fn home_dir() -> PathBuf {
     env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-#[allow(deprecated)]
-fn payload_to_value(payload: Payload) -> Value {
-    match payload {
-        Payload::Text(mut values, _) => {
-            if values.len() == 1 {
-                values.remove(0)
-            } else {
-                Value::Array(values)
-            }
-        }
-        Payload::String(value, _) => serde_json::from_str(&value).unwrap_or(Value::String(value)),
-        Payload::Binary(_, _) => Value::Null,
-    }
 }

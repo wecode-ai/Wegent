@@ -132,6 +132,26 @@ fn restart_plan_uses_nohup_binary_and_optional_verbose_log() {
         .ends_with(".wegent-executor/logs/executor-restart.log"));
 }
 
+#[cfg(unix)]
+#[test]
+fn spawn_restart_runs_restart_plan_command() {
+    let dir = unique_dir("restart-spawn");
+    let marker = dir.join("started");
+    let manager = ProcessManager::for_pid_file(dir.join("executor.pid"));
+    let plan = RestartPlan {
+        command: vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            format!("printf started > '{}'", marker.display()),
+        ],
+        log_file: None,
+    };
+
+    assert!(manager.spawn_restart(&plan));
+    wait_until(|| marker.is_file());
+    assert_eq!(fs::read_to_string(marker).unwrap(), "started");
+}
+
 #[derive(Debug)]
 struct FakeProcessOps {
     current_pid: u32,
@@ -204,4 +224,16 @@ fn unique_dir(prefix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+#[cfg(unix)]
+fn wait_until(condition: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if condition() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(condition());
 }
