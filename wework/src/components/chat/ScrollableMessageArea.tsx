@@ -8,6 +8,7 @@ import { MessageList } from './MessageList'
 
 const BOTTOM_THRESHOLD = 48
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
+const conversationScrollPositions = new Map<string, number>()
 
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
@@ -67,6 +68,10 @@ export function ScrollableMessageArea({
   const scrollFrameRef = useRef<number | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const lastMessage = messages[messages.length - 1]
+  const currentScrollKey = useMemo(
+    () => scrollPositionKey(conversationKey),
+    [conversationKey]
+  )
   const messageScrollSignature = useMemo(() => {
     if (!lastMessage) return 'empty'
 
@@ -74,6 +79,9 @@ export function ScrollableMessageArea({
       .map(block => {
         if (block.type === 'thinking' || block.type === 'text') {
           return `${block.id}:${block.status}:${block.content.length}`
+        }
+        if (block.type === 'file_changes') {
+          return `${block.id}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
         }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
       })
@@ -100,6 +108,15 @@ export function ScrollableMessageArea({
     }
   }, [])
 
+  const saveCurrentScrollPosition = useCallback(
+    (scrollTop?: number) => {
+      const element = scrollRef.current
+      if (!element || currentScrollKey === null) return
+      conversationScrollPositions.set(currentScrollKey, scrollTop ?? element.scrollTop)
+    },
+    [currentScrollKey]
+  )
+
   const updateScrollState = useCallback(() => {
     const element = scrollRef.current
     if (!element) return
@@ -111,8 +128,9 @@ export function ScrollableMessageArea({
     if (!isAtBottom) {
       clearScheduledScrolls()
     }
+    saveCurrentScrollPosition()
     setShowScrollButton(overflow && !isAtBottom)
-  }, [clearScheduledScrolls])
+  }, [clearScheduledScrolls, saveCurrentScrollPosition])
 
   const setScrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const element = scrollRef.current
@@ -126,9 +144,37 @@ export function ScrollableMessageArea({
     } else {
       element.scrollTop = element.scrollHeight
     }
+    saveCurrentScrollPosition(element.scrollHeight)
     isAtBottomRef.current = true
     setShowScrollButton(false)
-  }, [])
+  }, [saveCurrentScrollPosition])
+
+  const restoreSavedScrollPosition = useCallback(
+    (key: string) => {
+      const element = scrollRef.current
+      const savedScrollTop = conversationScrollPositions.get(key)
+      if (!element || savedScrollTop === undefined) return
+
+      clearScheduledScrolls()
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+      const nextScrollTop = Math.min(savedScrollTop, maxScrollTop)
+      if (typeof element.scrollTo === 'function') {
+        element.scrollTo({
+          top: nextScrollTop,
+          behavior: 'auto',
+        })
+      } else {
+        element.scrollTop = nextScrollTop
+      }
+
+      const overflow = element.scrollHeight > element.clientHeight + 8
+      const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
+      const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+      isAtBottomRef.current = isAtBottom
+      setShowScrollButton(overflow && !isAtBottom)
+    },
+    [clearScheduledScrolls]
+  )
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -165,8 +211,16 @@ export function ScrollableMessageArea({
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const shouldRestoreScroll =
+      Boolean(
+        currentScrollKey &&
+          messages.length > 0 &&
+          (conversationChanged || messagesLoaded) &&
+          conversationScrollPositions.has(currentScrollKey)
+      )
     const shouldForceBottom =
-      conversationChanged || messagesLoaded || (lastMessageChanged && lastMessage?.role === 'user')
+      !shouldRestoreScroll &&
+      (conversationChanged || messagesLoaded || (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
@@ -174,15 +228,22 @@ export function ScrollableMessageArea({
 
     if (messages.length === 0) return
 
+    if (shouldRestoreScroll && currentScrollKey) {
+      restoreSavedScrollPosition(currentScrollKey)
+      return
+    }
+
     if (shouldForceBottom || isAtBottomRef.current) {
       setScrollToBottom()
       scheduleStableScrollToBottom()
     }
   }, [
     conversationKey,
+    currentScrollKey,
     lastMessage,
     messageScrollSignature,
     messages.length,
+    restoreSavedScrollPosition,
     scheduleStableScrollToBottom,
     setScrollToBottom,
   ])
@@ -297,4 +358,8 @@ export function ScrollableMessageArea({
       )}
     </div>
   )
+}
+
+function scrollPositionKey(conversationKey: string | number | null | undefined): string | null {
+  return conversationKey == null ? null : String(conversationKey)
 }

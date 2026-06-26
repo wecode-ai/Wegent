@@ -23,6 +23,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
         let turn_file_changes = file_changes(turn);
         let turn_id = item_id(turn, "turn");
         let subtask_id = turn_subtask_id(turn, &turn_id);
+        let fold_commentary = turn_should_fold_commentary(turn);
         let mut blocks = Vec::new();
         let mut pending_file_changes = turn_file_changes.clone();
         let mut context_events = Vec::new();
@@ -53,6 +54,9 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                     ) {
+                        if fold_commentary {
+                            blocks.push(file_changes_block(item, &summary, created_at));
+                        }
                         pending_file_changes = merge_file_changes(pending_file_changes, summary);
                     }
                 }
@@ -63,6 +67,9 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                     ) {
+                        if fold_commentary {
+                            blocks.push(file_changes_block(item, &summary, created_at));
+                        }
                         pending_file_changes = merge_file_changes(pending_file_changes, summary);
                     }
                 }
@@ -78,6 +85,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     collect_assistant_message(
                         item,
                         created_at,
+                        fold_commentary,
                         &mut blocks,
                         &mut assistant_parts,
                         &mut memory_citations,
@@ -97,6 +105,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         collect_assistant_message(
                             item,
                             created_at,
+                            fold_commentary,
                             &mut blocks,
                             &mut assistant_parts,
                             &mut memory_citations,
@@ -112,6 +121,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     collect_assistant_message(
                         item,
                         created_at,
+                        fold_commentary,
                         &mut blocks,
                         &mut assistant_parts,
                         &mut memory_citations,
@@ -200,6 +210,58 @@ fn turn_subtask_id(turn: &Value, turn_id: &str) -> i64 {
         .unwrap_or_else(|| synthetic_turn_subtask_id(turn_id))
 }
 
+fn turn_should_fold_commentary(turn: &Value) -> bool {
+    !turn_interrupted(turn) && (turn_running(turn) || turn_has_final_assistant_message(turn))
+}
+
+fn turn_interrupted(turn: &Value) -> bool {
+    turn_status(turn).is_some_and(|status| {
+        matches!(
+            status.as_str(),
+            "interrupted" | "cancelled" | "canceled" | "aborted"
+        )
+    })
+}
+
+fn turn_running(turn: &Value) -> bool {
+    turn_status(turn).is_some_and(|status| {
+        matches!(
+            status.as_str(),
+            "running" | "inprogress" | "active" | "busy" | "pending"
+        )
+    })
+}
+
+fn turn_status(turn: &Value) -> Option<String> {
+    string_field(turn, "status").map(normalized_phase_or_status)
+}
+
+fn turn_has_final_assistant_message(turn: &Value) -> bool {
+    turn.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(is_final_assistant_message)
+}
+
+fn is_final_assistant_message(item: &Value) -> bool {
+    match item_type(item).as_str() {
+        "agentmessage" | "agentmessageevent" => assistant_message_phase_name(item)
+            .map(|phase| !matches!(phase.as_str(), "analysis" | "commentary"))
+            .unwrap_or(true),
+        "message" => {
+            let is_assistant = string_field(item, "role")
+                .unwrap_or_default()
+                .eq_ignore_ascii_case("assistant");
+            is_assistant
+                && assistant_message_phase_name(item)
+                    .map(|phase| !matches!(phase.as_str(), "analysis" | "commentary"))
+                    .unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
 fn synthetic_turn_subtask_id(turn_id: &str) -> i64 {
     let mut hash = 2_166_136_261_u32;
     for byte in turn_id.as_bytes() {
@@ -247,12 +309,13 @@ fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) 
 fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
+    fold_commentary: bool,
     blocks: &mut Vec<Value>,
     assistant_parts: &mut Vec<String>,
     memory_citations: &mut Vec<Value>,
 ) {
     if let Some(content) = extract_text(item) {
-        match assistant_message_phase(item) {
+        match assistant_message_phase(item, fold_commentary) {
             AssistantMessagePhase::Process => {
                 blocks.push(process_text_block(item, content, fallback_timestamp));
             }
@@ -271,15 +334,20 @@ enum AssistantMessagePhase {
     Process,
 }
 
-fn assistant_message_phase(item: &Value) -> AssistantMessagePhase {
-    let phase = string_field(item, "phase")
-        .unwrap_or_default()
-        .replace(['_', '-'], "")
-        .to_ascii_lowercase();
-    match phase.as_str() {
-        "commentary" | "analysis" => AssistantMessagePhase::Process,
+fn assistant_message_phase(item: &Value, fold_commentary: bool) -> AssistantMessagePhase {
+    match assistant_message_phase_name(item).as_deref() {
+        Some("analysis") => AssistantMessagePhase::Process,
+        Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
         _ => AssistantMessagePhase::Final,
     }
+}
+
+fn assistant_message_phase_name(item: &Value) -> Option<String> {
+    string_field(item, "phase").map(normalized_phase_or_status)
+}
+
+fn normalized_phase_or_status(value: String) -> String {
+    value.replace(['_', '-'], "").to_ascii_lowercase()
 }
 
 fn process_text_block(item: &Value, content: String, fallback_timestamp: i64) -> Value {
@@ -287,6 +355,16 @@ fn process_text_block(item: &Value, content: String, fallback_timestamp: i64) ->
         "id": item_id(item, "text"),
         "type": "text",
         "content": content,
+        "status": "done",
+        "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
+    })
+}
+
+fn file_changes_block(item: &Value, summary: &Value, fallback_timestamp: i64) -> Value {
+    json!({
+        "id": format!("file-changes-{}", item_id(item, "file-change")),
+        "type": "file_changes",
+        "file_changes": summary,
         "status": "done",
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
     })
@@ -634,7 +712,7 @@ fn merge_file_changes(existing: Option<Value>, next: Value) -> Option<Value> {
             .iter()
             .position(|file| string_field(file, "path").is_some_and(|path| path == next_path))
         {
-            files[existing_index] = next_file.clone();
+            files[existing_index] = merge_file_change(files.get(existing_index), next_file);
         } else {
             files.push(next_file.clone());
         }
@@ -684,6 +762,62 @@ fn merge_file_changes(existing: Option<Value>, next: Value) -> Option<Value> {
     }
 
     Some(current)
+}
+
+fn merge_file_change(existing: Option<&Value>, next: &Value) -> Value {
+    let Some(existing) = existing else {
+        return next.clone();
+    };
+    let Some(existing_object) = existing.as_object() else {
+        return next.clone();
+    };
+    let Some(next_object) = next.as_object() else {
+        return existing.clone();
+    };
+
+    let additions = existing_object
+        .get("additions")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        + next_object
+            .get("additions")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+    let deletions = existing_object
+        .get("deletions")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        + next_object
+            .get("deletions")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+
+    let mut merged = existing_object.clone();
+    for key in ["path", "binary"] {
+        if let Some(value) = next_object.get(key) {
+            merged.insert(key.to_owned(), value.clone());
+        }
+    }
+    if let Some(value) = next_object.get("old_path").filter(|value| !value.is_null()) {
+        merged.insert("old_path".to_owned(), value.clone());
+    }
+    let change_type = merged_change_type(
+        existing_object.get("change_type").and_then(Value::as_str),
+        next_object.get("change_type").and_then(Value::as_str),
+    );
+    merged.insert("change_type".to_owned(), Value::String(change_type));
+    merged.insert("additions".to_owned(), json!(additions));
+    merged.insert("deletions".to_owned(), json!(deletions));
+    Value::Object(merged)
+}
+
+fn merged_change_type(existing: Option<&str>, next: Option<&str>) -> String {
+    match (existing, next) {
+        (Some("created"), Some("modified")) => "created".to_owned(),
+        (_, Some(next)) => next.to_owned(),
+        (Some(existing), _) => existing.to_owned(),
+        _ => "modified".to_owned(),
+    }
 }
 
 fn file_changes_from_file_change_item(
@@ -776,7 +910,7 @@ fn file_changes_summary(
 }
 
 fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option<Value> {
-    let path = workspace_relative_path(&string_field(change, "path")?, workspace_path);
+    let source_path = workspace_relative_path(&string_field(change, "path")?, workspace_path);
     let kind = change
         .get("kind")
         .and_then(Value::as_object)
@@ -794,9 +928,17 @@ fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option
         "update" if move_path.is_some() => "renamed",
         _ => "modified",
     };
+    let (path, old_path) = if change_type == "renamed" {
+        (
+            move_path.unwrap_or_else(|| source_path.clone()),
+            Some(source_path),
+        )
+    } else {
+        (source_path, None)
+    };
     let (additions, deletions) = diff_stats(&diff, change_type);
     Some(json!({
-        "old_path": if change_type == "renamed" { move_path } else { None },
+        "old_path": old_path,
         "path": path,
         "change_type": change_type,
         "additions": additions,
@@ -815,7 +957,7 @@ fn file_change_from_patch_change(
         .or_else(|| raw_string_field(change, "diff"))
         .or_else(|| raw_string_field(change, "content"))
         .unwrap_or_default();
-    let path = workspace_relative_path(path, workspace_path);
+    let source_path = workspace_relative_path(path, workspace_path);
     let move_path = string_field(change, "move_path")
         .or_else(|| string_field(change, "movePath"))
         .map(|path| workspace_relative_path(&path, workspace_path));
@@ -825,9 +967,17 @@ fn file_change_from_patch_change(
         "update" if move_path.is_some() => "renamed",
         _ => "modified",
     };
+    let (path, old_path) = if change_type == "renamed" {
+        (
+            move_path.unwrap_or_else(|| source_path.clone()),
+            Some(source_path),
+        )
+    } else {
+        (source_path, None)
+    };
     let (additions, deletions) = diff_stats(&diff, change_type);
     Some(json!({
-        "old_path": if change_type == "renamed" { move_path } else { None },
+        "old_path": old_path,
         "path": path,
         "change_type": change_type,
         "additions": additions,
@@ -871,7 +1021,7 @@ fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
     if additions > 0 || deletions > 0 {
         return (additions, deletions);
     }
-    let line_count = diff.lines().filter(|line| !line.trim().is_empty()).count() as i64;
+    let line_count = diff.lines().count() as i64;
     match change_type {
         "created" => (line_count, 0),
         "deleted" => (0, line_count),
@@ -889,8 +1039,11 @@ fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Op
             let move_path = change.get("kind").and_then(|kind| {
                 string_field(kind, "movePath").or_else(|| string_field(kind, "move_path"))
             });
-            raw_string_field(change, "diff").map(|diff| {
-                diff_with_file_header(&path, move_path.as_deref(), &diff, workspace_path)
+            raw_string_field(change, "diff").map(|diff| match move_path {
+                Some(move_path) => {
+                    diff_with_file_header(&move_path, Some(&path), &diff, workspace_path)
+                }
+                None => diff_with_file_header(&path, None, &diff, workspace_path),
             })
         })
         .collect::<Vec<_>>()
@@ -909,8 +1062,11 @@ fn combined_diff_from_patch_apply_end(item: &Value, workspace_path: &str) -> Opt
             raw_string_field(change, "unified_diff")
                 .or_else(|| raw_string_field(change, "diff"))
                 .or_else(|| raw_string_field(change, "content"))
-                .map(|diff| {
-                    diff_with_file_header(path, move_path.as_deref(), &diff, workspace_path)
+                .map(|diff| match move_path {
+                    Some(move_path) => {
+                        diff_with_file_header(&move_path, Some(path), &diff, workspace_path)
+                    }
+                    None => diff_with_file_header(path, None, &diff, workspace_path),
                 })
         })
         .collect::<Vec<_>>()

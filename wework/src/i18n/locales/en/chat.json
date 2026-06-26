@@ -20,6 +20,8 @@
     "open_label": "Open {{path}}",
     "open_with": "Open with",
     "preview_label": "Open preview",
+    "show_more": "Show {{count}} more",
+    "show_less": "Collapse files",
     "kind": "Document",
     "kind_with_extension": "Document · {{extension}}"
   },
@@ -30,6 +32,9 @@
   },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
+    "created_files": "Created {{count}} files",
+    "deleted_files": "Deleted {{count}} files",
+    "renamed_files": "Renamed {{count}} files",
     "edited_file": "Edited {{filename}}",
     "created_file": "Created {{filename}}",
     "deleted_file": "Deleted {{filename}}",

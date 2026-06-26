@@ -321,7 +321,8 @@ describe('MessageList', () => {
     expect(screen.getByText('最终建议放在 PR flow 里。')).toBeInTheDocument()
     const collapseContent = screen.getByTestId('processing-collapse-content')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
-    expect(collapseContent).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+    expect(collapseContent).toHaveClass('opacity-0')
+    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
@@ -346,6 +347,18 @@ describe('MessageList', () => {
         createdAt: 1770000000000,
       },
       {
+        id: 'web-query-url-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'search',
+          query: 'https://www.weather.com/weather/today/l/Beijing+China',
+        },
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+      {
         id: 'web-open-1',
         subtaskId: 11,
         type: 'tool',
@@ -355,7 +368,7 @@ describe('MessageList', () => {
           url: 'https://www.weather.com/weather/today/l/Beijing+China',
         },
         status: 'done',
-        createdAt: 1770000001000,
+        createdAt: 1770000002000,
       },
     ]
 
@@ -693,6 +706,130 @@ describe('MessageList', () => {
     onOpenWorkspaceFile.mockClear()
     await userEvent.click(memoryEntry)
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
+  })
+
+  test('adds deduped document references from turn file changes and expands hidden references', async () => {
+    render(
+      <MessageList
+        onOpenWorkspaceFile={vi.fn()}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-file-change-documents',
+            subtaskId: 42,
+            role: 'assistant',
+            content:
+              'Updated [SKILL.md](/workspace/project/SKILL.md) and [wegent-merged-env.md](/workspace/project/references/wegent-merged-env.md).',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-42',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 10,
+              additions: 64,
+              deletions: 130,
+              files: [
+                {
+                  path: 'SKILL.md',
+                  change_type: 'modified',
+                  additions: 12,
+                  deletions: 12,
+                  binary: false,
+                },
+                {
+                  path: 'scripts/run_on_integration_env.sh',
+                  change_type: 'deleted',
+                  additions: 0,
+                  deletions: 58,
+                  binary: false,
+                },
+                {
+                  path: 'references/acceptance-validation-contract.md',
+                  change_type: 'modified',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+                {
+                  path: 'references/browser-validation.md',
+                  change_type: 'modified',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+                {
+                  path: 'references/github-pr-flow.md',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 3,
+                  binary: false,
+                },
+                {
+                  path: 'references/post-review-follow-up.md',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 9,
+                  binary: false,
+                },
+                {
+                  path: 'references/pr-review-notification.md',
+                  change_type: 'modified',
+                  additions: 2,
+                  deletions: 2,
+                  binary: false,
+                },
+                {
+                  path: 'references/wegent-integration-test-env.md',
+                  change_type: 'modified',
+                  additions: 22,
+                  deletions: 23,
+                  binary: false,
+                },
+                {
+                  path: 'references/wegent-merged-env.md',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 4,
+                  binary: false,
+                },
+                {
+                  path: 'scripts/start_executor_local.sh',
+                  change_type: 'renamed',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByTestId('codex-reference-card')).toHaveLength(3)
+    expect(screen.getByTestId('toggle-codex-reference-list-button')).toHaveTextContent(
+      '显示另外 5 个'
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-codex-reference-list-button'))
+
+    const expandedReferenceCards = screen.getAllByTestId('codex-reference-card')
+    expect(expandedReferenceCards).toHaveLength(8)
+    expect(screen.getByTestId('toggle-codex-reference-list-button')).toHaveTextContent('收起文件')
+    expect(expandedReferenceCards.map(card => card.textContent)).toEqual([
+      expect.stringContaining('SKILL.md'),
+      expect.stringContaining('acceptance-validation-contract.md'),
+      expect.stringContaining('browser-validation.md'),
+      expect.stringContaining('github-pr-flow.md'),
+      expect.stringContaining('post-review-follow-up.md'),
+      expect.stringContaining('pr-review-notification.md'),
+      expect.stringContaining('wegent-integration-test-env.md'),
+      expect.stringContaining('wegent-merged-env.md'),
+    ])
   })
 
   test('renders IM source badge for user messages with channel label', () => {

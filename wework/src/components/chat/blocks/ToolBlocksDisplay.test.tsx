@@ -59,6 +59,44 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
 ]
 
+const completedFileChangesBlock: ProcessingBlock = {
+  id: 'file-changes-1',
+  subtaskId: 1,
+  type: 'file_changes',
+  status: 'done',
+  createdAt: 1770000003000,
+  fileChanges: {
+    version: 1,
+    status: 'active',
+    artifact_id: 'artifact-1',
+    device_id: 'device-1',
+    workspace_path: '/tmp/project',
+    file_count: 1,
+    additions: 2,
+    deletions: 1,
+    files: [
+      {
+        path: 'scripts/env',
+        change_type: 'modified',
+        additions: 2,
+        deletions: 1,
+        binary: false,
+      },
+    ],
+    reverted_at: null,
+    revertible: false,
+    diff: [
+      'diff --git a/scripts/env b/scripts/env',
+      '--- a/scripts/env',
+      '+++ b/scripts/env',
+      '@@ -8,2 +8,3 @@',
+      '-OLD_ENV=remote',
+      '+OLD_ENV=local',
+      '+BACKEND_URL=127.0.0.1',
+    ].join('\n'),
+  },
+}
+
 describe('ToolBlocksDisplay', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -104,6 +142,56 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(2)
   })
 
+  test('renders file changes inside completed processing details', () => {
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
+    expect(screen.queryByText('已编辑 env')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
+
+    expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+    expect(screen.getByText('+2')).toBeInTheDocument()
+    expect(screen.getByText('-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
+
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('BACKEND_URL=127.0.0.1')
+  })
+
+  test('only persists the top-level processing expansion state', () => {
+    const { unmount } = render(
+      <ToolBlocksDisplay
+        blocks={[completedFileChangesBlock]}
+        isStreaming={false}
+        stateKey="file-changes-local-expansion"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
+    expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+
+    unmount()
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedFileChangesBlock]}
+        isStreaming={false}
+        stateKey="file-changes-local-expansion"
+      />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
+    expect(screen.queryByText('已编辑 env')).toBeNull()
+  })
+
   test('opens completed processing details with a short content transition', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 
@@ -113,12 +201,13 @@ describe('ToolBlocksDisplay', () => {
     expect(toggle).not.toHaveClass('w-full')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
     expect(collapseContent).toHaveClass(
-      'transition-[grid-template-rows,opacity]',
-      'duration-[220ms]',
-      'grid-rows-[0fr]',
+      'transition-[max-height,opacity]',
+      'duration-[260ms]',
       'opacity-0',
       'pointer-events-none'
     )
+    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
+    expect(toggle.querySelector('svg')).toHaveClass('-rotate-90')
 
     fireEvent.click(toggle.parentElement as HTMLElement)
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
@@ -126,8 +215,8 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(toggle)
 
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
-    expect(collapseContent).toHaveClass('grid-rows-[1fr]', 'opacity-100')
-    expect(toggle.querySelector('svg')).toHaveClass('-rotate-90')
+    expect(collapseContent).toHaveClass('opacity-100')
+    expect(toggle.querySelector('svg')).not.toHaveClass('-rotate-90')
   })
 
   test('keeps live duration when the run finishes', async () => {

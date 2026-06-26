@@ -732,6 +732,20 @@ function normalizeProcessingBlock(
     }
   }
 
+  if (block.type === 'file_changes') {
+    const fileChanges = normalizeTurnFileChanges(block.fileChanges ?? block.file_changes)
+    if (!fileChanges) return null
+    const id = typeof block.id === 'string' ? block.id : `file-changes-${subtaskId}-${index}`
+    return {
+      id,
+      subtaskId,
+      type: 'file_changes',
+      fileChanges,
+      status,
+      createdAt: timestamp,
+    }
+  }
+
   return null
 }
 

@@ -170,6 +170,53 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('restores the previous scroll position when reopening a conversation', () => {
+    const messageA = {
+      id: 'a',
+      role: 'assistant' as const,
+      content: '会话 A',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 180,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.scroll(scroller)
+    rerender(<ScrollableMessageArea conversationKey="conversation-b" messages={[messageB]} />)
+
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(<ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />)
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 180,
+      behavior: 'auto',
+    })
+  })
+
   test('does not pull the user back down when they have scrolled up', () => {
     const initialMessage = {
       id: '1',

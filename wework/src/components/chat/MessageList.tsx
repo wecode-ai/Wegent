@@ -657,7 +657,7 @@ function AssistantMessage({
     }
     onOpenWorkspaceFile?.(path)
   }
-  const references = getAssistantReferences(message.references, visibleContent)
+  const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">

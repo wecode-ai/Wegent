@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, TransitionEvent } from 'react'
 import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
@@ -133,7 +133,7 @@ export function ToolBlocksDisplay({
           >
             <span>{duration}</span>
             <svg
-              className="h-3 w-3 -rotate-90"
+              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -144,7 +144,7 @@ export function ToolBlocksDisplay({
           </button>
         </div>
       ) : null}
-      <CollapsibleProcessingContent expanded={expanded}>
+      <CollapsibleProcessingContent expanded={expanded} keepMounted>
         {processingContent}
       </CollapsibleProcessingContent>
     </div>
@@ -154,35 +154,96 @@ export function ToolBlocksDisplay({
 function CollapsibleProcessingContent({
   expanded,
   children,
+  keepMounted = false,
+  testId = 'processing-collapse-content',
 }: {
   expanded: boolean
   children: ReactNode
+  keepMounted?: boolean
+  testId?: string
 }) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const previousExpandedRef = useRef(expanded)
+  const [isRendered, setIsRendered] = useState(() => expanded || keepMounted)
+  const [maxHeight, setMaxHeight] = useState(() => (expanded ? 'none' : '0px'))
+  const shouldRender = expanded || keepMounted || isRendered
+
+  if (expanded && !isRendered) {
+    setIsRendered(true)
+  }
+
+  useLayoutEffect(() => {
+    if (!shouldRender) return
+
+    const content = contentRef.current
+    if (!content) return
+
+    const wasExpanded = previousExpandedRef.current
+    let frame: number | undefined
+
+    if (expanded) {
+      setMaxHeight(wasExpanded ? 'none' : `${content.scrollHeight}px`)
+    } else {
+      if (wasExpanded) {
+        setMaxHeight(`${content.scrollHeight}px`)
+        frame = requestAnimationFrame(() => setMaxHeight('0px'))
+      } else {
+        setMaxHeight('0px')
+      }
+    }
+
+    previousExpandedRef.current = expanded
+
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [expanded, shouldRender])
+
+  const handleTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.propertyName !== 'max-height') return
+    if (expanded) {
+      setMaxHeight('none')
+      return
+    }
+    if (!keepMounted) setIsRendered(false)
+  }
+
   return (
     <div
-      data-testid="processing-collapse-content"
+      data-testid={testId}
       aria-hidden={!expanded}
       inert={!expanded ? true : undefined}
+      onTransitionEnd={handleTransitionEnd}
       className={[
-        'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
-        expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0',
+        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
       ].join(' ')}
+      style={{ maxHeight }}
     >
-      <div className="min-h-0 overflow-hidden">{children}</div>
+      {shouldRender ? (
+        <div
+          ref={contentRef}
+          className={[
+            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            expanded ? 'translate-y-0' : '-translate-y-1',
+          ].join(' ')}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   )
 }
 
 function ToolActivityGroup({
   row,
-  stateKey,
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const [expanded, setExpanded] = usePersistentProcessingExpansion(stateKey)
+  const [expanded, setExpanded] = useState(false)
   const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
   const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
 
@@ -202,7 +263,7 @@ function ToolActivityGroup({
           strokeWidth={2}
         />
       </button>
-      {expanded && (
+      <CollapsibleProcessingContent expanded={expanded} testId="processing-activity-group-content">
         <div
           className={[
             'mt-2 flex min-w-0 flex-col gap-3',
@@ -216,13 +277,12 @@ function ToolActivityGroup({
               <ToolBlockItem
                 key={block.id}
                 block={block}
-                stateKey={stateKey ? `${stateKey}:${block.id}` : undefined}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
             ))
           )}
         </div>
-      )}
+      </CollapsibleProcessingContent>
     </div>
   )
 }

@@ -49,6 +49,19 @@ export function getWebSearchActivityItems(
     }
 
     const query = getStringField(action, 'query') ?? getStringArrayField(action, 'queries')[0]
+    const queryUrlMetadata = getUrlMetadata(query)
+    if (queryUrlMetadata) {
+      addItem({
+        id: `${block.id}-query-url`,
+        label: query,
+        domain: queryUrlMetadata.domain,
+        iconUrl: queryUrlMetadata.iconUrl,
+        sourceLabel: queryUrlMetadata.displayUrl,
+        sourceUrl: queryUrlMetadata.url,
+      })
+      return
+    }
+
     const siteScopedQuery = getSiteScopedQuery(query)
     addItem({
       id: `${block.id}-query`,

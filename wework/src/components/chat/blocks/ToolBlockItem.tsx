@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { ChevronDown, Search } from 'lucide-react'
+import { ChevronDown, FileDiff, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
-import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { isCommandToolName, isWebSearchToolName } from './toolBlockActivity'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
+const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
@@ -22,12 +24,9 @@ interface ToolBlockItemProps {
 export function ToolBlockItem({
   block,
   forceExpanded = false,
-  stateKey,
   onOpenWorkspaceFile,
 }: ToolBlockItemProps) {
-  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
-    stateKey ? `${stateKey}:tool` : undefined
-  )
+  const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const expanded = forceExpanded || userExpanded
 
@@ -36,12 +35,14 @@ export function ToolBlockItem({
       <ThinkingBlockItem
         block={block}
         isRunning={isRunning}
-        stateKey={stateKey ? `${stateKey}:thinking` : undefined}
       />
     )
   }
   if (block.type === 'text') {
     return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+  }
+  if (block.type === 'file_changes') {
+    return <ProcessFileChangesBlockItem block={block} />
   }
 
   const { icon, label } = getBlockLabel(block)
@@ -88,17 +89,277 @@ export function ToolBlockItem({
   )
 }
 
+function ProcessFileChangesBlockItem({ block }: {
+  block: Extract<ProcessingBlock, { type: 'file_changes' }>
+}) {
+  const { t } = useTranslation('chat')
+  const summary = block.fileChanges
+  const [expanded, setExpanded] = useState(false)
+  const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+
+  if (!summary.files.length) return null
+
+  return (
+    <div className="min-w-0 overflow-hidden text-[13px]" data-testid="process-file-changes-block">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
+      >
+        <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t)}</span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
+          strokeWidth={2}
+        />
+      </button>
+      {expanded ? (
+        <div className="mt-2 min-w-0 space-y-1.5">
+          {summary.files.map(file => {
+            const previewLines = fileDiffPreviewLines(file, summary)
+            const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+            return (
+              <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
+                <button
+                  type="button"
+                  disabled={previewLines.length === 0}
+                  onClick={() =>
+                    setExpandedFilePath(current => (current === file.path ? null : file.path))
+                  }
+                  className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+                >
+                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t)}</span>
+                  {!file.binary ? (
+                    <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
+                      <span className="text-green-600">+{file.additions}</span>
+                      <span className="text-red-500">-{file.deletions}</span>
+                    </span>
+                  ) : null}
+                  {previewLines.length > 0 ? (
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
+                        fileExpanded ? '' : '-rotate-90'
+                      }`}
+                      strokeWidth={2}
+                    />
+                  ) : null}
+                </button>
+                {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function fileChangesSummaryLabel(
+  summary: TurnFileChangesSummary,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const changeType = uniformChangeType(summary.files)
+  const count = summary.file_count || summary.files.length
+  if (changeType === 'created') return t('file_changes.created_files', { count })
+  if (changeType === 'deleted') return t('file_changes.deleted_files', { count })
+  if (changeType === 'renamed') return t('file_changes.renamed_files', { count })
+  return t('file_changes.edited_files', { count })
+}
+
+function uniformChangeType(files: TurnFileChangeItem[]): TurnFileChangeItem['change_type'] | null {
+  const first = files[0]?.change_type
+  if (!first) return null
+  return files.every(file => file.change_type === first) ? first : null
+}
+
+function fileChangeRowLabel(
+  file: TurnFileChangeItem,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const filename = basename(file.path)
+  switch (file.change_type) {
+    case 'created':
+      return t('file_changes.created_file', { filename })
+    case 'deleted':
+      return t('file_changes.deleted_file', { filename })
+    case 'renamed':
+      return t('file_changes.renamed_file', { filename })
+    case 'modified':
+    default:
+      return t('file_changes.edited_file', { filename })
+  }
+}
+
+function InlineDiffPreview({ file, lines }: { file: TurnFileChangeItem; lines: DiffPreviewLine[] }) {
+  const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
+  const truncated = lines.length > INLINE_DIFF_MAX_LINES
+
+  return (
+    <div
+      className="mt-2 max-h-[22rem] min-w-0 overflow-auto rounded-lg border border-border bg-surface font-mono text-[12px] leading-5"
+      data-testid="process-file-change-diff"
+    >
+      <div className="sticky top-0 z-10 flex h-8 items-center gap-2 border-b border-border bg-surface px-3 font-sans text-xs text-text-secondary">
+        <span className="min-w-0 flex-1 truncate">{basename(file.path)}</span>
+        <span className="shrink-0 text-green-600">+{file.additions}</span>
+        <span className="shrink-0 text-red-500">-{file.deletions}</span>
+      </div>
+      <div className="py-1">
+        {visibleLines.map(line => (
+          <div
+            key={line.key}
+            className={[
+              'grid min-w-max grid-cols-[3.25rem_max-content]',
+              line.type === 'addition'
+                ? 'border-l-4 border-green-500 bg-green-500/10'
+                : line.type === 'deletion'
+                  ? 'border-l-4 border-red-500 bg-red-500/10'
+                  : line.type === 'separator'
+                    ? 'border-l-4 border-transparent bg-muted/60'
+                    : 'border-l-4 border-transparent',
+            ].join(' ')}
+          >
+            <span
+              className={[
+                'select-none px-3 text-right',
+                line.type === 'addition'
+                  ? 'text-green-600'
+                  : line.type === 'deletion'
+                    ? 'text-red-500'
+                    : 'text-text-muted',
+              ].join(' ')}
+            >
+              {line.lineNumber ?? ''}
+            </span>
+            <span className="pr-4 whitespace-pre text-text-primary">{line.content || ' '}</span>
+          </div>
+        ))}
+        {truncated ? <div className="px-3 py-1 text-xs text-text-muted">...</div> : null}
+      </div>
+    </div>
+  )
+}
+
+interface DiffPreviewLine {
+  key: string
+  type: 'addition' | 'deletion' | 'context' | 'separator'
+  lineNumber?: number
+  content: string
+}
+
+function fileDiffPreviewLines(
+  file: TurnFileChangeItem,
+  summary: TurnFileChangesSummary
+): DiffPreviewLine[] {
+  if (file.binary || !summary.diff?.trim()) return []
+  const sectionLines = fileDiffLines(file, summary)
+  return parseDiffPreviewLines(sectionLines)
+}
+
+function fileDiffLines(file: TurnFileChangeItem, summary: TurnFileChangesSummary): string[] {
+  const diff = summary.diff?.trimEnd()
+  if (!diff) return []
+
+  const sections = parseUnifiedDiff(diff)
+  if (sections.length === 0) {
+    return summary.files.length === 1 ? diff.split('\n') : []
+  }
+
+  const section = sections.find(
+    item =>
+      pathsMatch(item.path, file.path) ||
+      (file.old_path ? pathsMatch(item.oldPath, file.old_path) : false)
+  )
+  return section?.lines ?? []
+}
+
+function pathsMatch(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false
+  return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`)
+}
+
+function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
+  const previewLines: DiffPreviewLine[] = []
+  let oldLine: number | undefined
+  let newLine: number | undefined
+  let seenHunk = false
+
+  lines.forEach((rawLine, index) => {
+    if (
+      rawLine.startsWith('diff --git') ||
+      rawLine.startsWith('---') ||
+      rawLine.startsWith('+++') ||
+      rawLine.startsWith('index ')
+    ) {
+      return
+    }
+
+    const hunk = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    if (hunk) {
+      if (seenHunk && previewLines.length > 0) {
+        previewLines.push({
+          key: `separator-${index}`,
+          type: 'separator',
+          content: '',
+        })
+      }
+      oldLine = Number(hunk[1])
+      newLine = Number(hunk[2])
+      seenHunk = true
+      return
+    }
+
+    if (!seenHunk && !rawLine.startsWith('+') && !rawLine.startsWith('-')) return
+
+    const prefix = rawLine[0]
+    if (prefix === '+') {
+      previewLines.push({
+        key: `addition-${index}`,
+        type: 'addition',
+        lineNumber: newLine,
+        content: rawLine.slice(1),
+      })
+      if (newLine !== undefined) newLine += 1
+      return
+    }
+    if (prefix === '-') {
+      previewLines.push({
+        key: `deletion-${index}`,
+        type: 'deletion',
+        lineNumber: oldLine,
+        content: rawLine.slice(1),
+      })
+      if (oldLine !== undefined) oldLine += 1
+      return
+    }
+
+    previewLines.push({
+      key: `context-${index}`,
+      type: 'context',
+      lineNumber: newLine ?? oldLine,
+      content: prefix === ' ' ? rawLine.slice(1) : rawLine,
+    })
+    if (oldLine !== undefined) oldLine += 1
+    if (newLine !== undefined) newLine += 1
+  })
+
+  return previewLines
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}
+
 function ThinkingBlockItem({
   block,
   isRunning,
-  stateKey,
 }: {
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
-  stateKey?: string
 }) {
   const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = usePersistentProcessingExpansion(stateKey)
+  const [expanded, setExpanded] = useState(false)
 
   if (!block.content) return null
 

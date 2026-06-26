@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Archive, Box, ChevronDown, FileText } from 'lucide-react'
+import { Archive, Box, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodexContextEvent,
@@ -8,6 +8,8 @@ import type {
   CodexReference,
 } from '@/types/api'
 import { basename, fileExtension, getDisplayCodexReferences } from './codexReferences'
+
+const DEFAULT_VISIBLE_REFERENCE_COUNT = 3
 
 export function CodexContextEvents({ events }: { events: CodexContextEvent[] }) {
   const { t } = useTranslation('chat')
@@ -87,8 +89,13 @@ export function CodexReferenceList({
   onOpenFile: (path: string) => void
 }) {
   const { t } = useTranslation('chat')
-  const uniqueReferences = getDisplayCodexReferences(references).slice(0, 6)
+  const [expanded, setExpanded] = useState(false)
+  const uniqueReferences = getDisplayCodexReferences(references)
   if (uniqueReferences.length === 0) return null
+  const hiddenCount = Math.max(0, uniqueReferences.length - DEFAULT_VISIBLE_REFERENCE_COUNT)
+  const visibleReferences = expanded
+    ? uniqueReferences
+    : uniqueReferences.slice(0, DEFAULT_VISIBLE_REFERENCE_COUNT)
 
   return (
     <section
@@ -97,7 +104,7 @@ export function CodexReferenceList({
       aria-label={t('codex_references.title')}
     >
       <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface">
-        {uniqueReferences.map(reference => (
+        {visibleReferences.map(reference => (
           <button
             type="button"
             key={reference.path}
@@ -134,6 +141,26 @@ export function CodexReferenceList({
             </span>
           </button>
         ))}
+        {hiddenCount > 0 ? (
+          <button
+            type="button"
+            data-testid="toggle-codex-reference-list-button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(value => !value)}
+            className="flex h-8 w-full items-center justify-center gap-1 border-t border-border text-xs font-medium text-text-secondary hover:bg-muted"
+          >
+            <span>
+              {expanded
+                ? t('codex_references.show_less')
+                : t('codex_references.show_more', { count: hiddenCount })}
+            </span>
+            {expanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+        ) : null}
       </div>
     </section>
   )
