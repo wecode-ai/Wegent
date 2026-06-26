@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::{
+    net::SocketAddr,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 
-use wegent_executor::server::ServerConfig;
+use wegent_executor::server::{startup_log_line, ServerConfig};
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -87,4 +90,14 @@ fn server_config_rejects_invalid_bind_host() {
     let error = config.bind_addr().unwrap_err();
 
     assert!(error.to_string().contains("invalid server bind address"));
+}
+
+#[test]
+fn startup_log_line_includes_bound_address() {
+    let bind_addr: SocketAddr = "127.0.0.1:10002".parse().unwrap();
+
+    assert_eq!(
+        startup_log_line(bind_addr),
+        "Wegent executor listening on 127.0.0.1:10002"
+    );
 }

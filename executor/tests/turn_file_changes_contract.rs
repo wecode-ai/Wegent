@@ -17,6 +17,24 @@ use wegent_executor::services::turn_file_changes::{
     ClaudeToolFileChangeTracker, NativeTurnFileChangeTracker, TurnFileChangeTracker,
 };
 
+const LOCAL_GIT_ENV_VARS: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 #[test]
 fn tracker_excludes_changes_that_preexist_the_turn() {
     let root = unique_dir("turn-preexisting");
@@ -251,6 +269,7 @@ fn commit_all(repo: &Path, message: &str) {
 
 fn run_git<const N: usize>(repo: &Path, args: [&str; N], input: Option<&[u8]>) -> Vec<u8> {
     let mut command = Command::new("git");
+    clear_local_git_env(&mut command);
     command.arg("-C").arg(repo).args(args);
     if input.is_some() {
         command.stdin(std::process::Stdio::piped());
@@ -269,6 +288,12 @@ fn run_git<const N: usize>(repo: &Path, args: [&str; N], input: Option<&[u8]>) -
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
+}
+
+fn clear_local_git_env(command: &mut Command) {
+    for key in LOCAL_GIT_ENV_VARS {
+        command.env_remove(key);
+    }
 }
 
 fn write(path: PathBuf, content: impl AsRef<[u8]>) {

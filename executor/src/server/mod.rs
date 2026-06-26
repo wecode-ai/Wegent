@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, future::Future};
+use std::{env, future::Future, io::Write, net::SocketAddr};
 
 mod config;
 
@@ -80,10 +80,16 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|error| format!("failed to bind executor server at {bind_addr}: {error}"))?;
+    println!("{}", startup_log_line(bind_addr));
+    let _ = std::io::stdout().flush();
 
     axum::serve(listener, create_docker_router_from_env()?)
         .await
         .map_err(|error| format!("executor server failed: {error}"))
+}
+
+pub fn startup_log_line(bind_addr: SocketAddr) -> String {
+    format!("Wegent executor listening on {bind_addr}")
 }
 
 async fn health_check() -> Json<Value> {

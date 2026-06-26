@@ -16,6 +16,23 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const ARTIFACT_VERSION: u64 = 1;
+const LOCAL_GIT_ENV_VARS: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitTreeSnapshot {
@@ -544,7 +561,9 @@ fn line_stats(
 fn numstat_by_path(workspace: &Path, patch: &[u8]) -> BTreeMap<String, (i64, i64, bool)> {
     let patch_path = unique_temp_dir("wegent-turn-numstat").join("changes.patch");
     let _ = fs::write(&patch_path, patch);
-    let result = Command::new("git")
+    let mut command = Command::new("git");
+    clear_local_git_env(&mut command);
+    let result = command
         .arg("apply")
         .arg("--numstat")
         .arg("-z")
@@ -785,6 +804,7 @@ fn git_output_vec(
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let mut command = Command::new("git");
+    clear_local_git_env(&mut command);
     command.arg("-C").arg(workspace).args(args);
     if let Some(env) = env {
         command.envs(env);
@@ -809,6 +829,12 @@ fn git_output_vec(
         Ok(output.stdout)
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+fn clear_local_git_env(command: &mut Command) {
+    for key in LOCAL_GIT_ENV_VARS {
+        command.env_remove(key);
     }
 }
 
