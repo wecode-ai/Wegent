@@ -95,7 +95,7 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
         execution.resolved_shell_type().as_deref(),
         Some("claudecode")
     );
-    assert_eq!(execution.resolved_agent_kind(), AgentKind::CodeX);
+    assert_eq!(execution.resolved_agent_kind(), AgentKind::ClaudeCode);
 }
 
 #[test]
@@ -126,11 +126,11 @@ fn validation_tasks_route_to_image_validator() {
 }
 
 #[test]
-fn responses_protocol_without_openai_provider_stays_on_claude_code() {
+fn responses_protocol_on_claudecode_shell_stays_on_claude_code() {
     let request = OpenAIResponsesRequest::from_value(json!({
         "input": "run task",
         "model_config": {
-            "model": "anthropic",
+            "model": "openai",
             "protocol": "openai-responses"
         },
         "metadata": {

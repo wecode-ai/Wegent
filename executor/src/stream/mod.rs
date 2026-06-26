@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use crate::runner::ExecutionOutcome;
+use crate::{agents::interactive_mcp::is_deferred_user_input_result, runner::ExecutionOutcome};
 
 pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
     let mut text = String::new();
@@ -18,7 +18,10 @@ pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
             continue;
         };
         if let Some(outcome) = extract_result_outcome(&value) {
-            if matches!(outcome, ExecutionOutcome::Cancelled { .. }) {
+            if matches!(
+                outcome,
+                ExecutionOutcome::Cancelled { .. } | ExecutionOutcome::WaitingForUserInput { .. }
+            ) {
                 return outcome;
             }
             terminal_outcome = Some(outcome);
@@ -67,6 +70,11 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     if value.get("type").and_then(Value::as_str) != Some("result") {
         return None;
     }
+    if is_deferred_user_input_result(value) {
+        return Some(ExecutionOutcome::WaitingForUserInput {
+            stop_reason: result_stop_reason(value),
+        });
+    }
     if !value
         .get("is_error")
         .and_then(Value::as_bool)
@@ -94,6 +102,16 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     } else {
         Some(ExecutionOutcome::Failed { message })
     }
+}
+
+fn result_stop_reason(value: &Value) -> String {
+    value
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool_deferred")
+        .to_owned()
 }
 
 fn is_interruption_message(value: &str) -> bool {

@@ -85,6 +85,39 @@ async fn background_runner_emits_start_and_completed_events() {
 }
 
 #[tokio::test]
+async fn background_runner_emits_silent_completed_event_for_waiting_user_input() {
+    let sink = RecordingSink::default();
+    let runner = BackgroundTaskRunner::new(
+        FakeEngine {
+            outcome: ExecutionOutcome::WaitingForUserInput {
+                stop_reason: "tool_deferred".to_owned(),
+            },
+        },
+        sink.clone(),
+    );
+
+    let result = runner.submit(task_request()).await;
+    let events = sink.wait_for_events(2).await;
+
+    assert_eq!(result.status, TaskStatus::Running);
+    assert_eq!(events[0].event_type, "response.created");
+    assert_eq!(events[1].event_type, "response.completed");
+    assert_eq!(
+        events[1].data["response"]["output"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(events[1].data["response"]["stop_reason"], "tool_deferred");
+    assert_eq!(events[1].data["response"]["silent_exit"], true);
+    assert_eq!(
+        events[1].data["response"]["silent_exit_reason"],
+        "waiting_for_user_input"
+    );
+}
+
+#[tokio::test]
 async fn background_runner_emits_error_event_for_failed_outcome() {
     let sink = RecordingSink::default();
     let runner = BackgroundTaskRunner::new(

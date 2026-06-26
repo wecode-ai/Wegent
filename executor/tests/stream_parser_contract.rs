@@ -56,6 +56,23 @@ fn ndjson_parser_maps_error_event_to_failed_outcome() {
 }
 
 #[test]
+fn ndjson_parser_maps_interactive_form_waiting_result_to_waiting_outcome() {
+    let output = r#"
+{"type":"assistant","message":{"content":[{"type":"text","text":"please fill the form"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"tool_deferred","result":"{\"__deferred_user_input__\":true,\"success\":true,\"status\":\"waiting_for_user_response\"}"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::WaitingForUserInput {
+            stop_reason: "tool_deferred".to_owned()
+        }
+    );
+}
+
+#[test]
 fn ndjson_parser_extracts_claude_session_id_from_init_or_result_events() {
     let output = r#"
 {"type":"system","subtype":"init","session_id":"init-session"}

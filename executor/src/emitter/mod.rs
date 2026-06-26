@@ -101,6 +101,23 @@ impl ResponsesEventBuilder {
         )
     }
 
+    pub fn response_waiting_for_user_input(&self, stop_reason: &str) -> EventEnvelope {
+        let stop_reason = stop_reason.trim();
+        let mut response = self.response_payload("completed", json!([]));
+        response["usage"] = Value::Null;
+        response["stop_reason"] = json!(if stop_reason.is_empty() {
+            "tool_deferred"
+        } else {
+            stop_reason
+        });
+        response["silent_exit"] = json!(true);
+        response["silent_exit_reason"] = json!("waiting_for_user_input");
+        self.envelope(
+            "response.completed",
+            json!({"type": "response.completed", "response": response}),
+        )
+    }
+
     pub fn error(&self, message: &str, code: &str) -> EventEnvelope {
         self.envelope(
             "error",

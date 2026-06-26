@@ -14,6 +14,7 @@ mod image_validator;
 pub mod interactive_mcp;
 
 use crate::{
+    agents::interactive_mcp::build_interactive_form_answer_query,
     claude_session,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
     logging::{log_executor_event, task_fields},
@@ -161,9 +162,17 @@ async fn run_pre_execute_hook(request: &ExecutionRequest, spec: &CommandSpec) {
 }
 
 pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> CommandSpec {
-    let mut spec = CommandSpec::new(binary)
-        .arg("-p")
-        .arg(claude_prompt_text(request))
+    let mut spec = CommandSpec::new(binary).arg("-p");
+    if let Some(query) = interactive_form_answer_query(request) {
+        spec = spec
+            .arg("--input-format")
+            .arg("stream-json")
+            .stdin(format!("{query}\n"));
+    } else {
+        spec = spec.arg(claude_prompt_text(request));
+    }
+
+    let mut spec = spec
         .arg("--output-format")
         .arg("stream-json")
         .arg("--verbose")
@@ -218,6 +227,13 @@ fn claude_prompt_text(request: &ExecutionRequest) -> String {
         })
         .unwrap_or_else(|| request.prompt.clone());
     prompt_text(&prompt)
+}
+
+fn interactive_form_answer_query(request: &ExecutionRequest) -> Option<String> {
+    let answer = request.extra.get("interactive_form_answer")?;
+    build_interactive_form_answer_query(answer)
+        .ok()
+        .map(|query| query.to_string())
 }
 
 fn kb_meta_prompt(request: &ExecutionRequest) -> Option<&str> {

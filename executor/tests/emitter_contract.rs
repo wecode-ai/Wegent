@@ -55,6 +55,28 @@ fn response_completed_event_contains_message_output() {
 }
 
 #[test]
+fn response_waiting_for_user_input_event_marks_silent_exit() {
+    let builder =
+        ResponsesEventBuilder::new(1, 2, "claude-sonnet-4").with_response_id("resp_waiting");
+
+    let event = builder.response_waiting_for_user_input("tool_deferred");
+
+    assert_eq!(event.event_type, "response.completed");
+    assert_eq!(event.data["response"]["id"], json!("resp_waiting"));
+    assert_eq!(event.data["response"]["status"], json!("completed"));
+    assert_eq!(event.data["response"]["output"], json!([]));
+    assert_eq!(
+        event.data["response"]["stop_reason"],
+        json!("tool_deferred")
+    );
+    assert_eq!(event.data["response"]["silent_exit"], json!(true));
+    assert_eq!(
+        event.data["response"]["silent_exit_reason"],
+        json!("waiting_for_user_input")
+    );
+}
+
+#[test]
 fn error_event_uses_openai_error_shape() {
     let builder = ResponsesEventBuilder::new(1, 2, "");
 

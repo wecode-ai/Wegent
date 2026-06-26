@@ -98,6 +98,20 @@ fn detects_deferred_user_input_result_from_mcp_text_content() {
 }
 
 #[test]
+fn ignores_deferred_marker_without_success_waiting_status() {
+    let result = json!({
+        "content": [
+            {
+                "type": "text",
+                "text": r#"{"__deferred_user_input__": true, "success": false, "status": "failed"}"#
+            }
+        ]
+    });
+
+    assert!(!is_deferred_user_input_result(&result));
+}
+
+#[test]
 fn proxy_request_targets_configured_mcp_server_and_normalizes_result() {
     let request = build_deferred_mcp_proxy_request(
         &deferred_tool_use(json!({"questions": [{"id": "q", "question": "Q?"}]})),
@@ -141,6 +155,27 @@ fn proxy_request_targets_configured_mcp_server_and_normalizes_result() {
 
     assert!(normalized.is_deferred_user_input);
     assert_eq!(normalized.tool_result["content"][0]["type"], "text");
+}
+
+#[test]
+fn proxy_request_resolves_nested_mcp_servers_and_normalized_server_names() {
+    let request = build_deferred_mcp_proxy_request(
+        &deferred_tool_use(json!({"questions": [{"id": "q", "question": "Q?"}]})),
+        &json!({
+            "mcpServers": {
+                "interactive-wegent-interactive-form-question": {
+                    "type": "http",
+                    "url": "http://backend/mcp/interactive-form-question/sse"
+                }
+            }
+        }),
+    )
+    .expect("normalized MCP server name should resolve");
+
+    assert_eq!(
+        request.server_url,
+        "http://backend/mcp/interactive-form-question/sse"
+    );
 }
 
 #[test]
@@ -313,6 +348,8 @@ fn interactive_form_answer_payload_ignores_unknown_fields() {
     let payload = build_interactive_form_answer_payload(&json!({
         "type": "interactive_form_question",
         "tool_use_id": "tool-1",
+        "task_id": 10,
+        "subtask_id": 20,
         "answers": {"scope": "all"},
         "success": true,
         "status": "answered",
@@ -327,6 +364,8 @@ fn interactive_form_answer_payload_ignores_unknown_fields() {
         json!({
             "type": "interactive_form_question",
             "tool_use_id": "tool-1",
+            "task_id": 10,
+            "subtask_id": 20,
             "answers": {"scope": "all"},
             "success": true,
             "status": "answered",

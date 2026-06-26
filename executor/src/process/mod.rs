@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Instant;
 use std::{
-    collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin, time::Duration,
+    collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin, process::Stdio,
+    time::Duration, time::Instant,
 };
 
-use tokio::{process::Command, time::timeout};
+use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 use crate::{
     claude_session,
@@ -25,6 +25,7 @@ pub struct CommandSpec {
     args: Vec<String>,
     env: BTreeMap<String, String>,
     cwd: Option<PathBuf>,
+    stdin: Option<String>,
 }
 
 impl CommandSpec {
@@ -34,6 +35,7 @@ impl CommandSpec {
             args: Vec::new(),
             env: BTreeMap::new(),
             cwd: None,
+            stdin: None,
         }
     }
 
@@ -52,6 +54,11 @@ impl CommandSpec {
         self
     }
 
+    pub fn stdin(mut self, input: impl Into<String>) -> Self {
+        self.stdin = Some(input.into());
+        self
+    }
+
     pub fn program(&self) -> &str {
         &self.program
     }
@@ -66,6 +73,10 @@ impl CommandSpec {
 
     pub fn current_dir(&self) -> Option<&PathBuf> {
         self.cwd.as_ref()
+    }
+
+    pub fn stdin_input(&self) -> Option<&str> {
+        self.stdin.as_deref()
     }
 }
 
@@ -161,7 +172,12 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
     log_executor_event("process started", &fields);
     let started = Instant::now();
-    let outcome = match timeout(Duration::from_secs(timeout_seconds), command.output()).await {
+    let outcome = match timeout(
+        Duration::from_secs(timeout_seconds),
+        run_prepared_command(command, spec.stdin.clone()),
+    )
+    .await
+    {
         Err(_) => CommandOutcome::Failure {
             stderr: format!("command timed out after {timeout_seconds}s"),
             stdout: String::new(),
@@ -173,6 +189,25 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
     fields.extend(command_outcome_fields(&outcome));
     log_executor_event("process finished", &fields);
     outcome
+}
+
+async fn run_prepared_command(
+    mut command: Command,
+    stdin: Option<String>,
+) -> std::io::Result<std::process::Output> {
+    let Some(input) = stdin else {
+        return command.output().await;
+    };
+
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    if let Some(mut child_stdin) = child.stdin.take() {
+        child_stdin.write_all(input.as_bytes()).await?;
+    }
+    child.wait_with_output().await
 }
 
 fn command_outcome(result: std::io::Result<std::process::Output>) -> CommandOutcome {
