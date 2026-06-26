@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import './i18n'
 import App from './App'
@@ -30,6 +30,7 @@ const workbenchValue: WorkbenchContextValue = {
     isSending: false,
     error: null,
   },
+  isStartupReady: true,
   messages: [],
   queuedMessages: [],
   guidanceMessages: [],
@@ -200,7 +201,16 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WorkbenchProvider: ({
+    children,
+    onStartupReadyChange,
+  }: {
+    children: React.ReactNode
+    onStartupReadyChange?: (ready: boolean) => void
+  }) => {
+    queueMicrotask(() => onStartupReadyChange?.(true))
+    return <>{children}</>
+  },
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -534,8 +544,13 @@ describe('App plugins route', () => {
   beforeEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     mockSystemSkillsFetch()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test('does not expose the plugins page from the desktop sidebar', async () => {
