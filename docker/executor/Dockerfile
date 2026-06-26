@@ -2,29 +2,28 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build stage: compile executor to standalone binary
+# Build stage: compile executor Rust binary
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder
+ARG APP_VERSION=dev
 
 WORKDIR /app
 
-# Copy pyproject.toml and install dependencies
-COPY executor/pyproject.toml /app/executor/pyproject.toml
+RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
 
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
-RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
+ENV PATH=/root/.cargo/bin:${PATH}
 
-# Install PyInstaller for building standalone binary (using uv for speed)
-RUN uv pip install --system pyinstaller
-
-# Copy source code
-COPY executor /app/executor
-COPY shared /app/shared
-
-# Build standalone binary
-RUN cd /app/executor && bash build.sh
+# Copy Rust manifest first for better Docker layer reuse.
+COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/src /app/executor/src
+RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 # Runtime stage: minimal image with only the binary
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+ARG APP_VERSION=dev
 
 WORKDIR /app
 
@@ -68,13 +67,13 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
     fc-cache -f -v
 
 
-# Copy only the standalone binary from builder
-COPY --from=builder /app/executor/dist/executor /app/executor
+# Copy the Rust executor binary to the stable path expected by executor_manager.
+COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
-ENV PYTHONPATH=/app
+ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 
-# Run the standalone binary
+# Run the Rust executor binary
 CMD ["/app/executor"]

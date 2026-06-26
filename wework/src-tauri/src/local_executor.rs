@@ -51,6 +51,25 @@ enum LocalExecutorChild {
     Process(Child),
 }
 
+#[derive(Clone, Copy)]
+enum LocalExecutorOutputStream {
+    Stdout,
+    Stderr,
+}
+
+impl LocalExecutorOutputStream {
+    fn log_label(self) -> &'static str {
+        match self {
+            Self::Stdout => "Local executor output",
+            Self::Stderr => "Local executor diagnostic",
+        }
+    }
+
+    fn log_line(self, line: &str) {
+        log::info!("{}: {}", self.log_label(), line);
+    }
+}
+
 impl LocalExecutorChild {
     fn is_running(&mut self) -> bool {
         match self {
@@ -493,13 +512,16 @@ fn write_request_line(_inner: &mut LocalExecutorInner, _line: &str) -> Result<()
     Err("Local executor socket IPC is not available on this platform".to_string())
 }
 
-fn drain_process_output(prefix: &'static str, output: impl std::io::Read + Send + 'static) {
+fn drain_process_output(
+    stream: LocalExecutorOutputStream,
+    output: impl std::io::Read + Send + 'static,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(output);
         for line in reader.lines().map_while(Result::ok) {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                log::info!("{prefix}: {trimmed}");
+                stream.log_line(trimmed);
             }
         }
     });
@@ -525,10 +547,10 @@ fn spawn_configured_sidecar(path: PathBuf) -> Result<LocalExecutorChild, String>
         })?;
 
     if let Some(stdout) = child.stdout.take() {
-        drain_process_output("Local executor stdout", stdout);
+        drain_process_output(LocalExecutorOutputStream::Stdout, stdout);
     }
     if let Some(stderr) = child.stderr.take() {
-        drain_process_output("Local executor stderr", stderr);
+        drain_process_output(LocalExecutorOutputStream::Stderr, stderr);
     }
 
     Ok(LocalExecutorChild::Process(child))
@@ -592,13 +614,13 @@ async fn spawn_sidecar_if_needed(
                 CommandEvent::Stdout(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
                     if !text.trim().is_empty() {
-                        log::info!("Local executor stdout: {}", text.trim());
+                        LocalExecutorOutputStream::Stdout.log_line(text.trim());
                     }
                 }
                 CommandEvent::Stderr(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
                     if !text.trim().is_empty() {
-                        log::warn!("Local executor stderr: {}", text.trim());
+                        LocalExecutorOutputStream::Stderr.log_line(text.trim());
                     }
                 }
                 CommandEvent::Terminated(payload) => {
@@ -822,6 +844,14 @@ mod tests {
         let message = parse_executor_line(line).expect("line should parse");
 
         assert!(matches!(message, ExecutorLine::Event(_)));
+    }
+
+    #[test]
+    fn stderr_output_uses_diagnostic_label_in_app_logs() {
+        let label = LocalExecutorOutputStream::Stderr.log_label();
+
+        assert_eq!(label, "Local executor diagnostic");
+        assert!(!label.contains("stderr"));
     }
 
     #[test]

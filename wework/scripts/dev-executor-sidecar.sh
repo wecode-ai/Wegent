@@ -7,19 +7,24 @@ WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 EXECUTOR_DIR="$PROJECT_DIR/executor"
 
-export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-
-cd "$EXECUTOR_DIR"
-
-if [ "${WEGENT_EXECUTOR_DEV_RELOAD:-1}" = "0" ]; then
-  if [ -x "$EXECUTOR_DIR/.venv/bin/python" ]; then
-    exec "$EXECUTOR_DIR/.venv/bin/python" main.py "$@"
-  fi
-  exec uv run python main.py "$@"
+if [ "${WEGENT_EXECUTOR_DEV_RELOAD:-1}" != "0" ] && [ -z "${WEGENT_EXECUTOR_BINARY:-}" ]; then
+  exec cargo run \
+    --manifest-path "$EXECUTOR_DIR/Cargo.toml" \
+    --features dev-reload \
+    --bin wegent-executor-dev \
+    -- "$@"
 fi
 
-if [ -x "$EXECUTOR_DIR/.venv/bin/python" ]; then
-  exec "$EXECUTOR_DIR/.venv/bin/python" scripts/dev_sidecar.py "$@"
+if [ -n "${WEGENT_EXECUTOR_BINARY:-}" ]; then
+  exec "$WEGENT_EXECUTOR_BINARY" "$@"
 fi
 
-exec uv run python scripts/dev_sidecar.py "$@"
+if [ -x "$EXECUTOR_DIR/dist/wegent-executor" ]; then
+  exec "$EXECUTOR_DIR/dist/wegent-executor" "$@"
+fi
+
+if [ -x "$EXECUTOR_DIR/target/release/wegent-executor" ]; then
+  exec "$EXECUTOR_DIR/target/release/wegent-executor" "$@"
+fi
+
+exec cargo run --manifest-path "$EXECUTOR_DIR/Cargo.toml" --bin wegent-executor -- "$@"

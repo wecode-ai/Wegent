@@ -21,15 +21,15 @@ Usage: ./local.sh [command] [version]
 
 Commands:
   all [version]    Build the local binary, then restart it
-  build [version]  Run uv sync --group build and build the local binary
+  build [version]  Build the Rust local binary
   start            Start dist/wegent-executor in the background
   stop             Stop the background executor process
   restart          Stop, then start the executor process
   status           Show whether the executor process is running
   logs             Tail the executor log
 
-If [version] is provided for 'build' or 'all', it overrides the version from
-pyproject.toml (passed as --version to the build script).
+If [version] is provided for 'build' or 'all', local.sh verifies the built
+binary with WEGENT_EXECUTOR_VERSION set to that value.
 
 Environment:
   WEGENT_AUTH_TOKEN              Optional; overrides device-config.json
@@ -65,12 +65,13 @@ build_executor() {
     echo "Building local executor. Log: $BUILD_LOG"
     (
         cd "$ROOT_DIR"
-        uv sync --group build
+        cargo build --release --locked
+        mkdir -p dist
+        cp target/release/wegent-executor dist/wegent-executor
+        chmod 0755 dist/wegent-executor
         if [[ -n "$version_arg" ]]; then
             echo "Building with version: $version_arg"
-            uv run python scripts/build_local.py --version "$version_arg"
-        else
-            uv run python scripts/build_local.py
+            WEGENT_EXECUTOR_VERSION="$version_arg" dist/wegent-executor --version
         fi
     ) 2>&1 | tee "$BUILD_LOG"
 }
