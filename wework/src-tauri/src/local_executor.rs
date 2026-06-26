@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,6 +24,8 @@ const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
 const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 120;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
+const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
+const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
@@ -48,7 +52,13 @@ struct LocalExecutorInner {
 
 enum LocalExecutorChild {
     Tauri(CommandChild),
-    Process(Child),
+    Process(ManagedProcessChild),
+}
+
+struct ManagedProcessChild {
+    child: Child,
+    #[cfg(unix)]
+    process_group_id: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -74,11 +84,7 @@ impl LocalExecutorChild {
     fn is_running(&mut self) -> bool {
         match self {
             LocalExecutorChild::Tauri(_) => true,
-            LocalExecutorChild::Process(child) => match child.try_wait() {
-                Ok(Some(_)) => false,
-                Ok(None) => true,
-                Err(_) => false,
-            },
+            LocalExecutorChild::Process(child) => child.is_running(),
         }
     }
 
@@ -87,10 +93,96 @@ impl LocalExecutorChild {
             LocalExecutorChild::Tauri(child) => {
                 let _ = child.kill();
             }
-            LocalExecutorChild::Process(mut child) => {
-                let _ = child.kill();
+            LocalExecutorChild::Process(child) => child.kill(),
+        }
+    }
+}
+
+impl ManagedProcessChild {
+    fn new(child: Child) -> Self {
+        #[cfg(unix)]
+        {
+            let process_group_id = child.id();
+            Self {
+                child,
+                process_group_id,
             }
         }
+        #[cfg(not(unix))]
+        {
+            Self { child }
+        }
+    }
+
+    fn is_running(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    fn kill(mut self) {
+        #[cfg(unix)]
+        {
+            terminate_process_group(self.process_group_id);
+            let _ = self.child.wait();
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn configure_managed_process_group(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_managed_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_group(process_group_id: u32) {
+    send_process_group_signal(process_group_id, libc::SIGTERM);
+    wait_for_process_group_exit(
+        process_group_id,
+        Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS),
+    );
+    send_process_group_signal(process_group_id, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+fn wait_for_process_group_exit(process_group_id: u32, timeout: Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !process_group_exists(process_group_id) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS));
+    }
+}
+
+#[cfg(unix)]
+fn process_group_exists(process_group_id: u32) -> bool {
+    unsafe { libc::kill(-(process_group_id as libc::pid_t), 0) == 0 }
+}
+
+#[cfg(unix)]
+fn send_process_group_signal(process_group_id: u32, signal: libc::c_int) {
+    unsafe {
+        let _ = libc::kill(-(process_group_id as libc::pid_t), signal);
     }
 }
 
@@ -535,16 +627,15 @@ fn spawn_configured_sidecar(path: PathBuf) -> Result<LocalExecutorChild, String>
         ));
     }
 
-    let mut child = Command::new(&path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "Failed to start local executor sidecar {}: {error}",
-                path.display()
-            )
-        })?;
+    let mut command = Command::new(&path);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    configure_managed_process_group(&mut command);
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "Failed to start local executor sidecar {}: {error}",
+            path.display()
+        )
+    })?;
 
     if let Some(stdout) = child.stdout.take() {
         drain_process_output(LocalExecutorOutputStream::Stdout, stdout);
@@ -553,7 +644,7 @@ fn spawn_configured_sidecar(path: PathBuf) -> Result<LocalExecutorChild, String>
         drain_process_output(LocalExecutorOutputStream::Stderr, stderr);
     }
 
-    Ok(LocalExecutorChild::Process(child))
+    Ok(LocalExecutorChild::Process(ManagedProcessChild::new(child)))
 }
 
 async fn spawn_sidecar_if_needed(
@@ -809,7 +900,15 @@ pub async fn local_executor_request(
 mod tests {
     use super::*;
     use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::process::Stdio;
     use std::sync::{Mutex as TestMutex, MutexGuard, OnceLock};
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
 
     fn env_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
@@ -899,5 +998,113 @@ mod tests {
         assert_eq!(status.device_id.as_deref(), Some("configured-device"));
         assert_eq!(status.version.as_deref(), Some("1.9.0"));
         assert_eq!(status.error, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_sidecar_kill_stops_grandchild_process_group() {
+        let dir = std::env::temp_dir().join(format!(
+            "wework-local-executor-process-group-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("test dir should be created");
+        let pid_path = dir.join("grandchild.pid");
+        let script_path = dir.join("sidecar.sh");
+        fs::write(
+            &script_path,
+            format!(
+                r#"#!/usr/bin/env bash
+set -euo pipefail
+(
+  trap '' TERM
+  while true; do sleep 10; done
+) &
+echo "$!" > "{}"
+wait
+"#,
+                pid_path.display()
+            ),
+        )
+        .expect("sidecar script should be written");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("sidecar metadata should be readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions)
+            .expect("sidecar script should be executable");
+
+        let child = spawn_configured_sidecar(script_path).expect("sidecar should start");
+        let grandchild_pid =
+            wait_for_pid_file(&pid_path, Duration::from_secs(2)).expect("grandchild pid");
+        let _cleanup = ProcessCleanup::new(grandchild_pid);
+
+        child.kill();
+
+        assert!(
+            wait_until_dead(grandchild_pid, Duration::from_secs(2)),
+            "grandchild process should be stopped when sidecar is killed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    struct ProcessCleanup {
+        pid: u32,
+    }
+
+    #[cfg(unix)]
+    impl ProcessCleanup {
+        fn new(pid: u32) -> Self {
+            Self { pid }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for ProcessCleanup {
+        fn drop(&mut self) {
+            if process_alive(self.pid) {
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", &self.pid.to_string()])
+                    .status();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn wait_for_pid_file(path: &PathBuf, timeout: Duration) -> Option<u32> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(value) = fs::read_to_string(path) {
+                if let Ok(pid) = value.trim().parse::<u32>() {
+                    return Some(pid);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        None
+    }
+
+    #[cfg(unix)]
+    fn wait_until_dead(pid: u32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !process_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        !process_alive(pid)
+    }
+
+    #[cfg(unix)]
+    fn process_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
     }
 }

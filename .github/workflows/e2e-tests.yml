@@ -88,13 +88,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -106,9 +104,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -395,13 +393,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -413,9 +409,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Configure npm global cache path
         run: |
@@ -428,7 +424,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.npm-global
-          key: ${{ runner.os }}-node-20-claude-code-cli-2.1.142
+          key: ${{ runner.os }}-node-24-claude-code-cli-2.1.142
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -478,6 +474,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-e2e-
+
+      - name: Build frontend for E2E
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_TELEMETRY_DISABLED: 1
+          RUNTIME_INTERNAL_API_URL: http://localhost:8000
+          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
+        run: pnpm exec next build
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -553,7 +558,7 @@ jobs:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          nohup env -u TURBOPACK pnpm exec next dev --port 3000 > next-dev.log 2>&1 &
+          nohup pnpm exec next start > next-dev.log 2>&1 &
           echo $! > next-dev.pid
 
       - name: Start Mock Model Server
@@ -807,13 +812,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -825,9 +828,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Download all blob reports
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

@@ -209,7 +209,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. With no arguments and no remote address, the executor listens on `~/.wegent-executor/app-ipc.sock` and does not connect to Backend. After `WEGENT_BACKEND_URL` or `connection.backend_url` is set, the executor keeps the local socket available and also connects to the remote Backend as a local device. `~/.wegent-executor/app-ipc.lock` limits each user home to one executor process so the web app does not see duplicate device connections. Logs are written to `~/.wegent-executor/logs/executor.log`.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. With no arguments and no remote address, the executor listens on `~/.wegent-executor/app-ipc.sock` and does not connect to Backend. After `WEGENT_BACKEND_URL` or `connection.backend_url` is set, the executor keeps the local socket available and also connects to the remote Backend as a local device. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same `WEGENT_EXECUTOR_HOME` or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
 
 ### Getting JWT Token
 

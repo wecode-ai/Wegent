@@ -1,21 +1,11 @@
 {
   "name": "wegent-workspace",
   "private": true,
-  "packageManager": "pnpm@10.34.3",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "core-js",
-      "esbuild",
-      "msw",
-      "protobufjs",
-      "sharp",
-      "unrs-resolver"
-    ]
   },
   "devDependencies": {
     "typescript": "^5.7.3",
