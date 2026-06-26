@@ -388,6 +388,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
 
     let cancelled = false
+    const initialLeaderBotRefs =
+      bots.find(bot => bot.id === leaderBot.bot_id)?.default_knowledge_base_refs || []
+    const refIdentity = (refs: KnowledgeBaseDefaultRef[] | undefined) =>
+      JSON.stringify((refs || []).map(ref => ({ id: ref.id, name: ref.name })))
+    const initialLeaderBotRefIdentity = refIdentity(initialLeaderBotRefs)
 
     botApis
       .getBot(leaderBot.bot_id, editingTeamId)
@@ -395,7 +400,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         if (cancelled) {
           return
         }
-        setSimpleDefaultKnowledgeBaseRefs(bot.default_knowledge_base_refs || [])
+        setSimpleDefaultKnowledgeBaseRefs(currentRefs => {
+          if (refIdentity(currentRefs) !== initialLeaderBotRefIdentity) {
+            return currentRefs
+          }
+          return bot.default_knowledge_base_refs || []
+        })
       })
       .catch(error => {
         if (!cancelled) {
@@ -406,7 +416,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return () => {
       cancelled = true
     }
-  }, [editingTeamId, formTeam, open])
+  }, [bots, editingTeamId, formTeam, open])
 
   // Update bot selection when bots change
   useEffect(() => {

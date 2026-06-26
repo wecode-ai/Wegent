@@ -187,6 +187,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     },
     []
   )
+  const normalizeDefaultKnowledgeBaseRefs = useCallback(
+    (refs: KnowledgeBaseDefaultRef[] | undefined) =>
+      (refs || []).map(ref => ({
+        id: ref.id,
+        name: ref.name,
+      })),
+    []
+  )
   const [agentConfig, setAgentConfig] = useState(
     baseBot?.agent_config ? getAgentConfigWithoutProtocol(baseBot.agent_config) : ''
   )
@@ -215,8 +223,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       .then(bot => {
         if (!cancelled) {
           setDefaultKnowledgeBaseRefs(prev => {
-            const refIdentity = (refs: KnowledgeBaseDefaultRef[]) =>
-              JSON.stringify(refs.map(ref => ({ id: ref.id, name: ref.name })))
+            const refIdentity = (refs: KnowledgeBaseDefaultRef[] | undefined) =>
+              JSON.stringify(normalizeDefaultKnowledgeBaseRefs(refs))
             const baseRefs = editingBot?.default_knowledge_base_refs || []
             if (refIdentity(prev) !== refIdentity(baseRefs)) {
               return prev
@@ -234,7 +242,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return () => {
       cancelled = true
     }
-  }, [defaultKnowledgeBaseTeamId, editingBot, editingBotId, hasDefaultKnowledgeBaseTeamContext])
+  }, [
+    defaultKnowledgeBaseTeamId,
+    editingBot,
+    editingBotId,
+    hasDefaultKnowledgeBaseTeamContext,
+    normalizeDefaultKnowledgeBaseRefs,
+  ])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -244,6 +258,23 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
+  const resolvedBaseShellType = useMemo(() => {
+    const shellName = baseBot?.shell_name || baseBot?.shell_type || ''
+    return shells.find(shell => shell.name === shellName)?.shellType || ''
+  }, [baseBot?.shell_name, baseBot?.shell_type, shells])
+
+  const buildMcpConfigSnapshot = useCallback(
+    (mcpServers: Record<string, unknown> | undefined, agentType: string) => {
+      if (!mcpServers) {
+        return ''
+      }
+      if (agentType && isValidAgentType(agentType)) {
+        return JSON.stringify(adaptMcpConfigForAgent(mcpServers, agentType), null, 2)
+      }
+      return JSON.stringify(mcpServers, null, 2)
+    },
+    []
+  )
 
   const currentFormSnapshot = useMemo(
     () =>
@@ -256,7 +287,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         selectedSkills,
         preloadSkills,
         selectedSkillRefs,
-        defaultKnowledgeBaseRefs,
+        defaultKnowledgeBaseRefs: normalizeDefaultKnowledgeBaseRefs(defaultKnowledgeBaseRefs),
       }),
     [
       agentConfig,
@@ -266,6 +297,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       mcpConfig,
       preloadSkills,
       prompt,
+      normalizeDefaultKnowledgeBaseRefs,
       selectedSkillRefs,
       selectedSkills,
     ]
@@ -277,14 +309,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         botName: bot?.name || '',
         agentName: bot?.shell_name || bot?.shell_type || '',
         prompt: bot?.system_prompt || '',
-        mcpConfig: bot?.mcp_servers ? JSON.stringify(bot.mcp_servers, null, 2) : '',
+        mcpConfig: buildMcpConfigSnapshot(bot?.mcp_servers, resolvedBaseShellType),
         agentConfig: bot?.agent_config ? getAgentConfigWithoutProtocol(bot.agent_config) : '',
         selectedSkills: bot?.skills || [],
         preloadSkills: bot?.preload_skills || [],
         selectedSkillRefs: bot?.skill_refs || {},
-        defaultKnowledgeBaseRefs: bot?.default_knowledge_base_refs || [],
+        defaultKnowledgeBaseRefs: normalizeDefaultKnowledgeBaseRefs(
+          bot?.default_knowledge_base_refs
+        ),
       }),
-    [getAgentConfigWithoutProtocol]
+    [
+      buildMcpConfigSnapshot,
+      getAgentConfigWithoutProtocol,
+      normalizeDefaultKnowledgeBaseRefs,
+      resolvedBaseShellType,
+    ]
   )
 
   const resetAgentDependentConfig = useCallback(() => {
@@ -596,6 +635,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       baseBot?.id || 'new',
       baseBot?.updated_at || '',
       cloningBot?.id || '',
+      resolvedBaseShellType || '',
     ].join(':')
     if (lastResetKeyRef.current === resetKey) {
       return
@@ -614,16 +654,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     // Apply type normalization when loading MCP config
     if (baseBot?.mcp_servers) {
-      const shellName = baseBot.shell_name || baseBot.shell_type || ''
-      const shell = shells.find(s => s.name === shellName)
-      const agentType = shell?.shellType
-
-      if (agentType && isValidAgentType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForAgent(baseBot.mcp_servers, agentType)
-        setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-      } else {
-        setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
-      }
+      setMcpConfig(buildMcpConfigSnapshot(baseBot.mcp_servers, resolvedBaseShellType))
     } else {
       setMcpConfig('')
     }
@@ -644,12 +675,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     lastResetSnapshotRef.current = buildBaseFormSnapshot(baseBot)
   }, [
     baseBot,
+    buildMcpConfigSnapshot,
     buildBaseFormSnapshot,
     cloningBot?.id,
     currentFormSnapshot,
     editingBotId,
     getAgentConfigWithoutProtocol,
-    shells,
+    resolvedBaseShellType,
   ])
 
   // Initialize model-related data after agents and models are loaded
