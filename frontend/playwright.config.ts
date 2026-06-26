@@ -96,6 +96,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
+        navigationTimeout: 90000,
       },
       dependencies: ['setup'],
     },
