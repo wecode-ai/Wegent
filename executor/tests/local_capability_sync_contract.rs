@@ -8,8 +8,8 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{json, Value};
@@ -105,6 +105,60 @@ async fn replace_sync_records_skill_and_mcp_and_removes_only_stale_managed_skill
     );
     assert_eq!(manifest["mcps"]["docs"]["installed_mcp_id"], 7);
     assert!(manifest["skills"].get("old-managed").is_none());
+}
+
+#[tokio::test]
+async fn concurrent_syncs_serialize_manifest_updates() {
+    let temp = TempRoot::new("capability-sync-concurrent");
+    let skills_dir = temp.path().join(".claude/skills");
+    let codex_skills_dir = temp.path().join(".codex/skills");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let provider = StaticPackageProvider::default()
+        .with_skill_delay(Duration::from_millis(50))
+        .with_skill("first", "---\nname: first\n---\n")
+        .with_skill("second", "---\nname: second\n---\n");
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir)
+        .with_codex_skills_dir(codex_skills_dir)
+        .with_store_dir(store_dir);
+    let handler = Arc::new(CapabilitySyncHandler::with_package_provider(
+        "token", store, provider,
+    ));
+
+    let first = {
+        let handler = Arc::clone(&handler);
+        tokio::spawn(async move {
+            handler
+                .apply_sync(json!({
+                    "mode": "merge",
+                    "skills": [{"name": "first", "skill_id": 1, "namespace": "default"}],
+                    "plugins": [],
+                    "mcps": [],
+                }))
+                .await
+        })
+    };
+    let second = {
+        let handler = Arc::clone(&handler);
+        tokio::spawn(async move {
+            handler
+                .apply_sync(json!({
+                    "mode": "merge",
+                    "skills": [{"name": "second", "skill_id": 2, "namespace": "default"}],
+                    "plugins": [],
+                    "mcps": [],
+                }))
+                .await
+        })
+    };
+
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(first.unwrap().unwrap()["success"], true);
+    assert_eq!(second.unwrap().unwrap()["success"], true);
+
+    let manifest = read_json(manifest_path);
+    assert_eq!(manifest["skills"]["first"]["skill_id"], 1);
+    assert_eq!(manifest["skills"]["second"]["skill_id"], 2);
 }
 
 #[tokio::test]
@@ -794,6 +848,7 @@ struct StaticPackageProvider {
     plugins: BTreeMap<String, Vec<u8>>,
     skill_calls: Mutex<Vec<String>>,
     plugin_calls: Mutex<Vec<String>>,
+    skill_delay: Option<Duration>,
 }
 
 impl StaticPackageProvider {
@@ -806,6 +861,11 @@ impl StaticPackageProvider {
         self.plugins.insert(path.to_owned(), bytes);
         self
     }
+
+    fn with_skill_delay(mut self, delay: Duration) -> Self {
+        self.skill_delay = Some(delay);
+        self
+    }
 }
 
 impl CapabilityPackageProvider for StaticPackageProvider {
@@ -814,7 +874,10 @@ impl CapabilityPackageProvider for StaticPackageProvider {
         spec: &'a SkillSyncSpec,
         target: &'a Path,
     ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
-        let result = {
+        Box::pin(async move {
+            if let Some(delay) = self.skill_delay {
+                tokio::time::sleep(delay).await;
+            }
             self.skill_calls.lock().unwrap().push(spec.name.clone());
             match self.skills.get(&spec.name) {
                 Some(content) => fs::create_dir_all(target)
@@ -825,8 +888,7 @@ impl CapabilityPackageProvider for StaticPackageProvider {
                     spec.name
                 ))),
             }
-        };
-        Box::pin(std::future::ready(result))
+        })
     }
 
     fn download_plugin<'a>(

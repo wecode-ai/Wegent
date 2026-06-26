@@ -13,6 +13,7 @@ use std::{
 
 use serde_json::{json, Map, Value};
 use thiserror::Error;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
@@ -412,6 +413,7 @@ where
     auth_token: String,
     store: GlobalCapabilityStore,
     package_provider: P,
+    sync_lock: AsyncMutex<()>,
 }
 
 impl CapabilitySyncHandler<NoopPackageProvider> {
@@ -437,6 +439,7 @@ where
             auth_token: auth_token.into(),
             store,
             package_provider,
+            sync_lock: AsyncMutex::new(()),
         }
     }
 
@@ -445,6 +448,7 @@ where
     }
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+        let _sync_guard = self.sync_lock.lock().await;
         let mut manifest = self.store.manifest.load()?;
         let mode = payload
             .get("mode")

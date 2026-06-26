@@ -66,6 +66,7 @@ The migration scope is executor-only:
 | Restrict package bearer tokens to backend-origin downloads | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 | Extract skill packages through per-sync staging directories before atomic replacement | Migrated | `executor/src/local/backend/capability.rs`, `executor/tests/local_capability_sync_contract.rs` |
 | Sync plugins from uploaded package downloads and marketplace metadata | Migrated | `executor/tests/local_capability_sync_contract.rs` |
+| Serialize concurrent capability sync manifest transactions | Migrated | `executor/tests/local_capability_sync_contract.rs` |
 
 ## Sessions
 
