@@ -224,6 +224,55 @@ function workspaceLabel(workspacePath: string, label: unknown): string {
   return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
 }
 
+function normalizeRuntimeTaskSummary(
+  task: unknown,
+  fallbackWorkspacePath: string
+): LocalTaskSummary | null {
+  const taskRecord = recordValue(task)
+  const localTaskId = stringValue(taskRecord.localTaskId) ?? stringValue(taskRecord.local_task_id)
+  if (!localTaskId) return null
+
+  const workspacePath =
+    stringValue(taskRecord.workspacePath) ??
+    stringValue(taskRecord.workspace_path) ??
+    stringValue(taskRecord.projectWorkspacePath) ??
+    stringValue(taskRecord.project_workspace_path) ??
+    stringValue(taskRecord.cwd) ??
+    stringValue(taskRecord.path) ??
+    fallbackWorkspacePath
+  const workspaceKind =
+    stringValue(taskRecord.workspaceKind) ?? stringValue(taskRecord.workspace_kind)
+  const worktreeId = stringValue(taskRecord.worktreeId) ?? stringValue(taskRecord.worktree_id)
+  const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
+  const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
+  const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
+
+  const normalized = {
+    ...taskRecord,
+    localTaskId,
+    workspacePath,
+    title: stringValue(taskRecord.title) ?? localTaskId,
+    runtime: stringValue(taskRecord.runtime) ?? 'codex',
+    ...(workspaceKind ? { workspaceKind } : {}),
+    ...(worktreeId ? { worktreeId } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(gitInfo !== undefined ? { gitInfo } : {}),
+  }
+
+  return normalized as LocalTaskSummary
+}
+
+function normalizeRuntimeTaskSummaries(
+  tasks: unknown,
+  fallbackWorkspacePath: string
+): LocalTaskSummary[] {
+  if (!Array.isArray(tasks)) return []
+  return tasks
+    .map(task => normalizeRuntimeTaskSummary(task, fallbackWorkspacePath))
+    .filter((task): task is LocalTaskSummary => task !== null)
+}
+
 function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [number, number] {
   const seed = data.localTaskId || `${data.runtime}:${data.workspacePath ?? ''}:${data.message}`
   const taskId = 10_000_000_000_000 + stableLocalId(seed)
@@ -647,13 +696,43 @@ function normalizeRuntimeWorkDeviceId(
   runtimeWork: RuntimeWorkListResponse,
   localDeviceId: string
 ): RuntimeWorkListResponse {
-  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    deviceId: localDeviceId,
-    deviceName: workspace.deviceName || 'Local Executor',
-    deviceStatus: workspace.deviceStatus ?? 'online',
-    available: workspace.available !== false,
-  })
+  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    const workspaceRecord = recordValue(workspace)
+    const workspacePath =
+      stringValue(workspaceRecord.workspacePath) ??
+      stringValue(workspaceRecord.workspace_path) ??
+      workspace.workspacePath
+    const workspaceKind =
+      stringValue(workspaceRecord.workspaceKind) ?? stringValue(workspaceRecord.workspace_kind)
+    const worktreeId =
+      stringValue(workspaceRecord.worktreeId) ?? stringValue(workspaceRecord.worktree_id)
+    const rawTasks = Array.isArray(workspaceRecord.localTasks)
+      ? workspaceRecord.localTasks
+      : Array.isArray(workspaceRecord.local_tasks)
+        ? workspaceRecord.local_tasks
+        : workspace.localTasks
+    const localTasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
+
+    return {
+      ...workspace,
+      deviceId: localDeviceId,
+      deviceName:
+        stringValue(workspaceRecord.deviceName) ??
+        stringValue(workspaceRecord.device_name) ??
+        workspace.deviceName ??
+        'Local Executor',
+      deviceStatus:
+        stringValue(workspaceRecord.deviceStatus) ??
+        stringValue(workspaceRecord.device_status) ??
+        workspace.deviceStatus ??
+        'online',
+      available: workspace.available !== false,
+      workspacePath,
+      ...(workspaceKind ? { workspaceKind } : {}),
+      ...(worktreeId ? { worktreeId } : {}),
+      localTasks,
+    }
+  }
 
   return {
     ...runtimeWork,
@@ -735,39 +814,14 @@ function adaptRuntimeWorkListResponse(
       : Array.isArray(workspace.local_tasks)
         ? workspace.local_tasks
         : []
-    const localTasks = rawTasks.reduce<LocalTaskSummary[]>((items, task) => {
-      const taskRecord = recordValue(task)
-      const localTaskId =
-        stringValue(taskRecord.localTaskId) ?? stringValue(taskRecord.local_task_id)
-      if (!localTaskId) {
-        return items
-      }
-      const taskWorkspacePath =
-        stringValue(taskRecord.workspacePath) ??
-        stringValue(taskRecord.workspace_path) ??
-        stringValue(taskRecord.projectWorkspacePath) ??
-        stringValue(taskRecord.project_workspace_path) ??
-        stringValue(taskRecord.cwd) ??
-        stringValue(taskRecord.path) ??
-        workspacePath
-      items.push({
-        ...taskRecord,
-        localTaskId,
-        workspacePath: taskWorkspacePath,
-        title: stringValue(taskRecord.title) ?? localTaskId,
-        runtime: stringValue(taskRecord.runtime) ?? 'codex',
-      })
-      return items
-    }, [])
+    const localTasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
     totalLocalTasks += localTasks.length
 
-    const firstTask = recordValue(localTasks[0])
-    const workspaceKind =
-      stringValue(workspace.workspaceKind) ??
-      stringValue(workspace.workspace_kind) ??
-      stringValue(firstTask.workspaceKind) ??
-      stringValue(firstTask.workspace_kind) ??
-      'workspace'
+    const workspaceKindFromWorkspace =
+      stringValue(workspace.workspaceKind) ?? stringValue(workspace.workspace_kind)
+    const hasChatTask = localTasks.some(task => task.workspaceKind === 'chat')
+    const workspaceKind = workspaceKindFromWorkspace ?? (hasChatTask ? 'chat' : 'workspace')
+    const worktreeId = stringValue(workspace.worktreeId) ?? stringValue(workspace.worktree_id)
     const label = workspaceLabel(workspacePath, workspace.label)
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
@@ -778,6 +832,7 @@ function adaptRuntimeWorkListResponse(
       available: true,
       workspacePath,
       workspaceKind,
+      worktreeId,
       label,
       workspaceSource:
         stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),

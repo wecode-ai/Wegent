@@ -13,6 +13,8 @@ import {
   WEWORK_MIN_EXECUTOR_VERSION,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
+  isCloudDevice,
+  isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type {
   DeleteDeviceWorkspaceRequest,
@@ -77,7 +79,12 @@ function workbenchSessionKey({
   currentProject: ProjectWithTasks | null
 }): string {
   if (currentRuntimeTask) {
-    return `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+    return [
+      'runtime',
+      currentRuntimeTask.deviceId,
+      currentRuntimeTask.localTaskId,
+      currentRuntimeTask.workspacePath ?? '',
+    ].join(':')
   }
   if (currentProject) {
     return `project:${currentProject.id}`
@@ -143,12 +150,21 @@ interface DesktopReviewMetadata {
 
 type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
 
+interface BottomPanelRenderContext {
+  key: string
+  currentProject: ProjectWithTasks | null
+  devices: DeviceInfo[]
+  workspaceTarget: WorkspaceTarget | null
+  preferLocalTerminal: boolean
+}
+
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
+  workspaceProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
   workspaceFileApi: WorkspaceFileApi
   workspaceTargetError?: string | null
@@ -213,6 +229,7 @@ export function DesktopWorkbenchMain({
   currentRuntimeTask,
   runtimeWork,
   currentProject,
+  workspaceProject,
   workspaceTarget,
   workspaceFileApi,
   workspaceTargetError,
@@ -269,7 +286,8 @@ export function DesktopWorkbenchMain({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
+  const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
+  const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
@@ -297,6 +315,79 @@ export function DesktopWorkbenchMain({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
+  const workspaceTargetDevice = workspaceTarget?.deviceId
+    ? devices.find(device => device.device_id === workspaceTarget.deviceId)
+    : undefined
+  const workspaceTargetUsesRemoteDevice = Boolean(
+    workspaceTargetDevice &&
+    (isCloudDevice(workspaceTargetDevice) || isRemoteDevice(workspaceTargetDevice))
+  )
+  const workspaceTargetUsesRemoteSource = workspaceTarget?.workspaceSource === 'remote'
+  const preferLocalWorkspaceTerminal =
+    projectWork.executionMode === 'current_workspace' &&
+    workspaceTarget?.source !== 'runtime' &&
+    !workspaceTargetUsesRemoteDevice &&
+    !workspaceTargetUsesRemoteSource
+  const bottomPanelWorkspaceKey = [
+    currentRuntimeTask
+      ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}:${
+          currentRuntimeTask.workspacePath ?? workspaceTarget?.path ?? ''
+        }`
+      : 'workspace',
+    workspaceProject?.id ?? 'projectless',
+    workspaceTarget?.deviceId ?? '',
+    workspaceTarget?.path ?? '',
+    preferLocalWorkspaceTerminal ? 'local' : projectWork.executionMode,
+  ].join(':')
+  const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
+  const activeBottomPanelContext = useMemo<BottomPanelRenderContext>(
+    () => ({
+      key: bottomPanelWorkspaceKey,
+      currentProject: workspaceProject,
+      devices,
+      workspaceTarget,
+      preferLocalTerminal: preferLocalWorkspaceTerminal,
+    }),
+    [
+      bottomPanelWorkspaceKey,
+      devices,
+      preferLocalWorkspaceTerminal,
+      workspaceProject,
+      workspaceTarget,
+    ]
+  )
+  const rememberActiveBottomPanelContext = useCallback(() => {
+    setBottomPanelContexts(current => {
+      const existingIndex = current.findIndex(context => context.key === bottomPanelWorkspaceKey)
+      if (existingIndex < 0) {
+        return [...current, activeBottomPanelContext]
+      }
+      if (current[existingIndex] === activeBottomPanelContext) {
+        return current
+      }
+      const next = [...current]
+      next[existingIndex] = activeBottomPanelContext
+      return next
+    })
+  }, [activeBottomPanelContext, bottomPanelWorkspaceKey])
+  const setCurrentBottomPanelOpen = useCallback(
+    (next: boolean | ((open: boolean) => boolean)) => {
+      rememberActiveBottomPanelContext()
+      setBottomPanelOpenByKey(current => {
+        const currentOpen = current[bottomPanelWorkspaceKey] ?? false
+        const nextOpen = typeof next === 'function' ? next(currentOpen) : next
+        if (currentOpen === nextOpen) return current
+        return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
+      })
+    },
+    [bottomPanelWorkspaceKey, rememberActiveBottomPanelContext]
+  )
+  const bottomPanelContextsToRender = useMemo(() => {
+    const inactiveContexts = bottomPanelContexts.filter(
+      context => context.key !== bottomPanelWorkspaceKey
+    )
+    return [...inactiveContexts, activeBottomPanelContext]
+  }, [activeBottomPanelContext, bottomPanelContexts, bottomPanelWorkspaceKey])
   const reviewRequestSequence = useRef(0)
   const previousTurnReviewRef = useRef<{
     loadDiff: () => Promise<string>
@@ -491,6 +582,9 @@ export function DesktopWorkbenchMain({
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
+  const selectTerminalView = useCallback(() => {
+    openRightPanelTab('terminal')
+  }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
     (path: string) => {
@@ -607,7 +701,10 @@ export function DesktopWorkbenchMain({
       return nextOpen
     })
   }, [rightPanelTabs])
-  const toggleBottomPanel = useCallback(() => setBottomPanelOpen(open => !open), [])
+  const toggleBottomPanel = useCallback(
+    () => setCurrentBottomPanelOpen(open => !open),
+    [setCurrentBottomPanelOpen]
+  )
   const renderWorkspacePanelActions = (mode: 'all' | 'environment' | 'panel-toggles') => (
     <WorkspacePanelActions
       mode={mode}
@@ -882,13 +979,25 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        <BottomWorkspacePanel
-          open={bottomPanelOpen}
-          currentProject={currentProject}
-          devices={devices}
-          workspaceTarget={workspaceTarget}
-          onRequestClose={() => setBottomPanelOpen(false)}
-        />
+        {bottomPanelContextsToRender.map(context => {
+          const active = context.key === bottomPanelWorkspaceKey
+          return (
+            <BottomWorkspacePanel
+              key={context.key}
+              open={active && (bottomPanelOpenByKey[context.key] ?? false)}
+              active={active}
+              preserveContent
+              testIdsEnabled={active}
+              currentProject={context.currentProject}
+              devices={context.devices}
+              workspaceTarget={context.workspaceTarget}
+              preferLocalTerminal={context.preferLocalTerminal}
+              onRequestClose={() => {
+                setBottomPanelOpenByKey(current => ({ ...current, [context.key]: false }))
+              }}
+            />
+          )
+        })}
       </div>
       {rightPanelOpen && (
         <div
@@ -920,7 +1029,10 @@ export function DesktopWorkbenchMain({
             visible={rightPanelOpen}
             activeView={rightPanelView}
             openTabs={rightPanelTabs}
+            currentProject={workspaceProject}
+            devices={devices}
             workspaceTarget={workspaceTarget}
+            preferLocalTerminal={preferLocalWorkspaceTerminal}
             workspaceFileApi={workspaceFileApi}
             openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
@@ -929,6 +1041,7 @@ export function DesktopWorkbenchMain({
             canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={onAddCodeComment}
             onSelectReview={selectReviewView}
+            onSelectTerminal={selectTerminalView}
             onSelectBrowser={selectBrowserView}
             onSelectFiles={selectFilesView}
             onCloseTab={closeRightPanelTab}

@@ -869,15 +869,14 @@ impl RuntimeWorkRpcHandler {
 
         links
             .into_iter()
-            .filter_map(|mut link| {
+            .filter_map(|link| {
                 if !is_codex_runtime(&link.runtime) {
                     return Some(link);
                 }
                 let group_path = workspace_group_path(&link.workspace_path);
-                let project = project_index
+                project_index
                     .project_for_path(&group_path)
                     .or_else(|| project_index.project_for_path(&link.workspace_path))?;
-                link.workspace_path = project.workspace_path.clone();
                 Some(link)
             })
             .collect()

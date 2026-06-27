@@ -603,7 +603,7 @@ function getSidebarDeviceStatusLabel(
 }
 
 function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}\0${address.localTaskId}`
+  return `${address.deviceId}\0${address.localTaskId}\0${address.workspacePath ?? ''}`
 }
 
 function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: LocalTaskSummary): string {

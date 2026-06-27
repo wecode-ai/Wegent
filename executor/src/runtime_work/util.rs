@@ -248,12 +248,39 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
         .unwrap_or(normalized)
 }
 
+pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
+    let normalized = normalize_workspace_path(path);
+    if let Some((worktree_root, _)) = git_worktree_root_and_id(&normalized) {
+        return worktree_root;
+    }
+    if let Some((worktree_root, _)) = path_worktree_root_and_id(&normalized) {
+        return worktree_root;
+    }
+    if infer_workspace_kind(&normalized) == "chat" {
+        return normalized;
+    }
+    if group_path.is_empty() {
+        normalized
+    } else {
+        group_path.to_owned()
+    }
+}
+
 pub(crate) fn infer_workspace_kind(path: &str) -> &'static str {
     if path.contains("/Codex/") || path.contains("\\Codex\\") {
         "chat"
+    } else if infer_worktree_id(path).is_some() {
+        "worktree"
     } else {
         "workspace"
     }
+}
+
+pub(crate) fn infer_worktree_id(path: &str) -> Option<String> {
+    let normalized = normalize_workspace_path(path);
+    git_worktree_root_and_id(&normalized)
+        .map(|(_, worktree_id)| worktree_id)
+        .or_else(|| path_worktree_root_and_id(&normalized).map(|(_, worktree_id)| worktree_id))
 }
 
 pub(crate) fn normalize_device_id(device_id: String) -> String {
@@ -331,6 +358,39 @@ fn git_common_workspace_root(path: &str) -> Option<String> {
     }
 }
 
+fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    let mut current = PathBuf::from(path);
+    loop {
+        let git_marker = current.join(".git");
+        if git_marker.is_file() {
+            let git_dir = parse_gitdir_file(&git_marker, &current)?;
+            let worktree_id = worktree_id_from_git_dir(&git_dir)?;
+            return Some((current.to_string_lossy().into_owned(), worktree_id));
+        }
+        if git_marker.is_dir() {
+            return None;
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn worktree_id_from_git_dir(git_dir: &Path) -> Option<String> {
+    let mut components = git_dir.components().peekable();
+    while let Some(component) = components.next() {
+        if component.as_os_str().to_str()? != "worktrees" {
+            continue;
+        }
+        return components
+            .next()
+            .and_then(|value| value.as_os_str().to_str())
+            .map(str::to_owned)
+            .filter(|value| !value.is_empty());
+    }
+    None
+}
+
 fn parse_gitdir_file(git_file: &Path, worktree_root: &Path) -> Option<PathBuf> {
     let content = std::fs::read_to_string(git_file).ok()?;
     let raw_path = content.trim().strip_prefix("gitdir:")?.trim();
@@ -343,6 +403,34 @@ fn parse_gitdir_file(git_file: &Path, worktree_root: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(normalize_workspace_path(
         &resolved.to_string_lossy(),
     )))
+}
+
+fn path_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    let parts = Path::new(path).components().collect::<Vec<_>>();
+    for index in 0..parts.len() {
+        let component_text = parts[index].as_os_str().to_str()?;
+        if component_text != "worktrees" && component_text != ".worktrees" {
+            continue;
+        }
+        if index + 2 >= parts.len() {
+            continue;
+        }
+        let worktree_id = parts[index + 1]
+            .as_os_str()
+            .to_str()
+            .map(str::to_owned)
+            .filter(|value| !value.is_empty())?;
+        let mut root = PathBuf::new();
+        for component in parts.iter().take(index + 3) {
+            match component {
+                Component::Prefix(prefix) => root.push(prefix.as_os_str()),
+                Component::RootDir => root.push(component.as_os_str()),
+                other => root.push(other.as_os_str()),
+            }
+        }
+        return Some((root.to_string_lossy().into_owned(), worktree_id));
+    }
+    None
 }
 
 fn read_common_git_dir(git_dir: &Path) -> Option<PathBuf> {

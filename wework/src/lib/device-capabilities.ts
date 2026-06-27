@@ -106,7 +106,7 @@ export function supportsRemoteSessions(device: DeviceLike): boolean {
 }
 
 export function supportsRemoteTerminalSessions(device: DeviceLike): boolean {
-  return isClaudeCodeDevice(device)
+  return (isCloudDevice(device) || isRemoteDevice(device)) && isClaudeCodeDevice(device)
 }
 
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
