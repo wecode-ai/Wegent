@@ -73,8 +73,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     ...overrides,
   }
 
-  render(<DesktopSidebar {...props} />)
-  return props
+  return render(<DesktopSidebar {...props} />)
 }
 
 function enableTauri() {
@@ -762,7 +761,7 @@ describe('DesktopSidebar', () => {
       const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
       const rowChildren = Array.from(taskRow.children)
 
-      expect(screen.queryByTestId('runtime-local-task-mark-codex-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-local-task-mark-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-codex-1')).toBeInTheDocument()
       expect(rowChildren).toHaveLength(2)
       expect(rowChildren[1]).toHaveAttribute('data-testid', 'runtime-local-task-trailing-codex-1')
@@ -775,7 +774,7 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
         rowChildren[1]
       )
-      expect(screen.queryByTestId('runtime-local-task-pin-icon-codex-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
       expect(
         screen.getByTestId('runtime-local-task-hover-actions-codex-1').className
@@ -825,6 +824,223 @@ describe('DesktopSidebar', () => {
       setTimeoutSpy.mockRestore()
       clearTimeoutSpy.mockRestore()
     }
+  })
+
+  test('marks and unmarks runtime tasks without opening the task', async () => {
+    const user = userEvent.setup()
+    const onOpenRuntimeLocalTask = vi.fn()
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+      onOpenRuntimeLocalTask,
+    })
+
+    await user.click(screen.getByTestId('project-item-button'))
+
+    const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+    const markButton = screen.getByTestId('runtime-local-task-mark-codex-1')
+    const pinIcon = screen.getByTestId('runtime-local-task-pin-icon-codex-1')
+
+    expect(taskRow).not.toHaveAttribute('data-marked')
+    expect(taskRow.className).not.toContain('color-sidebar-marked')
+
+    await user.click(markButton)
+
+    expect(taskRow).toHaveAttribute('data-marked', 'true')
+    expect(taskRow.className).toContain('color-sidebar-marked')
+    expect(pinIcon).toHaveClass('fill-current')
+    expect(markButton).toHaveAttribute('aria-label', '取消标记')
+    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+
+    await user.click(markButton)
+
+    expect(taskRow).not.toHaveAttribute('data-marked')
+    expect(taskRow.className).not.toContain('color-sidebar-marked')
+    expect(pinIcon).not.toHaveClass('fill-current')
+    expect(markButton).toHaveAttribute('aria-label', '标记任务')
+  })
+
+  test('moves pinned runtime tasks to the top of the project task list', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 3,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'old-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Old task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T00:00:00Z',
+                  },
+                  {
+                    localTaskId: 'new-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'New task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-22T00:00:00Z',
+                  },
+                  {
+                    localTaskId: 'middle-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Middle task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-21T00:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 3,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-item-button'))
+
+    const rowTestIds = () =>
+      screen.getAllByTestId(/^runtime-local-task-row-/).map(row => row.getAttribute('data-testid'))
+
+    expect(rowTestIds()).toEqual([
+      'runtime-local-task-row-new-task',
+      'runtime-local-task-row-middle-task',
+      'runtime-local-task-row-old-task',
+    ])
+
+    await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
+
+    expect(rowTestIds()).toEqual([
+      'runtime-local-task-row-old-task',
+      'runtime-local-task-row-new-task',
+      'runtime-local-task-row-middle-task',
+    ])
+
+    await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
+
+    expect(rowTestIds()).toEqual([
+      'runtime-local-task-row-new-task',
+      'runtime-local-task-row-middle-task',
+      'runtime-local-task-row-old-task',
+    ])
+  })
+
+  test('restores pinned runtime task ordering after remount', async () => {
+    const user = userEvent.setup()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalLocalTasks: 3,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              localTasks: [
+                {
+                  localTaskId: 'old-task',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Old task',
+                  runtime: 'codex',
+                  updatedAt: '2026-06-20T00:00:00Z',
+                },
+                {
+                  localTaskId: 'new-task',
+                  workspacePath: '/repo/Wegent',
+                  title: 'New task',
+                  runtime: 'codex',
+                  updatedAt: '2026-06-22T00:00:00Z',
+                },
+                {
+                  localTaskId: 'middle-task',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Middle task',
+                  runtime: 'codex',
+                  updatedAt: '2026-06-21T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 3,
+    }
+    const rowTestIds = () =>
+      screen.getAllByTestId(/^runtime-local-task-row-/).map(row => row.getAttribute('data-testid'))
+
+    const view = renderSidebar({ runtimeWork })
+
+    await user.click(screen.getByTestId('project-item-button'))
+    await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('wework.desktop.sidebar.pinnedRuntimeTaskKeys.7.1')).toContain(
+        'old-task'
+      )
+    })
+
+    view.unmount()
+
+    renderSidebar({ runtimeWork })
+
+    if (!screen.queryByTestId('runtime-local-task-row-old-task')) {
+      await user.click(screen.getByTestId('project-item-button'))
+    }
+
+    expect(rowTestIds()).toEqual([
+      'runtime-local-task-row-old-task',
+      'runtime-local-task-row-new-task',
+      'runtime-local-task-row-middle-task',
+    ])
+    expect(screen.getByTestId('runtime-local-task-mark-old-task')).toHaveAttribute(
+      'aria-label',
+      '取消标记'
+    )
   })
 
   test('opens centered archive confirmation dialog for project archive', async () => {
