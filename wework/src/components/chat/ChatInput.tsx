@@ -63,8 +63,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  worktreeBaseBranch?: string | null
-  onWorktreeBaseBranchChange?: (branchName: string) => void
+  worktreeBranch?: string | null
+  onWorktreeBranchChange?: (branchName: string | null) => void
 }
 
 interface ChatInputProps {

@@ -3868,7 +3868,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('loads environment info from the current runtime task workspace', async () => {
+  test('loads environment info automatically from the current runtime task workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+2',
       deletions: '-0',
@@ -3952,8 +3952,6 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
     await waitFor(() =>
       expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
         deviceId: 'runtime-device',
@@ -3964,7 +3962,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
 
-  test('loads environment info only when the environment popover opens', async () => {
+  test('loads environment info automatically for the current project workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',
       deletions: '-1',
@@ -4007,8 +4005,14 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await new Promise(resolve => window.setTimeout(resolve, 0))
-    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
+        deviceId: 'device-1',
+        path: '/repo',
+        source: 'project',
+      })
+    })
 
     rerender(
       <DesktopWorkbenchLayout
@@ -4028,18 +4032,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await new Promise(resolve => window.setTimeout(resolve, 0))
-    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
-    await waitFor(() => {
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
-    })
+    expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
   })
 
   test('closes the right workspace panel from the panel actions', async () => {

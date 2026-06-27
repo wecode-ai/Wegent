@@ -855,31 +855,53 @@ describe('branch environment commands', () => {
     },
   }
 
-  test('lists branches sorted by name', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: 'human/zebra\nmain\nhuman/alpaca\n',
-      stderr: '',
+  test('lists branches with the current branch first', async () => {
+    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
+      if (data.command_key === 'git_branch_list') {
+        return {
+          success: true,
+          stdout: 'human/zebra\nmain\nhuman/alpaca\n',
+          stderr: '',
+        }
+      }
+      if (data.command_key === 'git_branch') {
+        return { success: true, stdout: 'human/zebra\n', stderr: '' }
+      }
+      return { success: false, stdout: '', stderr: 'unexpected command' }
     })
 
     await expect(listProjectBranches({ executeCommand }, project)).resolves.toEqual([
-      'human/alpaca',
       'human/zebra',
       'main',
+      'human/alpaca',
     ])
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
       command_key: 'git_branch_list',
       path: '/workspace/Wegent',
       timeout_seconds: 15,
       max_output_bytes: 1024 * 64,
     })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
+      command_key: 'git_branch',
+      path: '/workspace/Wegent',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
   })
 
   test('runs branch commands in the active workspace target', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: 'main\n',
-      stderr: '',
+    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
+      if (data.command_key === 'git_branch_list') {
+        return {
+          success: true,
+          stdout: 'main\n',
+          stderr: '',
+        }
+      }
+      if (data.command_key === 'git_branch') {
+        return { success: true, stdout: 'main\n', stderr: '' }
+      }
+      return { success: true, stdout: '', stderr: '' }
     })
     const target = {
       deviceId: 'runtime-device',
@@ -900,13 +922,19 @@ describe('branch environment commands', () => {
       max_output_bytes: 1024 * 64,
     })
     expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
+      command_key: 'git_branch',
+      path: '/workspace/worktrees/1029/Wegent',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'runtime-device', {
       command_key: 'git_checkout',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/alpaca'],
       timeout_seconds: 30,
       max_output_bytes: 8192,
     })
-    expect(executeCommand).toHaveBeenNthCalledWith(3, 'runtime-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(4, 'runtime-device', {
       command_key: 'git_checkout_new',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/new-branch'],

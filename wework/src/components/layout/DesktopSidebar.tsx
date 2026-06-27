@@ -33,7 +33,7 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -475,16 +475,6 @@ interface SidebarDeviceState {
   status: SidebarDeviceStatus
 }
 
-function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
-  return {
-    id: runtimeProjectUiId(projectWork.project),
-    name: projectWork.project.name,
-    description: projectWork.project.description,
-    color: projectWork.project.color,
-    tasks: [],
-  }
-}
-
 function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
@@ -564,7 +554,9 @@ function shouldShowProjectDeviceStatus(
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
   if (!deviceState || devices.length <= 1) return false
-  return Boolean(deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device)))
+  return Boolean(
+    deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device))
+  )
 }
 
 function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {

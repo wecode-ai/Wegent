@@ -10,6 +10,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::{
     agents::{request_codex_app_server, run_codex_app_server_turn, CodexNotificationSender},
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
+    logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
@@ -352,8 +353,11 @@ impl RuntimeWorkRpcHandler {
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
-        let mut request = execution_request(&payload)
-            .unwrap_or_else(|| execution_request_from_payload(&payload, &workspace_path));
+        let mut request = match execution_request(&payload) {
+            Some(request) => request,
+            None => execution_request_from_payload(&payload, &workspace_path)
+                .map_err(|message| AppIpcError::new("bad_request", message))?,
+        };
         apply_runtime_payload_metadata(&mut request, &payload);
 
         let mut link =
@@ -376,30 +380,54 @@ impl RuntimeWorkRpcHandler {
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "localTaskId is required"))?;
-        if self
-            .local_task_link(&local_task_id)
-            .is_some_and(|link| link.running)
-        {
+        let existing_link = self.local_task_link(&local_task_id);
+        let payload_execution_request = execution_request(&payload);
+        let has_execution_request = payload_execution_request.is_some();
+        if existing_link.as_ref().is_some_and(|link| link.running) {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
                 "code": "bad_request",
             }));
         }
-        let thread_id = self.thread_id_for_local_task(&local_task_id);
+        let thread_id = existing_link
+            .as_ref()
+            .and_then(|link| link.thread_id.clone())
+            .unwrap_or_else(|| local_task_id.clone());
         let workspace_path = workspace_path(&payload)
             .or_else(|| {
-                self.local_task_link(&local_task_id)
-                    .map(|link| link.workspace_path)
+                existing_link
+                    .as_ref()
+                    .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
-        let mut request = execution_request(&payload)
-            .unwrap_or_else(|| execution_request_from_payload(&payload, &workspace_path));
+        let mut request = match payload_execution_request {
+            Some(request) => request,
+            None => execution_request_from_payload(&payload, &workspace_path)
+                .map_err(|message| AppIpcError::new("bad_request", message))?,
+        };
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+
+        let mut fields = task_fields(request.task_id, request.subtask_id);
+        fields.push(("local_task_id", local_task_id.clone()));
+        fields.push(("thread_id", thread_id.clone()));
+        fields.push(("workspace_path", workspace_path.clone()));
+        fields.push(("has_execution_request", has_execution_request.to_string()));
+        fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+        if let Some(cwd) = request.cwd() {
+            fields.push(("cwd", cwd.to_owned()));
+        }
+        fields.push((
+            "model_id",
+            string_field(&request.model_config, "model_id")
+                .or_else(|| string_field(&request.model_config, "modelId"))
+                .unwrap_or_default(),
+        ));
+        log_executor_event("runtime work send prepared", &fields);
 
         self.mark_task_running_for_send(
             &local_task_id,
@@ -629,6 +657,17 @@ impl RuntimeWorkRpcHandler {
         request: ExecutionRequest,
         resume_thread_id: Option<String>,
     ) {
+        let mut fields = task_fields(request.task_id, request.subtask_id);
+        fields.push(("local_task_id", local_task_id.clone()));
+        fields.push(("resume", resume_thread_id.is_some().to_string()));
+        if let Some(thread_id) = &resume_thread_id {
+            fields.push(("thread_id", thread_id.clone()));
+        }
+        if let Some(cwd) = request.cwd() {
+            fields.push(("cwd", cwd.to_owned()));
+        }
+        log_executor_event("runtime work turn spawning", &fields);
+
         let handler = self.clone();
         tokio::spawn(async move {
             emit_response_event(
@@ -701,19 +740,31 @@ impl RuntimeWorkRpcHandler {
                         request,
                         json!({"error": {"message": message}}),
                     ),
-                    ExecutionOutcome::Failed { message } => emit_response_event(
-                        &self.event_tx,
-                        &self.device_id,
-                        "response.failed",
-                        local_task_id,
-                        request,
-                        json!({"error": {"message": message}}),
-                    ),
+                    ExecutionOutcome::Failed { message } => {
+                        let mut fields = task_fields(request.task_id, request.subtask_id);
+                        fields.push(("local_task_id", local_task_id.to_owned()));
+                        fields.push(("error", message.clone()));
+                        fields.push(("error_len", message.len().to_string()));
+                        log_executor_event("runtime work turn failed", &fields);
+                        emit_response_event(
+                            &self.event_tx,
+                            &self.device_id,
+                            "response.failed",
+                            local_task_id,
+                            request,
+                            json!({"error": {"message": message}}),
+                        );
+                    }
                     ExecutionOutcome::Running => {}
                 }
             }
             Err(error) => {
                 self.finish_local_task(local_task_id, None, "failed");
+                let mut fields = task_fields(request.task_id, request.subtask_id);
+                fields.push(("local_task_id", local_task_id.to_owned()));
+                fields.push(("error", error.clone()));
+                fields.push(("error_len", error.len().to_string()));
+                log_executor_event("runtime work turn failed", &fields);
                 emit_response_event(
                     &self.event_tx,
                     &self.device_id,
@@ -929,6 +980,13 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
         });
     }
+}
+
+fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)> {
+    vec![
+        ("task_id", task_id.to_string()),
+        ("subtask_id", subtask_id.to_string()),
+    ]
 }
 
 fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<RuntimeWorkspaceLink> {

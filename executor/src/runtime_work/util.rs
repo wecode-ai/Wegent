@@ -22,7 +22,10 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 pub(crate) fn execution_request_from_payload(
     payload: &Value,
     workspace_path: &str,
-) -> ExecutionRequest {
+) -> Result<ExecutionRequest, String> {
+    let model_id = string_field(payload, "modelId")
+        .or_else(|| string_field(payload, "model_id"))
+        .ok_or_else(|| "modelId is required when executionRequest is not provided".to_owned())?;
     let mut request = ExecutionRequest {
         prompt: Value::String(
             string_field(payload, "message")
@@ -38,9 +41,7 @@ pub(crate) fn execution_request_from_payload(
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({
             "model": "openai",
-            "model_id": string_field(payload, "modelId")
-                .or_else(|| string_field(payload, "model_id"))
-                .unwrap_or_else(|| "gpt-5".to_owned()),
+            "model_id": model_id,
             "api_format": "responses",
             "protocol": "openai-responses",
         }),
@@ -52,7 +53,7 @@ pub(crate) fn execution_request_from_payload(
         request.device_id = Some(device_id);
     }
     apply_runtime_payload_metadata(&mut request, payload);
-    request
+    Ok(request)
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {

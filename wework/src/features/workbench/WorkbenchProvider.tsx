@@ -34,6 +34,7 @@ import { resolveModelExecutionSelection } from '@/features/cloud-connection/mode
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
+import { joinDevicePath } from '@/lib/device-workspace-path'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
@@ -47,7 +48,7 @@ import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/
 import type { RuntimeTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -80,7 +81,6 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeDeviceWorkspace,
-  RuntimeProjectWork,
   RuntimeTaskForkTarget,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationSettingsResponse,
@@ -318,6 +318,9 @@ interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   runtimeAddress?: RuntimeTaskAddress
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
+  modelId?: string
+  modelType?: RuntimeSendRequest['modelType']
+  modelOptions?: ModelOptions
 }
 
 interface RuntimeTranscriptPageState {
@@ -421,15 +424,6 @@ function trimConversationWorkspaceName(name: string): string {
   return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
 }
 
-function joinDevicePath(root: string, ...segments: string[]): string {
-  const trimmedRoot = root.trim()
-  const normalizedRoot = trimmedRoot === '/' ? '' : trimmedRoot.replace(/\/+$/g, '')
-  const joined = [normalizedRoot, ...segments.map(segment => segment.replace(/^\/+|\/+$/g, ''))]
-    .filter(Boolean)
-    .join('/')
-  return trimmedRoot.startsWith('/') ? `/${joined.replace(/^\/+/g, '')}` : joined
-}
-
 export interface WorkbenchContextValue {
   state: WorkbenchState
   isStartupReady: boolean
@@ -470,8 +464,8 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
-  projectWorktreeBaseBranch: string | null
-  setProjectWorktreeBaseBranch: (branchName: string | null) => void
+  projectWorktreeBranch: string | null
+  setProjectWorktreeBranch: (branchName: string | null) => void
   selectProject: (projectId: number | null) => void
   selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
@@ -1149,16 +1143,6 @@ function getSingleProjectDeviceWorkspaceId(
   return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
 }
 
-function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
-  return {
-    id: runtimeProjectUiId(projectWork.project),
-    name: projectWork.project.name,
-    description: projectWork.project.description,
-    color: projectWork.project.color,
-    tasks: [],
-  }
-}
-
 function findSelectableProject(
   projects: ProjectWithTasks[],
   runtimeWork: RuntimeWorkListResponse | null | undefined,
@@ -1201,6 +1185,21 @@ function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']):
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `${prefix}-${randomId}`
+}
+
+function selectedModelExecutionFields(
+  selectedModel: UnifiedModel | null,
+  selectedModelOptions: ModelOptions
+): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> {
+  if (!selectedModel) return {}
+  const executionModel = resolveModelExecutionSelection(selectedModel)
+  return {
+    modelId: executionModel.modelName,
+    modelType: executionModel.modelType,
+    ...(Object.keys(selectedModelOptions).length > 0
+      ? { modelOptions: { ...selectedModelOptions } }
+      : {}),
+  }
 }
 
 function nowMs(): number {
@@ -1284,9 +1283,7 @@ export function WorkbenchProvider({
   const [routeSearch, setRouteSearch] = useState(() => window.location.search)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
-  const [projectWorktreeBaseBranch, setProjectWorktreeBaseBranchState] = useState<string | null>(
-    null
-  )
+  const [projectWorktreeBranch, setProjectWorktreeBranchState] = useState<string | null>(null)
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({})
   const messagesRef = useRef<WorkbenchMessage[]>(messages)
   const localSkillsCacheRef = useRef<
@@ -1383,20 +1380,20 @@ export function WorkbenchProvider({
     }, 0)
     return () => window.clearTimeout(timer)
   }, [currentUser.preferences?.wework_project_execution_mode, state.currentProject])
-  const setProjectWorktreeBaseBranch = useCallback((branchName: string | null) => {
+  const setProjectWorktreeBranch = useCallback((branchName: string | null) => {
     const normalizedBranch = branchName?.trim() || null
-    setProjectWorktreeBaseBranchState(normalizedBranch)
+    setProjectWorktreeBranchState(normalizedBranch)
   }, [])
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setProjectWorktreeBaseBranchState(null)
+      setProjectWorktreeBranchState(null)
     }, 0)
     return () => window.clearTimeout(timer)
   }, [state.currentProject?.id])
   useEffect(() => {
     if (projectExecutionMode === 'git_worktree') return
     const timer = window.setTimeout(() => {
-      setProjectWorktreeBaseBranchState(null)
+      setProjectWorktreeBranchState(null)
     }, 0)
     return () => window.clearTimeout(timer)
   }, [projectExecutionMode])
@@ -2202,12 +2199,7 @@ export function WorkbenchProvider({
       const project = runtimeProjectWork
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
-          ) ?? {
-            id: runtimeProjectUiId(runtimeProjectWork.project),
-            name: runtimeProjectWork.project.name,
-            color: runtimeProjectWork.project.color,
-            tasks: [],
-          })
+          ) ?? runtimeProjectToProject(runtimeProjectWork))
         : null
 
       if (project) {
@@ -2838,7 +2830,7 @@ export function WorkbenchProvider({
         projectExecutionMode === 'git_worktree' &&
         supportsGitWorktreeExecution(activeProject)
       ) {
-        const branch = projectWorktreeBaseBranch?.trim()
+        const branch = projectWorktreeBranch?.trim()
         payload.execution = {
           workspace: {
             source: 'git_worktree',
@@ -2848,14 +2840,20 @@ export function WorkbenchProvider({
       }
 
       if (selectedModel) {
-        const executionModel = resolveModelExecutionSelection(selectedModel)
-        payload.force_override_bot_model = executionModel.modelName
-        payload.force_override_bot_model_type = executionModel.modelType
+        const executionModel = selectedModelExecutionFields(
+          selectedModel,
+          modelSelection.selectedModelOptions
+        )
+        payload.force_override_bot_model = executionModel.modelId
+        if (executionModel.modelType) {
+          payload.force_override_bot_model_type = executionModel.modelType
+        }
         if (
           modelSelection.selectedModel &&
-          Object.keys(modelSelection.selectedModelOptions).length > 0
+          executionModel.modelOptions &&
+          Object.keys(executionModel.modelOptions).length > 0
         ) {
-          payload.model_options = modelSelection.selectedModelOptions
+          payload.model_options = executionModel.modelOptions
         }
       }
 
@@ -2879,8 +2877,8 @@ export function WorkbenchProvider({
       modelSelection.models,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      projectWorktreeBranch,
       skillSelection.selectedSkills,
-      projectWorktreeBaseBranch,
       projectExecutionMode,
       state.currentProject,
       state.devices,
@@ -3079,6 +3077,12 @@ export function WorkbenchProvider({
     const message =
       trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
+    const runtimeSelectedModel =
+      modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+    const runtimeModelFields = selectedModelExecutionFields(
+      runtimeSelectedModel,
+      modelSelection.selectedModelOptions
+    )
 
     if (state.currentRuntimeTask) {
       if (hasCodeComments) {
@@ -3096,6 +3100,7 @@ export function WorkbenchProvider({
             createdAt: new Date().toISOString(),
             runtimeAddress: state.currentRuntimeTask ?? undefined,
             attachments: currentAttachments,
+            ...runtimeModelFields,
           },
         ])
         dispatch({ type: 'input_changed', input: '' })
@@ -3123,6 +3128,7 @@ export function WorkbenchProvider({
         const runtimeSendRequest: RuntimeSendRequest = {
           address: state.currentRuntimeTask,
           message: payloadMessage,
+          ...runtimeModelFields,
         }
         if (currentAttachments.length > 0) {
           runtimeSendRequest.attachmentIds = currentAttachments.map(attachment => attachment.id)
@@ -3205,6 +3211,9 @@ export function WorkbenchProvider({
     clearCodeCommentContexts,
     codeCommentContexts,
     currentRuntimeTaskBusy,
+    modelSelection.models,
+    modelSelection.selectedModel,
+    modelSelection.selectedModelOptions,
     reportSendBlocked,
     sendPreparedRuntimeMessage,
     state.devices,
@@ -3236,6 +3245,15 @@ export function WorkbenchProvider({
         const runtimeSendRequest: RuntimeSendRequest = {
           address: runtimeAddress,
           message: queuedMessageToSend.content,
+          ...(queuedMessageToSend.modelId
+            ? {
+                modelId: queuedMessageToSend.modelId,
+                modelType: queuedMessageToSend.modelType,
+                ...(queuedMessageToSend.modelOptions
+                  ? { modelOptions: queuedMessageToSend.modelOptions }
+                  : {}),
+              }
+            : {}),
         }
         if (queuedMessageToSend.attachments && queuedMessageToSend.attachments.length > 0) {
           runtimeSendRequest.attachmentIds = queuedMessageToSend.attachments.map(
@@ -3312,9 +3330,15 @@ export function WorkbenchProvider({
           return
         }
         try {
+          const runtimeSelectedModel =
+            modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
           const response = await executorClient.runtime.sendRuntimeMessage({
             address: state.currentRuntimeTask,
             message: previousUserMessage.content,
+            ...selectedModelExecutionFields(
+              runtimeSelectedModel,
+              modelSelection.selectedModelOptions
+            ),
           })
           if (!response.accepted) {
             throw new Error(response.error || '发送失败')
@@ -3337,6 +3361,9 @@ export function WorkbenchProvider({
       refreshWorkLists,
       reportSendBlocked,
       currentRuntimeTaskRunning,
+      modelSelection.models,
+      modelSelection.selectedModel,
+      modelSelection.selectedModelOptions,
       state.currentRuntimeTask,
     ]
   )
@@ -3561,6 +3588,13 @@ export function WorkbenchProvider({
         const runtimeSendRequest: RuntimeSendRequest = {
           address: runtimeAddress,
           message: queuedMessage.content,
+          ...(queuedMessage.modelId
+            ? {
+                modelId: queuedMessage.modelId,
+                modelType: queuedMessage.modelType,
+                ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
+              }
+            : {}),
         }
         if (queuedMessage.attachments && queuedMessage.attachments.length > 0) {
           runtimeSendRequest.attachmentIds = queuedMessage.attachments.map(
@@ -3651,8 +3685,8 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
-    projectWorktreeBaseBranch,
-    setProjectWorktreeBaseBranch,
+    projectWorktreeBranch,
+    setProjectWorktreeBranch,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,

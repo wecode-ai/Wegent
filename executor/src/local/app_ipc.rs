@@ -690,6 +690,36 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "remote", "get-url", "origin"],
             None,
         )),
+        "git_is_worktree" => Some(command_definition(
+            "sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --",
+            &["sh", "-c", "git -C \"$1\" rev-parse --is-inside-work-tree", "--"],
+            None,
+        )),
+        "git_worktree_add" => Some(command_definition(
+            "sh -c <git_worktree_add>",
+            &[
+                "sh",
+                "-c",
+                concat!(
+                    "source=$1; target=$2; ref=$3; ",
+                    "mkdir -p \"$(dirname \"$target\")\"; ",
+                    "if git -C \"$target\" rev-parse --is-inside-work-tree ",
+                    ">/dev/null 2>&1; then ",
+                    "if [ -n \"$ref\" ]; then ",
+                    "git -C \"$target\" checkout --force --detach \"$ref\"; fi; ",
+                    "exit 0; ",
+                    "else ",
+                    "if [ -e \"$target\" ]; then ",
+                    "echo \"target exists and is not a Git worktree\" >&2; exit 64; fi; ",
+                    "if [ -n \"$ref\" ]; then ",
+                    "git -C \"$source\" worktree add --detach \"$target\" \"$ref\"; ",
+                    "else git -C \"$source\" worktree add --detach \"$target\"; fi; ",
+                    "fi"
+                ),
+                "--",
+            ],
+            None,
+        )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
         "ls_skills" => Some(command_definition(

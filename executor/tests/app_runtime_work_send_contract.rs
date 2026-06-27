@@ -81,7 +81,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
                         "model": "openai",
-                        "model_id": "gpt-5",
+                        "model_id": "gpt-5.5",
                         "api_format": "responses"
                     }
                 }
@@ -118,6 +118,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "localTaskId": "local-task-1"
                 },
                 "content": "continue from content",
+                "modelId": "gpt-4.1",
                 "source": source,
                 "attachments": [attachment]
             }
@@ -136,12 +137,14 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .expect("send should resume the existing thread");
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
+    assert_eq!(resume["params"]["model"], "gpt-4.1");
 
     let last_turn_start = calls
         .iter()
         .rev()
         .find(|call| call["method"] == "turn/start")
         .expect("send should start a turn");
+    assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
     assert_eq!(last_turn_start["params"]["input"][0]["type"], "text");
     assert!(last_turn_start["params"]["input"][0]["text"]
         .as_str()
@@ -174,6 +177,29 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_send_rejects_missing_model_without_execution_request() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-task-1",
+                "message": "second turn"
+            }
+        }))
+        .await
+        .expect_err("send without executionRequest or modelId should fail fast");
+
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(
+        error.message,
+        "modelId is required when executionRequest is not provided"
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -197,7 +223,8 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
             "payload": {
                 "localTaskId": "local-task-1",
                 "workspacePath": "/tmp/project",
-                "message": "first turn"
+                "message": "first turn",
+                "modelId": "gpt-5.5"
             }
         }))
         .await

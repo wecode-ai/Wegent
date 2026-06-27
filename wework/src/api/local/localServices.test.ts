@@ -108,12 +108,6 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
-      execution: {
-        workspace: {
-          source: 'local_path',
-          path: '/Users/me/project',
-        },
-      },
     })
     await services.deviceApi.executeCommand('local-device', {
       command_key: 'home_dir',
@@ -133,12 +127,6 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
-      execution: {
-        workspace: {
-          source: 'local_path',
-          path: '/Users/me/project',
-        },
-      },
       executionRequest: expect.objectContaining({
         task_id: expect.any(Number),
         subtask_id: expect.any(Number),
@@ -204,7 +192,186 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  test('normalizes legacy local runtime task addresses to the ready device id', async () => {
+  test('creates a git worktree from the current branch before creating a local runtime task', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'device.execute_command') {
+          if (data.command_key === 'git_is_worktree') {
+            return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
+          }
+          if (data.command_key === 'project_workspace_root') {
+            return {
+              success: true,
+              stdout: '/Users/me/.wegent-executor/workspace/projects',
+              stderr: '',
+              exit_code: 0,
+            }
+          }
+          if (data.command_key === 'git_worktree_add') {
+            return { success: true, stdout: '', stderr: '', exit_code: 0 }
+          }
+        }
+        if (method === 'runtime.tasks.create') {
+          return {
+            accepted: true,
+            localTaskId: 'task-1',
+            runtime: 'codex',
+          }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      execution: {
+        workspace: {
+          source: 'git_worktree',
+        },
+      },
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const worktreePath = String(createPayload.workspacePath)
+    expect(worktreePath).toMatch(
+      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/\d+\/project$/
+    )
+    expect(response?.workspacePath).toBe(worktreePath)
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'git_is_worktree',
+      args: ['/Users/me/project'],
+      timeout_seconds: 15,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'git_worktree_add',
+      args: ['/Users/me/project', worktreePath],
+      timeout_seconds: 120,
+      max_output_bytes: 1024 * 1024,
+    })
+    expect(createPayload).toEqual(
+      expect.objectContaining({
+        deviceId: 'device-uuid',
+        workspacePath: worktreePath,
+        execution: {
+          workspace: {
+            source: 'git_worktree',
+            path: worktreePath,
+          },
+        },
+        executionRequest: expect.objectContaining({
+          workspace_source: 'git_worktree',
+          project_workspace_path: worktreePath,
+          workspace: {
+            project: {
+              source: 'git_worktree',
+              path: worktreePath,
+            },
+          },
+        }),
+      })
+    )
+  })
+
+  test('passes an explicit worktree branch when creating a local runtime task', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'device.execute_command') {
+          if (data.command_key === 'git_is_worktree') {
+            return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
+          }
+          if (data.command_key === 'project_workspace_root') {
+            return {
+              success: true,
+              stdout: '/Users/me/.wegent-executor/workspace/projects',
+              stderr: '',
+              exit_code: 0,
+            }
+          }
+          if (data.command_key === 'git_worktree_add') {
+            return { success: true, stdout: '', stderr: '', exit_code: 0 }
+          }
+        }
+        if (method === 'runtime.tasks.create') {
+          return {
+            accepted: true,
+            localTaskId: 'task-1',
+            runtime: 'codex',
+          }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      execution: {
+        workspace: {
+          source: 'git_worktree',
+          branch: 'develop',
+        },
+      },
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const worktreePath = String(createPayload.workspacePath)
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'git_worktree_add',
+      args: ['/Users/me/project', worktreePath, 'develop'],
+      timeout_seconds: 120,
+      max_output_bytes: 1024 * 1024,
+    })
+    expect(createPayload).toEqual(
+      expect.objectContaining({
+        execution: {
+          workspace: {
+            source: 'git_worktree',
+            path: worktreePath,
+            branch: 'develop',
+          },
+        },
+        executionRequest: expect.objectContaining({
+          workspace: {
+            project: {
+              source: 'git_worktree',
+              path: worktreePath,
+              branch: 'develop',
+            },
+          },
+        }),
+      })
+    )
+  })
+
+  test('normalizes local runtime send requests before IPC', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
@@ -215,11 +382,13 @@ describe('createLocalAppServices', () => {
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: { deviceId: 'local-device', localTaskId: 'task-1' },
       message: 'continue',
+      modelId: 'codex-gpt-5.5',
     })
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
       address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
       message: 'continue',
+      modelId: 'gpt-5.5',
     })
   })
 
@@ -342,44 +511,46 @@ describe('createLocalAppServices', () => {
   })
 
   test('routes workspace file APIs through local executor commands', async () => {
-    const request = vi.fn().mockImplementation(async (method: string, data: Record<string, unknown>) => {
-      if (method !== 'device.execute_command') return {}
-      if (data.command_key === 'workspace_tree') {
-        return {
-          success: true,
-          stdout: {
-            path: '/Users/me/project',
-            entries: [
-              {
-                name: 'src',
-                path: '/Users/me/project/src',
-                is_directory: true,
-                size: 0,
-                modified_at: '2026-06-20T01:00:00Z',
-              },
-            ],
-          },
-          stderr: '',
-          exit_code: 0,
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method !== 'device.execute_command') return {}
+        if (data.command_key === 'workspace_tree') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/project',
+              entries: [
+                {
+                  name: 'src',
+                  path: '/Users/me/project/src',
+                  is_directory: true,
+                  size: 0,
+                  modified_at: '2026-06-20T01:00:00Z',
+                },
+              ],
+            },
+            stderr: '',
+            exit_code: 0,
+          }
         }
-      }
-      if (data.command_key === 'workspace_read_text_file') {
-        return {
-          success: true,
-          stdout: {
-            path: '/Users/me/project/README.md',
-            name: 'README.md',
-            content: 'hello',
-            truncated: false,
-            size: 5,
-            modified_at: '2026-06-20T01:00:00Z',
-          },
-          stderr: '',
-          exit_code: 0,
+        if (data.command_key === 'workspace_read_text_file') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/project/README.md',
+              name: 'README.md',
+              content: 'hello',
+              truncated: false,
+              size: 5,
+              modified_at: '2026-06-20T01:00:00Z',
+            },
+            stderr: '',
+            exit_code: 0,
+          }
         }
-      }
-      return { success: false, error: 'unexpected command', stderr: '', exit_code: 1 }
-    })
+        return { success: false, error: 'unexpected command', stderr: '', exit_code: 1 }
+      })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,

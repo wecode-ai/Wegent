@@ -194,6 +194,7 @@ export function MobileWorkbenchLayout({
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  onLoadEnvironmentInfo,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
@@ -226,6 +227,8 @@ export function MobileWorkbenchLayout({
     executionTarget: 'local',
   })
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
+  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
+  const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
@@ -236,8 +239,10 @@ export function MobileWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
+  const environmentInfoRequestSequence = useRef(0)
   const hasConversation = messages.length > 0 || state.currentRuntimeTask
   const activeConversationProject = state.currentProject
+  const environmentWorkspaceReady = !activeConversationProject || Boolean(workspaceTarget)
   const workspaceTargetResolverApi = useMemo(
     () => ({
       getProjectWorkspaceRoot: (deviceId: string) => {
@@ -356,6 +361,50 @@ export function MobileWorkbenchLayout({
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
+  const refreshEnvironmentInfo = useCallback(async () => {
+    if (!onLoadEnvironmentInfo || !activeConversationProject) return
+
+    const requestId = environmentInfoRequestSequence.current + 1
+    environmentInfoRequestSequence.current = requestId
+
+    if (workspaceTargetResolving) {
+      setEnvironmentInfo(info => ({ ...info, loading: true }))
+      return
+    }
+
+    if (!environmentWorkspaceReady) {
+      setEnvironmentInfo(info => ({
+        ...info,
+        loading: false,
+        error: workspaceTargetError ?? 'Workspace is not ready',
+      }))
+      return
+    }
+
+    setEnvironmentInfo(info => ({ ...info, loading: true }))
+    try {
+      const info = await onLoadEnvironmentInfo(activeConversationProject, workspaceTarget)
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo({ ...info, loading: false })
+      }
+    } catch (error) {
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo(info => ({
+          ...info,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to load environment info',
+        }))
+      }
+    }
+  }, [
+    activeConversationProject,
+    environmentWorkspaceReady,
+    onLoadEnvironmentInfo,
+    workspaceTarget,
+    workspaceTargetError,
+    workspaceTargetResolving,
+  ])
+
   useEffect(() => {
     let cancelled = false
 
@@ -363,6 +412,8 @@ export function MobileWorkbenchLayout({
       .then(() => {
         if (!cancelled) {
           setWorkspaceTarget(null)
+          setWorkspaceTargetError(null)
+          setWorkspaceTargetResolving(true)
         }
         return resolveWorkspaceTarget({
           currentProject: activeConversationProject,
@@ -374,17 +425,28 @@ export function MobileWorkbenchLayout({
           setWorkspaceTarget(current =>
             workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
           )
+          setWorkspaceTargetError(null)
+          setWorkspaceTargetResolving(false)
         }
       })
-      .catch(() => {
+      .catch(error => {
         if (!cancelled) {
           setWorkspaceTarget(null)
+          setWorkspaceTargetError(
+            error instanceof Error ? error.message : 'Failed to resolve workspace'
+          )
+          setWorkspaceTargetResolving(false)
         }
       })
     return () => {
       cancelled = true
     }
   }, [activeConversationProject, workspaceTargetResolverApi])
+
+  useEffect(() => {
+    if (!activeConversationProject) return
+    void refreshEnvironmentInfo()
+  }, [activeConversationProject, refreshEnvironmentInfo])
 
   const openContinueInImDialog = useCallback(() => {
     if (!state.currentRuntimeTask) return

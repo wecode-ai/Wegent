@@ -52,6 +52,7 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
+import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
 import { LOCAL_USER } from './localSession'
@@ -244,6 +245,20 @@ function runtimeWorkspacePath(data: RuntimeTaskCreateRequest): string | null {
   return stringValue(workspace.path)
 }
 
+type LocalRuntimeWorkspaceSource = 'local_path' | 'git_worktree'
+
+function runtimeWorkspaceSource(data: RuntimeTaskCreateRequest): LocalRuntimeWorkspaceSource {
+  const execution = recordValue(data.execution)
+  const workspace = recordValue(execution.workspace)
+  return stringValue(workspace.source) === 'git_worktree' ? 'git_worktree' : 'local_path'
+}
+
+function runtimeWorkspaceBranch(data: RuntimeTaskCreateRequest): string | null {
+  const execution = recordValue(data.execution)
+  const workspace = recordValue(execution.workspace)
+  return stringValue(workspace.branch)
+}
+
 function requiredRuntimeWorkspacePath(data: RuntimeTaskCreateRequest): string {
   const workspacePath = runtimeWorkspacePath(data)
   if (!workspacePath) {
@@ -257,6 +272,14 @@ function codexModelId(modelId?: string): string {
     return CODEX_RUNTIME_MODEL_ID
   }
   return modelId
+}
+
+function normalizeLocalRuntimeSendRequest(data: RuntimeSendRequest): RuntimeSendRequest {
+  if (!data.modelId) return data
+  return {
+    ...data,
+    modelId: codexModelId(data.modelId),
+  }
 }
 
 function runtimeReasoning(modelOptions?: Record<string, string>): Record<string, string> | null {
@@ -410,11 +433,43 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
   return { parentPath, fileName }
 }
 
+interface LocalRuntimeWorkspace {
+  workspacePath: string
+  workspaceSource: LocalRuntimeWorkspaceSource
+  branch: string | null
+}
+
+function executionWithWorkspace(
+  data: RuntimeTaskCreateRequest,
+  workspace: LocalRuntimeWorkspace
+): RuntimeTaskCreateRequest['execution'] {
+  if (workspace.workspaceSource !== 'git_worktree') {
+    return data.execution
+  }
+
+  const execution = recordValue(data.execution)
+  const executionWorkspace = recordValue(execution.workspace)
+  const workspaceRequest = { ...executionWorkspace }
+  if (!workspace.branch) {
+    delete workspaceRequest.branch
+  }
+  return {
+    ...execution,
+    workspace: {
+      ...workspaceRequest,
+      source: workspace.workspaceSource,
+      path: workspace.workspacePath,
+      ...(workspace.branch ? { branch: workspace.branch } : {}),
+    },
+  } as RuntimeTaskCreateRequest['execution']
+}
+
 function createLocalExecutionRequest(
   data: RuntimeTaskCreateRequest,
-  localDeviceId: string
+  localDeviceId: string,
+  runtimeWorkspace: LocalRuntimeWorkspace
 ): Record<string, unknown> {
-  const workspacePath = requiredRuntimeWorkspacePath(data)
+  const { workspacePath, workspaceSource, branch } = runtimeWorkspace
   const [taskId, subtaskId] = createRuntimeExecutionIds(data)
   const title = runtimeTaskTitle(data)
   const modelConfig: Record<string, unknown> = {
@@ -462,11 +517,12 @@ function createLocalExecutionRequest(
     user_selected_skills: data.additionalSkills ?? [],
     workspace: {
       project: {
-        source: 'local_path',
+        source: workspaceSource,
         path: workspacePath,
+        ...(branch ? { branch } : {}),
       },
     },
-    workspace_source: 'local_path',
+    workspace_source: workspaceSource,
     project_workspace_path: workspacePath,
     execution_target_type: 'local',
     device_id: localDeviceId,
@@ -480,20 +536,110 @@ function createLocalExecutionRequest(
   }
 }
 
-function createLocalRuntimeTaskPayload(
+type RequestWithLocalDevice = <TResponse, TRequest extends object>(
+  method: string,
+  data: TRequest
+) => Promise<TResponse>
+
+async function executeLocalDeviceCommand(
+  requestWithLocalDevice: RequestWithLocalDevice,
+  data: {
+    deviceId?: string
+    command_key: string
+    args?: string[]
+    timeout_seconds?: number
+    max_output_bytes?: number
+  },
+  fallback: string
+): Promise<DeviceCommandResponse> {
+  const response = await requestWithLocalDevice<DeviceCommandResponse, typeof data>(
+    'device.execute_command',
+    { deviceId: LOCAL_DEVICE_ID, ...data }
+  )
+  assertCommandSuccess(response, fallback)
+  return response
+}
+
+async function prepareLocalRuntimeWorkspace(
   data: RuntimeTaskCreateRequest,
-  localDeviceId: string
-): Record<string, unknown> {
-  const workspacePath = requiredRuntimeWorkspacePath(data)
+  requestWithLocalDevice: RequestWithLocalDevice
+): Promise<LocalRuntimeWorkspace> {
+  const sourceWorkspacePath = requiredRuntimeWorkspacePath(data)
+  const requestedSource = runtimeWorkspaceSource(data)
+  const branch = runtimeWorkspaceBranch(data)
+  if (requestedSource !== 'git_worktree') {
+    return {
+      workspacePath: sourceWorkspacePath,
+      workspaceSource: 'local_path',
+      branch: null,
+    }
+  }
+
+  const gitCheck = await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      command_key: 'git_is_worktree',
+      args: [sourceWorkspacePath],
+      timeout_seconds: 15,
+    },
+    'Project directory is not a Git repository'
+  )
+  if (commandText(gitCheck) !== 'true') {
+    throw new Error('Project directory is not a Git repository')
+  }
+
+  const projectWorkspaceRootResponse = await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      command_key: 'project_workspace_root',
+      timeout_seconds: 15,
+    },
+    'Failed to resolve project workspace root'
+  )
+  const [taskId] = createRuntimeExecutionIds(data)
+  const worktreePath = buildManagedWorktreePath({
+    projectWorkspaceRoot: commandText(projectWorkspaceRootResponse),
+    sourceWorkspacePath,
+    worktreeId: taskId,
+  })
+  await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      command_key: 'git_worktree_add',
+      args: branch
+        ? [sourceWorkspacePath, worktreePath, branch]
+        : [sourceWorkspacePath, worktreePath],
+      timeout_seconds: 120,
+      max_output_bytes: 1024 * 1024,
+    },
+    'Failed to create Git worktree'
+  )
+
   return {
+    workspacePath: worktreePath,
+    workspaceSource: 'git_worktree',
+    branch,
+  }
+}
+
+async function createLocalRuntimeTaskPayload(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string,
+  requestWithLocalDevice: RequestWithLocalDevice
+): Promise<Record<string, unknown>> {
+  const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
+  const execution = executionWithWorkspace(data, runtimeWorkspace)
+  const normalizedData: RuntimeTaskCreateRequest = {
     ...data,
     deviceId: localDeviceId,
-    workspacePath,
-    title: runtimeTaskTitle(data),
-    executionRequest: createLocalExecutionRequest(
-      { ...data, deviceId: localDeviceId },
-      localDeviceId
-    ),
+    workspacePath: runtimeWorkspace.workspacePath,
+  }
+  if (execution) normalizedData.execution = execution
+
+  return {
+    ...normalizedData,
+    title: runtimeTaskTitle(normalizedData),
+    executionRequest: createLocalExecutionRequest(normalizedData, localDeviceId, runtimeWorkspace),
   } as unknown as Record<string, unknown>
 }
 
@@ -729,7 +875,7 @@ function createRuntimeWorkApi(
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      return requestWithLocalDevice('runtime.tasks.send', data)
+      return requestWithLocalDevice('runtime.tasks.send', normalizeLocalRuntimeSendRequest(data))
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)
@@ -800,17 +946,22 @@ function createRuntimeWorkApi(
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await getLocalDeviceId()
-      const payload = createLocalRuntimeTaskPayload(data, localDeviceId)
+      const payload = await createLocalRuntimeTaskPayload(
+        data,
+        localDeviceId,
+        requestWithLocalDevice
+      )
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload
       )
+      const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
       return {
         ...response,
         accepted: response.accepted ?? true,
         deviceId: localDeviceId,
         localTaskId: response.localTaskId ?? data.localTaskId ?? '',
-        workspacePath: response.workspacePath ?? requiredRuntimeWorkspacePath(data),
+        workspacePath: response.workspacePath ?? workspacePath,
         runtime: response.runtime ?? data.runtime,
       }
     },

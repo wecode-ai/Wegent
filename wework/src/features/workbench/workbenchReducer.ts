@@ -11,7 +11,7 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
@@ -176,6 +176,22 @@ function reconcileCurrentRuntimeTaskAddress(
   )
 }
 
+function resolveCurrentProjectAfterRefresh(
+  currentProject: ProjectWithTasks | null,
+  projects: ProjectWithTasks[],
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): ProjectWithTasks | null {
+  if (!currentProject) return null
+
+  const backendProject = projects.find(project => project.id === currentProject.id)
+  if (backendProject) return backendProject
+
+  const runtimeProject = runtimeWork?.projects.find(
+    projectWork => runtimeProjectUiId(projectWork.project) === currentProject.id
+  )
+  return runtimeProject ? runtimeProjectToProject(runtimeProject) : null
+}
+
 function runtimeWorkspaceFromMapping(
   mapping: DeviceWorkspaceResponse,
   devices: DeviceInfo[]
@@ -305,9 +321,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           devices,
           runtimeWork
         ),
-        currentProject: state.currentProject
-          ? (action.projects.find(project => project.id === state.currentProject?.id) ?? null)
-          : null,
+        currentProject: resolveCurrentProjectAfterRefresh(
+          state.currentProject,
+          action.projects,
+          runtimeWork
+        ),
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
@@ -343,6 +361,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: action.runtimeWork,
+        currentProject: resolveCurrentProjectAfterRefresh(
+          state.currentProject,
+          state.projects,
+          action.runtimeWork
+        ),
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           state.devices,

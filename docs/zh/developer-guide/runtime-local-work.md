@@ -78,6 +78,8 @@ POST /api/runtime-work/send
 
 Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
 
+每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。打包本地 app 的 `createLocalAppServices()` 是本机 Codex 模型名规范化的唯一边界：UI 可以展示 `codex-gpt-5.5`，但发送到 Codex app-server 前必须统一转换成真实模型 id `gpt-5.5`。新建任务和继续任务都必须复用同一套规范化逻辑。
+
 如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：
 
 ```text
@@ -138,6 +140,8 @@ POST /api/runtime-work/create
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
 在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
+
+项目模式创建任务时，Wework 的执行工作区只有两种来源：`current_workspace` 使用项目主目录，`git_worktree` 在本机 executor 管理目录下创建独立工作树。工作树路径由设备工作区根、运行时任务 id 和项目目录名稳定拼出，不能由 UI 拼接任意路径。工作树创建请求可以携带显式 `branch`；如果没有显式分支，默认分支必须读取项目主目录的当前 Git 分支，而不是 Git 默认分支或 `HEAD` 字样。分支列表只负责展示可选分支，当前分支应排在第一位，其余分支保持 Git 返回顺序。
 
 Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
