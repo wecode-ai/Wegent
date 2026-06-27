@@ -60,6 +60,7 @@ import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
@@ -253,6 +254,7 @@ export function DesktopWorkbenchLayout({
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
+  const isTauri = isTauriRuntime()
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
@@ -718,7 +720,7 @@ export function DesktopWorkbenchLayout({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && !sidebarCollapsed && (
+      {!settingsOpen && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
@@ -733,7 +735,7 @@ export function DesktopWorkbenchLayout({
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           activeItem={activeItem}
-          onCollapse={() => setSidebarCollapsed(true)}
+          collapsed={sidebarCollapsed}
           onNewChat={onNewChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={onSelectProject}
@@ -849,11 +851,16 @@ export function DesktopWorkbenchLayout({
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
           topBarLeftActions={
-            sidebarCollapsed ? (
+            sidebarCollapsed && !isTauri ? (
               <DesktopWindowControls
                 sidebarCollapsed
                 onToggleSidebar={() => setSidebarCollapsed(false)}
                 onNewChat={onNewChat}
+              />
+            ) : !isTauri ? (
+              <DesktopWindowControls
+                sidebarCollapsed={false}
+                onToggleSidebar={() => setSidebarCollapsed(true)}
               />
             ) : undefined
           }

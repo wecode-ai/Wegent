@@ -83,6 +83,31 @@ describe('ChromeTitlebar', () => {
     ).toBeTruthy()
   })
 
+  test('renders before-tabs content between traffic lights and tabs', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(
+      <ChromeTitlebar
+        tabs={mockTabs}
+        activeKey="wework"
+        onNavigate={vi.fn()}
+        beforeTabs={<button type="button">Toggle sidebar</button>}
+      />
+    )
+
+    const spacer = screen.getByTestId('macos-traffic-light-spacer')
+    const beforeTabs = screen.getByTestId('chrome-titlebar-before-tabs')
+    const activeTab = screen.getByTestId('chrome-tab-wework')
+    expect(beforeTabs).toHaveTextContent('Toggle sidebar')
+    expect(
+      spacer.compareDocumentPosition(beforeTabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      beforeTabs.compareDocumentPosition(activeTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    disableTauri()
+  })
+
   test('calls onNavigate on tab click', async () => {
     const fn = vi.fn()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={fn} />)

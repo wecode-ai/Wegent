@@ -697,7 +697,7 @@ export function DesktopWorkbenchMain({
       ref={workbenchMainRef}
       data-testid="desktop-workbench-main"
       className={cn(
-        'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)] transition-[margin] duration-[220ms] ease-out motion-reduce:transition-none',
         !isTauri && 'mt-1.5',
         sidebarCollapsed && 'ml-1.5'
       )}

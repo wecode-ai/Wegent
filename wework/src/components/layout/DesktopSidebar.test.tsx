@@ -5,6 +5,11 @@ import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { CloudWorkStatus } from '@/types/workbench'
+import {
+  CloudConnectionContext,
+  DISCONNECTED_STATE,
+} from '@/features/cloud-connection/CloudConnectionContext'
+import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -52,12 +57,14 @@ function project(overrides: Partial<ProjectWithTasks> = {}): ProjectWithTasks {
   }
 }
 
-function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {}) {
+function renderSidebar(
+  overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
+  cloudConnection?: Partial<CloudConnectionContextValue>
+) {
   const props: Parameters<typeof DesktopSidebar>[0] = {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     projects: [project()],
     devices: [localDevice()],
-    onCollapse: vi.fn(),
     onNewChat: vi.fn(),
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
@@ -73,7 +80,22 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     ...overrides,
   }
 
-  render(<DesktopSidebar {...props} />)
+  const tree = <DesktopSidebar {...props} />
+  if (cloudConnection) {
+    const value: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      connectWithPassword: vi.fn(),
+      setupAdminPassword: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+      ...cloudConnection,
+    }
+    render(<CloudConnectionContext.Provider value={value}>{tree}</CloudConnectionContext.Provider>)
+  } else {
+    render(tree)
+  }
   return props
 }
 
@@ -97,6 +119,18 @@ describe('DesktopSidebar', () => {
 
     expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+  })
+
+  test('keeps the settings row notification bell inside the sidebar width', () => {
+    renderSidebar()
+
+    expect(screen.getByTestId('settings-button')).toHaveClass('min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
+      'h-9',
+      'w-9',
+      'shrink-0'
+    )
   })
 
   test('does not render non-chat runtime workspace groups', async () => {
@@ -971,7 +1005,7 @@ describe('DesktopSidebar', () => {
     confirmSpy.mockRestore()
   })
 
-  test('shows a global IM notification quick toggle near settings', async () => {
+  test('opens away reminder controls from the account notification bell', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
 
@@ -997,16 +1031,23 @@ describe('DesktopSidebar', () => {
 
     const toggle = screen.getByTestId('sidebar-global-im-notification-button')
 
-    expect(toggle).toHaveTextContent('IM通知')
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
     expect(toggle).toHaveAttribute('title', expect.stringContaining('Telegram'))
 
     await user.click(toggle)
+    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
+      '离开电脑提醒'
+    )
+    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
+      'Telegram / Alice'
+    )
+    await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
   })
 
-  test('opens global IM notification channel settings separately from the quick toggle', async () => {
+  test('opens away reminder channel settings from the bell menu', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
     const onOpenGlobalImNotificationSettings = vi.fn()
@@ -1032,10 +1073,115 @@ describe('DesktopSidebar', () => {
       onOpenGlobalImNotificationSettings,
     })
 
+    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
+    expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
     await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
 
     expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
+  })
+
+  test('keeps the away reminder bell neutral when cloud is disconnected', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar(
+      {
+        imNotificationSettings: {
+          global: {
+            enabled: false,
+            sessionKey: null,
+            session: null,
+          },
+          runtimeTaskSubscriptions: [],
+        },
+        onToggleGlobalImNotification: vi.fn(),
+      },
+      {
+        status: 'disconnected',
+        isConnected: false,
+        token: null,
+        user: null,
+        error: null,
+      }
+    )
+
+    const bell = screen.getByTestId('sidebar-global-im-notification-button')
+    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).not.toHaveClass('text-red-500')
+    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
+
+    await user.click(bell)
+
+    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
+      '登录云端后可开启离开电脑提醒'
+    )
+  })
+
+  test('shows the away reminder bell even when notification handlers are unavailable', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar(
+      {
+        onToggleGlobalImNotification: undefined,
+        onOpenGlobalImNotificationSettings: undefined,
+      },
+      {
+        status: 'disconnected',
+        isConnected: false,
+        token: null,
+        user: null,
+        error: null,
+      }
+    )
+
+    const bell = screen.getByTestId('sidebar-global-im-notification-button')
+    expect(bell).toBeInTheDocument()
+    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).not.toHaveClass('text-red-500')
+    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
+
+    await user.click(bell)
+
+    expect(screen.getByTestId('sidebar-global-im-notification-menu')).toHaveTextContent(
+      '登录云端后可开启离开电脑提醒'
+    )
+  })
+
+  test('wraps cloud connection errors without turning the away reminder bell red', async () => {
+    const user = userEvent.setup()
+    const error = '读取云端用户失败 (http://localhost:8000/api/users/me): Cloud connection failed'
+
+    renderSidebar(
+      {
+        imNotificationSettings: {
+          global: {
+            enabled: false,
+            sessionKey: null,
+            session: null,
+          },
+          runtimeTaskSubscriptions: [],
+        },
+      },
+      {
+        status: 'error',
+        isConnected: false,
+        token: null,
+        user: null,
+        error,
+      }
+    )
+
+    const bell = screen.getByTestId('sidebar-global-im-notification-button')
+    expect(bell).toHaveAttribute('title', '登录云端后可开启离开电脑提醒')
+    expect(bell).not.toHaveClass('text-red-500')
+    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-global-im-notification-indicator')).not.toBeInTheDocument()
+
+    await user.click(bell)
+
+    const errorMessage = screen.getByTestId('sidebar-global-im-notification-error')
+    expect(errorMessage).toHaveTextContent(error)
+    expect(errorMessage).toHaveClass('break-words', '[overflow-wrap:anywhere]')
   })
 
   test('shows archive all menus on project and chat headers with chat create action', async () => {
