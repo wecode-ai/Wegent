@@ -5,7 +5,6 @@ const MARKDOWN_LINK_PATTERN = /\[([^\]]+)]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'
 const CODEX_REFERENCE_DOCUMENT_EXTENSIONS = new Set([
   'doc',
   'docx',
-  'log',
   'markdown',
   'md',
   'mdx',

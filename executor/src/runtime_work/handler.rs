@@ -1064,7 +1064,7 @@ fn merge_cached_messages(codex_messages: Vec<Value>, cached_messages: Vec<Value>
                 return codex_message;
             };
             used[index] = true;
-            cached_messages[index].clone()
+            merge_cached_message_fields(codex_message, &cached_messages[index])
         })
         .collect::<Vec<_>>();
 
@@ -1074,6 +1074,25 @@ fn merge_cached_messages(codex_messages: Vec<Value>, cached_messages: Vec<Value>
         }
     }
     merged
+}
+
+fn merge_cached_message_fields(mut codex_message: Value, cached_message: &Value) -> Value {
+    let Some(codex_object) = codex_message.as_object_mut() else {
+        return codex_message;
+    };
+    let Some(cached_object) = cached_message.as_object() else {
+        return codex_message;
+    };
+
+    for key in ["source", "attachments", "error", "errorType", "error_type"] {
+        if !codex_object.contains_key(key) {
+            if let Some(value) = cached_object.get(key).cloned() {
+                codex_object.insert(key.to_owned(), value);
+            }
+        }
+    }
+
+    codex_message
 }
 
 fn messages_match(left: &Value, right: &Value) -> bool {
@@ -1265,5 +1284,44 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!({}));
             self.dispatch(&method, payload).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_message_merge_preserves_codex_rebuilt_blocks() {
+        let codex_messages = vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "done",
+            "status": "cancelled",
+            "blocks": [
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_name": "exec_command",
+                    "status": "done"
+                }
+            ],
+            "stoppedNotice": true
+        })];
+        let cached_messages = vec![json!({
+            "id": "cached-assistant",
+            "role": "assistant",
+            "content": "done",
+            "status": "done",
+            "source": {"source": "im"}
+        })];
+
+        let merged = merge_cached_messages(codex_messages, cached_messages);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["status"], "cancelled");
+        assert_eq!(merged[0]["stoppedNotice"], true);
+        assert_eq!(merged[0]["blocks"][0]["tool_name"], "exec_command");
+        assert_eq!(merged[0]["source"]["source"], "im");
     }
 }

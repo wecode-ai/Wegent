@@ -982,6 +982,8 @@ function runtimeMessageToWorkbenchMessage(
       ? ({ ...message.source, source: 'im' } as MessageSource)
       : undefined
   const createdAt = message.createdAt ?? new Date().toISOString()
+  const completedAt = message.completedAt ?? message.completed_at ?? undefined
+  const stoppedNotice = message.stoppedNotice ?? message.stopped_notice ?? undefined
   const messageCreatedAtMs = getBlockTimestamp(createdAt)
   const blocks = normalizeProcessingBlocks(
     getRuntimeMessageBlockSubtaskId(message, subtaskId),
@@ -1003,6 +1005,8 @@ function runtimeMessageToWorkbenchMessage(
     memoryCitations: normalizeRuntimeMemoryCitations(message),
     contextEvents: normalizeRuntimeContextEvents(message),
     createdAt,
+    completedAt,
+    stoppedNotice,
   }
 }
 

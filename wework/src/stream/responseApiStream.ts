@@ -187,6 +187,10 @@ function normalizeToolInput(input: Record<string, unknown> | undefined): Record<
     normalized.command = normalized.cmd
     delete normalized.cmd
   }
+  if ('commandLine' in normalized && !('command' in normalized)) {
+    normalized.command = normalized.commandLine
+    delete normalized.commandLine
+  }
   if ('workdir' in normalized && !('cwd' in normalized)) {
     normalized.cwd = normalized.workdir
     delete normalized.workdir

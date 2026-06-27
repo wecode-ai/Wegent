@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
-import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
+import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
 import {
   buildProcessingDisplayRows,
   isCommandToolName,
+  isGuidanceActivityGroup,
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
@@ -245,7 +246,7 @@ function ToolActivityGroup({
 }) {
   const [expanded, setExpanded] = useState(false)
   const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
-  const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
+  const icon = renderActivityGroupIcon(row.blocks)
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
@@ -256,7 +257,7 @@ function ToolActivityGroup({
         onClick={() => setExpanded(value => !value)}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
       >
-        <Icon className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+        {icon}
         <span className="min-w-0 truncate">{row.label}</span>
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
@@ -297,6 +298,16 @@ function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
 
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
   return blocks.some(block => isCommandToolName(block.toolName))
+}
+
+function renderActivityGroupIcon(blocks: ToolBlock[]) {
+  if (hasCommandBlocks(blocks)) {
+    return <SquareTerminal className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  if (isGuidanceActivityGroup(blocks)) {
+    return <MessageCircle className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
 }
 
 function ThinkingIndicator() {

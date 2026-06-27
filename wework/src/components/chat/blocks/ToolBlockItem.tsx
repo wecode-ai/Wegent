@@ -7,7 +7,7 @@ import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
-import { isCommandToolName, isWebSearchToolName } from './toolBlockActivity'
+import { isCommandToolName, isGuidanceToolName, isWebSearchToolName } from './toolBlockActivity'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 
@@ -31,12 +31,7 @@ export function ToolBlockItem({
   const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
-    return (
-      <ThinkingBlockItem
-        block={block}
-        isRunning={isRunning}
-      />
-    )
+    return <ThinkingBlockItem block={block} isRunning={isRunning} />
   }
   if (block.type === 'text') {
     return <ProcessTextBlockItem block={block} isRunning={isRunning} />
@@ -89,7 +84,9 @@ export function ToolBlockItem({
   )
 }
 
-function ProcessFileChangesBlockItem({ block }: {
+function ProcessFileChangesBlockItem({
+  block,
+}: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
 }) {
   const { t } = useTranslation('chat')
@@ -191,7 +188,13 @@ function fileChangeRowLabel(
   }
 }
 
-function InlineDiffPreview({ file, lines }: { file: TurnFileChangeItem; lines: DiffPreviewLine[] }) {
+function InlineDiffPreview({
+  file,
+  lines,
+}: {
+  file: TurnFileChangeItem
+  lines: DiffPreviewLine[]
+}) {
   const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
   const truncated = lines.length > INLINE_DIFF_MAX_LINES
 
@@ -503,22 +506,22 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
   const prefix = getToolStatusPrefix(block)
 
   if (isCommandToolName(name)) {
-    const command = getInputField(block, 'command', 'cmd')
+    const command = getInputField(block, 'command', 'cmd', 'commandLine')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (name === 'write' || name === 'create_file' || name === 'write_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
+    const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <FileIcon />, label: `${prefix.create} ${fileName}` }
   }
   if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
+    const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <EditIcon />, label: `${prefix.edit} ${fileName}` }
   }
   if (name === 'read' || name === 'read_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
+    const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
   }
@@ -527,6 +530,9 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
       icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
       label: prefix.webSearch,
     }
+  }
+  if (isGuidanceToolName(name)) {
+    return { icon: <ToolIcon />, label: prefix.guidance }
   }
   return { icon: <ToolIcon />, label: `${prefix.generic} ${block.toolName}` }
 }
@@ -539,6 +545,7 @@ function getToolStatusPrefix(block: ToolBlock) {
       edit: '编辑失败',
       read: '读取失败',
       webSearch: '搜索网页失败',
+      guidance: '引导对话失败',
       generic: '执行失败',
     }
   }
@@ -550,6 +557,7 @@ function getToolStatusPrefix(block: ToolBlock) {
       edit: '已编辑',
       read: '已读取',
       webSearch: '已搜索网页',
+      guidance: '已引导对话',
       generic: '已运行',
     }
   }
@@ -560,6 +568,7 @@ function getToolStatusPrefix(block: ToolBlock) {
     edit: '正在编辑',
     read: '正在读取',
     webSearch: '正在搜索网页',
+    guidance: '正在引导对话',
     generic: '正在运行',
   }
 }
@@ -651,6 +660,9 @@ function renderBlockDetail(block: ToolBlock) {
   if (isWebSearchToolName(name)) {
     return <WebSearchBlockDetail block={block} />
   }
+  if (isGuidanceToolName(name)) {
+    return null
+  }
 
   const input = block.toolInput
   if (!input) return null
@@ -687,11 +699,11 @@ function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   ) {
     return undefined
   }
-  return getInputField(block, 'file_path', 'path')
+  return getFileInputPath(block)
 }
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {
-  const command = getInputField(block, 'command', 'cmd')
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const output = block.toolOutput
   const outputText =
     typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
@@ -776,8 +788,8 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileWriteDetail({ block }: { block: ToolBlock }) {
-  const filePath = getInputField(block, 'file_path', 'path')
-  const content = getInputField(block, 'content', 'file_text')
+  const filePath = getFileInputPath(block)
+  const content = getInputField(block, 'content', 'file_text', 'fileText')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
       {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
@@ -791,9 +803,9 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileEditDetail({ block }: { block: ToolBlock }) {
-  const filePath = getInputField(block, 'file_path', 'path')
-  const oldStr = getInputField(block, 'old_string', 'old_str')
-  const newStr = getInputField(block, 'new_string', 'new_str')
+  const filePath = getFileInputPath(block)
+  const oldStr = getInputField(block, 'old_string', 'old_str', 'oldString')
+  const newStr = getInputField(block, 'new_string', 'new_str', 'newString')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
       {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
@@ -818,6 +830,20 @@ function getInputField(block: ToolBlock, ...keys: string[]): string | undefined 
     if (typeof val === 'string') return val
   }
   return undefined
+}
+
+function getFileInputPath(block: ToolBlock): string | undefined {
+  return getInputField(
+    block,
+    'file_path',
+    'filePath',
+    'filepath',
+    'path',
+    'file',
+    'filename',
+    'target_file',
+    'targetFile'
+  )
 }
 
 function truncate(str: string, maxLen: number): string {

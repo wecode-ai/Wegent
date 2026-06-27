@@ -6,14 +6,12 @@ use std::{
     collections::HashMap,
     env, fs,
     future::Future,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -33,7 +31,6 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
 const WORKSPACE_TREE_SCRIPT: &str = r#"
 import json
 import os
@@ -372,16 +369,12 @@ impl AppIpcServer {
                 };
 
                 match request_from_message(&message) {
-                    Ok((method, params, accept_compressed_result)) => {
-                        match self.dispatch(&method, params).await {
-                            Ok(result) => response_message(
-                                request_id.as_deref().unwrap_or_default(),
-                                result,
-                                accept_compressed_result,
-                            ),
-                            Err(error) => error_message(request_id.as_deref(), &error),
+                    Ok((method, params)) => match self.dispatch(&method, params).await {
+                        Ok(result) => {
+                            response_message(request_id.as_deref().unwrap_or_default(), result)
                         }
-                    }
+                        Err(error) => error_message(request_id.as_deref(), &error),
+                    },
                     Err(error) => error_message(request_id.as_deref(), &error),
                 }
             }
@@ -732,7 +725,7 @@ fn command_definition(
 
 fn request_from_message(
     message: &serde_json::Map<String, Value>,
-) -> Result<(String, Value, bool), AppIpcError> {
+) -> Result<(String, Value), AppIpcError> {
     if message.get("type").and_then(Value::as_str) != Some("request") {
         return Err(AppIpcError::new(
             "invalid_request",
@@ -756,13 +749,7 @@ fn request_from_message(
         ));
     }
 
-    let accept_compressed_result = message
-        .get("acceptCompressedRuntimeResult")
-        .or_else(|| message.get("accept_compressed_runtime_result"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-
-    Ok((method, params, accept_compressed_result))
+    Ok((method, params))
 }
 
 fn request_id_from(message: &serde_json::Map<String, Value>) -> Result<String, AppIpcError> {
@@ -774,16 +761,12 @@ fn request_id_from(message: &serde_json::Map<String, Value>) -> Result<String, A
         .ok_or_else(|| AppIpcError::new("invalid_request", "Request id is required"))
 }
 
-fn response_message(request_id: &str, result: Value, accept_compressed_result: bool) -> Value {
+fn response_message(request_id: &str, result: Value) -> Value {
     json!({
         "type": "response",
         "id": request_id,
         "ok": true,
-        "result": if accept_compressed_result {
-            encode_large_runtime_result(result)
-        } else {
-            result
-        },
+        "result": result,
     })
 }
 
@@ -923,27 +906,6 @@ fn stdout_string(result: &CommandResult) -> String {
         .unwrap_or_else(|| result.stdout.to_string())
 }
 
-fn encode_large_runtime_result(result: Value) -> Value {
-    let Ok(bytes) = serde_json::to_vec(&result) else {
-        return result;
-    };
-    if bytes.len() <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES {
-        return result;
-    }
-
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    if encoder.write_all(&bytes).is_err() {
-        return result;
-    }
-    let Ok(compressed) = encoder.finish() else {
-        return result;
-    };
-    json!({
-        "__runtimeRpcEncoding": "gzip+base64+json",
-        "payload": STANDARD.encode(compressed),
-    })
-}
-
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir();
@@ -989,32 +951,4 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn response_message_respects_uncompressed_client_preference() {
-        let large_text = "x".repeat(RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES + 1024);
-        let response = response_message(
-            "req-1",
-            json!({
-                "messages": [
-                    {
-                        "id": "message-1",
-                        "content": large_text,
-                    }
-                ],
-            }),
-            false,
-        );
-
-        let result = response
-            .get("result")
-            .expect("response should contain result");
-        assert_eq!(result.get("__runtimeRpcEncoding"), None);
-        assert!(result.get("messages").and_then(Value::as_array).is_some());
-    }
 }

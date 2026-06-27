@@ -30,13 +30,33 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => <h1 className="mb-4 mt-6 text-lg font-semibold">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-3 mt-5 text-base font-semibold">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold">{children}</h3>,
-          p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-6">{children}</p>,
+          h1: ({ children }) => (
+            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold">
+              {children}
+            </h3>
+          ),
+          p: ({ children }) => (
+            <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
+              {children}
+            </p>
+          ),
           ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
           ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>,
-          li: ({ children }) => <li className="min-w-0 break-words pl-1 leading-6">{children}</li>,
+          li: ({ children }) => (
+            <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
+              {children}
+            </li>
+          ),
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
           code: ({ className, children }) => {
             const match = /language-(\w*)/.exec(className || '')
@@ -53,12 +73,15 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
           },
           pre: ({ children }) => <>{children}</>,
           blockquote: ({ children }) => (
-            <blockquote className="mb-3 border-l-3 border-border pl-4 text-text-secondary">
+            <blockquote
+              data-scroll-anchor
+              className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
+            >
               {children}
             </blockquote>
           ),
           table: ({ children }) => (
-            <div className="mb-3 max-w-full overflow-x-auto">
+            <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
               <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
             </div>
           ),
@@ -246,6 +269,7 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   return (
     <img
       data-testid="assistant-markdown-image"
+      data-scroll-anchor
       src={resolvedSrc}
       alt={alt || ''}
       className="my-2 block max-h-[360px] max-w-full rounded-xl border border-border bg-base object-contain"

@@ -205,6 +205,108 @@ fn read_dropped_files(paths: Vec<String>) -> Result<Vec<DroppedFilePayload>, Str
     Ok(files)
 }
 
+fn sanitized_download_filename(filename: &str, fallback: &std::path::Path) -> String {
+    let raw = normalized_non_empty(filename.to_string()).or_else(|| {
+        fallback
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(String::from)
+    });
+
+    let sanitized = raw
+        .unwrap_or_else(|| "image".to_string())
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            character if character.is_control() => '_',
+            character => character,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+
+    if sanitized.is_empty() {
+        "image".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn unique_download_path(directory: &std::path::Path, filename: &str) -> std::path::PathBuf {
+    let candidate = directory.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let path = std::path::Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image");
+    let extension = path.extension().and_then(|value| value.to_str());
+
+    for index in 1..1000 {
+        let filename = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate = directory.join(filename);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    directory.join(filename)
+}
+
+#[cfg(target_os = "macos")]
+fn notify_download_finished(path: &std::path::Path) {
+    use objc2_foundation::{NSDistributedNotificationCenter, NSString};
+
+    let notification_name = NSString::from_str("com.apple.DownloadFileFinished");
+    let file_path = NSString::from_str(&path.to_string_lossy());
+    unsafe {
+        NSDistributedNotificationCenter::defaultCenter()
+            .postNotificationName_object(&notification_name, Some(&file_path));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn notify_download_finished(_path: &std::path::Path) {}
+
+#[tauri::command]
+fn download_local_file_to_downloads(
+    app: tauri::AppHandle,
+    source_path: String,
+    filename: String,
+) -> Result<String, String> {
+    let Some(source_path) = normalized_non_empty(source_path) else {
+        return Err("Source path is empty".to_string());
+    };
+
+    let source_path = std::path::PathBuf::from(source_path);
+    if !source_path.is_file() {
+        return Err("Source file does not exist".to_string());
+    }
+
+    let downloads_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Failed to locate Downloads directory: {error}"))?;
+    std::fs::create_dir_all(&downloads_dir)
+        .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
+
+    let filename = sanitized_download_filename(&filename, &source_path);
+    let target_path = unique_download_path(&downloads_dir, &filename);
+    std::fs::copy(&source_path, &target_path)
+        .map_err(|error| format!("Failed to copy file to Downloads: {error}"))?;
+    notify_download_finished(&target_path);
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<String> {
     let expected_backend_url = expected_backend_url
@@ -315,6 +417,7 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
+            download_local_file_to_downloads,
             local_path_exists,
             read_dropped_files,
             local_terminal::resize_local_terminal,

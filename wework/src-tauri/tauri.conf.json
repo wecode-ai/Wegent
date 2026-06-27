@@ -28,7 +28,13 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["$TEMP/**", "/var/folders/**", "/private/var/folders/**"]
+        }
+      }
     }
   },
   "bundle": {

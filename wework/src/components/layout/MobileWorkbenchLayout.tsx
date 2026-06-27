@@ -533,7 +533,11 @@ export function MobileWorkbenchLayout({
               isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
-              conversationKey={state.currentRuntimeTask?.localTaskId ?? null}
+              conversationKey={
+                state.currentRuntimeTask
+                  ? `${state.currentRuntimeTask.deviceId}:${state.currentRuntimeTask.localTaskId}`
+                  : null
+              }
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}

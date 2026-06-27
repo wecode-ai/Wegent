@@ -742,7 +742,11 @@ export function DesktopWorkbenchMain({
               isWaitingForAssistant={isWaitingForAssistant}
               hasMoreBefore={runtimeTranscriptHasMoreBefore}
               loadingMoreBefore={isRuntimeTranscriptLoadingMore}
-              conversationKey={currentRuntimeTask?.localTaskId ?? null}
+              conversationKey={
+                currentRuntimeTask
+                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+                  : null
+              }
               className="h-full"
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}

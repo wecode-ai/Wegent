@@ -51,6 +51,8 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[]
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
+  completedAt?: string | number | null
+  stoppedNotice?: boolean | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
   contextEvents?: CodexContextEvent[] | null
