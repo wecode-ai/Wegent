@@ -4,6 +4,30 @@ mod local_terminal;
 
 use tauri::Manager;
 
+#[cfg(desktop)]
+use tauri::{
+    menu::{Menu, MenuBuilder, MenuItem, SubmenuBuilder},
+    tray::TrayIconBuilder,
+    Emitter,
+};
+
+#[cfg(desktop)]
+const MAIN_WINDOW_LABEL: &str = "main";
+#[cfg(desktop)]
+const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
+#[cfg(desktop)]
+const TRAY_OPEN_TASK_EVENT: &str = "wework-tray-open-task";
+#[cfg(desktop)]
+const TRAY_MENU_OPEN_ID: &str = "open";
+#[cfg(desktop)]
+const TRAY_MENU_SETTINGS_ID: &str = "settings";
+#[cfg(desktop)]
+const TRAY_MENU_QUIT_ID: &str = "quit";
+#[cfg(desktop)]
+const TRAY_MENU_TASK_PREFIX: &str = "task:";
+#[cfg(desktop)]
+const TRAY_ID: &str = "wework-main";
+
 fn normalized_non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -359,6 +383,299 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
     None
 }
 
+#[cfg(desktop)]
+fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(desktop)]
+fn open_settings_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    show_main_window(app);
+    if let Err(error) = app.emit(TRAY_OPEN_SETTINGS_EVENT, ()) {
+        log::warn!("Failed to emit tray settings navigation event: {error}");
+    }
+}
+
+#[cfg(desktop)]
+#[derive(Clone, serde::Serialize)]
+struct TrayTaskOpenPayload {
+    id: String,
+}
+
+#[cfg(desktop)]
+fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &str) {
+    show_main_window(app);
+    if let Err(error) = app.emit(
+        TRAY_OPEN_TASK_EVENT,
+        TrayTaskOpenPayload {
+            id: task_id.to_string(),
+        },
+    ) {
+        log::warn!("Failed to emit tray task navigation event: {error}");
+    }
+}
+
+#[cfg(desktop)]
+fn quit_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<local_executor::LocalExecutorState>();
+    local_executor::shutdown_local_executor(&state);
+    app.exit(0);
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayMenuTaskItem {
+    id: String,
+    title: String,
+    project_name: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayMenuStatePayload {
+    language: String,
+    running: Vec<TrayMenuTaskItem>,
+    running_more: Vec<TrayMenuTaskItem>,
+    pinned: Vec<TrayMenuTaskItem>,
+    pinned_more: Vec<TrayMenuTaskItem>,
+    recent: Vec<TrayMenuTaskItem>,
+    recent_more: Vec<TrayMenuTaskItem>,
+}
+
+#[cfg(desktop)]
+impl TrayMenuStatePayload {
+    fn empty(language: &str) -> Self {
+        Self {
+            language: language.to_string(),
+            running: Vec::new(),
+            running_more: Vec::new(),
+            pinned: Vec::new(),
+            pinned_more: Vec::new(),
+            recent: Vec::new(),
+            recent_more: Vec::new(),
+        }
+    }
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+enum TrayLanguage {
+    ZhCn,
+    En,
+}
+
+#[cfg(desktop)]
+impl TrayLanguage {
+    fn from_language(language: &str) -> Self {
+        if language.trim().to_lowercase().starts_with("en") {
+            Self::En
+        } else {
+            Self::ZhCn
+        }
+    }
+
+    fn labels(self) -> TrayMenuLabels {
+        match self {
+            Self::ZhCn => TrayMenuLabels {
+                running: "运行中",
+                pinned: "置顶",
+                tasks: "任务",
+                untitled_task: "未命名任务",
+                no_pinned_tasks: "暂无置顶任务",
+                no_tasks: "暂无任务",
+                more: "更多",
+                open: "打开应用",
+                settings: "设置",
+                quit: "退出应用",
+            },
+            Self::En => TrayMenuLabels {
+                running: "Running",
+                pinned: "Pinned",
+                tasks: "Tasks",
+                untitled_task: "Untitled Task",
+                no_pinned_tasks: "No Pinned Tasks",
+                no_tasks: "No Tasks",
+                more: "More",
+                open: "Open App",
+                settings: "Settings",
+                quit: "Quit App",
+            },
+        }
+    }
+}
+
+#[cfg(desktop)]
+struct TrayMenuLabels {
+    running: &'static str,
+    pinned: &'static str,
+    tasks: &'static str,
+    untitled_task: &'static str,
+    no_pinned_tasks: &'static str,
+    no_tasks: &'static str,
+    more: &'static str,
+    open: &'static str,
+    settings: &'static str,
+    quit: &'static str,
+}
+
+#[cfg(desktop)]
+fn build_system_tray_menu<M: Manager<tauri::Wry>>(
+    manager: &M,
+    state: &TrayMenuStatePayload,
+) -> tauri::Result<Menu<tauri::Wry>> {
+    let labels = TrayLanguage::from_language(&state.language).labels();
+    let mut builder = MenuBuilder::new(manager);
+
+    builder = append_tray_task_section(
+        builder,
+        manager,
+        labels.running,
+        labels.untitled_task,
+        "",
+        labels.more,
+        &state.running,
+        &state.running_more,
+        false,
+    )?;
+    builder = append_tray_task_section(
+        builder,
+        manager,
+        labels.pinned,
+        labels.untitled_task,
+        labels.no_pinned_tasks,
+        labels.more,
+        &state.pinned,
+        &state.pinned_more,
+        true,
+    )?;
+    builder = append_tray_task_section(
+        builder,
+        manager,
+        labels.tasks,
+        labels.untitled_task,
+        labels.no_tasks,
+        labels.more,
+        &state.recent,
+        &state.recent_more,
+        true,
+    )?;
+
+    builder
+        .text(TRAY_MENU_OPEN_ID, labels.open)
+        .separator()
+        .text(TRAY_MENU_SETTINGS_ID, labels.settings)
+        .separator()
+        .text(TRAY_MENU_QUIT_ID, labels.quit)
+        .build()
+}
+
+#[cfg(desktop)]
+fn append_tray_task_section<'m, M: Manager<tauri::Wry>>(
+    mut builder: MenuBuilder<'m, tauri::Wry, M>,
+    manager: &M,
+    title: &str,
+    untitled_task: &str,
+    empty_text: &str,
+    more: &str,
+    items: &[TrayMenuTaskItem],
+    more_items: &[TrayMenuTaskItem],
+    always_visible: bool,
+) -> tauri::Result<MenuBuilder<'m, tauri::Wry, M>> {
+    if items.is_empty() && more_items.is_empty() && !always_visible {
+        return Ok(builder);
+    }
+
+    let heading = MenuItem::new(manager, title, false, None::<&str>)?;
+    builder = builder.item(&heading);
+
+    if items.is_empty() && more_items.is_empty() {
+        let empty_item = MenuItem::new(manager, empty_text, false, None::<&str>)?;
+        builder = builder.item(&empty_item);
+    } else {
+        for item in items {
+            let title = normalized_menu_task_title(item, untitled_task);
+            builder = builder.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
+        }
+        if !more_items.is_empty() {
+            let mut submenu = SubmenuBuilder::new(manager, more);
+            for item in more_items {
+                let title = normalized_menu_task_title(item, untitled_task);
+                submenu = submenu.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
+            }
+            let submenu = submenu.build()?;
+            builder = builder.item(&submenu);
+        }
+    }
+
+    Ok(builder.separator())
+}
+
+#[cfg(desktop)]
+fn normalized_menu_task_title(item: &TrayMenuTaskItem, fallback: &str) -> String {
+    let title = item.title.trim();
+    let project_name = item.project_name.trim();
+    if title.is_empty() {
+        return fallback.to_string();
+    }
+    if project_name.is_empty() {
+        title.to_string()
+    } else {
+        format!("{title} - {project_name}")
+    }
+}
+
+#[cfg(desktop)]
+fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let menu = build_system_tray_menu(app, &TrayMenuStatePayload::empty("zh-CN"))?;
+
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .tooltip("WeWork")
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| {
+            let event_id = event.id().as_ref();
+            match event_id {
+                TRAY_MENU_OPEN_ID => show_main_window(app),
+                TRAY_MENU_SETTINGS_ID => open_settings_from_tray(app),
+                TRAY_MENU_QUIT_ID => quit_from_tray(app),
+                _ => {
+                    if let Some(task_id) = event_id.strip_prefix(TRAY_MENU_TASK_PREFIX) {
+                        open_task_from_tray(app, task_id);
+                    }
+                }
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
+    let menu = build_system_tray_menu(&app, &state)
+        .map_err(|error| format!("Failed to build tray menu: {error}"))?;
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    tray.set_menu(Some(menu))
+        .map_err(|error| format!("Failed to update tray menu: {error}"))
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -399,6 +716,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            #[cfg(desktop)]
+            setup_system_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -417,6 +736,7 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
+            set_tray_menu_state,
             download_local_file_to_downloads,
             local_path_exists,
             read_dropped_files,
