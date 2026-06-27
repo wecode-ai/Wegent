@@ -1690,7 +1690,8 @@ describe('WorkbenchProvider runtime tasks', () => {
         } satisfies RuntimeTranscriptResponse
       }
       if (transcriptCalls === 2) return slowPoll.promise
-      return fastPoll.promise
+      if (transcriptCalls === 3) return fastPoll.promise
+      throw new Error(`unexpected transcript poll #${transcriptCalls}`)
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(runningWork),
