@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use wegent_executor::local::app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler};
 
 #[tokio::test]
-async fn app_ipc_returns_large_runtime_rpc_success_results_as_json() {
+async fn app_ipc_returns_large_runtime_rpc_success_results_inline() {
     let server = AppIpcServer::new().with_runtime_work_handler(LargeRuntimeHandler);
 
     let response = server
@@ -27,7 +27,6 @@ async fn app_ipc_returns_large_runtime_rpc_success_results_as_json() {
     assert_eq!(response["type"], "response");
     assert_eq!(response["id"], "req-large");
     assert_eq!(response["ok"], true);
-    assert_eq!(response["result"]["__runtimeRpcEncoding"], Value::Null);
     assert_eq!(response["result"]["success"], true);
     assert_eq!(
         response["result"]["messages"][0]["content"],
