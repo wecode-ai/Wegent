@@ -460,6 +460,7 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: chatPath,
       localTaskId: 'chat-1',
     })
   })
@@ -513,6 +514,7 @@ describe('DesktopSidebar', () => {
       expect(onRenameRuntimeLocalTask).toHaveBeenCalledWith(
         {
           deviceId: 'local-device',
+          workspacePath: '/workspace/chats/chat-rename',
           localTaskId: 'codex-rename',
         },
         '对齐方案'
@@ -570,6 +572,7 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
   })
@@ -849,6 +852,7 @@ describe('DesktopSidebar', () => {
       await waitFor(() =>
         expect(onArchiveRuntimeLocalTask).toHaveBeenCalledWith({
           deviceId: 'local-device',
+          workspacePath: '/repo/Wegent',
           localTaskId: 'codex-1',
         })
       )
@@ -1501,6 +1505,7 @@ describe('DesktopSidebar', () => {
       expect(onArchiveChatConversations).toHaveBeenCalledWith([
         {
           deviceId: 'local-device',
+          workspacePath: '/workspace/chats/chat-1',
           localTaskId: 'chat-1',
         },
       ])
@@ -1552,6 +1557,7 @@ describe('DesktopSidebar', () => {
           {
             address: {
               deviceId: 'local-device',
+              workspacePath: '/repo/Wegent',
               localTaskId: 'codex-1',
             },
             sessionKeys: ['session-telegram'],
@@ -1576,6 +1582,7 @@ describe('DesktopSidebar', () => {
     expect(onToggleRuntimeTaskNotification).toHaveBeenCalledWith(
       {
         deviceId: 'local-device',
+        workspacePath: '/repo/Wegent',
         localTaskId: 'codex-1',
       },
       true
@@ -1675,6 +1682,7 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: '/workspace/worktrees/42/Wegent',
       localTaskId: 'codex-worktree',
     })
   })

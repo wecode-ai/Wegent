@@ -42,6 +42,8 @@ Wework requests the task list on startup, explicit refresh, or device-state chan
 5. Backend performs light aggregation and returns the result to Wework without reading or matching the Backend `projects` table.
 6. Wework renders Projects and Conversations from the runtime work response, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
 
+The `runtime.tasks.list` response has two workspace levels. The outer workspace is the sidebar Project grouping, so Codex git worktree tasks should be grouped under their shared repository root. The inner LocalTask is the actual execution directory and must keep its own `workspacePath`. When that directory is a git worktree, the LocalTask must carry `workspaceKind: worktree` and `worktreeId`; the sidebar worktree icon, bottom terminal cwd, and right-side workspace tools all derive from LocalTask fields. A worktree LocalTask must not turn the parent workspace into a worktree, and the LocalTask path must not be overwritten with the parent workspace path.
+
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.
 
 When there is only one device, Wework does not show an IP next to Project names. When there are multiple devices, the local device still omits the IP, while online remote devices show a usable non-loopback runtime transfer host or client IP with a green online dot. Remote project and remote host pickers also use that IP/host as the primary display label; the device id is only a technical fallback when no network address is available.
@@ -126,6 +128,8 @@ After Wework opens a LocalTask, the right-side file, review, and terminal tools 
 - If the LocalTask maps to a Project, environment info and review still receive that Project, but Git commands run in the LocalTask's actual directory.
 - If the LocalTask does not map to a Project, the local terminal can still open as long as the device is online and the directory is accessible. IDE capabilities that depend on Project APIs still require Project context.
 - Terminals opened for runtime LocalTasks must start a device-scoped PTY from the current LocalTask's `deviceId + workspacePath` and must not fall back to the Project's default bound device; otherwise cross-device worktrees open on the wrong machine.
+
+The bottom terminal panel state is also scoped to the current workspace-tool context. A terminal opened from LocalTask A must not be reused as LocalTask B's terminal after switching tasks; switching back to A restores A's terminal state. When no LocalTask is selected and only a local Project is selected, the terminal cwd is that Project's local path. In local App mode, missing Backend connectivity must not display a cloud-device prompt or fall back to `$HOME`.
 
 ## Create Tasks
 

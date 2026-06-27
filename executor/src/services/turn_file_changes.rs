@@ -8,6 +8,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,6 +17,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const ARTIFACT_VERSION: u64 = 1;
+static TEMP_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -848,28 +851,24 @@ fn atomic_write(path: &Path, content: &[u8]) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let temp_path = path.with_extension(format!(
-        "tmp-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default()
-    ));
+    let temp_path = path.with_extension(format!("tmp-{}", unique_temp_suffix()));
     let _ = fs::write(&temp_path, content);
     let _ = fs::rename(temp_path, path);
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default()
-    ));
+    let path = std::env::temp_dir().join(format!("{prefix}-{}", unique_temp_suffix()));
     let _ = fs::create_dir_all(&path);
     path
+}
+
+fn unique_temp_suffix() -> String {
+    let sequence = TEMP_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
 fn resolve_path(path: PathBuf) -> PathBuf {

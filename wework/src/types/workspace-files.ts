@@ -29,6 +29,7 @@ export interface WorkspaceTarget {
   deviceId: string
   path: string
   source: 'project' | 'runtime'
+  workspaceSource?: 'local' | 'remote' | string | null
 }
 
 export interface WorkspaceFileOpenRequest {

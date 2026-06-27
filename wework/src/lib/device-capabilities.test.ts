@@ -83,18 +83,19 @@ describe('device-capabilities', () => {
     ).toBe(false)
   })
 
-  test('supports remote terminal sessions on Claude Code devices without requiring cloud type', () => {
+  test('supports remote terminal sessions only on remote or cloud Claude Code devices', () => {
     const claudeDevice = {
       bind_shell: 'claudecode',
       status: 'online',
     }
 
-    expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'local' })).toBe(true)
+    expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'local' })).toBe(false)
     expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'cloud' })).toBe(true)
+    expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'remote' })).toBe(true)
     expect(
       supportsRemoteTerminalSessions({
         ...claudeDevice,
-        device_type: 'local',
+        device_type: 'remote',
         bind_shell: 'openclaw',
       })
     ).toBe(false)

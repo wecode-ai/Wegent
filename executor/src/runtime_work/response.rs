@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    infer_workspace_kind, now_ms, path_is_within, string_field, timestamp_ms_field,
-    workspace_group_path, workspace_label,
+    infer_workspace_kind, infer_worktree_id, now_ms, path_is_within, string_field,
+    timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
 };
 
 const DEFAULT_CODEX_SESSION_LIMIT: u64 = 100;
@@ -193,7 +193,7 @@ pub(crate) fn workspace_response(
             .find(|root| path_is_within(root, &normalized_link_path))
             .cloned()
             .unwrap_or(normalized_link_path);
-        link.workspace_path = group_path.clone();
+        link.workspace_path = workspace_task_path(&link.workspace_path, &group_path);
         groups
             .entry(group_path)
             .or_insert_with(|| (None, Vec::new()))
@@ -333,6 +333,9 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         "workspaceKind".to_owned(),
         Value::String(infer_workspace_kind(&link.workspace_path).to_owned()),
     );
+    if let Some(worktree_id) = infer_worktree_id(&link.workspace_path) {
+        task.insert("worktreeId".to_owned(), Value::String(worktree_id));
+    }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
     task.insert("running".to_owned(), Value::Bool(link.running));
     task.insert("status".to_owned(), Value::String(link.status));

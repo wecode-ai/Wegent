@@ -41,6 +41,7 @@ import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/ty
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
+  resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
   resolveWorkspaceTarget,
   workspaceTargetKey,
@@ -298,11 +299,17 @@ export function DesktopWorkbenchLayout({
     [state.currentRuntimeTask, state.projects, state.runtimeWork]
   )
   const activeConversationProject = state.currentProject ?? runtimeWorkspaceContext?.project ?? null
+  const selectedWorkspaceProject = projectWork.currentProjectId
+    ? (projectWork.projects.find(project => project.id === projectWork.currentProjectId) ??
+      state.projects.find(project => project.id === projectWork.currentProjectId) ??
+      null)
+    : null
   const environmentProject = useMemo(() => {
     if (state.currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
     }
     return (
+      selectedWorkspaceProject ??
       activeConversationProject ??
       state.projects.find(project => project.config?.mode === 'workspace') ??
       null
@@ -310,6 +317,7 @@ export function DesktopWorkbenchLayout({
   }, [
     activeConversationProject,
     runtimeWorkspaceContext?.project,
+    selectedWorkspaceProject,
     state.currentRuntimeTask,
     state.projects,
   ])
@@ -318,10 +326,30 @@ export function DesktopWorkbenchLayout({
     [onGetProjectWorkspaceRoot]
   )
   const hasEnvironmentProject = Boolean(environmentProject)
-  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
   const workspaceTargetProject = environmentProject
   const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
   const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
+  const projectRuntimeWorkspaceTarget = useMemo(
+    () =>
+      state.currentRuntimeTask
+        ? null
+        : resolveProjectRuntimeWorkspaceTarget({
+            currentProject: workspaceTargetProject,
+            runtimeWork: state.runtimeWork,
+            selectedDeviceWorkspaceId: projectWork.selectedDeviceWorkspaceId,
+          }),
+    [
+      projectWork.selectedDeviceWorkspaceId,
+      state.currentRuntimeTask,
+      state.runtimeWork,
+      workspaceTargetProject,
+    ]
+  )
+  const projectRuntimeWorkspaceTargetKey = workspaceTargetKey(projectRuntimeWorkspaceTarget)
+  const activeWorkspaceTarget = state.currentRuntimeTask
+    ? runtimeWorkspaceTarget
+    : (projectRuntimeWorkspaceTarget ?? workspaceTarget)
+  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
 
   useEffect(() => {
     let cancelled = false
@@ -331,6 +359,19 @@ export function DesktopWorkbenchLayout({
         workspaceTargetKey(current) === runtimeWorkspaceTargetKey ? current : runtimeWorkspaceTarget
       )
       setWorkspaceTargetError(runtimeWorkspaceTarget ? null : 'Workspace is not ready')
+      setWorkspaceTargetResolving(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (projectRuntimeWorkspaceTarget) {
+      setWorkspaceTarget(current =>
+        workspaceTargetKey(current) === projectRuntimeWorkspaceTargetKey
+          ? current
+          : projectRuntimeWorkspaceTarget
+      )
+      setWorkspaceTargetError(null)
       setWorkspaceTargetResolving(false)
       return () => {
         cancelled = true
@@ -366,6 +407,8 @@ export function DesktopWorkbenchLayout({
       cancelled = true
     }
   }, [
+    projectRuntimeWorkspaceTarget,
+    projectRuntimeWorkspaceTargetKey,
     runtimeWorkspaceTarget,
     runtimeWorkspaceTargetKey,
     state.currentRuntimeTask,
@@ -390,7 +433,7 @@ export function DesktopWorkbenchLayout({
 
     setEnvironmentInfo(info => ({ ...info, loading: true }))
     try {
-      const info = await onLoadEnvironmentInfo(environmentProject, workspaceTarget)
+      const info = await onLoadEnvironmentInfo(environmentProject, activeWorkspaceTarget)
       setEnvironmentInfo({ ...info, loading: false })
     } catch (error) {
       setEnvironmentInfo(info => ({
@@ -402,8 +445,8 @@ export function DesktopWorkbenchLayout({
   }, [
     environmentProject,
     environmentWorkspaceReady,
+    activeWorkspaceTarget,
     onLoadEnvironmentInfo,
-    workspaceTarget,
     workspaceTargetError,
     workspaceTargetResolving,
   ])
@@ -435,26 +478,26 @@ export function DesktopWorkbenchLayout({
   }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
   async function handleCommitEnvironmentChanges(message: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCommitEnvironmentChanges(environmentProject, message, workspaceTarget)
+    await onCommitEnvironmentChanges(environmentProject, message, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
   }
 
   async function handleCheckoutEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCheckoutEnvironmentBranch(environmentProject, branchName, workspaceTarget)
+    await onCheckoutEnvironmentBranch(environmentProject, branchName, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
   async function handleCreateEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCreateEnvironmentBranch(environmentProject, branchName, workspaceTarget)
+    await onCreateEnvironmentBranch(environmentProject, branchName, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
@@ -711,8 +754,8 @@ export function DesktopWorkbenchLayout({
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
     onRefreshBranch: undefined,
-    onListBranches: workspaceTarget
-      ? () => onListEnvironmentBranches(environmentProject, workspaceTarget)
+    onListBranches: activeWorkspaceTarget
+      ? () => onListEnvironmentBranches(environmentProject, activeWorkspaceTarget)
       : undefined,
     onCheckoutBranch: handleCheckoutEnvironmentBranch,
     onCreateBranch: handleCreateEnvironmentBranch,
@@ -786,7 +829,8 @@ export function DesktopWorkbenchLayout({
           currentRuntimeTask={state.currentRuntimeTask}
           runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
-          workspaceTarget={workspaceTarget}
+          workspaceProject={environmentProject}
+          workspaceTarget={activeWorkspaceTarget}
           workspaceFileApi={workspaceFileApi}
           workspaceTargetError={workspaceTargetError}
           devices={state.devices}
@@ -815,10 +859,10 @@ export function DesktopWorkbenchLayout({
               : undefined
           }
           onListEnvironmentBranches={() => {
-            if (!workspaceTarget) {
+            if (!activeWorkspaceTarget) {
               return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
             }
-            return onListEnvironmentBranches(environmentProject, workspaceTarget)
+            return onListEnvironmentBranches(environmentProject, activeWorkspaceTarget)
           }}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
