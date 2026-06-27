@@ -9,6 +9,7 @@ import {
   GitCompareArrows,
   Loader2,
   MessageSquarePlus,
+  Pin,
   Plus,
   RotateCw,
   Search,
@@ -62,6 +63,7 @@ import {
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
+  type RuntimeSidebarTaskItem,
 } from './runtimeTaskSidebarHelpers'
 import { useResizableSidebar } from './useResizableSidebar'
 
@@ -387,6 +389,26 @@ function writeStoredNumberSet(key: string, values: Set<number>) {
   }
 }
 
+function readStoredStringSet(key: string): Set<string> {
+  try {
+    const value = window.localStorage.getItem(key)
+    if (!value) return new Set()
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((item): item is string => typeof item === 'string' && item !== ''))
+  } catch {
+    return new Set()
+  }
+}
+
+function writeStoredStringSet(key: string, values: Set<string>) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...values].sort()))
+  } catch {
+    // Keep the in-memory sidebar state when browser storage is unavailable.
+  }
+}
+
 function pruneProjectIdSet(values: Set<number>, projects: ProjectWithTasks[]): Set<number> {
   if (projects.length === 0) return values
   const projectIds = new Set(projects.map(project => project.id))
@@ -592,6 +614,26 @@ function getSidebarDeviceStatusLabel(
 
 function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.localTaskId}`
+}
+
+function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: LocalTaskSummary): string {
+  return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
+}
+
+function prioritizePinnedRuntimeTaskItems(
+  items: RuntimeSidebarTaskItem[],
+  pinnedTaskKeys: ReadonlySet<string>
+) {
+  const pinnedItems: RuntimeSidebarTaskItem[] = []
+  const unpinnedItems: RuntimeSidebarTaskItem[] = []
+  for (const item of items) {
+    if (pinnedTaskKeys.has(getRuntimeTaskPinKey(item.workspace, item.task))) {
+      pinnedItems.push(item)
+    } else {
+      unpinnedItems.push(item)
+    }
+  }
+  return [...pinnedItems, ...unpinnedItems]
 }
 
 function isRuntimeTaskNotificationSubscribed(
@@ -914,10 +956,12 @@ function RuntimeLocalTaskRow({
   workspace,
   task,
   selected,
+  marked: controlledMarked,
   indentClassName = 'pl-12',
   imNotificationSettings,
   showDeviceMarker,
   onOpenRuntimeLocalTask,
+  onToggleMark,
   onRenameRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
   onToggleRuntimeTaskNotification,
@@ -925,10 +969,12 @@ function RuntimeLocalTaskRow({
   workspace: RuntimeDeviceWorkspace
   task: LocalTaskSummary
   selected: boolean
+  marked?: boolean
   indentClassName?: string
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onToggleMark?: (address: RuntimeTaskAddress) => void
   onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
@@ -937,6 +983,7 @@ function RuntimeLocalTaskRow({
   ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
+  const [internalMarked, setInternalMarked] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [archivePending, setArchivePending] = useState(false)
   const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
@@ -953,10 +1000,20 @@ function RuntimeLocalTaskRow({
     imNotificationSettings,
     taskAddress
   )
+  const marked = controlledMarked ?? internalMarked
   const notificationsDisabled = !workspace.available || !onToggleRuntimeTaskNotification
   const handleOpen = () => {
     if (disabled) return
     void onOpenRuntimeLocalTask?.(taskAddress)
+  }
+  const handleToggleMark = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    event.currentTarget.blur()
+    if (controlledMarked === undefined) {
+      setInternalMarked(value => !value)
+      return
+    }
+    onToggleMark?.(taskAddress)
   }
   useEffect(() => {
     return () => {
@@ -1027,6 +1084,7 @@ function RuntimeLocalTaskRow({
     <>
       <div
         data-testid={`runtime-local-task-row-${task.localTaskId}`}
+        data-marked={marked ? 'true' : undefined}
         role="button"
         tabIndex={disabled ? -1 : 0}
         aria-disabled={disabled}
@@ -1044,10 +1102,12 @@ function RuntimeLocalTaskRow({
           disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
           selected
             ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-            : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+            : marked
+              ? 'bg-[rgb(var(--color-sidebar-marked))] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-marked-hover))]'
+              : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
         )}
       >
-        <span title={task.title} className="min-w-0 flex-1 truncate group-hover/task:pr-14">
+        <span title={task.title} className="min-w-0 flex-1 truncate group-hover/task:pr-20">
           {task.title}
         </span>
         <span
@@ -1097,7 +1157,7 @@ function RuntimeLocalTaskRow({
           </span>
           <span
             data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
-            className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[52px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
+            className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
@@ -1107,6 +1167,30 @@ function RuntimeLocalTaskRow({
                 ? `runtime-local-task-notify-hover-icon-${task.localTaskId}`
                 : `runtime-local-task-notify-icon-${task.localTaskId}`
             )}
+            <button
+              type="button"
+              data-testid={`runtime-local-task-mark-${task.localTaskId}`}
+              onClick={handleToggleMark}
+              className={cn(
+                'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
+              )}
+              title={
+                marked
+                  ? t('workbench.unmark_runtime_task', '取消标记')
+                  : t('workbench.mark_runtime_task', '标记任务')
+              }
+              aria-label={
+                marked
+                  ? t('workbench.unmark_runtime_task', '取消标记')
+                  : t('workbench.mark_runtime_task', '标记任务')
+              }
+            >
+              <Pin
+                data-testid={`runtime-local-task-pin-icon-${task.localTaskId}`}
+                className={cn('h-4 w-4', marked && 'fill-current')}
+              />
+            </button>
             <button
               type="button"
               data-testid={`runtime-local-task-archive-${task.localTaskId}`}
@@ -1181,6 +1265,7 @@ function ProjectItem({
   onToggleProject,
   devices,
   runtimeProjectWork,
+  pinnedTaskKeysStorageKey,
   currentRuntimeTask,
   imNotificationSettings,
   showDeviceMarker,
@@ -1198,6 +1283,7 @@ function ProjectItem({
   onToggleProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
+  pinnedTaskKeysStorageKey: string
   currentRuntimeTask?: RuntimeTaskAddress | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
@@ -1222,9 +1308,17 @@ function ProjectItem({
   const [runtimeTasksExpanded, setRuntimeTasksExpanded] = useState(false)
   const [projectArchiving, setProjectArchiving] = useState(false)
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const pinnedTaskKeysStorageRef = useRef(pinnedTaskKeysStorageKey)
+  const [pinnedRuntimeTaskKeys, setPinnedRuntimeTaskKeys] = useState<Set<string>>(() =>
+    readStoredStringSet(pinnedTaskKeysStorageKey)
+  )
+  const prioritizedRuntimeTaskItems = useMemo(
+    () => prioritizePinnedRuntimeTaskItems(runtimeTaskItems, pinnedRuntimeTaskKeys),
+    [pinnedRuntimeTaskKeys, runtimeTaskItems]
+  )
   const visibleRuntimeTaskItems = useMemo(
-    () => getVisibleRuntimeSidebarTaskItems(runtimeTaskItems, runtimeTasksExpanded),
-    [runtimeTaskItems, runtimeTasksExpanded]
+    () => getVisibleRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTasksExpanded),
+    [prioritizedRuntimeTaskItems, runtimeTasksExpanded]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(runtimeTaskItems)
   const projectDeviceState =
@@ -1243,6 +1337,27 @@ function ProjectItem({
       : t('workbench.new_project_chat', '新建项目对话')
   const archiveConversationCount = runtimeTaskItems.length
   const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
+  const toggleRuntimeTaskPin = (address: RuntimeTaskAddress) => {
+    const taskKey = getRuntimeNotificationKey(address)
+    setPinnedRuntimeTaskKeys(currentKeys => {
+      const nextKeys = new Set(currentKeys)
+      if (nextKeys.has(taskKey)) {
+        nextKeys.delete(taskKey)
+      } else {
+        nextKeys.add(taskKey)
+      }
+      return nextKeys
+    })
+  }
+  useEffect(() => {
+    if (pinnedTaskKeysStorageRef.current !== pinnedTaskKeysStorageKey) return
+    writeStoredStringSet(pinnedTaskKeysStorageKey, pinnedRuntimeTaskKeys)
+  }, [pinnedRuntimeTaskKeys, pinnedTaskKeysStorageKey])
+  useEffect(() => {
+    if (pinnedTaskKeysStorageRef.current === pinnedTaskKeysStorageKey) return
+    pinnedTaskKeysStorageRef.current = pinnedTaskKeysStorageKey
+    setPinnedRuntimeTaskKeys(readStoredStringSet(pinnedTaskKeysStorageKey))
+  }, [pinnedTaskKeysStorageKey])
   const closeArchiveConfirm = () => {
     if (!projectArchiving) {
       setArchiveConfirmOpen(false)
@@ -1358,10 +1473,12 @@ function ProjectItem({
                   workspace={workspace}
                   task={task}
                   selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                  marked={pinnedRuntimeTaskKeys.has(getRuntimeTaskPinKey(workspace, task))}
                   indentClassName="pl-9"
                   imNotificationSettings={imNotificationSettings}
                   showDeviceMarker={showDeviceMarker}
                   onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                  onToggleMark={toggleRuntimeTaskPin}
                   onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
                   onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                   onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
@@ -1897,6 +2014,10 @@ export function DesktopSidebar({
                     expanded={displayedExpandedProjectIds.has(project.id)}
                     devices={devices}
                     runtimeProjectWork={runtimeWorkByProjectId.get(project.id)}
+                    pinnedTaskKeysStorageKey={getDesktopSidebarStorageKey(
+                      storageScope,
+                      `pinnedRuntimeTaskKeys.${project.id}`
+                    )}
                     currentRuntimeTask={currentRuntimeTask}
                     imNotificationSettings={imNotificationSettings}
                     showDeviceMarker={false}

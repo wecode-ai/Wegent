@@ -167,6 +167,151 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('renders a compact left-side navigation for previous user messages', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: '第一条用户需求',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: '第一条回复摘要',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+          {
+            id: 'user-2',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## notes.txt: /tmp/notes.txt',
+              '',
+              '## My request for Codex:',
+              '第二条用户需求',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-29T00:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 300,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1000,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('第一条用户需求').closest('[data-message-id]')!, 120, 180)
+    mockRect(screen.getByText('第二条用户需求').closest('[data-message-id]')!, 620, 680)
+
+    fireEvent.resize(window)
+
+    const navigation = screen.getByTestId('message-turn-navigation')
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(navigation).toHaveAccessibleName('历史发言导航')
+    expect(navigation).toHaveStyle({ height: '21px' })
+    expect(markers).toHaveLength(2)
+    expect(markers[0]).toHaveAccessibleName('跳转到第 1 条发言')
+    expect(markers[1]).toHaveAccessibleName('跳转到第 2 条发言')
+    const activeMarkerIndicator = markers[0].querySelector('span')
+    const nearbyMarkerIndicator = markers[1].querySelector('span')
+    expect(activeMarkerIndicator).toHaveStyle({ width: '8px' })
+    expect(nearbyMarkerIndicator).toHaveStyle({ width: '8px' })
+    fireEvent.focus(markers[0])
+    expect(activeMarkerIndicator).toHaveStyle({ width: '24px' })
+    expect(nearbyMarkerIndicator).toHaveStyle({ width: '16px' })
+    fireEvent.blur(markers[0])
+    expect(activeMarkerIndicator).toHaveStyle({ width: '8px' })
+    expect(nearbyMarkerIndicator).toHaveStyle({ width: '8px' })
+
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 620,
+      writable: true,
+      configurable: true,
+    })
+    fireEvent.scroll(scroller)
+    expect(nearbyMarkerIndicator).toHaveClass('bg-text-primary')
+    fireEvent.focus(markers[0])
+    expect(nearbyMarkerIndicator).not.toHaveClass('bg-text-primary')
+    fireEvent.blur(markers[0])
+    expect(screen.getAllByText('第一条用户需求')).toHaveLength(2)
+    expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
+  })
+
+  test('clicks a message navigation marker to jump to that user message', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'jump-user-1',
+            role: 'user',
+            content: '先前需求',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'jump-assistant-1',
+            role: 'assistant',
+            content: '先前回复',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+          {
+            id: 'jump-user-2',
+            role: 'user',
+            content: '需要跳转的需求',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 300,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1000,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('先前需求').closest('[data-message-id]')!, 120, 180)
+    mockRect(screen.getByText('需要跳转的需求').closest('[data-message-id]')!, 620, 680)
+
+    fireEvent.resize(window)
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[1])
+
+    expect(scroller.scrollTo).toHaveBeenCalledWith({
+      top: 524,
+      behavior: 'smooth',
+    })
+  })
+
   test('pins the conversation to the bottom after opening a chat', () => {
     render(
       <ScrollableMessageArea
