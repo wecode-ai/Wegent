@@ -455,6 +455,9 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  modelId?: string
+  modelType?: ModelType | null
+  modelOptions?: ModelOptions
   attachmentIds?: number[]
   source?: RuntimeMessageSource | null
 }

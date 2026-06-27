@@ -289,6 +289,7 @@ export function DesktopWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
+  const environmentInfoRequestSequence = useRef(0)
   const runtimeWorkspaceContext = useMemo(
     () =>
       resolveRuntimeWorkspaceContext({
@@ -326,6 +327,9 @@ export function DesktopWorkbenchLayout({
     [onGetProjectWorkspaceRoot]
   )
   const hasEnvironmentProject = Boolean(environmentProject)
+  const shouldAutoLoadEnvironmentInfo = Boolean(
+    activeConversationProject || state.currentRuntimeTask
+  )
   const workspaceTargetProject = environmentProject
   const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
   const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
@@ -417,6 +421,9 @@ export function DesktopWorkbenchLayout({
   ])
 
   const refreshEnvironmentInfo = useCallback(async () => {
+    const requestId = environmentInfoRequestSequence.current + 1
+    environmentInfoRequestSequence.current = requestId
+
     if (workspaceTargetResolving) {
       setEnvironmentInfo(info => ({ ...info, loading: true }))
       return
@@ -434,13 +441,17 @@ export function DesktopWorkbenchLayout({
     setEnvironmentInfo(info => ({ ...info, loading: true }))
     try {
       const info = await onLoadEnvironmentInfo(environmentProject, activeWorkspaceTarget)
-      setEnvironmentInfo({ ...info, loading: false })
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo({ ...info, loading: false })
+      }
     } catch (error) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load environment info',
-      }))
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo(info => ({
+          ...info,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to load environment info',
+        }))
+      }
     }
   }, [
     environmentProject,
@@ -450,6 +461,11 @@ export function DesktopWorkbenchLayout({
     workspaceTargetError,
     workspaceTargetResolving,
   ])
+
+  useEffect(() => {
+    if (!shouldAutoLoadEnvironmentInfo) return
+    void refreshEnvironmentInfo()
+  }, [refreshEnvironmentInfo, shouldAutoLoadEnvironmentInfo])
 
   useEffect(() => {
     const handlePopState = () => {

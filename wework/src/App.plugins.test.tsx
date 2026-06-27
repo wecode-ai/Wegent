@@ -53,8 +53,8 @@ const workbenchValue: WorkbenchContextValue = {
   upgradingDevices: {},
   projectExecutionMode: 'current_workspace',
   setProjectExecutionMode: vi.fn(),
-  projectWorktreeBaseBranch: null,
-  setProjectWorktreeBaseBranch: vi.fn(),
+  projectWorktreeBranch: null,
+  setProjectWorktreeBranch: vi.fn(),
   projectChat: {
     models: [],
     skills: [],

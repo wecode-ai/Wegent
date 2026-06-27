@@ -10,7 +10,7 @@ import {
   resolveProjectWorkspacePath,
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
@@ -152,7 +152,8 @@ export function resolveRuntimeWorkspaceContext({
 
       return {
         project:
-          projects.find(project => project.id === runtimeProjectUiId(projectWork.project)) ?? null,
+          projects.find(project => project.id === runtimeProjectUiId(projectWork.project)) ??
+          runtimeProjectToProject(projectWork),
         workspaceTarget: workspaceTargetFromRuntimeTask(workspace, task),
       }
     }

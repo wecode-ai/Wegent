@@ -51,7 +51,7 @@ local:runtime:codex-gpt-5.5
 cloud:runtime:codex-gpt-5.5
 ```
 
-执行前通过模型上的 `weworkExecution` 元数据映射回原始 `modelName` 和 `modelType`。后端仍收到 `codex-gpt-5.5` 和 `runtime`，不会破坏已有 Codex 模型解析。
+执行前通过模型上的 `weworkExecution` 元数据映射回原始 `modelName` 和 `modelType`。本地 IPC 执行边界再把本机 Codex UI 模型名规范化为 Codex app-server 接受的真实模型 id，例如 `codex-gpt-5.5` 会在发送前转换为 `gpt-5.5`。云端 relay 仍按模型来源传递原始执行模型名。
 
 ## 本机认证状态
 

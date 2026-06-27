@@ -152,7 +152,7 @@ pub async fn request_codex_app_server(
     let launch_config = CodexLaunchConfig::default();
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
 
-    let result = async {
+    let result: Result<Value, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
             .stdin
@@ -218,7 +218,7 @@ pub async fn run_codex_app_server_turn(
         }
     };
 
-    let result = async {
+    let result: Result<CodexAppServerTurn, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
             .stdin
@@ -271,15 +271,24 @@ pub async fn run_codex_app_server_turn(
         thread_fields.push(("thread_id", thread_id.clone()));
         log_executor_event("codex thread request finished", &thread_fields);
 
+        let turn_input = turn_input(&request.prompt);
         let mut turn_fields = task_fields(request.task_id, request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
+        turn_fields.push(("input_items", turn_input.len().to_string()));
+        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+        if let Some(cwd) = request.cwd() {
+            turn_fields.push(("cwd", cwd.to_owned()));
+        }
+        if let Some(model) = model_id(request) {
+            turn_fields.push(("model", model));
+        }
         log_executor_event("codex turn request started", &turn_fields);
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
             rpc.send_request(
                 "turn/start",
-                turn_start_params(&thread_id, request, &launch_config),
+                turn_start_params(&thread_id, request, &launch_config, turn_input),
             ),
         )
         .await?;
@@ -290,6 +299,10 @@ pub async fn run_codex_app_server_turn(
         )
         .await?;
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
+        if let ExecutionOutcome::Failed { message } = &outcome {
+            turn_fields.push(("error", message.clone()));
+            turn_fields.push(("error_len", message.len().to_string()));
+        }
         log_executor_event("codex turn request finished", &turn_fields);
         Ok(CodexAppServerTurn { thread_id, outcome })
     }
@@ -297,6 +310,12 @@ pub async fn run_codex_app_server_turn(
 
     let _ = child.start_kill();
     let _ = child.wait().await;
+    if let Err(error) = &result {
+        let mut failed_fields = fields.clone();
+        failed_fields.push(("error", error.clone()));
+        failed_fields.push(("error_len", error.len().to_string()));
+        log_executor_event("codex app-server request failed", &failed_fields);
+    }
     log_executor_event("codex app-server stopped", &fields);
     cleanup_generated_files(&prepared.generated_files);
     result
@@ -1556,13 +1575,11 @@ fn turn_start_params(
     thread_id: &str,
     request: &ExecutionRequest,
     launch_config: &CodexLaunchConfig,
+    input: Vec<Value>,
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-    params.insert(
-        "input".to_owned(),
-        Value::Array(turn_input(&request.prompt)),
-    );
+    params.insert("input".to_owned(), Value::Array(input));
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),

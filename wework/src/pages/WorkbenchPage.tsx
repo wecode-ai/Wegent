@@ -27,8 +27,8 @@ export function WorkbenchPage() {
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
-    projectWorktreeBaseBranch,
-    setProjectWorktreeBaseBranch,
+    projectWorktreeBranch,
+    setProjectWorktreeBranch,
     projectChat,
     selectProject,
     selectProjectWorkspace,
@@ -117,8 +117,8 @@ export function WorkbenchPage() {
       selectProject(projectId)
     },
     onExecutionModeChange: setProjectExecutionMode,
-    worktreeBaseBranch: projectWorktreeBaseBranch,
-    onWorktreeBaseBranchChange: setProjectWorktreeBaseBranch,
+    worktreeBranch: projectWorktreeBranch,
+    onWorktreeBranchChange: setProjectWorktreeBranch,
   }
 
   return (

@@ -356,6 +356,7 @@
     "environment_workspace_path": "路径",
     "environment_copied": "已复制",
     "environment_branch_empty": "暂无分支",
+    "environment_branch_select": "选择分支",
     "environment_commit": "提交",
     "environment_commit_message": "提交说明",
     "environment_commit_cancel": "取消",

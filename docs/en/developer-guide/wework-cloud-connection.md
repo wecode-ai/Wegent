@@ -51,7 +51,7 @@ local:runtime:codex-gpt-5.5
 cloud:runtime:codex-gpt-5.5
 ```
 
-Before execution, `weworkExecution` metadata on the selected model maps the UI name back to the original `modelName` and `modelType`. The backend still receives `codex-gpt-5.5` and `runtime`, so existing Codex model parsing is preserved.
+Before execution, `weworkExecution` metadata on the selected model maps the UI name back to the original `modelName` and `modelType`. The local IPC execution boundary then normalizes local Codex UI model names to the real model id accepted by Codex app-server; for example, `codex-gpt-5.5` is converted to `gpt-5.5` before sending. Cloud relay paths continue to pass the original execution model name for their source.
 
 ## Local Auth Status
 

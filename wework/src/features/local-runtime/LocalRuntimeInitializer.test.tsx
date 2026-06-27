@@ -108,7 +108,7 @@ describe('LocalRuntimeInitializer', () => {
     )
 
     expect(await screen.findByTestId('main-app')).not.toBeVisible()
-    expect(onMount).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onMount).toHaveBeenCalledTimes(1))
 
     rerender(
       <LocalRuntimeInitializer startupReady>

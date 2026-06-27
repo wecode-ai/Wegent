@@ -554,7 +554,6 @@ export function DesktopWorkbenchMain({
           reviewTitle: tChat(`file_changes.${mode}_label`),
           reviewMode: mode,
           branchName: environmentInfo.branchName,
-          targetBranchName: projectWork.worktreeBaseBranch ?? undefined,
         }
       )
     },
@@ -562,7 +561,6 @@ export function DesktopWorkbenchMain({
       environmentInfo.branchName,
       onLoadEnvironmentDiff,
       openReviewFromDiffLoader,
-      projectWork.worktreeBaseBranch,
       t,
       tChat,
       workspaceTarget,

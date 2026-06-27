@@ -356,6 +356,7 @@
     "environment_workspace_path": "Path",
     "environment_copied": "Copied",
     "environment_branch_empty": "No branch",
+    "environment_branch_select": "Select branch",
     "environment_commit": "Commit",
     "environment_commit_message": "Commit message",
     "environment_commit_cancel": "Cancel",
