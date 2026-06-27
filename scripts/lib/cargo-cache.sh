@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-# Shared Cargo target directories for local Codex worktrees.
+# Shared Cargo target directories for local worktrees.
 #
-# Normal clones keep Cargo's default per-worktree target directory. Codex
-# worktrees use a stable target root under ~/.codex so dependency artifacts can
-# be reused across branches without committing machine-specific Cargo config.
+# Local scripts use a stable cache root so dependency artifacts can be reused
+# across git worktrees without committing machine-specific Cargo config.
 
 configure_wegent_cargo_target_dir() {
   local project_dir="$1"
@@ -21,8 +20,10 @@ configure_wegent_cargo_target_dir() {
   local cache_root=""
   if [ -n "${WEGENT_CARGO_TARGET_ROOT:-}" ]; then
     cache_root="${WEGENT_CARGO_TARGET_ROOT%/}"
-  elif [ -n "${HOME:-}" ] && [[ "$project_dir" == "$HOME/.codex/worktrees/"*"/Wegent" ]]; then
-    cache_root="$HOME/.codex/cache/wegent/cargo-target"
+  elif [ -n "${XDG_CACHE_HOME:-}" ]; then
+    cache_root="${XDG_CACHE_HOME%/}/wegent/cargo-target"
+  elif [ -n "${HOME:-}" ]; then
+    cache_root="$HOME/.cache/wegent/cargo-target"
   else
     return 0
   fi
