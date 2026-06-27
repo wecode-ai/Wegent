@@ -12,6 +12,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
@@ -51,6 +52,7 @@ export function PluginManagementPage() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const isTauri = isTauriRuntime()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -92,7 +94,7 @@ export function PluginManagementPage() {
 
   return (
     <div className="flex h-full overflow-hidden bg-background text-text-primary">
-      {!isMobile && !sidebarCollapsed && (
+      {!isMobile && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
@@ -106,7 +108,7 @@ export function PluginManagementPage() {
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           activeItem="plugins"
-          onCollapse={() => setSidebarCollapsed(true)}
+          collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
@@ -176,11 +178,16 @@ export function PluginManagementPage() {
       <PluginManagementWorkspace
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
-          sidebarCollapsed && !isMobile ? (
+          !isMobile && sidebarCollapsed && !isTauri ? (
             <DesktopWindowControls
               sidebarCollapsed
               onToggleSidebar={() => setSidebarCollapsed(false)}
               onNewChat={handleNewChat}
+            />
+          ) : !isMobile && !isTauri ? (
+            <DesktopWindowControls
+              sidebarCollapsed={false}
+              onToggleSidebar={() => setSidebarCollapsed(true)}
             />
           ) : undefined
         }

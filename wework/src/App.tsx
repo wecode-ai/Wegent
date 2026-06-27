@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PanelLeft } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -19,6 +20,9 @@ import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarBu
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { useTranslation } from '@/hooks/useTranslation'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -104,7 +108,13 @@ function AppShell() {
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
 
   useEffect(() => {
-    if (path === '/login' || path === '/login/oidc' || isLoading || !user || workbenchStartupReady) {
+    if (
+      path === '/login' ||
+      path === '/login/oidc' ||
+      isLoading ||
+      !user ||
+      workbenchStartupReady
+    ) {
       return undefined
     }
 
@@ -144,6 +154,7 @@ function AppShell() {
             tabs={tabs}
             activeKey={activeAppKey}
             onNavigate={navigateToApp}
+            beforeTabs={activeAppKey === 'wework' ? <TitlebarSidebarToggle /> : undefined}
             afterTabs={<AppUpdateTitlebarButton />}
           />
         )}
@@ -152,5 +163,27 @@ function AppShell() {
         </div>
       </div>
     </LocalRuntimeInitializer>
+  )
+}
+
+function TitlebarSidebarToggle() {
+  const { t } = useTranslation('common')
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const label = sidebarCollapsed
+    ? t('workbench.expand_sidebar', '展开侧边栏')
+    : t('workbench.collapse_sidebar', '收起侧边栏')
+
+  return (
+    <button
+      type="button"
+      data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
+      onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      title={label}
+      aria-label={label}
+      aria-pressed={sidebarCollapsed}
+    >
+      <PanelLeft />
+    </button>
   )
 }
