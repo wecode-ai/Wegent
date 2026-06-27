@@ -12,6 +12,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex, MutexGuard};
 use wegent_executor::{
@@ -54,8 +55,14 @@ fn set_temp_codex_home(prefix: &str) -> EnvGuard {
     )
 }
 
+fn set_temp_codex_sqlite_home(prefix: &str) -> (EnvGuard, PathBuf) {
+    let sqlite_home = temp_path(prefix, "dir");
+    let guard = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    (guard, sqlite_home)
+}
+
 #[tokio::test]
-async fn app_runtime_lists_codex_threads_through_app_server() {
+async fn app_runtime_lists_codex_threads_from_state_db() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -64,6 +71,21 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-list-codex-home");
+    let sqlite_home = temp_path("wegent-app-runtime-list-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    write_codex_state_db_thread(
+        &sqlite_home,
+        CodexStateDbThread {
+            id: "thread-1",
+            cwd: "/tmp/project",
+            title: "Fix CI",
+            preview: "fix ci",
+            rollout_path: "/tmp/codex/thread-1.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived: false,
+        },
+    );
     let log_path = temp_path("wegent-app-runtime-list-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let server = AppIpcServer::new()
@@ -99,11 +121,10 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
         "thread-1"
     );
 
-    let calls = read_json_lines(&log_path);
-    assert_eq!(calls[0]["method"], "initialize");
-    assert_eq!(calls[1]["method"], "initialized");
-    assert_eq!(calls[2]["method"], "thread/list");
-    assert_eq!(calls[2]["params"]["useStateDbOnly"], true);
+    assert!(
+        !log_path.exists(),
+        "runtime.tasks.list should not spawn app-server"
+    );
 }
 
 #[tokio::test]
@@ -342,6 +363,9 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-store-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-store-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -478,6 +502,9 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-archive-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-archive-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-archive-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -531,9 +558,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
     assert!(calls
         .iter()
         .any(|call| call["method"] == "thread/unarchive"));
-    assert!(calls
-        .iter()
-        .any(|call| call["method"] == "thread/list" && call["params"]["archived"] == true));
+    assert!(calls.iter().all(|call| call["method"] != "thread/list"));
 }
 
 #[tokio::test]
@@ -591,6 +616,9 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-rename-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-rename-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-rename-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -640,6 +668,9 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-search-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-search-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -688,6 +719,9 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-search-archive-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-search-archive-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-archive-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -953,6 +987,98 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+struct CodexStateDbThread<'a> {
+    id: &'a str,
+    cwd: &'a str,
+    title: &'a str,
+    preview: &'a str,
+    rollout_path: &'a str,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    archived: bool,
+}
+
+fn write_codex_state_db_thread(sqlite_home: &Path, thread: CodexStateDbThread<'_>) {
+    fs::create_dir_all(sqlite_home).unwrap();
+    let connection = Connection::open(sqlite_home.join("state_5.sqlite")).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (?1, ?2, ?3, ?4, 'vscode', 'openai', ?5, ?6, ?7, 'test', ?8, ?9, ?10)
+            "#,
+            (
+                thread.id,
+                thread.rollout_path,
+                thread.created_at_ms / 1000,
+                thread.updated_at_ms / 1000,
+                thread.cwd,
+                thread.title,
+                if thread.archived { 1_i64 } else { 0_i64 },
+                thread.created_at_ms,
+                thread.updated_at_ms,
+                thread.preview,
+            ),
+        )
+        .unwrap();
+}
+
+fn write_default_codex_state_db_thread(sqlite_home: &Path, archived: bool) {
+    write_codex_state_db_thread(
+        sqlite_home,
+        CodexStateDbThread {
+            id: "thread-1",
+            cwd: "/tmp/project",
+            title: "Fix CI",
+            preview: "fix ci",
+            rollout_path: "/tmp/codex/thread-1.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived,
+        },
+    );
 }
 
 fn read_json_lines(path: &Path) -> Vec<Value> {

@@ -12,8 +12,6 @@ use super::util::{
     string_field, timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
 };
 
-const DEFAULT_CODEX_SESSION_LIMIT: u64 = 100;
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
@@ -151,16 +149,6 @@ impl Default for RuntimeWorkspaceLink {
             updated_at: now_ms(),
         }
     }
-}
-
-pub(crate) fn thread_list_params(archived: bool) -> Value {
-    json!({
-        "limit": DEFAULT_CODEX_SESSION_LIMIT,
-        "archived": archived,
-        "sortDirection": "desc",
-        "sortKey": "updated_at",
-        "useStateDbOnly": true,
-    })
 }
 
 pub(crate) fn workspace_response(

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashSet, future::Future, pin::Pin};
+use std::{collections::HashSet, future::Future, path::PathBuf, pin::Pin};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc};
@@ -24,10 +24,11 @@ use super::{
         append_rollout_turns_from_offset, rollout_turns, thread_with_rollout_running_status,
         thread_with_rollout_turns, thread_with_turns,
     },
+    codex_state_db::{list_threads_from_state_db, resolve_codex_state_db_path},
     events::{emit_response_event, map_codex_notification},
     response::{
-        archived_conversations_response, search_result_item, thread_list_params,
-        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
+        archived_conversations_response, search_result_item, workspace_response, RuntimeTaskLink,
+        RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
         append_runtime_handle_message, cache_codex_notification, cached_messages,
@@ -51,6 +52,7 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
+    codex_state_db_path: Option<PathBuf>,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -61,6 +63,7 @@ impl RuntimeWorkRpcHandler {
             event_tx: None,
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
+            codex_state_db_path: resolve_codex_state_db_path(),
         }
     }
 
@@ -877,38 +880,28 @@ impl RuntimeWorkRpcHandler {
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
 
-        match request_codex_app_server(
-            &self.codex_binary,
-            "thread/list",
-            thread_list_params(archived),
-        )
-        .await
-        {
-            Ok(response) => {
-                for thread in response
-                    .get("data")
-                    .or_else(|| response.get("threads"))
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(mut link) = self.link_from_thread(thread) {
-                        if archived {
-                            link.status = "archived".to_owned();
-                            link.running = false;
-                        } else if link.status == "archived" {
-                            continue;
+        if let Some(db_path) = &self.codex_state_db_path {
+            match list_threads_from_state_db(db_path, archived) {
+                Ok(threads) => {
+                    for thread in threads {
+                        if let Some(mut link) = self.link_from_thread(&thread) {
+                            if archived {
+                                link.status = "archived".to_owned();
+                                link.running = false;
+                            } else if link.status == "archived" {
+                                continue;
+                            }
+                            if let Some(thread_id) = &link.thread_id {
+                                discovered_thread_ids.insert(thread_id.clone());
+                            }
+                            discovered_local_task_ids.insert(link.local_task_id.clone());
+                            links.push(link);
                         }
-                        if let Some(thread_id) = &link.thread_id {
-                            discovered_thread_ids.insert(thread_id.clone());
-                        }
-                        discovered_local_task_ids.insert(link.local_task_id.clone());
-                        links.push(link);
                     }
                 }
-            }
-            Err(error) => {
-                eprintln!("failed to list Codex app-server threads: {error}");
+                Err(error) => {
+                    eprintln!("failed to list Codex state DB threads: {error}");
+                }
             }
         }
 
@@ -1171,7 +1164,10 @@ fn payload_runtime_is_codex(payload: &Value) -> bool {
 }
 
 fn is_cached_codex_link_hidden(link: &RuntimeTaskLink) -> bool {
-    is_codex_runtime(&link.runtime) && !link.running && link.thread_id.is_some()
+    is_codex_runtime(&link.runtime)
+        && !link.running
+        && link.thread_id.is_some()
+        && link.status != "archived"
 }
 
 fn is_codex_runtime(runtime: &str) -> bool {

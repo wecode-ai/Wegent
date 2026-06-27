@@ -12,6 +12,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use rusqlite::Connection;
 use serde_json::json;
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
@@ -51,6 +52,12 @@ fn set_temp_codex_home(prefix: &str) -> EnvGuard {
     )
 }
 
+fn set_temp_codex_sqlite_home(prefix: &str) -> (EnvGuard, PathBuf) {
+    let sqlite_home = temp_path(prefix, "dir");
+    let guard = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    (guard, sqlite_home)
+}
+
 #[tokio::test]
 async fn runtime_prepare_fork_transfer_returns_git_workspace_package_metadata() {
     let _lock = env_lock().await;
@@ -61,6 +68,9 @@ async fn runtime_prepare_fork_transfer_returns_git_workspace_package_metadata() 
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("runtime-fork-prepare-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("runtime-fork-prepare-sqlite");
+    write_codex_state_db_thread(&sqlite_home);
     let fake_codex = write_fake_codex(&temp_path("runtime-fork-prepare-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -268,4 +278,72 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+fn write_codex_state_db_thread(sqlite_home: &Path) {
+    fs::create_dir_all(sqlite_home).unwrap();
+    let connection = Connection::open(sqlite_home.join("state_5.sqlite")).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (
+                'thread-1',
+                '/tmp/codex/thread-1.jsonl',
+                1780000000,
+                1780000060,
+                'vscode',
+                'openai',
+                '/tmp/project',
+                'Fork source',
+                0,
+                'test',
+                1780000000000,
+                1780000060000,
+                'fork'
+            )
+            "#,
+            (),
+        )
+        .unwrap();
 }

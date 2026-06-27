@@ -9,6 +9,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+use rusqlite::Connection;
 use serde_json::json;
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
@@ -23,6 +24,12 @@ async fn manual_runtime_transcript_perf_for_long_local_rollout() {
         fs::copy(&rollout_path, &copied).expect("rollout copy should succeed");
         rollout_path = copied;
     }
+    let state_db_path = temp_path("manual-runtime-perf-state", "sqlite");
+    write_state_db_thread(&state_db_path, &rollout_path);
+    let _state_db = EnvGuard::set(
+        "WEGENT_CODEX_STATE_DB",
+        &state_db_path.display().to_string(),
+    );
     let fake_codex = write_fake_codex(&rollout_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -169,6 +176,62 @@ fn append_rollout_message(path: &Path) {
     .unwrap();
 }
 
+fn write_state_db_thread(db_path: &Path, rollout_path: &Path) {
+    let connection = Connection::open(db_path).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (
+                'thread-long', ?1, 1780000000, 1780000060, 'vscode', 'openai',
+                '/tmp/project', 'Long transcript', 0, 'test', 1780000000000, 1780000060000, 'long'
+            )
+            "#,
+            (rollout_path.display().to_string(),),
+        )
+        .unwrap();
+}
+
 fn temp_path(prefix: &str, extension: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -178,4 +241,27 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }
