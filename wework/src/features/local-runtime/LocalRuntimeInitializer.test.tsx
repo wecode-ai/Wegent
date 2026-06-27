@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -6,8 +6,14 @@ import '@/i18n'
 import { ensureLocalExecutorStarted } from '@/tauri/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 
+const startDragging = vi.fn().mockResolvedValue(undefined)
+
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ startDragging }),
 }))
 
 const ensureMock = vi.mocked(ensureLocalExecutorStarted)
@@ -33,6 +39,7 @@ describe('LocalRuntimeInitializer', () => {
     enableTauri()
     vi.stubEnv('DEV', false)
     ensureMock.mockReset()
+    startDragging.mockClear()
   })
 
   afterEach(() => {
@@ -69,6 +76,25 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).not.toBeVisible()
     expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
+  })
+
+  test('keeps the startup screen titlebar draggable', async () => {
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer startupReady={false}>
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    const dragRegion = within(screen.getByTestId('local-runtime-titlebar-drag-region')).getByTestId(
+      'macos-titlebar-drag-region'
+    )
+    expect(dragRegion).toHaveAttribute('data-tauri-drag-region')
+
+    fireEvent.mouseDown(dragRegion, { button: 0 })
+
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
   })
 
   test('does not remount children when the startup screen is dismissed', async () => {

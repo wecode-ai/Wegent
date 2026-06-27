@@ -8,6 +8,9 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
 INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
 
+# shellcheck source=../../scripts/lib/cargo-cache.sh
+source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
+
 usage() {
   cat <<'EOF'
 Usage: bash wework/scripts/dev-mac-app.sh [options]
@@ -20,6 +23,11 @@ Environment:
   WEWORK_PORT           Default dev server port when --port is not provided.
   WEWORK_HOST           Host IP used to build backend proxy targets.
   BACKEND_PORT          Backend port used when proxy targets are not set.
+  CARGO_TARGET_DIR      Explicit Cargo target directory. Overrides auto cache.
+  WEGENT_CARGO_TARGET_ROOT
+                        Shared Cargo target root for Wegent local builds.
+  WEGENT_DISABLE_SHARED_CARGO_TARGET
+                        Set to 1 to keep Cargo's default per-worktree target.
   WEWORK_EXECUTOR_SIDECAR
                         Executor sidecar path. Defaults to source reload sidecar.
   WEGENT_EXECUTOR_DEV_RELOAD
@@ -123,6 +131,7 @@ export WEWORK_EXECUTOR_SIDECAR
 export VITE_API_BASE_URL="/api"
 export VITE_SOCKET_BASE_URL="http://localhost:$WEWORK_PORT"
 export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
+configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
@@ -149,6 +158,7 @@ echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
 echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
+echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
   echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"

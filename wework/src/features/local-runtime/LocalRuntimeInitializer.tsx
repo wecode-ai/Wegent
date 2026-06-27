@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -213,8 +214,14 @@ export function LocalRuntimeInitializer({
       {shouldShowStartupScreen && (
         <main
           data-testid="local-runtime-initializer"
-          className="flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
+          className="relative flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
         >
+          <div
+            data-testid="local-runtime-titlebar-drag-region"
+            className="absolute inset-x-0 top-0 h-[52px]"
+          >
+            <MacOSTitleBarDragRegion className="h-full w-full" />
+          </div>
           <section className="flex w-full max-w-[520px] flex-col items-center text-center">
             {failed ? (
               <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">

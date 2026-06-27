@@ -982,11 +982,13 @@ describe('DesktopWorkbenchLayout', () => {
   test('collapses and expands the sidebar', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass('h-[52px]')
+    expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
     expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
-    expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
+      screen.getByTestId('desktop-window-controls')
+    )
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
@@ -998,10 +1000,13 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
 
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    expect(sidebar).toHaveStyle({ width: '240px' })
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.queryByText('新对话')).not.toBeInTheDocument()
-    expect(document.querySelector('aside')).not.toBeInTheDocument()
+    expect(sidebar).toHaveStyle({ width: '0px' })
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+    expect(sidebar).toHaveClass('transition-[width,opacity]', 'duration-[220ms]')
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -1012,14 +1017,16 @@ describe('DesktopWorkbenchLayout', () => {
       'mr-1.5',
       'ml-1.5'
     )
+    expect(document.querySelector('aside')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
 
     expect(screen.getByText('新对话')).toBeInTheDocument()
-    expect(document.querySelector('aside')).toBeInTheDocument()
+    expect(sidebar).toHaveStyle({ width: '240px' })
+    expect(sidebar).toHaveAttribute('aria-hidden', 'false')
   })
 
-  test('keeps window controls in their page-level positions in Tauri', async () => {
+  test('keeps sidebar controls out of the page chrome in Tauri', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1027,25 +1034,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toContainElement(
-      screen.getByTestId('collapse-sidebar-button')
-    )
+    expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
     )
-    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-[52px]')
     expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mb-1.5', 'mr-1.5')
     expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('mt-1.5')
-
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
-
-    expect(screen.getByTestId('workbench-topbar')).toContainElement(
-      screen.getByTestId('expand-sidebar-button')
-    )
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
-      screen.getByTestId('toggle-right-workspace-panel-button')
-    )
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -2193,7 +2190,9 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-9', 'w-9')
   })
 
   test('toggles an empty project task list without selecting the project', async () => {

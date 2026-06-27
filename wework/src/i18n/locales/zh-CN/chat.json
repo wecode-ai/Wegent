@@ -1,4 +1,8 @@
 {
+  "message_navigation": {
+    "label": "历史发言导航",
+    "jump_to_message": "跳转到第 {{index}} 条发言"
+  },
   "thinking": {
     "running": "正在思考",
     "updating": "正在整理思路...",

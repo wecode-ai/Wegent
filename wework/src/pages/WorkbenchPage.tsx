@@ -1,9 +1,12 @@
+import { useEffect, useMemo } from 'react'
 import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayout'
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { navigateTo } from '@/lib/navigation'
+import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
+import { syncTrayMenuState } from '@/tauri/trayNavigation'
 
 export function WorkbenchPage() {
   const isMobile = useIsMobile()
@@ -86,6 +89,15 @@ export function WorkbenchPage() {
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
   } = useWorkbench()
+  const trayMenuTaskGroups = useMemo(
+    () => buildTrayMenuTaskGroups(state.runtimeWork),
+    [state.runtimeWork]
+  )
+
+  useEffect(() => {
+    syncTrayMenuState(trayMenuTaskGroups)
+  }, [trayMenuTaskGroups])
+
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
     projects: state.projects,
