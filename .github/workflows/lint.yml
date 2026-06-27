@@ -158,8 +158,8 @@ jobs:
 
       - name: Run repository policy check
         env:
-          REPOSITORY_POLICY_PATTERN_B64: ${{ secrets.REPOSITORY_POLICY_PATTERN_B64 }}
-          REPOSITORY_POLICY_APPROVED_B64: ${{ secrets.REPOSITORY_POLICY_APPROVED_B64 }}
+          REPOSITORY_POLICY_PATTERN_B64: ${{ vars.RESTRICTED_DOMAIN_PATTERN_B64 }}
+          REPOSITORY_POLICY_APPROVED_B64: ${{ vars.APPROVED_DOMAIN_REFERENCES_B64 }}
         run: |
           chmod +x ./scripts/hooks/check-repository-policy.sh
           ./scripts/hooks/check-repository-policy.sh
