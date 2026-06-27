@@ -126,6 +126,7 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const RUNTIME_RUNNING_TRANSCRIPT_POLL_MS = 1500
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
@@ -748,7 +749,7 @@ function isCurrentLocalTaskEvent(
   if (!payload.local_task_id) return false
   return Boolean(
     currentRuntimeTask &&
-    payload.device_id === currentRuntimeTask.deviceId &&
+    (!payload.device_id || payload.device_id === currentRuntimeTask.deviceId) &&
     payload.local_task_id === currentRuntimeTask.localTaskId
   )
 }
@@ -781,6 +782,37 @@ function runtimeTranscriptDebug(response: unknown): Record<string, unknown> {
     hasMoreBefore: response.hasMoreBefore,
     beforeCursor: response.beforeCursor,
   }
+}
+
+type RuntimeDebugWindow = Window & { __WEWORK_RUNTIME_DEBUG__?: boolean }
+
+function isRuntimeWorkDebugEnabled(): boolean {
+  return (
+    ((window as RuntimeDebugWindow).__WEWORK_RUNTIME_DEBUG__ ?? false) ||
+    import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
+  )
+}
+
+function debugRuntimeWork(label: string, details: Record<string, unknown>) {
+  if (!isRuntimeWorkDebugEnabled()) return
+  console.debug(`[Wework runtime] ${label}`, details)
+}
+
+function debugRuntimeStreamEvent(
+  label: string,
+  currentRuntimeTask: RuntimeTaskAddress | null,
+  payload: { device_id?: string; local_task_id?: string; subtask_id?: number },
+  matched: boolean,
+  details: Record<string, unknown> = {}
+) {
+  debugRuntimeWork(label, {
+    matched,
+    currentRuntimeTask: currentRuntimeTask ? runtimeAddressDebug(currentRuntimeTask) : null,
+    payloadDeviceId: payload.device_id ?? null,
+    payloadLocalTaskId: payload.local_task_id ?? null,
+    payloadSubtaskId: payload.subtask_id ?? null,
+    ...details,
+  })
 }
 
 function isDeviceStatus(value: unknown): value is DeviceInfo['status'] {
@@ -997,7 +1029,7 @@ function runtimeMessageToWorkbenchMessage(
   const status: WorkbenchMessage['status'] =
     normalizedStatus === 'failed'
       ? 'failed'
-      : normalizedStatus === 'streaming'
+      : isRuntimeStreamingStatus(normalizedStatus)
         ? 'streaming'
         : 'done'
   const runtimeStatus = normalizedStatus === 'cancelled' ? 'cancelled' : status
@@ -1034,11 +1066,40 @@ function runtimeMessageToWorkbenchMessage(
   }
 }
 
+function isRuntimeStreamingStatus(status: string): boolean {
+  return (
+    status === 'streaming' ||
+    status === 'running' ||
+    status === 'inprogress' ||
+    status === 'in_progress' ||
+    status === 'active' ||
+    status === 'busy' ||
+    status === 'pending'
+  )
+}
+
 function runtimeMessagesToWorkbenchMessages(
   address: RuntimeTaskAddress,
   messages: NormalizedRuntimeMessage[]
 ): WorkbenchMessage[] {
   return messages.map(message => runtimeMessageToWorkbenchMessage(address, message))
+}
+
+function mergeRuntimeSnapshotMessages(
+  currentMessages: WorkbenchMessage[],
+  snapshotMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  if (currentMessages.length === 0) return snapshotMessages
+
+  const snapshotById = new Map(snapshotMessages.map(message => [message.id, message]))
+  const merged = currentMessages.map(message => snapshotById.get(message.id) ?? message)
+  const currentIds = new Set(currentMessages.map(message => message.id))
+  snapshotMessages.forEach(message => {
+    if (!currentIds.has(message.id)) {
+      merged.push(message)
+    }
+  })
+  return merged
 }
 
 function findFileChangesBySubtaskId(
@@ -1710,6 +1771,85 @@ export function WorkbenchProvider({
     state.standaloneDeviceId,
   ])
 
+  const refreshCurrentRuntimeTaskSnapshot = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      const [transcriptResult, runtimeWorkResult] = await Promise.allSettled([
+        executorClient.runtime.getRuntimeTranscript({
+          ...address,
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        }),
+        executorClient.runtime.listRuntimeWork(),
+      ])
+
+      if (!isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) return
+
+      if (runtimeWorkResult.status === 'fulfilled') {
+        dispatch({ type: 'runtime_work_refreshed', runtimeWork: runtimeWorkResult.value })
+      }
+
+      if (transcriptResult.status !== 'fulfilled') {
+        console.warn('[Wework] Runtime transcript poll failed', {
+          address: runtimeAddressDebug(address),
+          error: transcriptResult.reason,
+        })
+        return
+      }
+
+      const transcript = transcriptResult.value
+      if (!Array.isArray(transcript.messages)) {
+        console.warn('[Wework] Runtime transcript poll returned no messages array', {
+          address: runtimeAddressDebug(address),
+          response: runtimeTranscriptDebug(transcript),
+        })
+        return
+      }
+
+      const snapshotMessages = runtimeMessagesToWorkbenchMessages(address, transcript.messages)
+      const currentMessages = messagesRef.current
+      const alreadyLoadedOlderMessages = currentMessages.length > snapshotMessages.length
+
+      dispatchMessages({
+        type: 'reset',
+        messages: mergeRuntimeSnapshotMessages(currentMessages, snapshotMessages),
+      })
+      setRuntimeTranscriptPage(previous => {
+        if (alreadyLoadedOlderMessages) {
+          return { ...previous, loadingMore: false }
+        }
+        return {
+          hasMoreBefore: Boolean(transcript.hasMoreBefore),
+          beforeCursor: transcript.beforeCursor ?? null,
+          loadingMore: false,
+        }
+      })
+    },
+    [executorClient]
+  )
+
+  useEffect(() => {
+    const address = state.currentRuntimeTask
+    if (!address || !currentRuntimeTaskRunning) return undefined
+
+    let cancelled = false
+    const poll = () => {
+      if (cancelled) return
+      void refreshCurrentRuntimeTaskSnapshot(address)
+    }
+
+    poll()
+    const interval = window.setInterval(poll, RUNTIME_RUNNING_TRANSCRIPT_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [
+    currentRuntimeTaskKey,
+    currentRuntimeTaskRunning,
+    refreshCurrentRuntimeTaskSnapshot,
+    state.currentRuntimeTask,
+  ])
+
   const loadDevicesForRefresh = useCallback(
     async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {
       let devices: DeviceInfo[]
@@ -1899,7 +2039,10 @@ export function WorkbenchProvider({
       onDeviceSlotUpdate: refreshDevicesAfterEvent,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatStart: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
+        debugRuntimeStreamEvent('chat:start', currentRuntimeTask, payload, matched)
+        if (!matched) return
         setIsAwaitingAssistantStart(false)
         dispatchMessages({
           type: 'assistant_started',
@@ -1907,9 +2050,17 @@ export function WorkbenchProvider({
           subtaskId: payload.subtask_id,
           shellType: payload.shell_type,
         })
+        void refreshWorkLists().catch(() => undefined)
       },
       onChatChunk: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
+        debugRuntimeStreamEvent('chat:chunk', currentRuntimeTask, payload, matched, {
+          hasContent: Boolean(payload.content),
+          hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
+          blockCount: getResultBlocks(payload.subtask_id, payload.result)?.length ?? 0,
+        })
+        if (!matched) return
         dispatchMessages({
           type: 'assistant_chunk',
           subtaskId: payload.subtask_id,
@@ -1919,7 +2070,13 @@ export function WorkbenchProvider({
         })
       },
       onChatDone: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
+        debugRuntimeStreamEvent('chat:done', currentRuntimeTask, payload, matched, {
+          hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.file_changes)),
+          blockCount: getResultBlocks(payload.subtask_id, payload.result)?.length ?? 0,
+        })
+        if (!matched) return
         setIsAwaitingAssistantStart(false)
         dispatchMessages({
           type: 'assistant_done',
@@ -1931,7 +2088,13 @@ export function WorkbenchProvider({
         void refreshWorkLists().catch(() => undefined)
       },
       onChatError: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
+        debugRuntimeStreamEvent('chat:error', currentRuntimeTask, payload, matched, {
+          error: payload.error,
+          errorType: payload.type,
+        })
+        if (!matched) return
         setIsAwaitingAssistantStart(false)
         dispatchMessages({
           type: 'assistant_error',
@@ -1942,8 +2105,14 @@ export function WorkbenchProvider({
         void refreshWorkLists().catch(() => undefined)
       },
       onBlockCreated: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
         const block = normalizeChatBlock(payload.subtask_id, payload.block)
+        debugRuntimeStreamEvent('block:created', currentRuntimeTask, payload, matched, {
+          rawBlockType: isRecord(payload.block) ? payload.block.type : null,
+          normalizedBlockType: block?.type ?? null,
+        })
+        if (!matched) return
         if (!block) return
         dispatchMessages({
           type: 'block_created',
@@ -1952,7 +2121,16 @@ export function WorkbenchProvider({
         })
       },
       onBlockUpdated: payload => {
-        if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
+        const currentRuntimeTask = currentRuntimeTaskRef.current
+        const matched = isCurrentLocalTaskEvent(currentRuntimeTask, payload)
+        debugRuntimeStreamEvent('block:updated', currentRuntimeTask, payload, matched, {
+          blockId: payload.block_id,
+          status: payload.status ?? null,
+          hasContent: payload.content !== undefined,
+          hasToolInput: payload.tool_input !== undefined,
+          hasToolOutput: payload.tool_output !== undefined,
+        })
+        if (!matched) return
         dispatchMessages({
           type: 'block_updated',
           subtaskId: payload.subtask_id,
@@ -2489,7 +2667,7 @@ export function WorkbenchProvider({
       const olderMessages = runtimeMessagesToWorkbenchMessages(address, transcript.messages)
       dispatchMessages({
         type: 'reset',
-        messages: [...olderMessages, ...messages],
+        messages: [...olderMessages, ...messagesRef.current],
       })
       setRuntimeTranscriptPage({
         hasMoreBefore: Boolean(transcript.hasMoreBefore),
@@ -2513,7 +2691,6 @@ export function WorkbenchProvider({
     }
   }, [
     executorClient,
-    messages,
     runtimeTranscriptPage.beforeCursor,
     runtimeTranscriptPage.hasMoreBefore,
     runtimeTranscriptPage.loadingMore,

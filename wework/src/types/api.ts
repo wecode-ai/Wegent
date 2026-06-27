@@ -450,6 +450,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number
   beforeCursor?: string | null
+  refresh?: boolean
 }
 
 export interface RuntimeSendRequest {

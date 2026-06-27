@@ -8,8 +8,9 @@ use tokio::sync::broadcast;
 use crate::protocol::ExecutionRequest;
 
 use super::{
+    codex_notifications::{codex_notification, debug_ignored_codex_notification},
     transcript::{tool_block_from_notification, tool_update_from_notification},
-    util::string_field,
+    util::{extract_text, reasoning_content, string_field},
 };
 
 pub(crate) fn emit_response_event(
@@ -51,18 +52,37 @@ pub(crate) fn map_codex_notification(
     request: &ExecutionRequest,
     message: Value,
 ) {
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    let params = message.get("params").unwrap_or(&message);
-    match method {
-        "item/agentMessage/delta" => {
-            emit_text_delta(event_tx, device_id, local_task_id, request, params)
-        }
-        "item/reasoning/delta" | "item/reasoningSummary/delta" => {
-            emit_reasoning_delta(event_tx, device_id, local_task_id, request, params)
-        }
-        "item/started" => emit_tool_start(event_tx, device_id, local_task_id, request, params),
-        "item/completed" => emit_tool_done(event_tx, device_id, local_task_id, request, params),
-        _ => {}
+    let notification = codex_notification(&message);
+    match notification.method.as_str() {
+        "item/agentMessage/delta" => emit_text_delta(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            notification.params,
+        ),
+        "item/reasoning/delta" | "item/reasoningSummary/delta" => emit_reasoning_delta(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            notification.params,
+        ),
+        "item/started" => emit_tool_start(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            notification.params,
+        ),
+        "item/completed" => emit_tool_done(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            notification.params,
+        ),
+        _ => debug_ignored_codex_notification(&message, &notification.method, notification.params),
     }
 }
 
@@ -73,7 +93,7 @@ fn emit_text_delta(
     request: &ExecutionRequest,
     params: &Value,
 ) {
-    let Some(delta) = string_field(params, "delta") else {
+    let Some(delta) = string_field(params, "delta").or_else(|| extract_text(params)) else {
         return;
     };
     emit_response_event(
@@ -93,7 +113,7 @@ fn emit_reasoning_delta(
     request: &ExecutionRequest,
     params: &Value,
 ) {
-    let Some(delta) = string_field(params, "delta") else {
+    let Some(delta) = string_field(params, "delta").or_else(|| reasoning_content(params)) else {
         return;
     };
     emit_response_event(

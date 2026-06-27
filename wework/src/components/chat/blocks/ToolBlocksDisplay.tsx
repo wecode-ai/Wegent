@@ -103,7 +103,7 @@ export function ToolBlocksDisplay({
             <ToolBlockItem
               key={row.id}
               block={row.block}
-              forceExpanded={isRunning && row.block.type === 'tool'}
+              forceExpanded={forceExpanded}
               stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />

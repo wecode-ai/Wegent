@@ -1,0 +1,142 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{
+    collections::HashMap,
+    fs,
+    sync::{Arc, Mutex},
+    time::UNIX_EPOCH,
+};
+
+use serde_json::Value;
+
+use super::util::now_ms;
+
+const RUNNING_TRANSCRIPT_CACHE_TTL_MS: i64 = 1_200;
+const COMPLETED_TRANSCRIPT_CACHE_TTL_MS: i64 = 60_000;
+
+#[derive(Clone, Default)]
+pub(crate) struct TranscriptCache {
+    entries: Arc<Mutex<HashMap<String, CachedTranscript>>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedTranscript {
+    pub local_task_id: String,
+    pub workspace_path: String,
+    pub runtime: String,
+    pub messages: Vec<Value>,
+    pub running: bool,
+    pub source_signature: Option<TranscriptSourceSignature>,
+    pub rollout_turns: Option<Vec<Value>>,
+    cached_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TranscriptSourceSignature {
+    path: String,
+    len: u64,
+    modified_ms: i64,
+}
+
+impl CachedTranscript {
+    pub fn new(
+        local_task_id: String,
+        workspace_path: String,
+        runtime: String,
+        messages: Vec<Value>,
+        running: bool,
+        source_signature: Option<TranscriptSourceSignature>,
+    ) -> Self {
+        Self {
+            local_task_id,
+            workspace_path,
+            runtime,
+            messages,
+            running,
+            source_signature,
+            rollout_turns: None,
+            cached_at: now_ms(),
+        }
+    }
+
+    pub fn with_rollout_turns(mut self, turns: Option<Vec<Value>>) -> Self {
+        self.rollout_turns = turns;
+        self
+    }
+}
+
+impl TranscriptSourceSignature {
+    pub fn from_path(path: &str) -> Option<Self> {
+        let metadata = fs::metadata(path).ok()?;
+        let modified_ms = metadata
+            .modified()
+            .ok()?
+            .duration_since(UNIX_EPOCH)
+            .ok()?
+            .as_millis();
+        let modified_ms = i64::try_from(modified_ms).ok()?;
+        Some(Self {
+            path: path.to_owned(),
+            len: metadata.len(),
+            modified_ms,
+        })
+    }
+
+    fn is_current(&self) -> bool {
+        Self::from_path(&self.path).as_ref() == Some(self)
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+}
+
+impl TranscriptCache {
+    pub fn get(
+        &self,
+        key: &str,
+        running_hint: bool,
+        require_current_source: bool,
+    ) -> Option<CachedTranscript> {
+        let mut entries = self.entries.lock().ok()?;
+        let entry = entries.get(key)?;
+        if require_current_source {
+            if let Some(signature) = &entry.source_signature {
+                return signature.is_current().then(|| entry.clone());
+            }
+        }
+        let ttl = if running_hint || entry.running {
+            RUNNING_TRANSCRIPT_CACHE_TTL_MS
+        } else {
+            COMPLETED_TRANSCRIPT_CACHE_TTL_MS
+        };
+        if now_ms().saturating_sub(entry.cached_at) > ttl {
+            entries.remove(key);
+            return None;
+        }
+        Some(entry.clone())
+    }
+
+    pub fn peek(&self, key: &str) -> Option<CachedTranscript> {
+        let entries = self.entries.lock().ok()?;
+        entries.get(key).cloned()
+    }
+
+    pub fn insert(&self, key: impl Into<String>, transcript: CachedTranscript) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.insert(key.into(), transcript);
+        }
+    }
+
+    pub fn invalidate(&self, key: &str) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(key);
+        }
+    }
+}

@@ -7,7 +7,9 @@ use std::path::Path;
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    bool_field, extract_text, integer_field, item_id, item_type, normalize_workspace_path, now_ms,
+    bool_field, codex_wrapped_item_payload, extract_text, integer_field, is_codex_tool_item_type,
+    is_codex_tool_output_item_type, is_likely_codex_tool_item_type,
+    is_likely_codex_tool_output_item_type, item_id, item_type, normalize_workspace_path, now_ms,
     raw_string_field, reasoning_content, string_field, timestamp_ms_field,
 };
 
@@ -26,18 +28,20 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
         let turn_id = item_id(turn, "turn");
         let subtask_id = turn_subtask_id(turn, &turn_id);
         let turn_cancelled = turn_interrupted(turn);
+        let assistant_status = turn_assistant_status(turn);
         let fold_commentary = turn_should_fold_commentary(turn);
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
-        for item in turn
+        for raw_item in turn
             .get("items")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
         {
-            match item_type(item).as_str() {
+            let item = transcript_item(raw_item);
+            match item_type(&item).as_str() {
                 "usermessage" => {
-                    if is_internal_turn_abort_message(item) {
+                    if is_internal_turn_abort_message(&item) {
                         continue;
                     }
                     let is_guidance =
@@ -50,32 +54,35 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             subtask_id,
                             created_at,
                             completed_at,
-                            status: if turn_cancelled { "cancelled" } else { "done" },
+                            status: assistant_status,
                         },
                         &mut assistant,
                         false,
                     );
-                    push_user_message(&mut messages, item, created_at);
+                    push_user_message(&mut messages, &item, created_at, &turn_id);
                     if is_guidance {
                         assistant.blocks.push(guidance_block(
-                            item,
-                            item_timestamp(item).unwrap_or(created_at),
+                            &item,
+                            item_timestamp(&item).unwrap_or(created_at),
                         ));
                     }
                 }
-                "reasoning" => push_reasoning_block(&mut assistant.blocks, item, created_at),
-                "commandexecution" => assistant.blocks.push(command_block(item, created_at)),
+                "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
+                "commandexecution" => assistant.blocks.push(command_block(&item, created_at)),
                 "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
                 | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
                 | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
-                    assistant.blocks.push(tool_block(item, created_at))
+                    assistant.blocks.push(tool_block(&item, created_at))
                 }
-                "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput" => {
-                    merge_tool_output(&mut assistant.blocks, item, created_at);
+                "functioncalloutput"
+                | "customtoolcalloutput"
+                | "toolsearchoutput"
+                | "execcommandend" => {
+                    merge_tool_output(&mut assistant.blocks, &item, created_at);
                 }
                 "filechange" => {
                     if let Some(summary) = file_changes_from_file_change_item(
-                        item,
+                        &item,
                         &turn_id,
                         device_id,
                         &workspace_path,
@@ -83,7 +90,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         if fold_commentary {
                             assistant
                                 .blocks
-                                .push(file_changes_block(item, &summary, created_at));
+                                .push(file_changes_block(&item, &summary, created_at));
                         }
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), summary);
@@ -91,7 +98,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 "patchapplyend" => {
                     if let Some(summary) = file_changes_from_patch_apply_end(
-                        item,
+                        &item,
                         &turn_id,
                         device_id,
                         &workspace_path,
@@ -99,7 +106,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         if fold_commentary {
                             assistant
                                 .blocks
-                                .push(file_changes_block(item, &summary, created_at));
+                                .push(file_changes_block(&item, &summary, created_at));
                         }
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), summary);
@@ -107,7 +114,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 "contextcompaction" => {
                     assistant.context_events.push(context_event(
-                        item,
+                        &item,
                         created_at,
                         "context_compaction",
                         "done",
@@ -115,7 +122,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 "agentmessage" => {
                     collect_assistant_message(
-                        item,
+                        &item,
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
@@ -123,18 +130,18 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &mut assistant.assistant_parts,
                         &mut assistant.memory_citations,
                     );
-                    if let Some(file_changes) = file_changes(item) {
+                    if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), file_changes);
                     }
                 }
-                "message" => match string_field(item, "role")
+                "message" => match string_field(&item, "role")
                     .unwrap_or_default()
                     .to_ascii_lowercase()
                     .as_str()
                 {
                     "user" => {
-                        if is_internal_turn_abort_message(item) {
+                        if is_internal_turn_abort_message(&item) {
                             continue;
                         }
                         let is_guidance =
@@ -147,22 +154,22 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                                 subtask_id,
                                 created_at,
                                 completed_at,
-                                status: if turn_cancelled { "cancelled" } else { "done" },
+                                status: assistant_status,
                             },
                             &mut assistant,
                             false,
                         );
-                        push_user_message(&mut messages, item, created_at);
+                        push_user_message(&mut messages, &item, created_at, &turn_id);
                         if is_guidance {
                             assistant.blocks.push(guidance_block(
-                                item,
-                                item_timestamp(item).unwrap_or(created_at),
+                                &item,
+                                item_timestamp(&item).unwrap_or(created_at),
                             ));
                         }
                     }
                     "assistant" => {
                         collect_assistant_message(
-                            item,
+                            &item,
                             created_at,
                             fold_commentary,
                             turn_cancelled && fold_commentary,
@@ -170,7 +177,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             &mut assistant.assistant_parts,
                             &mut assistant.memory_citations,
                         );
-                        if let Some(file_changes) = file_changes(item) {
+                        if let Some(file_changes) = file_changes(&item) {
                             assistant.file_changes =
                                 merge_file_changes(assistant.file_changes.take(), file_changes);
                         }
@@ -179,7 +186,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 },
                 "agentmessageevent" => {
                     collect_assistant_message(
-                        item,
+                        &item,
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
@@ -187,12 +194,18 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &mut assistant.assistant_parts,
                         &mut assistant.memory_citations,
                     );
-                    if let Some(file_changes) = file_changes(item) {
+                    if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), file_changes);
                     }
                 }
-                _ => {}
+                _ => {
+                    if is_default_tool_output_item(&item) {
+                        merge_tool_output(&mut assistant.blocks, &item, created_at);
+                    } else if is_default_tool_item(&item) {
+                        assistant.blocks.push(tool_block(&item, created_at));
+                    }
+                }
             }
         }
         push_accumulated_assistant(
@@ -203,7 +216,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 subtask_id,
                 created_at,
                 completed_at,
-                status: if turn_cancelled { "cancelled" } else { "done" },
+                status: assistant_status,
             },
             &mut assistant,
             true,
@@ -213,12 +226,12 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
 }
 
 pub(crate) fn tool_block_from_notification(params: &Value, status: &str) -> Option<Value> {
-    let item = params.get("item").unwrap_or(params);
-    let item_type = item_type(item);
-    if !is_tool_item_type(&item_type) {
+    let item = notification_item(params);
+    let item_type = item_type(&item);
+    if !is_likely_codex_tool_item_type(&item_type) {
         return None;
     }
-    let mut block = tool_block(item, now_ms());
+    let mut block = tool_block(&item, now_ms());
     if let Some(object) = block.as_object_mut() {
         object.insert("status".to_owned(), Value::String(status.to_owned()));
     }
@@ -226,18 +239,46 @@ pub(crate) fn tool_block_from_notification(params: &Value, status: &str) -> Opti
 }
 
 pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, Value)> {
-    let item = params.get("item").unwrap_or(params);
-    let item_type = item_type(item);
-    if !is_tool_item_type(&item_type) && !is_tool_output_item_type(&item_type) {
+    let item = notification_item(params);
+    let item_type = item_type(&item);
+    if !is_likely_codex_tool_item_type(&item_type)
+        && !is_likely_codex_tool_output_item_type(&item_type)
+    {
         return None;
     }
-    Some((
-        tool_call_id(item),
-        json!({
-            "status": tool_status(item),
-            "tool_output": tool_output(item),
-        }),
-    ))
+    let mut updates = json!({
+        "status": tool_status(&item),
+        "tool_output": tool_output(&item),
+    });
+    if let Some(input) = command_input_from_output(&item) {
+        if let Some(object) = updates.as_object_mut() {
+            object.insert("tool_input".to_owned(), input);
+        }
+    }
+    Some((tool_call_id(&item), updates))
+}
+
+fn notification_item(params: &Value) -> Value {
+    transcript_item(params.get("item").unwrap_or(params))
+}
+
+fn transcript_item(item: &Value) -> Value {
+    let Some(payload) = codex_wrapped_item_payload(item) else {
+        return item.clone();
+    };
+    let Some(payload_object) = payload.as_object() else {
+        return item.clone();
+    };
+
+    let mut object = payload_object.clone();
+    for key in ["id", "timestamp", "createdAt", "created_at"] {
+        if !object.contains_key(key) {
+            if let Some(value) = item.get(key).cloned() {
+                object.insert(key.to_owned(), value);
+            }
+        }
+    }
+    Value::Object(object)
 }
 
 fn turn_started_at(turn: &Value) -> i64 {
@@ -291,14 +332,15 @@ fn turn_has_substantive_process(turn: &Value) -> bool {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|item| {
-            let item_type = item_type(item);
+        .any(|raw_item| {
+            let item = transcript_item(raw_item);
+            let item_type = item_type(&item);
             is_substantive_process_item_type(&item_type)
                 || (item_type == "message"
-                    && !string_field(item, "role")
+                    && !string_field(&item, "role")
                         .unwrap_or_default()
                         .eq_ignore_ascii_case("user")
-                    && !is_agent_message(item))
+                    && !is_agent_message(&item))
         })
 }
 
@@ -310,12 +352,42 @@ fn is_agent_message(item: &Value) -> bool {
 }
 
 fn is_substantive_process_item_type(item_type: &str) -> bool {
-    is_tool_item_type(item_type)
-        || is_tool_output_item_type(item_type)
+    is_codex_tool_item_type(item_type)
+        || is_codex_tool_output_item_type(item_type)
+        || is_likely_codex_tool_item_type(item_type)
         || matches!(
             item_type,
             "reasoning" | "filechange" | "patchapplyend" | "contextcompaction"
         )
+}
+
+fn is_default_tool_item(item: &Value) -> bool {
+    let item_type = item_type(item);
+    !matches!(
+        item_type.as_str(),
+        "" | "message"
+            | "usermessage"
+            | "agentmessage"
+            | "agentmessageevent"
+            | "reasoning"
+            | "filechange"
+            | "patchapplyend"
+            | "contextcompaction"
+    ) && (is_likely_codex_tool_item_type(&item_type)
+        || string_field(item, "call_id").is_some()
+        || string_field(item, "callId").is_some())
+}
+
+fn is_default_tool_output_item(item: &Value) -> bool {
+    let item_type = item_type(item);
+    is_default_tool_item(item)
+        && (is_likely_codex_tool_output_item_type(&item_type)
+            || item.get("output").is_some()
+            || item.get("result").is_some()
+            || item.get("aggregatedOutput").is_some()
+            || item.get("aggregated_output").is_some()
+            || item.get("stdout").is_some()
+            || item.get("stderr").is_some())
 }
 
 fn turn_interrupted(turn: &Value) -> bool {
@@ -336,6 +408,16 @@ fn turn_running(turn: &Value) -> bool {
     })
 }
 
+fn turn_assistant_status(turn: &Value) -> &'static str {
+    if turn_running(turn) {
+        "streaming"
+    } else if turn_interrupted(turn) {
+        "cancelled"
+    } else {
+        "done"
+    }
+}
+
 fn turn_status(turn: &Value) -> Option<String> {
     string_field(turn, "status").map(normalized_phase_or_status)
 }
@@ -345,7 +427,7 @@ fn turn_has_final_assistant_message(turn: &Value) -> bool {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(is_final_assistant_message)
+        .any(|item| is_final_assistant_message(&transcript_item(item)))
 }
 
 fn is_final_assistant_message(item: &Value) -> bool {
@@ -458,6 +540,7 @@ fn push_accumulated_assistant(
     };
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         turn_id: &synthetic_turn_id,
+        source_turn_id: context.turn_id,
         subtask_id: context.subtask_id,
         created_at: context.created_at,
         completed_at: context.completed_at,
@@ -473,7 +556,7 @@ fn push_accumulated_assistant(
     assistant.clear_after_emit();
 }
 
-fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64) {
+fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, turn_id: &str) {
     let content = extract_text(item).unwrap_or_default();
     let attachments = user_message_image_attachments(item, created_at);
     if content.trim().is_empty() && attachments.is_empty() {
@@ -486,6 +569,7 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64) {
         "content": content,
         "status": "done",
         "createdAt": item_timestamp(item).unwrap_or(created_at),
+        "turnId": turn_id,
     });
     if !attachments.is_empty() {
         if let Some(object) = message.as_object_mut() {
@@ -737,6 +821,7 @@ fn item_timestamp(item: &Value) -> Option<i64> {
 
 struct AssistantMessageDraft<'a> {
     turn_id: &'a str,
+    source_turn_id: &'a str,
     subtask_id: i64,
     created_at: i64,
     completed_at: Option<i64>,
@@ -758,11 +843,14 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "subtaskId": draft.subtask_id,
         "subtask_id": draft.subtask_id,
         "createdAt": draft.created_at,
+        "turnId": draft.source_turn_id,
         "blocks": draft.blocks,
     });
-    if let Some(completed_at) = draft.completed_at {
-        if let Some(object) = message.as_object_mut() {
-            object.insert("completedAt".to_owned(), json!(completed_at));
+    if draft.status != "streaming" {
+        if let Some(completed_at) = draft.completed_at {
+            if let Some(object) = message.as_object_mut() {
+                object.insert("completedAt".to_owned(), json!(completed_at));
+            }
         }
     }
     if draft.status == "cancelled" {
@@ -770,9 +858,11 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
             object.insert("stoppedNotice".to_owned(), json!(draft.stopped_notice));
         }
     }
-    if let Some(file_changes) = draft.file_changes {
-        if let Some(object) = message.as_object_mut() {
-            object.insert("fileChanges".to_owned(), file_changes);
+    if draft.status != "streaming" {
+        if let Some(file_changes) = draft.file_changes {
+            if let Some(object) = message.as_object_mut() {
+                object.insert("fileChanges".to_owned(), file_changes);
+            }
         }
     }
     if !draft.context_events.is_empty() {
@@ -835,12 +925,13 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
             .is_some_and(|value| value == call_id)
     }) {
         if let Some(object) = block.as_object_mut() {
+            merge_tool_input(object, command_input_from_output(item));
             object.insert("tool_output".to_owned(), tool_output(item));
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
     }
-    blocks.push(json!({
+    let mut block = json!({
         "id": call_id,
         "type": "tool",
         "tool_use_id": tool_call_id(item),
@@ -848,15 +939,21 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
         "tool_output": tool_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
-    }));
+    });
+    if let Some(input) = command_input_from_output(item) {
+        if let Some(object) = block.as_object_mut() {
+            object.insert("tool_input".to_owned(), input);
+        }
+    }
+    blocks.push(block);
 }
 
 fn command_input(item: &Value) -> Value {
     json!({
-        "command": string_field(item, "command")
+        "command": command_string(item)
             .or_else(|| command_from_local_shell_action(item))
             .unwrap_or_default(),
-        "cwd": string_field(item, "cwd").unwrap_or_default(),
+        "cwd": command_cwd(item).unwrap_or_default(),
     })
 }
 
@@ -867,39 +964,60 @@ fn command_output(item: &Value) -> String {
         .unwrap_or_default()
 }
 
+fn command_input_from_output(item: &Value) -> Option<Value> {
+    if item_type(item) != "execcommandend" {
+        return None;
+    }
+    Some(command_input(item))
+}
+
+fn merge_tool_input(object: &mut Map<String, Value>, next_input: Option<Value>) {
+    let Some(next_input) = next_input.and_then(|value| value.as_object().cloned()) else {
+        return;
+    };
+    let input = object
+        .entry("tool_input".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !input.is_object() {
+        *input = Value::Object(Map::new());
+    }
+    let Some(input_object) = input.as_object_mut() else {
+        return;
+    };
+    for (key, value) in next_input {
+        if input_object
+            .get(&key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+        {
+            continue;
+        }
+        input_object.insert(key, value);
+    }
+}
+
+fn command_string(item: &Value) -> Option<String> {
+    string_field(item, "command").or_else(|| {
+        let command = item.get("command")?.as_array()?;
+        let parts = command
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join(" "))
+    })
+}
+
+fn command_cwd(item: &Value) -> Option<String> {
+    string_field(item, "cwd").or_else(|| string_field(item, "workdir"))
+}
+
 fn command_from_local_shell_action(item: &Value) -> Option<String> {
     item.get("action").and_then(|action| {
         string_field(action, "command")
             .or_else(|| string_field(action, "cmd"))
             .or_else(|| string_field(action, "commandLine"))
     })
-}
-
-fn is_tool_item_type(item_type: &str) -> bool {
-    matches!(
-        item_type,
-        "commandexecution"
-            | "shellcall"
-            | "localshellcall"
-            | "functioncall"
-            | "customtoolcall"
-            | "dynamictoolcall"
-            | "mcptoolcall"
-            | "mcpcall"
-            | "toolsearchcall"
-            | "websearchcall"
-            | "websearch"
-            | "imagegeneration"
-            | "imageview"
-            | "sleep"
-    )
-}
-
-fn is_tool_output_item_type(item_type: &str) -> bool {
-    matches!(
-        item_type,
-        "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput"
-    )
 }
 
 fn tool_call_id(item: &Value) -> String {
@@ -930,16 +1048,21 @@ fn tool_name(item: &Value) -> String {
                 .unwrap_or(tool)
         }
         "toolsearchcall" | "toolsearchoutput" => "tool_search".to_owned(),
+        "execcommandend" => "exec_command".to_owned(),
         "websearch" | "websearchcall" => "web_search".to_owned(),
         "imagegeneration" => "image_generation".to_owned(),
         "imageview" => "view_image".to_owned(),
         "sleep" => "sleep".to_owned(),
-        _ => "tool".to_owned(),
+        _ => string_field(item, "name")
+            .or_else(|| string_field(item, "tool"))
+            .or_else(|| raw_string_field(item, "type"))
+            .unwrap_or_else(|| "tool".to_owned()),
     }
 }
 
 fn tool_input(item: &Value) -> Value {
     match item_type(item).as_str() {
+        "execcommandend" => command_input(item),
         "functioncall" => parse_json_object_string(item, "arguments").unwrap_or_else(
             || json!({"arguments": raw_string_field(item, "arguments").unwrap_or_default()}),
         ),
@@ -964,8 +1087,32 @@ fn tool_input(item: &Value) -> Value {
         "imagegeneration" => {
             json!({"revised_prompt": string_field(item, "revisedPrompt").or_else(|| string_field(item, "revised_prompt")).unwrap_or_default()})
         }
-        _ => Value::Object(Map::new()),
+        _ => default_tool_input(item),
     }
+}
+
+fn default_tool_input(item: &Value) -> Value {
+    let mut input = Map::new();
+    for key in [
+        "type",
+        "id",
+        "call_id",
+        "callId",
+        "name",
+        "tool",
+        "server",
+        "command",
+        "cwd",
+        "workdir",
+        "arguments",
+        "input",
+        "action",
+    ] {
+        if let Some(value) = item.get(key).cloned() {
+            input.insert(key.to_owned(), value);
+        }
+    }
+    Value::Object(input)
 }
 
 fn parse_json_object_string(item: &Value, key: &str) -> Option<Value> {
@@ -977,7 +1124,9 @@ fn parse_json_object_string(item: &Value, key: &str) -> Option<Value> {
 
 fn tool_output(item: &Value) -> Value {
     match item_type(item).as_str() {
-        "commandexecution" | "shellcall" | "localshellcall" => Value::String(command_output(item)),
+        "commandexecution" | "shellcall" | "localshellcall" | "execcommandend" => {
+            Value::String(command_output(item))
+        }
         "functioncalloutput" | "customtoolcalloutput" => output_payload_text(item)
             .map(Value::String)
             .unwrap_or_else(|| item.get("output").cloned().unwrap_or(Value::Null)),
@@ -1003,8 +1152,32 @@ fn tool_output(item: &Value) -> Value {
             .or_else(|| raw_string_field(item, "result"))
             .map(Value::String)
             .unwrap_or(Value::Null),
-        _ => Value::Null,
+        _ => default_tool_output(item),
     }
+}
+
+fn default_tool_output(item: &Value) -> Value {
+    if let Some(output) = output_payload_text(item) {
+        return Value::String(output);
+    }
+    let command_output = command_output(item);
+    if !command_output.is_empty() {
+        return Value::String(command_output);
+    }
+    let stdout = raw_string_field(item, "stdout").unwrap_or_default();
+    let stderr = raw_string_field(item, "stderr").unwrap_or_default();
+    let combined = [stdout, stderr]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !combined.is_empty() {
+        return Value::String(combined);
+    }
+    item.get("result")
+        .or_else(|| item.get("formatted_output"))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn output_payload_text(item: &Value) -> Option<String> {
@@ -1034,10 +1207,18 @@ fn output_content_items_text(value: &Value) -> String {
 }
 
 fn tool_status(item: &Value) -> String {
-    let status = string_field(item, "status").unwrap_or_else(|| "completed".to_owned());
+    let status = string_field(item, "status").unwrap_or_else(|| {
+        if is_codex_tool_output_item_type(&item_type(item)) {
+            "completed".to_owned()
+        } else {
+            "inProgress".to_owned()
+        }
+    });
     if status.eq_ignore_ascii_case("failed")
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
+        || integer_field(item, "exit_code").is_some_and(|exit_code| exit_code != 0)
+        || integer_field(item, "exitCode").is_some_and(|exit_code| exit_code != 0)
         || bool_field(item, "success").is_some_and(|success| !success)
         || item.get("error").is_some()
     {
@@ -1510,6 +1691,201 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transcript_unwraps_codex_response_item_and_event_msg_items() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "completedAt": 1_780_000_005,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_000,
+                            "payload": {
+                                "id": "user-1",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "inspect runtime"}]
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "commentary-1",
+                                "type": "agent_message",
+                                "phase": "commentary",
+                                "message": "I will inspect the runtime."
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "id": "reasoning-1",
+                                "type": "reasoning",
+                                "summary": ["Checking the relevant files."]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_003,
+                            "payload": {
+                                "id": "call-1",
+                                "type": "function_call",
+                                "call_id": "call-1",
+                                "name": "exec_command",
+                                "arguments": "{\"cmd\":\"rg runtime\",\"workdir\":\"/tmp/project\"}"
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_004,
+                            "payload": {
+                                "id": "call-output-1",
+                                "type": "function_call_output",
+                                "call_id": "call-1",
+                                "output": "runtime.rs"
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_005,
+                            "payload": {
+                                "id": "final-1",
+                                "type": "message",
+                                "role": "assistant",
+                                "phase": "final_answer",
+                                "content": [{"type": "output_text", "text": "Done."}]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "inspect runtime");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Done.");
+        assert_eq!(messages[1]["blocks"][0]["type"], "text");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "I will inspect the runtime."
+        );
+        assert_eq!(messages[1]["blocks"][0]["timestamp"], 1_780_000_001_000_i64);
+        assert_eq!(messages[1]["blocks"][1]["type"], "thinking");
+        assert_eq!(
+            messages[1]["blocks"][1]["content"],
+            "Checking the relevant files."
+        );
+        assert_eq!(messages[1]["blocks"][2]["tool_name"], "exec_command");
+        assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
+        assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
+        assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_merges_exec_command_end_into_function_call_block() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "id": "call-1",
+                                "type": "function_call",
+                                "call_id": "call-1",
+                                "name": "exec_command",
+                                "arguments": "{\"cmd\":\"pwd\",\"workdir\":\"/tmp/project\"}"
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "pwd"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": "/tmp/project\n",
+                                "status": "completed",
+                                "exit_code": 0
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(messages[0]["status"], "streaming");
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "exec_command");
+        assert_eq!(block["tool_input"]["cmd"], "pwd");
+        assert_eq!(block["tool_input"]["cwd"], "/tmp/project");
+        assert_eq!(block["tool_output"], "/tmp/project\n");
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_renders_unknown_tool_events_with_default_blocks() {
+        let thread = json!({
+            "id": "thread-1",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "custom_command_begin",
+                                "call_id": "call-unknown",
+                                "name": "unknown_runner",
+                                "input": {"path": "src/main.rs"}
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "custom_command_end",
+                                "call_id": "call-unknown",
+                                "stdout": "ok\n",
+                                "status": "completed"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "unknown_runner");
+        assert_eq!(block["tool_input"]["input"]["path"], "src/main.rs");
+        assert_eq!(block["tool_output"], "ok\n");
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
     fn interrupted_turn_keeps_commentary_visible_and_cancelled_status() {
         let thread = json!({
             "id": "thread-1",
@@ -1606,6 +1982,60 @@ mod tests {
         assert_eq!(
             messages[3]["blocks"][1]["content"],
             "I will use the lockfile context."
+        );
+    }
+
+    #[test]
+    fn running_turn_stays_streaming_without_final_file_changes_card() {
+        let thread = json!({
+            "id": "thread-running",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-running",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "id": "user-1",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "keep working"}]
+                        },
+                        {
+                            "id": "reasoning-1",
+                            "type": "reasoning",
+                            "summary": ["Still inspecting."]
+                        },
+                        {
+                            "id": "call-1",
+                            "type": "function_call",
+                            "call_id": "call-1",
+                            "name": "exec_command",
+                            "arguments": "{\"cmd\":\"sed -n '1,20p' src/main.rs\",\"workdir\":\"/tmp/project\"}"
+                        },
+                        {
+                            "id": "patch-1",
+                            "type": "patchApplyEnd",
+                            "status": "completed",
+                            "changes": [{"path": "src/main.rs", "kind": "modified", "additions": 2, "deletions": 1}]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["status"], "streaming");
+        assert!(messages[1].get("completedAt").is_none());
+        assert!(messages[1].get("fileChanges").is_none());
+        assert_eq!(messages[1]["blocks"][0]["type"], "thinking");
+        assert_eq!(messages[1]["blocks"][1]["tool_name"], "exec_command");
+        assert_eq!(messages[1]["blocks"][1]["status"], "pending");
+        assert_eq!(
+            messages[1]["blocks"][1]["tool_input"]["cmd"],
+            "sed -n '1,20p' src/main.rs"
         );
     }
 }

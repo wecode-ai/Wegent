@@ -946,13 +946,6 @@ describe('DesktopSidebar', () => {
                 workspacePath: '/repo/Wegent',
                 localTasks: [
                   {
-                    localTaskId: 'old-task',
-                    workspacePath: '/repo/Wegent',
-                    title: 'Old task',
-                    runtime: 'codex',
-                    updatedAt: '2026-06-20T00:00:00Z',
-                  },
-                  {
                     localTaskId: 'new-task',
                     workspacePath: '/repo/Wegent',
                     title: 'New task',
@@ -965,6 +958,13 @@ describe('DesktopSidebar', () => {
                     title: 'Middle task',
                     runtime: 'codex',
                     updatedAt: '2026-06-21T00:00:00Z',
+                  },
+                  {
+                    localTaskId: 'old-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Old task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T00:00:00Z',
                   },
                 ],
               },
@@ -1687,7 +1687,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('limits project runtime tasks to five rows and toggles the rest by updated time', async () => {
+  test('limits project runtime tasks to five rows and preserves append order', async () => {
     renderSidebar({
       runtimeWork: {
         projects: [
@@ -1760,26 +1760,26 @@ describe('DesktopSidebar', () => {
     const collapsedRows = screen.getAllByTestId(/^runtime-local-task-row-/)
     expect(collapsedRows).toHaveLength(5)
     expect(collapsedRows.map(row => row.textContent)).toEqual([
-      expect.stringContaining('Newest task'),
-      expect.stringContaining('Second task'),
+      expect.stringContaining('Oldest hidden task'),
       expect.stringContaining('Third task'),
-      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Newest task'),
       expect.stringContaining('Fifth task'),
+      expect.stringContaining('Second task'),
     ])
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
 
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
-    expect(screen.getByText('Oldest hidden task')).toBeInTheDocument()
+    expect(screen.getByText('Fourth task')).toBeInTheDocument()
     expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toHaveTextContent('折叠显示')
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
   })
 
   test('toggles a project when its sidebar row is clicked', async () => {

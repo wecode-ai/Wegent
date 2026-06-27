@@ -159,7 +159,9 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
 
     expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
-    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('BACKEND_URL=127.0.0.1')
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
+      'BACKEND_URL=127.0.0.1'
+    )
   })
 
   test('only persists the top-level processing expansion state', () => {
@@ -303,12 +305,12 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps completed tools expanded until the assistant turn finishes', () => {
+  test('keeps completed tools collapsed while the assistant turn is still running', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     expect(screen.queryByText('已运行 1 条命令')).not.toBeInTheDocument()
     expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
-    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {

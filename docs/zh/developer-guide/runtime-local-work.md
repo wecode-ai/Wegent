@@ -72,6 +72,36 @@ POST /api/runtime-work/transcript
 
 Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.transcript`。原生 Codex 任务通过 Codex session path 或 session 文件发现定位；非 Codex/导入类任务可以使用 `workspacePath` 作为本地索引查找提示，或者通过本机 LocalTask 索引按 `localTaskId` 定位。executor 读取原生运行时 transcript，并返回标准化消息。
 
+### Codex 会话读取路径与性能
+
+Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
+
+1. 列表调用 Codex app-server `thread/list`，并传 `useStateDbOnly: true`。这个接口只读 Codex state DB 中的 thread metadata，不扫描 JSONL transcript；executor 只额外读取 rollout 尾部一小段来判断 Codex 自己发起的会话是否仍在运行，然后合并设备侧 LocalTask 索引。
+2. 首次打开调用 `thread/read`，并传 `includeTurns: false`，只拿 thread metadata 和 rollout path。executor 用这个 path 自己顺序解析一次 JSONL，生成标准化消息、tool block、thinking block、文件变更和 raw rollout turns，并把这些结果连同文件长度/mtime 签名放进内存 cache。
+3. 已加载后的切换不再访问 Codex app-server，也不重新读文件。executor 从内存 cache 取完整消息数组，然后用请求里的 `limit`/`beforeCursor` 做分页返回。
+4. 切换时需要获取最新数据时，executor 先读取当前 rollout 文件签名。如果文件只发生 append，就从上次文件长度开始读取新增字节，把新增事件合并到缓存的 rollout turns，并只从受影响的第一个 turn 重新生成消息，按 `turnId` 替换缓存尾部。这样 tool item、thinking、运行状态和最新文本都来自同一个 append 结果，不需要额外 fallback。
+5. 只有文件被截断、mtime 变化但长度不变、或老缓存没有 raw turns 时，才丢弃缓存重新执行一次首次打开路径。这是文件非 append 变化的恢复路径，不承载正常功能。
+
+没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。也没有在打开时请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
+
+可用下面的手工 benchmark 复测本机 rollout：
+
+```bash
+cd executor
+WEGENT_MANUAL_ROLLOUT=/path/to/rollout.jsonl \
+WEGENT_MANUAL_APPEND=1 \
+cargo test --test manual_runtime_perf -- --ignored --nocapture
+```
+
+当前本机实测结果：
+
+| 样本 | 文件大小 | 列表 | 首次打开 | 已加载切换 | append 刷新 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| “修复进行中任务未显示 tool 调用” | 约 39 MB | 438 ms | 1.24 s | 27 ms | 45 ms |
+| 极端长历史 | 约 312 MB | 445 ms | 19.56 s | 97 ms | 53 ms |
+
+因此常规长会话达到列表 1 秒以内、首次打开 3 秒以内、已加载切换和获取最新数据 500 ms 以内。极端历史的首次冷解析仍受 JSONL 文件大小限制，但加载后切换和 append 刷新不再随历史总长度增长。
+
 继续 LocalTask 时，Wework 调用：
 
 ```text

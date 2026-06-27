@@ -56,6 +56,8 @@ const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
+const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
+  /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
   '.apng': 'image/apng',
   '.avif': 'image/avif',
@@ -447,6 +449,7 @@ function parseCodexLocalFileMentions(content: string): {
     const filename = match[1]?.trim()
     const path = match[2]?.trim()
     if (!filename || !path) continue
+    if (isTransientCodexClipboardImage(path)) continue
     const target = { filename, path }
     if (isLocalImageMention(filename, path)) {
       if (!images.some(image => image.path === path || image.filename === filename)) {
@@ -466,6 +469,10 @@ function parseCodexLocalFileMentions(content: string): {
 
 function isLocalImageMention(filename: string, path: string): boolean {
   return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
+}
+
+function isTransientCodexClipboardImage(path: string): boolean {
+  return CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN.test(path)
 }
 
 function getLocalImageExtension(filename: string, path: string): string {

@@ -132,6 +132,64 @@ function updateRuntimeWorkDeviceStatus(
   }
 }
 
+function mergeRuntimeWorkPreservingTaskOrder(
+  current: RuntimeWorkListResponse | null | undefined,
+  next: RuntimeWorkListResponse | null
+): RuntimeWorkListResponse | null {
+  if (!current || !next) return next
+
+  const mergeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    const currentWorkspace = findMatchingRuntimeWorkspace(current, workspace)
+    if (!currentWorkspace) return workspace
+    return {
+      ...workspace,
+      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+    }
+  }
+
+  return {
+    ...next,
+    projects: next.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(mergeWorkspace),
+    })),
+    chats: next.chats.map(mergeWorkspace),
+  }
+}
+
+function findMatchingRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse,
+  target: RuntimeDeviceWorkspace
+): RuntimeDeviceWorkspace | null {
+  const workspaces = [
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ...runtimeWork.chats,
+  ]
+  return (
+    workspaces.find(
+      workspace =>
+        workspace.deviceId === target.deviceId && workspace.workspacePath === target.workspacePath
+    ) ?? null
+  )
+}
+
+function mergeRuntimeLocalTasks(
+  currentTasks: RuntimeDeviceWorkspace['localTasks'],
+  nextTasks: RuntimeDeviceWorkspace['localTasks']
+) {
+  const nextById = new Map(nextTasks.map(task => [task.localTaskId, task]))
+  const merged = currentTasks
+    .map(task => nextById.get(task.localTaskId))
+    .filter((task): task is RuntimeDeviceWorkspace['localTasks'][number] => Boolean(task))
+  const mergedIds = new Set(merged.map(task => task.localTaskId))
+  nextTasks.forEach(task => {
+    if (!mergedIds.has(task.localTaskId)) {
+      merged.push(task)
+    }
+  })
+  return merged
+}
+
 function findRuntimeTaskAddressByLocalTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   localTaskId: string
@@ -310,7 +368,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
     case 'lists_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
+      const runtimeWork =
+        action.runtimeWork === undefined
+          ? state.runtimeWork
+          : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       const refreshedState = {
         ...state,
         projects: action.projects,
@@ -357,21 +418,23 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             : action.standaloneWorkspacePath,
       }
     }
-    case 'runtime_work_refreshed':
+    case 'runtime_work_refreshed': {
+      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       return {
         ...state,
-        runtimeWork: action.runtimeWork,
+        runtimeWork,
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           state.projects,
-          action.runtimeWork
+          runtimeWork
         ),
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           state.devices,
-          action.runtimeWork
+          runtimeWork
         ),
       }
+    }
     case 'device_status_changed':
       return {
         ...state,

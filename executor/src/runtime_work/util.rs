@@ -177,6 +177,59 @@ pub(crate) fn item_type(item: &Value) -> String {
         .to_ascii_lowercase()
 }
 
+pub(crate) fn codex_wrapped_item_payload(item: &Value) -> Option<&Value> {
+    if matches!(item_type(item).as_str(), "responseitem" | "eventmsg") {
+        return item.get("payload").filter(|payload| payload.is_object());
+    }
+    None
+}
+
+pub(crate) fn is_codex_tool_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "commandexecution"
+            | "shellcall"
+            | "localshellcall"
+            | "functioncall"
+            | "customtoolcall"
+            | "dynamictoolcall"
+            | "mcptoolcall"
+            | "mcpcall"
+            | "toolsearchcall"
+            | "websearchcall"
+            | "websearch"
+            | "imagegeneration"
+            | "imageview"
+            | "sleep"
+    )
+}
+
+pub(crate) fn is_codex_tool_output_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput" | "execcommandend"
+    )
+}
+
+pub(crate) fn is_likely_codex_tool_item_type(item_type: &str) -> bool {
+    is_codex_tool_item_type(item_type)
+        || is_codex_tool_output_item_type(item_type)
+        || item_type.contains("tool")
+        || item_type.contains("command")
+        || item_type.contains("exec")
+        || item_type.contains("mcp")
+        || item_type.contains("function")
+}
+
+pub(crate) fn is_likely_codex_tool_output_item_type(item_type: &str) -> bool {
+    is_codex_tool_output_item_type(item_type)
+        || (is_likely_codex_tool_item_type(item_type)
+            && (item_type.ends_with("end")
+                || item_type.ends_with("output")
+                || item_type.ends_with("result")
+                || item_type.contains("complete")))
+}
+
 pub(crate) fn item_id(item: &Value, prefix: &str) -> String {
     string_field(item, "id").unwrap_or_else(|| format!("{prefix}-{}", now_ms()))
 }

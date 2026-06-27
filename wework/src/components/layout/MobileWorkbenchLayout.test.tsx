@@ -1023,7 +1023,7 @@ describe('MobileWorkbenchLayout', () => {
     })
   })
 
-  test('limits mobile project runtime tasks to five rows and toggles the rest by updated time', async () => {
+  test('limits mobile project runtime tasks to five rows and preserves append order', async () => {
     render(
       <MobileWorkbenchLayout
         state={{
@@ -1106,13 +1106,13 @@ describe('MobileWorkbenchLayout', () => {
     const collapsedRows = screen.getAllByTestId('mobile-runtime-task-button')
     expect(collapsedRows).toHaveLength(5)
     expect(collapsedRows.map(row => row.textContent)).toEqual([
-      expect.stringContaining('Newest task'),
-      expect.stringContaining('Second task'),
+      expect.stringContaining('Oldest hidden task'),
       expect.stringContaining('Third task'),
-      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Newest task'),
       expect.stringContaining('Fifth task'),
+      expect.stringContaining('Second task'),
     ])
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
       '展开显示'
     )
@@ -1120,7 +1120,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(6)
-    expect(screen.getByText('Oldest hidden task')).toBeInTheDocument()
+    expect(screen.getByText('Fourth task')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
       '折叠显示'
     )
@@ -1128,7 +1128,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
   })
 
   test('opens project actions on long press without expanding the project', async () => {

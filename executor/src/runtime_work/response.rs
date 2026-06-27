@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    infer_workspace_kind, infer_worktree_id, now_ms, path_is_within, string_field,
-    timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
+    codex_wrapped_item_payload, infer_workspace_kind, infer_worktree_id, now_ms, path_is_within,
+    string_field, timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
 };
 
 const DEFAULT_CODEX_SESSION_LIMIT: u64 = 100;
@@ -84,7 +84,8 @@ impl RuntimeTaskLink {
         } else {
             thread_status(thread)
         };
-        let running = !local_archived && thread_running(thread);
+        let local_running = local_link.as_ref().is_some_and(|link| link.running);
+        let running = !local_archived && (local_running || thread_running(thread));
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -409,6 +410,7 @@ fn turn_or_item_running(value: &Value) -> bool {
     string_field(value, "status")
         .map(|status| normalized_running_status(&status))
         .unwrap_or(false)
+        || codex_wrapped_item_payload(value).is_some_and(turn_or_item_running)
         || value
             .get("items")
             .and_then(Value::as_array)

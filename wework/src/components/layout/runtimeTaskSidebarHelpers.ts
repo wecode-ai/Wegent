@@ -30,9 +30,7 @@ export function getRuntimeTaskRuntimeLabel(runtime: string) {
 export function getRuntimeSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
-  return sortRuntimeTaskItems(
-    workspaces.flatMap(workspace => workspace.localTasks.map(task => ({ workspace, task })))
-  )
+  return workspaces.flatMap(workspace => workspace.localTasks.map(task => ({ workspace, task })))
 }
 
 export function getRuntimeChatSidebarTaskItems(

@@ -204,7 +204,7 @@ describe('MessageList', () => {
     const secondText = screen.getByText('从常用目录看，可能的前端仓库很多。')
 
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
-    expect(activityRow).toHaveTextContent('已探索 1 个文件')
+    expect(activityRow).toHaveTextContent('已读取 1 个文件')
     expect(firstText.compareDocumentPosition(activityRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -1505,6 +1505,36 @@ describe('MessageList', () => {
     fireEvent.error(await screen.findByTestId('message-local-image-preview'))
 
     expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+  })
+
+  test('does not create Tauri asset previews for transient Codex clipboard images', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-transient-clipboard-image',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## codex-clipboard-c73483f7-dfe5-413b-a30f-787bb2814c21.png: /var/folders/fp/l62gd0z17ys57j9s7t0dfq3w0000gn/T/codex-clipboard-c73483f7-dfe5-413b-a30f-787bb2814c21.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-mention')).not.toBeInTheDocument()
+    expect(tauriCoreMock.convertFileSrc).not.toHaveBeenCalledWith(
+      expect.stringContaining('codex-clipboard-c73483f7')
+    )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 

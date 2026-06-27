@@ -359,4 +359,95 @@ describe('workbenchReducer', () => {
       available: true,
     })
   })
+
+  test('preserves runtime task order on refresh and appends new tasks', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'task-a',
+                    workspacePath: '/workspace/repo',
+                    title: 'Task A',
+                    runtime: 'codex',
+                  },
+                  {
+                    localTaskId: 'task-b',
+                    workspacePath: '/workspace/repo',
+                    title: 'Task B',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 2,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'task-b',
+                    workspacePath: '/workspace/repo',
+                    title: 'Task B updated',
+                    runtime: 'codex',
+                    running: true,
+                  },
+                  {
+                    localTaskId: 'task-a',
+                    workspacePath: '/workspace/repo',
+                    title: 'Task A updated',
+                    runtime: 'codex',
+                  },
+                  {
+                    localTaskId: 'task-c',
+                    workspacePath: '/workspace/repo',
+                    title: 'Task C',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 3,
+      },
+    })
+
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].localTasks.map(
+        task => task.localTaskId
+      )
+    ).toEqual(['task-a', 'task-b', 'task-c'])
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].localTasks[1]).toMatchObject({
+      title: 'Task B updated',
+      running: true,
+    })
+  })
 })

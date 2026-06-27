@@ -72,6 +72,36 @@ POST /api/runtime-work/transcript
 
 Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. Native Codex tasks are located through their Codex session path or session-file discovery. Non-Codex/imported tasks may use `workspacePath` as a local-index lookup hint, or locate the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
 
+### Codex Transcript Read Path And Performance
+
+Wework uses one primary read path for local Codex conversations so list, open, and refresh do not each implement separate transcript logic:
+
+1. The list path calls Codex app-server `thread/list` with `useStateDbOnly: true`. This reads thread metadata from Codex's state DB without scanning JSONL transcripts. The executor only reads a small rollout tail to infer whether a Codex-native conversation is still running, then merges the device-side LocalTask index.
+2. The first open path calls `thread/read` with `includeTurns: false`, which returns thread metadata and the rollout path only. The executor then parses that JSONL once, builds normalized messages, tool blocks, thinking blocks, file changes, and raw rollout turns, and stores them in memory with the rollout length/mtime signature.
+3. Switching to an already loaded conversation no longer calls Codex app-server or rereads the file. The executor serves the full message array from memory and applies the requested `limit`/`beforeCursor` page.
+4. When a switch needs fresh data, the executor first reads the current rollout file signature. If the file only appended bytes, it reads from the previous length, applies those events to the cached rollout turns, regenerates messages only from the first affected turn, and replaces the cached tail by `turnId`. Tool items, thinking, running status, and new text all come from that single append result.
+5. The only recovery path is a non-append file change: truncation, same-length mtime changes, or an old cache without raw turns. In that case the executor discards the cache and runs the first-open path again.
+
+Wework does not use Codex app-server `thread/turns/list` for long transcript paging because the current Codex implementation still replays the whole rollout file on each request. That has the same cost as a full read and cannot reuse the executor's normalized tool/message cache. Opening with `includeTurns: true` is also avoided because large transcripts would be serialized through app-server before the executor normalizes them, increasing IPC and frontend pressure.
+
+Use this manual benchmark to recheck a local rollout:
+
+```bash
+cd executor
+WEGENT_MANUAL_ROLLOUT=/path/to/rollout.jsonl \
+WEGENT_MANUAL_APPEND=1 \
+cargo test --test manual_runtime_perf -- --ignored --nocapture
+```
+
+Current local measurements:
+
+| Sample | File size | List | First open | Loaded switch | Append refresh |
+| --- | --- | ---: | ---: | ---: | ---: |
+| "Fix running task tool calls not shown" | about 39 MB | 438 ms | 1.24 s | 27 ms | 45 ms |
+| Extreme long history | about 312 MB | 445 ms | 19.56 s | 97 ms | 53 ms |
+
+The normal long-conversation target is therefore met: list under 1 second, first open under 3 seconds, and loaded switch plus fresh-data refresh under 500 ms. The first cold parse for extreme histories is still bounded by JSONL size, but loaded switching and append refresh no longer grow with total history length.
+
 When a user continues a LocalTask, Wework calls:
 
 ```text
