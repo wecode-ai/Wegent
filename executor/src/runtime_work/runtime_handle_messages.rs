@@ -301,6 +301,14 @@ fn messages_match(left: &Value, right: &Value) -> bool {
     if string_field(left, "role") != string_field(right, "role") {
         return false;
     }
+    let left_subtask_id =
+        integer_field(left, "subtaskId").or_else(|| integer_field(left, "subtask_id"));
+    let right_subtask_id =
+        integer_field(right, "subtaskId").or_else(|| integer_field(right, "subtask_id"));
+    if left_subtask_id.is_some() && right_subtask_id.is_some() {
+        return left_subtask_id == right_subtask_id;
+    }
+
     let left_content = string_field(left, "content").unwrap_or_default();
     let right_content = string_field(right, "content").unwrap_or_default();
     if left_content == right_content {
@@ -411,7 +419,10 @@ fn merge_message_blocks(
     for cached_block in cached_blocks {
         if let Some(index) = matching_block_index(&codex_blocks, &used_codex_blocks, cached_block) {
             used_codex_blocks[index] = true;
-            merged.push(codex_blocks[index].clone());
+            merged.push(merge_cached_block_fields(
+                codex_blocks[index].clone(),
+                cached_block,
+            ));
         } else {
             merged.push(cached_block.clone());
         }
@@ -424,6 +435,57 @@ fn merge_message_blocks(
     }
 
     Some(merged)
+}
+
+fn merge_cached_block_fields(mut codex_block: Value, cached_block: &Value) -> Value {
+    let Some(codex_object) = codex_block.as_object_mut() else {
+        return codex_block;
+    };
+    let Some(cached_object) = cached_block.as_object() else {
+        return codex_block;
+    };
+
+    for key in ["content", "tool_input", "tool_output"] {
+        if field_should_fill_from_cached(codex_object.get(key)) {
+            if let Some(value) = cached_object.get(key).cloned() {
+                codex_object.insert(key.to_owned(), value);
+            }
+        }
+    }
+
+    let codex_status = codex_object
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let cached_status = cached_object
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !cached_status.is_empty()
+        && (codex_status.is_empty() || block_status_is_pending(codex_status))
+        && !block_status_is_pending(cached_status)
+    {
+        codex_object.insert("status".to_owned(), Value::String(cached_status.to_owned()));
+    }
+
+    codex_block
+}
+
+fn field_should_fill_from_cached(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(value)) => value.is_empty(),
+        Some(Value::Array(value)) => value.is_empty(),
+        Some(Value::Object(value)) => value.is_empty(),
+        _ => false,
+    }
+}
+
+fn block_status_is_pending(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "pending" | "running" | "streaming" | "inprogress" | "in_progress" | "active" | "busy"
+    )
 }
 
 fn matching_block_index(blocks: &[Value], used_blocks: &[bool], block: &Value) -> Option<usize> {

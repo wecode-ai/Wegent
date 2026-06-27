@@ -450,4 +450,129 @@ describe('workbenchReducer', () => {
       running: true,
     })
   })
+
+  test('keeps chat and project workspace task ordering separate when paths overlap', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/shared',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'project-task',
+                    workspacePath: '/workspace/shared',
+                    title: 'Project task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/shared',
+            workspaceKind: 'chat',
+            available: true,
+            mapped: true,
+            localTasks: [
+              {
+                localTaskId: 'chat-b',
+                workspacePath: '/workspace/shared',
+                title: 'Chat B',
+                runtime: 'codex',
+              },
+              {
+                localTaskId: 'chat-a',
+                workspacePath: '/workspace/shared',
+                title: 'Chat A',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 3,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/shared',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'project-task',
+                    workspacePath: '/workspace/shared',
+                    title: 'Project task updated',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/shared',
+            workspaceKind: 'chat',
+            available: true,
+            mapped: true,
+            localTasks: [
+              {
+                localTaskId: 'chat-a',
+                workspacePath: '/workspace/shared',
+                title: 'Chat A updated',
+                runtime: 'codex',
+              },
+              {
+                localTaskId: 'chat-b',
+                workspacePath: '/workspace/shared',
+                title: 'Chat B updated',
+                runtime: 'codex',
+              },
+              {
+                localTaskId: 'chat-c',
+                workspacePath: '/workspace/shared',
+                title: 'Chat C',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 4,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.chats[0].localTasks.map(task => task.localTaskId)).toEqual([
+      'chat-b',
+      'chat-a',
+      'chat-c',
+    ])
+    expect(refreshed.runtimeWork?.chats[0].localTasks[0]).toMatchObject({
+      title: 'Chat B updated',
+    })
+  })
 })

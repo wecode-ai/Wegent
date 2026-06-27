@@ -138,8 +138,20 @@ function mergeRuntimeWorkPreservingTaskOrder(
 ): RuntimeWorkListResponse | null {
   if (!current || !next) return next
 
-  const mergeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingRuntimeWorkspace(current, workspace)
+  const mergeProjectWorkspace = (
+    projectWork: RuntimeProjectWork,
+    workspace: RuntimeDeviceWorkspace
+  ): RuntimeDeviceWorkspace => {
+    const currentWorkspace = findMatchingProjectRuntimeWorkspace(current, projectWork, workspace)
+    if (!currentWorkspace) return workspace
+    return {
+      ...workspace,
+      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+    }
+  }
+
+  const mergeChatWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    const currentWorkspace = findMatchingChatRuntimeWorkspace(current, workspace)
     if (!currentWorkspace) return workspace
     return {
       ...workspace,
@@ -151,26 +163,62 @@ function mergeRuntimeWorkPreservingTaskOrder(
     ...next,
     projects: next.projects.map(project => ({
       ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(mergeWorkspace),
+      deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
+        mergeProjectWorkspace(project, workspace)
+      ),
     })),
-    chats: next.chats.map(mergeWorkspace),
+    chats: next.chats.map(mergeChatWorkspace),
   }
 }
 
-function findMatchingRuntimeWorkspace(
+function findMatchingProjectRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse,
+  projectWork: RuntimeProjectWork,
+  target: RuntimeDeviceWorkspace
+): RuntimeDeviceWorkspace | null {
+  const projectKey = runtimeProjectUiId(projectWork.project)
+  const currentProject = runtimeWork.projects.find(
+    project => runtimeProjectUiId(project.project) === projectKey
+  )
+  return (
+    currentProject?.deviceWorkspaces.find(workspace =>
+      runtimeWorkspaceMatches(workspace, target)
+    ) ?? null
+  )
+}
+
+function findMatchingChatRuntimeWorkspace(
   runtimeWork: RuntimeWorkListResponse,
   target: RuntimeDeviceWorkspace
 ): RuntimeDeviceWorkspace | null {
-  const workspaces = [
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-    ...runtimeWork.chats,
-  ]
-  return (
-    workspaces.find(
-      workspace =>
-        workspace.deviceId === target.deviceId && workspace.workspacePath === target.workspacePath
-    ) ?? null
-  )
+  return runtimeWork.chats.find(workspace => runtimeWorkspaceMatches(workspace, target)) ?? null
+}
+
+function runtimeWorkspaceMatches(
+  current: RuntimeDeviceWorkspace,
+  target: RuntimeDeviceWorkspace
+): boolean {
+  if (current.deviceId !== target.deviceId || current.workspacePath !== target.workspacePath) {
+    return false
+  }
+  if (
+    current.workspaceKind &&
+    target.workspaceKind &&
+    current.workspaceKind !== target.workspaceKind
+  ) {
+    return false
+  }
+  if (
+    current.projectId != null &&
+    target.projectId != null &&
+    current.projectId !== target.projectId
+  ) {
+    return false
+  }
+  if (current.worktreeId && target.worktreeId && current.worktreeId !== target.worktreeId) {
+    return false
+  }
+  return true
 }
 
 function mergeRuntimeLocalTasks(

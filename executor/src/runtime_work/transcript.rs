@@ -1207,8 +1207,17 @@ fn output_content_items_text(value: &Value) -> String {
 }
 
 fn tool_status(item: &Value) -> String {
+    let item_type = item_type(item);
     let status = string_field(item, "status").unwrap_or_else(|| {
-        if is_codex_tool_output_item_type(&item_type(item)) {
+        if is_codex_tool_output_item_type(&item_type)
+            || is_likely_codex_tool_output_item_type(&item_type)
+            || item.get("output").is_some()
+            || item.get("result").is_some()
+            || item.get("aggregatedOutput").is_some()
+            || item.get("aggregated_output").is_some()
+            || item.get("stdout").is_some()
+            || item.get("stderr").is_some()
+        {
             "completed".to_owned()
         } else {
             "inProgress".to_owned()
@@ -1866,8 +1875,7 @@ mod tests {
                             "payload": {
                                 "type": "custom_command_end",
                                 "call_id": "call-unknown",
-                                "stdout": "ok\n",
-                                "status": "completed"
+                                "stdout": "ok\n"
                             }
                         }
                     ]

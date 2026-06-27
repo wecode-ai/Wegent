@@ -112,7 +112,7 @@ export function ToolBlocksDisplay({
         {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
       </div>
     ),
-    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
+    [forceExpanded, hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
   )
 
   if (blocks.length === 0 && !isStreaming) return null

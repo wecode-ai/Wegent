@@ -921,7 +921,7 @@ fn write_rollout_messages(path: &Path, messages: &[&str]) {
         );
         lines.push(json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string());
     }
-    fs::write(path, lines.join("\n")).unwrap();
+    fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
 }
 
 fn count_thread_reads(log_path: &Path) -> usize {

@@ -4,10 +4,12 @@
 
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::json;
@@ -150,9 +152,12 @@ done
         rollout, rollout
     );
     fs::write(&path, content).unwrap();
-    let mut permissions = fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
     path
 }
 

@@ -237,7 +237,7 @@ impl RuntimeWorkRpcHandler {
                 .map(|link| merge_cached_messages(cached.messages.clone(), cached_messages(link)))
                 .unwrap_or_else(|| cached.messages.clone());
             return Ok(transcript_response(
-                &cached.local_task_id,
+                &local_task_id,
                 cached.workspace_path,
                 cached.runtime,
                 messages,
@@ -266,7 +266,6 @@ impl RuntimeWorkRpcHandler {
                     thread,
                     local_link.as_ref(),
                     running_hint,
-                    &local_task_id,
                     &workspace_path,
                 ) {
                     let messages = updated.messages.clone();
@@ -297,7 +296,6 @@ impl RuntimeWorkRpcHandler {
         self.transcript_cache.insert(
             thread_id,
             CachedTranscript::new(
-                local_task_id.clone(),
                 workspace_path.clone(),
                 "codex".to_owned(),
                 messages.clone(),
@@ -1002,7 +1000,6 @@ impl RuntimeWorkRpcHandler {
                 self.transcript_cache.insert(
                     thread_id.to_owned(),
                     CachedTranscript::new(
-                        thread_id.to_owned(),
                         workspace_path,
                         "codex".to_owned(),
                         messages.clone(),
@@ -1026,7 +1023,6 @@ impl RuntimeWorkRpcHandler {
         thread: &Value,
         local_link: Option<&RuntimeTaskLink>,
         running_hint: bool,
-        local_task_id: &str,
         workspace_path: &str,
     ) -> Option<CachedTranscript> {
         let previous_signature = cached.source_signature.as_ref()?;
@@ -1067,7 +1063,6 @@ impl RuntimeWorkRpcHandler {
         let running = running_hint || messages.iter().any(runtime_message_running);
         Some(
             CachedTranscript::new(
-                local_task_id.to_owned(),
                 workspace_path.to_owned(),
                 "codex".to_owned(),
                 messages,
@@ -1535,6 +1530,104 @@ mod tests {
     }
 
     #[test]
+    fn cached_message_merge_matches_assistant_by_subtask_id() {
+        let codex_messages = vec![json!({
+            "id": "assistant-server",
+            "role": "assistant",
+            "content": "server snapshot",
+            "subtaskId": 42,
+        })];
+        let cached_messages = vec![json!({
+            "id": "assistant-live",
+            "role": "assistant",
+            "content": "live delta",
+            "subtaskId": 42,
+            "source": {"source": "im"},
+        })];
+
+        let merged = merge_cached_messages(codex_messages, cached_messages);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["id"], "assistant-server");
+        assert_eq!(merged[0]["content"], "server snapshot");
+        assert_eq!(merged[0]["source"]["source"], "im");
+    }
+
+    #[test]
+    fn cached_message_merge_preserves_live_block_fields() {
+        let codex_messages = vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "",
+            "subtaskId": 42,
+            "blocks": [
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_name": "exec_command",
+                    "status": "pending"
+                }
+            ],
+        })];
+        let cached_messages = vec![json!({
+            "id": "assistant-live",
+            "role": "assistant",
+            "content": "",
+            "subtaskId": 42,
+            "blocks": [
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_name": "exec_command",
+                    "status": "done",
+                    "tool_output": "ok"
+                }
+            ],
+        })];
+
+        let merged = merge_cached_messages(codex_messages, cached_messages);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0]["blocks"][0]["status"], "done");
+        assert_eq!(merged[0]["blocks"][0]["tool_output"], "ok");
+    }
+
+    #[tokio::test]
+    async fn cached_transcript_response_uses_requested_local_task_id() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Mapped task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        link.running = false;
+        link.status = "active".to_owned();
+        handler.upsert_local_task(link);
+        handler.transcript_cache.insert(
+            "thread-1",
+            CachedTranscript::new(
+                "/tmp/project".to_owned(),
+                "codex".to_owned(),
+                vec![json!({"id":"assistant-1","role":"assistant","content":"cached"})],
+                false,
+                None,
+            ),
+        );
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {"localTaskId": "local-task-1"}
+            }))
+            .await
+            .expect("cached transcript should return");
+
+        assert_eq!(result["localTaskId"], "local-task-1");
+        assert_eq!(result["messages"][0]["content"], "cached");
+    }
+
+    #[test]
     fn changed_transcript_messages_replace_tail_from_changed_turn() {
         let cached_messages = vec![
             json!({
@@ -1596,7 +1689,6 @@ mod tests {
         std::fs::write(&old_path, "{}\n").unwrap();
         std::fs::write(&new_path, "{}\n").unwrap();
         let cached = CachedTranscript::new(
-            "thread-1".to_owned(),
             "/tmp/project".to_owned(),
             "codex".to_owned(),
             Vec::new(),
@@ -1615,14 +1707,8 @@ mod tests {
             "cwd": "/tmp/project",
         });
 
-        let result = handler.incremental_cached_transcript(
-            cached,
-            &thread,
-            None,
-            false,
-            "thread-1",
-            "/tmp/project",
-        );
+        let result =
+            handler.incremental_cached_transcript(cached, &thread, None, false, "/tmp/project");
 
         assert!(result.is_none());
         let _ = std::fs::remove_file(old_path);

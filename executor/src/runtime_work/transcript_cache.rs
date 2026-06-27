@@ -4,7 +4,8 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom},
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
@@ -23,7 +24,6 @@ pub(crate) struct TranscriptCache {
 
 #[derive(Clone)]
 pub(crate) struct CachedTranscript {
-    pub local_task_id: String,
     pub workspace_path: String,
     pub runtime: String,
     pub messages: Vec<Value>,
@@ -42,7 +42,6 @@ pub(crate) struct TranscriptSourceSignature {
 
 impl CachedTranscript {
     pub fn new(
-        local_task_id: String,
         workspace_path: String,
         runtime: String,
         messages: Vec<Value>,
@@ -50,7 +49,6 @@ impl CachedTranscript {
         source_signature: Option<TranscriptSourceSignature>,
     ) -> Self {
         Self {
-            local_task_id,
             workspace_path,
             runtime,
             messages,
@@ -70,6 +68,9 @@ impl CachedTranscript {
 impl TranscriptSourceSignature {
     pub fn from_path(path: &str) -> Option<Self> {
         let metadata = fs::metadata(path).ok()?;
+        if !path_has_complete_tail(path, metadata.len())? {
+            return None;
+        }
         let modified_ms = metadata
             .modified()
             .ok()?
@@ -107,9 +108,15 @@ impl TranscriptCache {
         let mut entries = self.entries.lock().ok()?;
         let entry = entries.get(key)?;
         if require_current_source {
-            if let Some(signature) = &entry.source_signature {
-                return signature.is_current().then(|| entry.clone());
+            let is_current = entry
+                .source_signature
+                .as_ref()
+                .is_some_and(TranscriptSourceSignature::is_current);
+            if !is_current {
+                entries.remove(key);
+                return None;
             }
+            return Some(entry.clone());
         }
         let ttl = if running_hint || entry.running {
             RUNNING_TRANSCRIPT_CACHE_TTL_MS
@@ -138,5 +145,69 @@ impl TranscriptCache {
         if let Ok(mut entries) = self.entries.lock() {
             entries.remove(key);
         }
+    }
+}
+
+fn path_has_complete_tail(path: &str, len: u64) -> Option<bool> {
+    if len == 0 {
+        return Some(true);
+    }
+    let mut file = File::open(path).ok()?;
+    file.seek(SeekFrom::Start(len.saturating_sub(1))).ok()?;
+    let mut byte = [0_u8; 1];
+    file.read_exact(&mut byte).ok()?;
+    Some(byte[0] == b'\n')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_signature_requires_complete_jsonl_tail() {
+        let path = temp_path("partial-tail");
+        fs::write(&path, r#"{"type":"event"}"#).unwrap();
+
+        let signature = TranscriptSourceSignature::from_path(&path.display().to_string());
+
+        assert!(signature.is_none());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn source_signature_accepts_newline_terminated_jsonl_tail() {
+        let path = temp_path("complete-tail");
+        fs::write(&path, "{\"type\":\"event\"}\n").unwrap();
+
+        let signature = TranscriptSourceSignature::from_path(&path.display().to_string());
+
+        assert!(signature.is_some());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn refresh_cache_misses_entries_without_current_source_signature() {
+        let cache = TranscriptCache::default();
+        cache.insert(
+            "thread-1",
+            CachedTranscript::new(
+                "/tmp/project".to_owned(),
+                "codex".to_owned(),
+                Vec::new(),
+                true,
+                None,
+            ),
+        );
+
+        assert!(cache.get("thread-1", true, true).is_none());
+        assert!(cache.peek("thread-1").is_none());
+    }
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "wegent-transcript-cache-{label}-{}-{}.jsonl",
+            std::process::id(),
+            now_ms()
+        ))
     }
 }

@@ -91,6 +91,7 @@ export function RightWorkspacePanel({
     setBrowserTitle(null)
     onSelectBrowser()
   }
+  const selectTerminal = onSelectTerminal ?? (() => undefined)
 
   const closeTab = (tab: RightWorkspacePanelTab) => {
     if (tab === 'browser') {
@@ -163,7 +164,7 @@ export function RightWorkspacePanel({
                 tab === 'review'
                   ? onSelectReview
                   : tab === 'terminal'
-                    ? onSelectTerminal
+                    ? selectTerminal
                     : tab === 'browser'
                       ? onSelectBrowser
                       : onSelectFiles

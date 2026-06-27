@@ -1608,14 +1608,16 @@ describe('WorkbenchProvider runtime tasks', () => {
                   role: 'assistant',
                   content: 'working',
                   status: 'streaming',
+                  subtaskId: 901,
                 },
               ]
             : [
                 {
-                  id: 'assistant-1',
+                  id: 'assistant-1-rebuilt',
                   role: 'assistant',
                   content: 'still working',
                   status: 'streaming',
+                  subtaskId: 901,
                 },
               ],
       } satisfies RuntimeTranscriptResponse
@@ -1642,6 +1644,96 @@ describe('WorkbenchProvider runtime tasks', () => {
         ),
       { timeout: 3000 }
     )
+  })
+
+  test('ignores stale overlapping runtime transcript polls', async () => {
+    const runningWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              localTasks: [
+                {
+                  localTaskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalLocalTasks: 1,
+    })
+    const slowPoll = deferred<RuntimeTranscriptResponse>()
+    const fastPoll = deferred<RuntimeTranscriptResponse>()
+    let transcriptCalls = 0
+    const getRuntimeTranscript = vi.fn().mockImplementation(async () => {
+      transcriptCalls += 1
+      if (transcriptCalls === 1) {
+        return {
+          localTaskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+          messages: [{ id: 'user-1', role: 'user', content: 'initial' }],
+        } satisfies RuntimeTranscriptResponse
+      }
+      if (transcriptCalls === 2) return slowPoll.promise
+      return fastPoll.promise
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runningWork),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('initial')
+    )
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(3), {
+      timeout: 2500,
+    })
+
+    await act(async () => {
+      fastPoll.resolve({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'assistant-fresh', role: 'assistant', content: 'fresh' }],
+      })
+      await fastPoll.promise
+    })
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('fresh')
+
+    await act(async () => {
+      slowPoll.resolve({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'assistant-stale', role: 'assistant', content: 'stale' }],
+      })
+      await slowPoll.promise
+    })
+
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('fresh')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('stale')
   })
 
   test('reviews runtime transcript file changes through device command and reverts through runtime API', async () => {

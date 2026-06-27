@@ -1092,14 +1092,48 @@ function mergeRuntimeSnapshotMessages(
   if (currentMessages.length === 0) return snapshotMessages
 
   const snapshotById = new Map(snapshotMessages.map(message => [message.id, message]))
-  const merged = currentMessages.map(message => snapshotById.get(message.id) ?? message)
-  const currentIds = new Set(currentMessages.map(message => message.id))
+  const snapshotByMergeKey = new Map<string, WorkbenchMessage[]>()
   snapshotMessages.forEach(message => {
-    if (!currentIds.has(message.id)) {
+    const key = runtimeMessageMergeKey(message)
+    if (!key) return
+    const candidates = snapshotByMergeKey.get(key) ?? []
+    candidates.push(message)
+    snapshotByMergeKey.set(key, candidates)
+  })
+  const usedSnapshotIds = new Set<string>()
+  const merged = currentMessages.map(message => {
+    const byId = snapshotById.get(message.id)
+    if (byId) {
+      usedSnapshotIds.add(byId.id)
+      return byId
+    }
+    const key = runtimeMessageMergeKey(message)
+    const byKey = key
+      ? snapshotByMergeKey.get(key)?.find(candidate => !usedSnapshotIds.has(candidate.id))
+      : undefined
+    if (byKey) {
+      usedSnapshotIds.add(byKey.id)
+      return byKey
+    }
+    return message
+  })
+  snapshotMessages.forEach(message => {
+    if (!usedSnapshotIds.has(message.id)) {
       merged.push(message)
     }
   })
   return merged
+}
+
+function runtimeMessageMergeKey(message: WorkbenchMessage): string | null {
+  if (message.role === 'assistant' && typeof message.subtaskId === 'number') {
+    return `assistant:${message.subtaskId}`
+  }
+  const content = message.content.trim()
+  if (message.role === 'user' && content) {
+    return `user:${content}`
+  }
+  return null
 }
 
 function findFileChangesBySubtaskId(
@@ -1382,6 +1416,7 @@ export function WorkbenchProvider({
   >(new Map())
   const handledRuntimeTaskRouteRef = useRef<string | null>(null)
   const runtimeOpenRequestIdRef = useRef(0)
+  const runtimeSnapshotRequestIdRef = useRef(0)
   const currentRuntimeTaskRef = useRef<RuntimeTaskAddress | null>(null)
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   const currentRuntimeTaskKey = state.currentRuntimeTask
@@ -1773,6 +1808,7 @@ export function WorkbenchProvider({
 
   const refreshCurrentRuntimeTaskSnapshot = useCallback(
     async (address: RuntimeTaskAddress) => {
+      const requestId = ++runtimeSnapshotRequestIdRef.current
       const [transcriptResult, runtimeWorkResult] = await Promise.allSettled([
         executorClient.runtime.getRuntimeTranscript({
           ...address,
@@ -1782,7 +1818,12 @@ export function WorkbenchProvider({
         executorClient.runtime.listRuntimeWork(),
       ])
 
-      if (!isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) return
+      if (
+        requestId !== runtimeSnapshotRequestIdRef.current ||
+        !isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)
+      ) {
+        return
+      }
 
       if (runtimeWorkResult.status === 'fulfilled') {
         dispatch({ type: 'runtime_work_refreshed', runtimeWork: runtimeWorkResult.value })
