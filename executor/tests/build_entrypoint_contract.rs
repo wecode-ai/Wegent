@@ -61,14 +61,17 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let local_sh = fs::read_to_string("local.sh").unwrap();
     assert!(local_sh.contains("cargo build --release --locked"));
-    assert!(local_sh.contains("target/release/wegent-executor"));
+    assert!(local_sh.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
+    assert!(local_sh.contains("cargo_target_binary_path \"$ROOT_DIR\" release wegent-executor"));
 
     let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
     assert!(dev_sidecar.contains("--features dev-reload"));
     assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
     assert!(dev_sidecar.contains("cargo build"));
-    assert!(dev_sidecar.contains("exec \"$EXECUTOR_DIR/target/debug/wegent-executor-dev\""));
+    assert!(dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
+    assert!(dev_sidecar
+        .contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor-dev"));
     assert!(!dev_sidecar.contains("exec cargo run"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();

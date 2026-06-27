@@ -7,11 +7,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 PID_DIR="$ROOT_DIR/.pids"
 PID_FILE="$PID_DIR/wegent-executor.pid"
 RUN_LOG="$PID_DIR/wegent-executor.log"
 BUILD_LOG="$PID_DIR/wegent-executor-build.log"
 BINARY_PATH="${WEGENT_EXECUTOR_BINARY:-$ROOT_DIR/dist/wegent-executor}"
+
+# shellcheck source=../scripts/lib/cargo-cache.sh
+source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 
 DEFAULT_FILE_EDIT_HOOK_COMMAND='tee -a /tmp/hook-debug.log | curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log -H "Content-Type: application/json" -H "wecode-source: wegent-device" --data-binary @-'
 
@@ -36,6 +40,10 @@ Environment:
   WEGENT_BACKEND_URL             Optional; overrides device-config.json
   WEGENT_FILE_EDIT_HOOK_COMMAND  Default: local file edit hook collector
   WEGENT_EXECUTOR_BINARY         Default: dist/wegent-executor
+  CARGO_TARGET_DIR               Explicit Cargo target directory. Overrides auto cache.
+  WEGENT_CARGO_TARGET_ROOT       Shared Cargo target root for Wegent local builds.
+  WEGENT_DISABLE_SHARED_CARGO_TARGET
+                                  Set to 1 to keep Cargo's default per-worktree target.
 
 Examples:
   ./local.sh all
@@ -62,12 +70,14 @@ is_running() {
 build_executor() {
     local version_arg="${1:-}"
     ensure_pid_dir
+    configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor"
     echo "Building local executor. Log: $BUILD_LOG"
+    echo "Cargo target dir: ${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
     (
         cd "$ROOT_DIR"
         cargo build --release --locked
         mkdir -p dist
-        cp target/release/wegent-executor dist/wegent-executor
+        cp "$(cargo_target_binary_path "$ROOT_DIR" release wegent-executor)" dist/wegent-executor
         chmod 0755 dist/wegent-executor
         if [[ "$(uname -s)" == "Darwin" ]]; then
             codesign --force --sign - --options runtime dist/wegent-executor >/dev/null 2>&1 || true

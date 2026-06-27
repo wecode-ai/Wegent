@@ -169,7 +169,25 @@ fn debug_binary_path(manifest_dir: &Path) -> PathBuf {
     } else {
         "wegent-executor"
     };
-    manifest_dir.join("target").join("debug").join(executable)
+    cargo_target_dir(manifest_dir)
+        .join("debug")
+        .join(executable)
+}
+
+fn cargo_target_dir(manifest_dir: &Path) -> PathBuf {
+    match env::var_os("CARGO_TARGET_DIR").filter(|value| !value.is_empty()) {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                path
+            } else {
+                env::current_dir()
+                    .unwrap_or_else(|_| manifest_dir.to_path_buf())
+                    .join(path)
+            }
+        }
+        None => manifest_dir.join("target"),
+    }
 }
 
 fn stop_child(child: &mut Option<Child>) {
@@ -216,4 +234,82 @@ fn drain_debounced_events(rx: &mpsc::Receiver<DevEvent>) -> bool {
 
 fn is_reload_event(event: &Event) -> bool {
     !matches!(event.kind, EventKind::Access(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should not be poisoned")
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                env::set_var(self.key, previous);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn debug_binary_path_uses_explicit_cargo_target_dir() {
+        let _guard = env_lock();
+        let target_dir = env::temp_dir().join("wegent-executor-dev-target");
+        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &target_dir);
+
+        assert_eq!(
+            debug_binary_path(Path::new("/tmp/executor")),
+            target_dir.join("debug").join(executable_name())
+        );
+    }
+
+    #[test]
+    fn debug_binary_path_defaults_to_manifest_target_dir() {
+        let _guard = env_lock();
+        let _env = EnvVarGuard::remove("CARGO_TARGET_DIR");
+        let manifest_dir = Path::new("/tmp/executor");
+
+        assert_eq!(
+            debug_binary_path(manifest_dir),
+            manifest_dir
+                .join("target")
+                .join("debug")
+                .join(executable_name())
+        );
+    }
+
+    fn executable_name() -> &'static str {
+        if cfg!(windows) {
+            "wegent-executor.exe"
+        } else {
+            "wegent-executor"
+        }
+    }
 }
