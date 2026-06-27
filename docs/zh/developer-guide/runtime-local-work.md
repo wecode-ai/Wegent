@@ -42,6 +42,8 @@ Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制
 5. Backend 做轻量聚合后返回给 Wework，不再读取或匹配 Backend `projects` 表。
 6. Wework 根据 runtime work 响应展示 Project 和 Conversation；每个 LocalTask 的打开和通知身份仍是 `deviceId + localTaskId`。
 
+`runtime.tasks.list` 的响应有两层工作区语义。外层 workspace 表示侧栏 Project 分组，Codex git worktree 任务应归并到共同的仓库根目录；内层 LocalTask 表示任务实际运行目录，必须保留自己的 `workspacePath`。如果该目录是 git worktree，LocalTask 需要携带 `workspaceKind: worktree` 和 `worktreeId`，侧栏 worktree 图标、底部终端 cwd 和右侧工具目录都只从 LocalTask 字段判断。不能因为某个 LocalTask 是 worktree 就把父 workspace 标记为 worktree，也不能把 LocalTask 路径覆盖成父 workspace 路径。
+
 executor 不主动向 Backend 轮询或推送任务列表。离线设备不会贡献 LocalTask；Wework 可以显示映射目录离线，但不会从中心库缓存本地任务。
 
 如果只有一个设备，Wework 不在项目名后显示设备 IP；如果有多个设备，本地设备不显示 IP，远端在线设备显示可用的非 loopback runtime transfer host 或客户端 IP，并配绿色在线点。远程项目和远程主机选择器的主显示文本也优先使用这个 IP/host；设备 id 只是缺少网络地址时的技术回退。
@@ -126,6 +128,8 @@ Wework 打开 LocalTask 后，右侧文件、审查和终端工具使用当前 L
 - 如果 LocalTask 能映射到 Project，环境信息和审查仍带上 Project，但 Git 命令运行在 LocalTask 的实际目录。
 - 如果 LocalTask 没有映射到 Project，只要设备在线且目录可访问，本地终端仍可打开；依赖 Project API 的 IDE 能力仍要求 Project 上下文。
 - 对运行时 LocalTask 打开的终端必须使用当前 LocalTask 的 `deviceId + workspacePath` 启动设备级 PTY，不能回退到 Project 默认绑定设备，否则跨设备 worktree 会打开到错误机器。
+
+底部终端面板的状态也以当前工作区工具上下文分隔。用户在 A LocalTask 打开的终端不能在切换到 B LocalTask 后复用为 B 的终端；切回 A 时才恢复 A 的终端状态。未选中 LocalTask、只选中本地 Project 时，终端 cwd 使用该 Project 的本地路径；本地 App 模式不应因为没有 Backend 连接而显示云设备提示或回退到 `$HOME`。
 
 ## 创建任务
 

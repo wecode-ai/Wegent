@@ -639,7 +639,16 @@ function getCurrentAppPath(): string {
 }
 
 function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {
-  return `${route.deviceId}:${route.localTaskId}`
+  return `${route.deviceId}:${route.localTaskId}:${route.workspacePath ?? ''}`
+}
+
+function matchesRequestedWorkspacePath(
+  currentPath?: string | null,
+  requestedPath?: string | null
+): boolean {
+  const normalizedRequestedPath = requestedPath?.trim()
+  if (!normalizedRequestedPath) return true
+  return currentPath?.trim() === normalizedRequestedPath
 }
 
 function isSameRuntimeTaskIdentity(
@@ -647,7 +656,10 @@ function isSameRuntimeTaskIdentity(
   route: RuntimeTaskRoute
 ): boolean {
   return Boolean(
-    address && address.deviceId === route.deviceId && address.localTaskId === route.localTaskId
+    address &&
+    address.deviceId === route.deviceId &&
+    address.localTaskId === route.localTaskId &&
+    matchesRequestedWorkspacePath(address.workspacePath, route.workspacePath)
   )
 }
 
@@ -655,16 +667,32 @@ function isSameRuntimeTaskAddress(
   left: RuntimeTaskAddress | null | undefined,
   right: RuntimeTaskAddress
 ): boolean {
-  return Boolean(left && left.deviceId === right.deviceId && left.localTaskId === right.localTaskId)
+  return Boolean(
+    left &&
+    left.deviceId === right.deviceId &&
+    left.localTaskId === right.localTaskId &&
+    matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
+  )
 }
 
 function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
   return workspaces.flatMap(workspace =>
     workspace.localTasks.map(task => ({
       deviceId: workspace.deviceId,
+      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       localTaskId: task.localTaskId,
     }))
   )
+}
+
+function getRuntimeTaskWorkspacePath(
+  workspace: RuntimeDeviceWorkspace,
+  task: { workspacePath?: string | null }
+): string {
+  if (workspace.workspaceKind === 'worktree' || workspace.worktreeId) {
+    return workspace.workspacePath
+  }
+  return task.workspacePath || workspace.workspacePath
 }
 
 function projectTaskAddresses(
@@ -702,6 +730,7 @@ function resolveRuntimeTaskRouteAddress(
       } else {
         fallbackAddress = {
           deviceId: workspace.deviceId,
+          workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
           localTaskId: task.localTaskId,
         }
       }
@@ -710,6 +739,7 @@ function resolveRuntimeTaskRouteAddress(
 
     return {
       deviceId: workspace.deviceId,
+      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       localTaskId: task.localTaskId,
     }
   }
@@ -2970,6 +3000,8 @@ export function WorkbenchProvider({
       }
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
+        workspacePath:
+          'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
         localTaskId,
       }
       const runtimeProject = projectId
@@ -3008,6 +3040,7 @@ export function WorkbenchProvider({
         }
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
+          workspacePath: response.workspacePath || optimisticAddress.workspacePath,
           localTaskId: response.localTaskId || optimisticAddress.localTaskId,
         }
         if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {

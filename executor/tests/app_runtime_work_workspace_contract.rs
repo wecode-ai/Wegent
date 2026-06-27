@@ -281,7 +281,19 @@ async fn runtime_task_list_coalesces_codex_git_worktrees_under_common_repo_root(
     assert_eq!(workspace["updatedAt"], 1780000120000_i64);
     assert_eq!(workspace["localTasks"].as_array().unwrap().len(), 2);
     assert_eq!(workspace["localTasks"][0]["localTaskId"], "thread-b");
+    assert_eq!(
+        workspace["localTasks"][0]["workspacePath"],
+        codex_worktree_b.display().to_string()
+    );
+    assert_eq!(workspace["localTasks"][0]["workspaceKind"], "worktree");
+    assert_eq!(workspace["localTasks"][0]["worktreeId"], "b");
     assert_eq!(workspace["localTasks"][1]["localTaskId"], "thread-a");
+    assert_eq!(
+        workspace["localTasks"][1]["workspacePath"],
+        codex_worktree_a.display().to_string()
+    );
+    assert_eq!(workspace["localTasks"][1]["workspaceKind"], "worktree");
+    assert_eq!(workspace["localTasks"][1]["worktreeId"], "a");
 }
 
 #[tokio::test]

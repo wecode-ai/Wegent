@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createQuotaApi } from '@/api/quota'
+import {
+  closeLocalTerminal,
+  getLocalExecutorDeviceId,
+  isLocalTerminalAvailable,
+  localPathExists,
+  startLocalTerminal,
+} from '@/lib/local-terminal'
 import '@/i18n'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
@@ -74,6 +81,14 @@ vi.mock('@/api/projects', () => ({
 
 vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
+}))
+
+vi.mock('@/lib/local-terminal', () => ({
+  closeLocalTerminal: vi.fn(),
+  getLocalExecutorDeviceId: vi.fn(),
+  isLocalTerminalAvailable: vi.fn(),
+  localPathExists: vi.fn(),
+  startLocalTerminal: vi.fn(),
 }))
 
 vi.mock('@pierre/diffs/react', async () => {
@@ -205,11 +220,37 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
-  RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
+  RemoteTerminal: ({
+    active,
+    sessionId,
+    testIdsEnabled = true,
+  }: {
+    active: boolean
+    sessionId: string
+    testIdsEnabled?: boolean
+  }) => (
     <div
-      data-testid="remote-terminal"
+      data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
       data-session-id={sessionId}
       className="h-full w-full"
+      hidden={!active}
+    />
+  ),
+}))
+
+vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
+  EmbeddedLocalTerminal: ({
+    active,
+    sessionId,
+    testIdsEnabled = true,
+  }: {
+    active: boolean
+    sessionId: string
+    testIdsEnabled?: boolean
+  }) => (
+    <div
+      data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
+      data-session-id={sessionId}
       hidden={!active}
     />
   ),
@@ -218,6 +259,11 @@ vi.mock('./workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createQuotaApiMock = vi.mocked(createQuotaApi)
+const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
+const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const localPathExistsMock = vi.mocked(localPathExists)
+const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
@@ -300,6 +346,11 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
     Element.prototype.scrollIntoView = vi.fn()
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+    getLocalExecutorDeviceIdMock.mockResolvedValue(null)
+    localPathExistsMock.mockResolvedValue(false)
+    startLocalTerminalMock.mockResolvedValue('local-terminal-1')
+    closeLocalTerminalMock.mockResolvedValue(undefined)
     fetchQuotaMock.mockResolvedValue({
       quota: 748,
       usage: 747.74,
@@ -447,12 +498,12 @@ describe('DesktopWorkbenchLayout', () => {
       config: {
         mode: 'workspace' as const,
         execution: {
-          targetType: 'local' as const,
+          targetType: 'cloud' as const,
           deviceId: workspaceDevice.device_id,
         },
         workspace: {
-          source: 'local_path' as const,
-          localPath: '/workspace/project',
+          source: 'git' as const,
+          checkoutPath: '/workspace/project',
         },
       },
     }
@@ -2481,41 +2532,45 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens the right workspace new tab menu as a native Tauri popup', async () => {
+  test('opens the right workspace new tab menu as an anchored popup in Tauri', async () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
 
     const newTabButton = screen.getByTestId('right-workspace-new-tab-button')
-    vi.spyOn(newTabButton, 'getBoundingClientRect').mockReturnValue(
-      createRect({ left: 238, top: 22, width: 32, height: 32 })
-    )
     ;(window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
 
     await userEvent.click(newTabButton)
 
-    await waitFor(() => expect(tauriMenuMocks.menuNew).toHaveBeenCalledTimes(1))
+    const menu = screen.getByTestId('right-workspace-new-tab-menu')
+    expect(menu).toBeInTheDocument()
+    expect(within(menu).getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+    expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
+    expect(within(menu).queryByTestId('right-workspace-browser-option')).not.toBeInTheDocument()
+    expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
+    expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
+    expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
+  })
+
+  test('opens terminal in the right workspace panel from the right add menu', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+
+    const menu = screen.getByTestId('right-workspace-new-tab-menu')
+    await userEvent.click(within(menu).getByTestId('right-workspace-terminal-option'))
+
     expect(screen.queryByTestId('right-workspace-new-tab-menu')).not.toBeInTheDocument()
-    expect(tauriMenuMocks.menuNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'right-workspace-new-tab-native-menu',
-        items: [
-          expect.objectContaining({
-            id: 'right-workspace-new-tab-review',
-            text: expect.stringContaining('审查'),
-          }),
-          expect.objectContaining({
-            id: 'right-workspace-new-tab-files',
-            text: expect.stringContaining('文件'),
-          }),
-        ],
-      })
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
     )
-    expect(tauriMenuMocks.menuPopup).toHaveBeenCalledWith(
-      expect.objectContaining({ x: 238, y: 60 }),
-      { label: 'main' }
-    )
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'true')
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
   })
 
   test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
@@ -4095,6 +4150,396 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-terminal-frame')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-window')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
+  })
+
+  test('opens a local project terminal when a project is selected without an active task', async () => {
+    const otherWorkspaceProject = {
+      id: 31,
+      name: 'ws1',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/Users/me/ws1',
+        },
+      },
+    }
+    const localWorkspaceProject = {
+      id: 32,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/Users/me/Wegent',
+        },
+      },
+    }
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    localPathExistsMock.mockResolvedValue(true)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: null,
+          projects: [otherWorkspaceProject, localWorkspaceProject],
+          devices: [],
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [otherWorkspaceProject, localWorkspaceProject],
+          currentProjectId: localWorkspaceProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/Users/me/Wegent',
+      })
+    )
+    expect(startTerminalSessionMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('uses local mode for a selected git project without an active task', async () => {
+    const gitWorkspaceProject = {
+      id: 33,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'workspace-cloud-device',
+        },
+        workspace: {
+          source: 'git' as const,
+          checkoutPath: '/Users/me/Wegent',
+        },
+      },
+    }
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue(null)
+    localPathExistsMock.mockResolvedValue(true)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: null,
+          projects: [gitWorkspaceProject],
+          devices: [],
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [gitWorkspaceProject],
+          currentProjectId: gitWorkspaceProject.id,
+          executionMode: 'current_workspace',
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/Users/me/Wegent',
+      })
+    )
+    expect(startTerminalSessionMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('opens the selected runtime project workspace path instead of the home directory', async () => {
+    const runtimeProject = {
+      id: 34,
+      name: 'Wegent',
+      tasks: [],
+    }
+    const localDevice = {
+      id: 41,
+      device_id: 'local-device',
+      name: 'Mac',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue('local-device')
+    localPathExistsMock.mockResolvedValue(true)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: runtimeProject,
+          projects: [],
+          devices: [localDevice],
+          runtimeWork: {
+            projects: [
+              {
+                project: {
+                  id: runtimeProject.id,
+                  key: 'project:wegent',
+                  name: runtimeProject.name,
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 42,
+                    deviceId: localDevice.device_id,
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/Users/me/Wegent',
+                    workspaceSource: 'local',
+                    localTasks: [],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalLocalTasks: 0,
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [],
+          devices: [localDevice],
+          runtimeWork: {
+            projects: [
+              {
+                project: {
+                  id: runtimeProject.id,
+                  key: 'project:wegent',
+                  name: runtimeProject.name,
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 42,
+                    deviceId: localDevice.device_id,
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/Users/me/Wegent',
+                    workspaceSource: 'local',
+                    localTasks: [],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalLocalTasks: 0,
+          },
+          currentProject: runtimeProject,
+          currentProjectId: runtimeProject.id,
+          selectedDeviceWorkspaceId: 42,
+          executionMode: 'current_workspace',
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/Users/me/Wegent',
+      })
+    )
+    expect(startTerminalSessionMock).not.toHaveBeenCalled()
+    expect(localPathExistsMock).toHaveBeenCalledWith('/Users/me/Wegent')
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('preserves bottom terminal state per runtime task', async () => {
+    const runtimeProject = {
+      id: 35,
+      name: 'Wegent',
+      tasks: [],
+    }
+    const localDevice = {
+      id: 43,
+      device_id: 'local-device',
+      name: 'Mac',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: {
+            id: runtimeProject.id,
+            key: 'project:wegent',
+            name: runtimeProject.name,
+          },
+          deviceWorkspaces: [
+            {
+              id: 44,
+              deviceId: localDevice.device_id,
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/Users/me/Wegent',
+              workspaceSource: 'local' as const,
+              localTasks: [
+                {
+                  localTaskId: 'runtime-a',
+                  workspacePath: '/Users/me/Wegent/.worktrees/a',
+                  title: 'Task A',
+                  runtime: 'codex',
+                },
+                {
+                  localTaskId: 'runtime-b',
+                  workspacePath: '/Users/me/Wegent/.worktrees/b',
+                  title: 'Task B',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 2,
+    }
+    const taskA = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/a',
+      localTaskId: 'runtime-a',
+    }
+    const taskB = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/b',
+      localTaskId: 'runtime-b',
+    }
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalTerminalMock
+      .mockResolvedValueOnce('local-terminal-a')
+      .mockResolvedValueOnce('local-terminal-b')
+
+    const propsForTask = (task: typeof taskA) => ({
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        currentProject: runtimeProject,
+        currentRuntimeTask: task,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+        currentProject: runtimeProject,
+        currentProjectId: runtimeProject.id,
+        selectedDeviceWorkspaceId: 44,
+        executionMode: 'current_workspace' as const,
+      },
+    })
+    const visibleLocalTerminals = () =>
+      screen
+        .queryAllByTestId('embedded-local-terminal')
+        .filter(element => !element.hasAttribute('hidden'))
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/Users/me/Wegent/.worktrees/a',
+      })
+    )
+    await waitFor(() => {
+      const terminals = visibleLocalTerminals()
+      expect(terminals).toHaveLength(1)
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(visibleLocalTerminals()).toHaveLength(0)
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/Users/me/Wegent/.worktrees/b',
+      })
+    )
+    await waitFor(() => {
+      const terminals = visibleLocalTerminals()
+      expect(terminals).toHaveLength(1)
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-b')
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(2)
+    await waitFor(() => {
+      const terminals = visibleLocalTerminals()
+      expect(terminals).toHaveLength(1)
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+    })
+  })
+
+  test('opens the bottom workspace add menu without replacing the terminal', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+
+    const menu = screen.getByTestId('workspace-terminal-new-tab-menu')
+    expect(menu).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-window')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
+    expect(within(menu).getByTestId('workspace-add-terminal-option')).toHaveTextContent('终端')
+    expect(within(menu).queryByTestId('workspace-add-review-option')).not.toBeInTheDocument()
+    expect(within(menu).queryByTestId('workspace-add-browser-option')).not.toBeInTheDocument()
+    expect(within(menu).queryByTestId('workspace-add-files-option')).not.toBeInTheDocument()
+
+    await userEvent.click(within(menu).getByTestId('workspace-add-terminal-option'))
+
+    expect(screen.queryByTestId('workspace-terminal-new-tab-menu')).not.toBeInTheDocument()
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByTestId('remote-terminal')).toHaveLength(2)
+    expect(screen.getAllByTestId('bottom-workspace-terminal-tab')).toHaveLength(2)
+    expect(screen.getAllByTestId('bottom-workspace-terminal-tab')[1]).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
   })
 
   test('closes the bottom workspace panel from the panel edge', async () => {

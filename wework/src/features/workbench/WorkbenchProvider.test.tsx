@@ -1355,6 +1355,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',
+      workspacePath: '/workspace/project-alpha',
       limit: 50,
     })
   })
@@ -1608,8 +1609,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       address: {
         deviceId: 'device-1',
         localTaskId: 'runtime-restored',
+        workspacePath: '/workspace/project-alpha',
       },
-      fileChanges,
+      fileChanges: expect.objectContaining(fileChanges),
     })
     expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
   })
