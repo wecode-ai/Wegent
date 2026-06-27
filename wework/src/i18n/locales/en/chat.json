@@ -1,4 +1,8 @@
 {
+  "message_navigation": {
+    "label": "Previous message navigation",
+    "jump_to_message": "Jump to message {{index}}"
+  },
   "thinking": {
     "running": "Thinking",
     "updating": "Organizing thoughts...",

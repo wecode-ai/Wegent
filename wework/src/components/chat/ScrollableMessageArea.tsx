@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import type { DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { MessageTurnNavigation } from './MessageTurnNavigation'
 
 const BOTTOM_THRESHOLD = 48
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
@@ -355,6 +356,7 @@ export function ScrollableMessageArea({
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
+      <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
       <div
         ref={scrollRef}
         data-testid={scrollTestId}
