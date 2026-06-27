@@ -41,6 +41,38 @@ describe('toolBlockActivity', () => {
     ).toBe('已探索 1 个文件 1 次搜索 已运行 1 条命令')
   })
 
+  test('classifies commandLine aliases as shell command activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'cmdline-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { commandLine: 'find . -name package.json' },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已探索 1 次搜索')
+  })
+
+  test('summarizes mid-turn user guidance activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'guidance-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'conversation_guidance',
+          toolInput: { message: 'follow this file' },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已引导对话')
+  })
+
   test('groups completed tools while preserving running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',

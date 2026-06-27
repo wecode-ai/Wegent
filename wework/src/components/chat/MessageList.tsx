@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   MouseEvent as ReactMouseEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Copy, Package } from 'lucide-react'
+import {
+  AlertTriangle,
+  Braces,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  File as FileIcon,
+  Package,
+} from 'lucide-react'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
@@ -13,7 +22,6 @@ import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { AssistantMarkdown } from './AssistantMarkdown'
-import { resolveDirectMarkdownImageSrc } from './assistantMarkdownLinks'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
@@ -48,6 +56,17 @@ const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
+const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
+  '.apng': 'image/apng',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+}
 
 export function MessageList({
   messages,
@@ -71,7 +90,7 @@ export function MessageList({
   }
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-2">
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11">
       {visibleMessages.map(message => (
         <article
           key={message.id}
@@ -79,10 +98,11 @@ export function MessageList({
             'min-w-0 overflow-x-hidden',
             message.role === 'user' ? 'flex justify-end' : '',
           ].join(' ')}
+          data-message-id={message.id}
           data-testid={`message-${message.role}`}
         >
           {message.role === 'user' ? (
-            <UserMessage message={message} />
+            <UserMessage message={message} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ) : (
             <AssistantMessage
               message={message}
@@ -110,6 +130,7 @@ export function MessageList({
 function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (message.role !== 'assistant') return true
   if (message.status === 'streaming' || message.status === 'failed') return true
+  if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
   if (
     message.references?.length ||
@@ -136,7 +157,23 @@ function WaitingAssistantIndicator() {
 }
 
 function getTurnStartMs(createdAt: string): number | undefined {
-  const ms = new Date(createdAt).getTime()
+  return getMessageTimestampMs(createdAt)
+}
+
+function getMessageTimestampMs(value: string | number | null | undefined): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1_000_000_000_000) return value
+    if (value > 1_000_000_000) return value * 1000
+    return undefined
+  }
+
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const numericValue = Number(value)
+  if (Number.isFinite(numericValue)) {
+    return getMessageTimestampMs(numericValue)
+  }
+
+  const ms = new Date(value).getTime()
   return Number.isFinite(ms) ? ms : undefined
 }
 
@@ -157,6 +194,11 @@ function getStoppedElapsedDuration(message: WorkbenchMessage): string {
   const startedAt = getTurnStartMs(message.createdAt)
   if (startedAt === undefined) return '0s'
 
+  const completedAt = getMessageTimestampMs(message.completedAt)
+  if (completedAt !== undefined && completedAt >= startedAt) {
+    return formatCompactDuration(completedAt - startedAt)
+  }
+
   const blockEndTimes =
     message.blocks
       ?.map(block => block.createdAt)
@@ -168,6 +210,10 @@ function getStoppedElapsedDuration(message: WorkbenchMessage): string {
 
 function isCancelledAssistantMessage(message: WorkbenchMessage): boolean {
   return message.runtimeStatus === 'cancelled'
+}
+
+function isCancelledPlaceholderContent(content: string): boolean {
+  return ['interrupted', 'cancelled', 'canceled', 'aborted'].includes(content.trim().toLowerCase())
 }
 
 function formatMessageTime(createdAt: string) {
@@ -206,17 +252,46 @@ async function copyText(text: string) {
   document.body.removeChild(textarea)
 }
 
-function UserMessage({ message }: { message: WorkbenchMessage }) {
+function UserMessage({
+  message,
+  onOpenWorkspaceFile,
+}: {
+  message: WorkbenchMessage
+  onOpenWorkspaceFile?: (path: string) => void
+}) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
-  const codexLocalFileMentions = parseCodexLocalFileMentions(message.content)
-  const displayContent = codexLocalFileMentions?.requestText ?? message.content
-  const imageAttachments = (message.attachments ?? []).filter(isImageAttachment)
-  const documentAttachments = (message.attachments ?? []).filter(
-    attachment => !isImageAttachment(attachment)
+  const codexLocalFileMentions = useMemo(
+    () => parseCodexLocalFileMentions(message.content),
+    [message.content]
   )
-  const localImageMentions =
-    imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? [])
+  const displayContent = codexLocalFileMentions?.requestText ?? message.content
+  const imageAttachments = useMemo(
+    () => (message.attachments ?? []).filter(isImageAttachment),
+    [message.attachments]
+  )
+  const documentAttachments = useMemo(
+    () => (message.attachments ?? []).filter(attachment => !isImageAttachment(attachment)),
+    [message.attachments]
+  )
+  const localImageMentions = useMemo(
+    () => (imageAttachments.length > 0 ? [] : (codexLocalFileMentions?.images ?? [])),
+    [codexLocalFileMentions?.images, imageAttachments.length]
+  )
+  const localFileMentions = codexLocalFileMentions?.files ?? []
+  const localImageAttachments = useMemo(
+    () =>
+      localImageMentions.map((image, index) =>
+        createLocalImageMentionAttachment(image, index, message.createdAt)
+      ),
+    [localImageMentions, message.createdAt]
+  )
+  const imagePreviewAttachments = useMemo(
+    () => (imageAttachments.length > 0 ? imageAttachments : localImageAttachments),
+    [imageAttachments, localImageAttachments]
+  )
+  const hasImagePreviews = imagePreviewAttachments.length > 0
+  const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
   const shouldCollapse =
     displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
@@ -224,36 +299,89 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
 
   return (
     <div
-      className="flex max-w-[80%] flex-col items-end gap-1.5"
+      className={[
+        'flex flex-col items-end gap-1.5',
+        hasImagePreviews ? 'w-full max-w-full' : 'max-w-[80%]',
+      ].join(' ')}
       data-testid="message-hover-region"
       onPointerEnter={() => setAreHoverActionsVisible(true)}
       onPointerLeave={() => setAreHoverActionsVisible(false)}
     >
-      <div className="flex w-fit max-w-full flex-col items-end gap-1.5">
-        {(imageAttachments.length > 0 ||
-          localImageMentions.length > 0 ||
+      <div
+        className={[
+          'flex max-w-full flex-col items-end gap-1.5',
+          hasImagePreviews ? 'w-full' : 'w-fit',
+        ].join(' ')}
+      >
+        {(imagePreviewAttachments.length > 0 ||
+          localFileMentions.length > 0 ||
           documentAttachments.length > 0) && (
-          <div className="flex max-w-full flex-col items-end gap-2">
-            {(imageAttachments.length > 0 || localImageMentions.length > 0) && (
+          <div
+            className={[
+              'flex max-w-full flex-col items-end gap-2',
+              hasImagePreviews ? 'w-full' : '',
+            ].join(' ')}
+          >
+            {hasImagePreviews && (
               <div
                 data-testid="message-image-attachments"
-                className="flex max-w-full flex-row flex-wrap justify-end gap-2"
+                className={[
+                  'flex w-full max-w-full flex-row flex-nowrap gap-2',
+                  hasMultipleImagePreviews
+                    ? 'scrollbar-none justify-start overflow-x-auto overscroll-x-contain'
+                    : 'justify-end overflow-visible',
+                ].join(' ')}
               >
-                {imageAttachments.map(attachment => (
-                  <MessageImageAttachmentPreview key={attachment.id} attachment={attachment} />
-                ))}
-                {localImageMentions.map(image => (
-                  <MessageLocalImagePreview key={image.path} image={image} />
+                {imagePreviewAttachments.map((attachment, index) => (
+                  <MessageImageAttachmentPreview
+                    key={`${attachment.id}:${attachment.local_preview_url ?? attachment.filename}`}
+                    attachment={attachment}
+                    galleryAttachments={imagePreviewAttachments}
+                    galleryIndex={index}
+                    imageTestId={
+                      imageAttachments.length > 0
+                        ? 'message-image-preview'
+                        : 'message-local-image-preview'
+                    }
+                    buttonTestId={
+                      imageAttachments.length > 0
+                        ? 'message-image-preview-button'
+                        : 'message-local-image-preview-button'
+                    }
+                    loadingTestId={
+                      imageAttachments.length > 0
+                        ? 'message-image-preview-loading'
+                        : 'message-local-image-preview-loading'
+                    }
+                    errorTestId={
+                      imageAttachments.length > 0
+                        ? 'message-image-preview-error'
+                        : 'message-local-image-preview-error'
+                    }
+                    hideOnError={imageAttachments.length === 0}
+                  />
                 ))}
               </div>
             )}
+            {localFileMentions.map(file => (
+              <MessageCodexFileMention
+                key={`${file.filename}:${file.path}`}
+                file={file}
+                onOpenFile={onOpenWorkspaceFile}
+              />
+            ))}
             {documentAttachments.map(attachment => (
               <MessageDocumentAttachment key={attachment.id} attachment={attachment} />
             ))}
           </div>
         )}
         {displayContent && (
-          <div className="max-w-full overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary">
+          <div
+            className={[
+              'overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary',
+              hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
+            ].join(' ')}
+          >
             <div
               data-testid="user-message-content"
               className={[
@@ -298,26 +426,11 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
   )
 }
 
-function MessageLocalImagePreview({ image }: { image: { filename: string; path: string } }) {
-  const [hasLoadError, setHasLoadError] = useState(false)
-  const imageSrc = resolveDirectMarkdownImageSrc(image.path)
-  if (!imageSrc || hasLoadError) return null
-
-  return (
-    <img
-      data-testid="message-local-image-preview"
-      src={imageSrc}
-      alt={image.filename}
-      className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
-      loading="lazy"
-      onError={() => setHasLoadError(true)}
-    />
-  )
-}
-
-function parseCodexLocalFileMentions(
-  content: string
-): { requestText: string; images: Array<{ filename: string; path: string }> } | null {
+function parseCodexLocalFileMentions(content: string): {
+  requestText: string
+  images: Array<{ filename: string; path: string }>
+  files: Array<{ filename: string; path: string }>
+} | null {
   if (!CODEX_FILE_MENTIONS_HEADER_PATTERN.test(content)) return null
 
   const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
@@ -325,23 +438,95 @@ function parseCodexLocalFileMentions(
     requestMarker?.index === undefined
       ? ''
       : content.slice(requestMarker.index + requestMarker[0].length).trim()
-  if (!requestText) return null
 
   const filesText =
     requestMarker?.index === undefined ? content : content.slice(0, requestMarker.index)
   const images: Array<{ filename: string; path: string }> = []
+  const files: Array<{ filename: string; path: string }> = []
   for (const match of filesText.matchAll(CODEX_FILE_MENTION_LINE_PATTERN)) {
     const filename = match[1]?.trim()
     const path = match[2]?.trim()
-    if (!filename || !path || !isLocalImageMention(filename, path)) continue
-    images.push({ filename, path })
+    if (!filename || !path) continue
+    const target = { filename, path }
+    if (isLocalImageMention(filename, path)) {
+      if (!images.some(image => image.path === path || image.filename === filename)) {
+        images.push(target)
+      }
+      continue
+    }
+    if (!files.some(file => file.path === path || file.filename === filename)) {
+      files.push(target)
+    }
   }
 
-  return { requestText, images }
+  if (!requestText && images.length === 0 && files.length === 0) return null
+
+  return { requestText, images, files }
 }
 
 function isLocalImageMention(filename: string, path: string): boolean {
   return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
+}
+
+function getLocalImageExtension(filename: string, path: string): string {
+  const source = LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) ? filename : path
+  const match = source.match(/(\.[a-z0-9]+)(?:[?#].*)?$/i)
+  return match?.[1]?.toLowerCase() ?? ''
+}
+
+function createLocalImageMentionAttachment(
+  image: { filename: string; path: string },
+  index: number,
+  createdAt: string
+): Attachment {
+  const fileExtension = getLocalImageExtension(image.filename, image.path)
+
+  return {
+    id: -100000 - index,
+    filename: image.filename,
+    file_size: 0,
+    mime_type: LOCAL_IMAGE_MIME_TYPES[fileExtension] ?? 'image/png',
+    status: 'ready',
+    file_extension: fileExtension,
+    created_at: createdAt,
+    local_preview_url: image.path,
+  }
+}
+
+function MessageCodexFileMention({
+  file,
+  onOpenFile,
+}: {
+  file: { filename: string; path: string }
+  onOpenFile?: (path: string) => void
+}) {
+  const useBracesIcon = shouldUseBracesFileIcon(file.filename)
+  const Icon = useBracesIcon ? Braces : FileIcon
+  const iconTestId = useBracesIcon
+    ? 'message-codex-file-braces-icon'
+    : 'message-codex-file-document-icon'
+
+  return (
+    <button
+      type="button"
+      data-testid="message-codex-file-mention"
+      className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
+      title={file.path}
+      aria-label={file.filename}
+      onClick={() => onOpenFile?.(file.path)}
+    >
+      <Icon
+        data-testid={iconTestId}
+        className="h-3.5 w-3.5 shrink-0 text-text-muted"
+        strokeWidth={1.8}
+      />
+      <span className="min-w-0 truncate">{file.filename}</span>
+    </button>
+  )
+}
+
+function shouldUseBracesFileIcon(filename: string): boolean {
+  return /\.(?:json|jsonc)$/i.test(filename)
 }
 
 function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
@@ -364,16 +549,38 @@ function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
   )
 }
 
-function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment }) {
+function MessageImageAttachmentPreview({
+  attachment,
+  galleryAttachments,
+  galleryIndex,
+  buttonTestId = 'message-image-preview-button',
+  imageTestId = 'message-image-preview',
+  loadingTestId = 'message-image-preview-loading',
+  errorTestId = 'message-image-preview-error',
+  hideOnError = false,
+}: {
+  attachment: Attachment
+  galleryAttachments: Attachment[]
+  galleryIndex: number
+  buttonTestId?: string
+  imageTestId?: string
+  loadingTestId?: string
+  errorTestId?: string
+  hideOnError?: boolean
+}) {
   return (
     <AttachmentImagePreview
       attachment={attachment}
-      buttonTestId="message-image-preview-button"
-      imageTestId="message-image-preview"
-      loadingTestId="message-image-preview-loading"
-      errorTestId="message-image-preview-error"
-      imageClassName="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
-      placeholderClassName="flex h-20 w-28 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
+      buttonTestId={buttonTestId}
+      imageTestId={imageTestId}
+      loadingTestId={loadingTestId}
+      errorTestId={errorTestId}
+      imageClassName="block h-20 w-20 shrink-0 rounded-xl border border-border bg-base object-cover"
+      placeholderClassName="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
+      buttonClassName="block h-20 w-20 shrink-0 cursor-zoom-in p-0 text-left"
+      galleryAttachments={galleryAttachments}
+      galleryIndex={galleryIndex}
+      hideOnError={hideOnError}
     />
   )
 }
@@ -625,9 +832,13 @@ function AssistantMessage({
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
-  const shouldHideContent = isCancelled || shouldHideFailedAssistantContent(message)
+  const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
+  const shouldHideContent =
+    shouldHideFailedAssistantContent(message) ||
+    (isCancelled && isCancelledPlaceholderContent(message.content))
   const visibleContent = shouldHideContent ? '' : message.content
-  const hiddenErrorContent = shouldHideContent && !isCancelled ? message.content.trim() : undefined
+  const hiddenErrorContent =
+    message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -668,6 +879,16 @@ function AssistantMessage({
         onPointerLeave={() => setAreHoverActionsVisible(false)}
       >
         <div className="w-fit max-w-full">
+          {shouldShowStoppedNotice ? (
+            <div
+              data-testid="assistant-stopped-notice"
+              className="mb-3 border-b border-border pb-2 text-sm font-medium text-text-muted"
+            >
+              {t('assistant_status.stopped_after', {
+                duration: getStoppedElapsedDuration(message),
+              })}
+            </div>
+          ) : null}
           {hasBlocks && (
             <ToolBlocksDisplay
               blocks={displayBlocks}
@@ -718,16 +939,6 @@ function AssistantMessage({
               onRevert={onRevertFileChanges}
               onOpenReview={onOpenFileChangesReview}
             />
-          ) : null}
-          {isCancelled ? (
-            <div
-              data-testid="assistant-stopped-notice"
-              className="mt-4 flex justify-end border-b border-border pb-2 text-sm font-medium text-text-muted"
-            >
-              {t('assistant_status.stopped_after', {
-                duration: getStoppedElapsedDuration(message),
-              })}
-            </div>
           ) : null}
         </div>
         {message.status !== 'streaming' &&

@@ -252,6 +252,10 @@ export interface NormalizedRuntimeMessage {
   subtask_id?: number | null
   status?: string | null
   createdAt?: string | null
+  completedAt?: string | number | null
+  completed_at?: string | number | null
+  stoppedNotice?: boolean | null
+  stopped_notice?: boolean | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]

@@ -124,6 +124,7 @@ export function MarkdownCodeBlock({
   return (
     <div
       data-testid="markdown-code-block"
+      data-scroll-anchor
       className={[
         'max-w-full overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
         compact ? 'mb-1.5' : 'mb-3 mt-2',

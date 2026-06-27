@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::path::Path;
+
 use serde_json::{json, Map, Value};
 
 use super::util::{
@@ -23,14 +25,10 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
         let turn_file_changes = file_changes(turn);
         let turn_id = item_id(turn, "turn");
         let subtask_id = turn_subtask_id(turn, &turn_id);
-        let has_final_assistant_message = turn_has_final_assistant_message(turn);
-        let interrupted_without_final = turn_interrupted(turn) && !has_final_assistant_message;
+        let turn_cancelled = turn_interrupted(turn);
         let fold_commentary = turn_should_fold_commentary(turn);
-        let mut blocks = Vec::new();
-        let mut pending_file_changes = turn_file_changes.clone();
-        let mut context_events = Vec::new();
-        let mut assistant_parts = Vec::new();
-        let mut memory_citations = Vec::new();
+        let mut assistant_segment_index = 0;
+        let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
         for item in turn
             .get("items")
             .and_then(Value::as_array)
@@ -38,16 +36,42 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             .flatten()
         {
             match item_type(item).as_str() {
-                "usermessage" => push_user_message(&mut messages, item, created_at),
-                "reasoning" => push_reasoning_block(&mut blocks, item, created_at),
-                "commandexecution" => blocks.push(command_block(item, created_at)),
+                "usermessage" => {
+                    if is_internal_turn_abort_message(item) {
+                        continue;
+                    }
+                    let is_guidance =
+                        assistant_segment_index > 0 || assistant.has_non_file_output();
+                    push_accumulated_assistant(
+                        &mut messages,
+                        &mut assistant_segment_index,
+                        AssistantEmitContext {
+                            turn_id: &turn_id,
+                            subtask_id,
+                            created_at,
+                            completed_at,
+                            status: if turn_cancelled { "cancelled" } else { "done" },
+                        },
+                        &mut assistant,
+                        false,
+                    );
+                    push_user_message(&mut messages, item, created_at);
+                    if is_guidance {
+                        assistant.blocks.push(guidance_block(
+                            item,
+                            item_timestamp(item).unwrap_or(created_at),
+                        ));
+                    }
+                }
+                "reasoning" => push_reasoning_block(&mut assistant.blocks, item, created_at),
+                "commandexecution" => assistant.blocks.push(command_block(item, created_at)),
                 "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
-                | "toolsearchcall" | "websearchcall" | "websearch" | "imagegeneration"
-                | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
-                    blocks.push(tool_block(item, created_at))
+                | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
+                | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
+                    assistant.blocks.push(tool_block(item, created_at))
                 }
                 "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput" => {
-                    merge_tool_output(&mut blocks, item, created_at);
+                    merge_tool_output(&mut assistant.blocks, item, created_at);
                 }
                 "filechange" => {
                     if let Some(summary) = file_changes_from_file_change_item(
@@ -57,9 +81,12 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &workspace_path,
                     ) {
                         if fold_commentary {
-                            blocks.push(file_changes_block(item, &summary, created_at));
+                            assistant
+                                .blocks
+                                .push(file_changes_block(item, &summary, created_at));
                         }
-                        pending_file_changes = merge_file_changes(pending_file_changes, summary);
+                        assistant.file_changes =
+                            merge_file_changes(assistant.file_changes.take(), summary);
                     }
                 }
                 "patchapplyend" => {
@@ -70,13 +97,16 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &workspace_path,
                     ) {
                         if fold_commentary {
-                            blocks.push(file_changes_block(item, &summary, created_at));
+                            assistant
+                                .blocks
+                                .push(file_changes_block(item, &summary, created_at));
                         }
-                        pending_file_changes = merge_file_changes(pending_file_changes, summary);
+                        assistant.file_changes =
+                            merge_file_changes(assistant.file_changes.take(), summary);
                     }
                 }
                 "contextcompaction" => {
-                    context_events.push(context_event(
+                    assistant.context_events.push(context_event(
                         item,
                         created_at,
                         "context_compaction",
@@ -88,13 +118,14 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         item,
                         created_at,
                         fold_commentary,
-                        &mut blocks,
-                        &mut assistant_parts,
-                        &mut memory_citations,
+                        turn_cancelled && fold_commentary,
+                        &mut assistant.blocks,
+                        &mut assistant.assistant_parts,
+                        &mut assistant.memory_citations,
                     );
                     if let Some(file_changes) = file_changes(item) {
-                        pending_file_changes =
-                            merge_file_changes(pending_file_changes, file_changes);
+                        assistant.file_changes =
+                            merge_file_changes(assistant.file_changes.take(), file_changes);
                     }
                 }
                 "message" => match string_field(item, "role")
@@ -102,19 +133,46 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     .to_ascii_lowercase()
                     .as_str()
                 {
-                    "user" => push_user_message(&mut messages, item, created_at),
+                    "user" => {
+                        if is_internal_turn_abort_message(item) {
+                            continue;
+                        }
+                        let is_guidance =
+                            assistant_segment_index > 0 || assistant.has_non_file_output();
+                        push_accumulated_assistant(
+                            &mut messages,
+                            &mut assistant_segment_index,
+                            AssistantEmitContext {
+                                turn_id: &turn_id,
+                                subtask_id,
+                                created_at,
+                                completed_at,
+                                status: if turn_cancelled { "cancelled" } else { "done" },
+                            },
+                            &mut assistant,
+                            false,
+                        );
+                        push_user_message(&mut messages, item, created_at);
+                        if is_guidance {
+                            assistant.blocks.push(guidance_block(
+                                item,
+                                item_timestamp(item).unwrap_or(created_at),
+                            ));
+                        }
+                    }
                     "assistant" => {
                         collect_assistant_message(
                             item,
                             created_at,
                             fold_commentary,
-                            &mut blocks,
-                            &mut assistant_parts,
-                            &mut memory_citations,
+                            turn_cancelled && fold_commentary,
+                            &mut assistant.blocks,
+                            &mut assistant.assistant_parts,
+                            &mut assistant.memory_citations,
                         );
                         if let Some(file_changes) = file_changes(item) {
-                            pending_file_changes =
-                                merge_file_changes(pending_file_changes, file_changes);
+                            assistant.file_changes =
+                                merge_file_changes(assistant.file_changes.take(), file_changes);
                         }
                     }
                     _ => {}
@@ -124,41 +182,32 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         item,
                         created_at,
                         fold_commentary,
-                        &mut blocks,
-                        &mut assistant_parts,
-                        &mut memory_citations,
+                        turn_cancelled && fold_commentary,
+                        &mut assistant.blocks,
+                        &mut assistant.assistant_parts,
+                        &mut assistant.memory_citations,
                     );
                     if let Some(file_changes) = file_changes(item) {
-                        pending_file_changes =
-                            merge_file_changes(pending_file_changes, file_changes);
+                        assistant.file_changes =
+                            merge_file_changes(assistant.file_changes.take(), file_changes);
                     }
                 }
                 _ => {}
             }
         }
-        if !blocks.is_empty()
-            || pending_file_changes.is_some()
-            || !context_events.is_empty()
-            || !assistant_parts.is_empty()
-            || !memory_citations.is_empty()
-        {
-            apply_turn_completed_at(&mut blocks, completed_at);
-            messages.push(synthetic_assistant_message(AssistantMessageDraft {
+        push_accumulated_assistant(
+            &mut messages,
+            &mut assistant_segment_index,
+            AssistantEmitContext {
                 turn_id: &turn_id,
                 subtask_id,
                 created_at,
-                blocks: &blocks,
-                file_changes: pending_file_changes,
-                context_events: &context_events,
-                assistant_parts: &assistant_parts,
-                memory_citations: &memory_citations,
-                status: if interrupted_without_final {
-                    "cancelled"
-                } else {
-                    "done"
-                },
-            }));
-        }
+                completed_at,
+                status: if turn_cancelled { "cancelled" } else { "done" },
+            },
+            &mut assistant,
+            true,
+        );
     }
     messages
 }
@@ -202,6 +251,16 @@ fn turn_started_at(turn: &Value) -> i64 {
 fn turn_completed_at(turn: &Value, started_at: i64) -> Option<i64> {
     timestamp_ms_field(turn, "completedAt")
         .or_else(|| timestamp_ms_field(turn, "completed_at"))
+        .or_else(|| timestamp_ms_field(turn, "endedAt"))
+        .or_else(|| timestamp_ms_field(turn, "ended_at"))
+        .or_else(|| timestamp_ms_field(turn, "stoppedAt"))
+        .or_else(|| timestamp_ms_field(turn, "stopped_at"))
+        .or_else(|| timestamp_ms_field(turn, "cancelledAt"))
+        .or_else(|| timestamp_ms_field(turn, "cancelled_at"))
+        .or_else(|| timestamp_ms_field(turn, "interruptedAt"))
+        .or_else(|| timestamp_ms_field(turn, "interrupted_at"))
+        .or_else(|| timestamp_ms_field(turn, "updatedAt"))
+        .or_else(|| timestamp_ms_field(turn, "updated_at"))
         .or_else(|| {
             integer_field(turn, "durationMs")
                 .or_else(|| integer_field(turn, "duration_ms"))
@@ -221,10 +280,9 @@ fn turn_should_fold_commentary(turn: &Value) -> bool {
     if turn_has_final_assistant_message(turn) || turn_running(turn) {
         return true;
     }
-    // An interrupted turn only folds commentary into process blocks when it also
-    // produced substantive output (file changes, tool calls, reasoning, etc.).
-    // When the turn was interrupted before producing anything else, the commentary
-    // is the only thing the agent said, so surface it as the visible content.
+    // Interrupted turns with process output should keep commentary inside the
+    // collapsible process area. If commentary is the only assistant output,
+    // surface it directly like Codex app does.
     turn_interrupted(turn) && turn_has_substantive_process(turn)
 }
 
@@ -328,16 +386,251 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
     block.insert("timestamp".to_owned(), json!(completed_at));
 }
 
-fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64) {
-    if let Some(content) = extract_text(item) {
-        messages.push(json!({
-            "id": item_id(item, "user"),
-            "role": "user",
-            "content": content,
-            "status": "done",
-            "createdAt": created_at,
-        }));
+struct AssistantTurnAccumulation {
+    blocks: Vec<Value>,
+    file_changes: Option<Value>,
+    context_events: Vec<Value>,
+    assistant_parts: Vec<String>,
+    memory_citations: Vec<Value>,
+}
+
+impl AssistantTurnAccumulation {
+    fn new(file_changes: Option<Value>) -> Self {
+        Self {
+            blocks: Vec::new(),
+            file_changes,
+            context_events: Vec::new(),
+            assistant_parts: Vec::new(),
+            memory_citations: Vec::new(),
+        }
     }
+
+    fn has_non_file_output(&self) -> bool {
+        !self.blocks.is_empty()
+            || !self.context_events.is_empty()
+            || !self.assistant_parts.is_empty()
+            || !self.memory_citations.is_empty()
+    }
+
+    fn has_output(&self) -> bool {
+        self.has_non_file_output() || self.file_changes.is_some()
+    }
+
+    fn clear_after_emit(&mut self) {
+        self.blocks.clear();
+        self.file_changes = None;
+        self.context_events.clear();
+        self.assistant_parts.clear();
+        self.memory_citations.clear();
+    }
+}
+
+struct AssistantEmitContext<'a> {
+    turn_id: &'a str,
+    subtask_id: i64,
+    created_at: i64,
+    completed_at: Option<i64>,
+    status: &'a str,
+}
+
+fn push_accumulated_assistant(
+    messages: &mut Vec<Value>,
+    segment_index: &mut usize,
+    context: AssistantEmitContext<'_>,
+    assistant: &mut AssistantTurnAccumulation,
+    include_file_only: bool,
+) {
+    let should_emit = if include_file_only {
+        assistant.has_output()
+    } else {
+        assistant.has_non_file_output()
+    };
+    if !should_emit {
+        return;
+    }
+
+    apply_turn_completed_at(&mut assistant.blocks, context.completed_at);
+    let stopped_notice = context.status == "cancelled" && *segment_index == 0;
+    let synthetic_turn_id = if *segment_index == 0 {
+        context.turn_id.to_owned()
+    } else {
+        format!("{}-{}", context.turn_id, *segment_index)
+    };
+    messages.push(synthetic_assistant_message(AssistantMessageDraft {
+        turn_id: &synthetic_turn_id,
+        subtask_id: context.subtask_id,
+        created_at: context.created_at,
+        completed_at: context.completed_at,
+        status: context.status,
+        stopped_notice,
+        blocks: &assistant.blocks,
+        file_changes: assistant.file_changes.clone(),
+        context_events: &assistant.context_events,
+        assistant_parts: &assistant.assistant_parts,
+        memory_citations: &assistant.memory_citations,
+    }));
+    *segment_index += 1;
+    assistant.clear_after_emit();
+}
+
+fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64) {
+    let content = extract_text(item).unwrap_or_default();
+    let attachments = user_message_image_attachments(item, created_at);
+    if content.trim().is_empty() && attachments.is_empty() {
+        return;
+    }
+
+    let mut message = json!({
+        "id": item_id(item, "user"),
+        "role": "user",
+        "content": content,
+        "status": "done",
+        "createdAt": item_timestamp(item).unwrap_or(created_at),
+    });
+    if !attachments.is_empty() {
+        if let Some(object) = message.as_object_mut() {
+            object.insert("attachments".to_owned(), Value::Array(attachments));
+        }
+    }
+    messages.push(message);
+}
+
+fn is_internal_turn_abort_message(item: &Value) -> bool {
+    extract_text(item)
+        .map(|content| content.trim_start().starts_with("<turn_aborted>"))
+        .unwrap_or(false)
+}
+
+fn user_message_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
+    let mut attachments = Vec::new();
+    if let Some(content) = item.get("content").and_then(Value::as_array) {
+        for part in content {
+            match item_type(part).as_str() {
+                "localimage" => {
+                    if let Some(path) = string_field(part, "path") {
+                        push_image_attachment(&mut attachments, &path, true, created_at);
+                    }
+                }
+                "image" => {
+                    if let Some(url) = string_field(part, "url") {
+                        push_image_attachment(&mut attachments, &url, false, created_at);
+                    }
+                }
+                "inputimage" => {
+                    if let Some(url) = string_field(part, "image_url") {
+                        push_image_attachment(&mut attachments, &url, false, created_at);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for path in string_array_field(item, "local_images")
+        .into_iter()
+        .chain(string_array_field(item, "localImages"))
+    {
+        push_image_attachment(&mut attachments, &path, true, created_at);
+    }
+    for url in string_array_field(item, "images") {
+        push_image_attachment(&mut attachments, &url, false, created_at);
+    }
+    attachments
+}
+
+fn push_image_attachment(attachments: &mut Vec<Value>, source: &str, local: bool, created_at: i64) {
+    if source.trim().is_empty()
+        || attachments
+            .iter()
+            .any(|item| item["local_preview_url"] == source)
+    {
+        return;
+    }
+    let index = attachments.len();
+    let extension = image_extension(source);
+    let mime_type = image_mime_type(source, &extension);
+    attachments.push(json!({
+        "id": -((index as i64) + 1),
+        "filename": image_filename(source, index, &extension),
+        "file_size": 0,
+        "mime_type": mime_type,
+        "status": "ready",
+        "file_extension": extension,
+        "created_at": created_at,
+        "local_preview_url": if local { source } else { source.trim() },
+    }));
+}
+
+fn string_array_field(item: &Value, key: &str) -> Vec<String> {
+    item.get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn image_filename(source: &str, index: usize, extension: &str) -> String {
+    if let Some(filename) = Path::new(strip_url_query(source))
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+    {
+        return filename;
+    }
+
+    format!("image-{}{}", index + 1, extension)
+}
+
+fn image_extension(source: &str) -> String {
+    let lower = source.to_ascii_lowercase();
+    if lower.starts_with("data:image/jpeg") || lower.starts_with("data:image/jpg") {
+        return ".jpg".to_owned();
+    }
+    if lower.starts_with("data:image/png") {
+        return ".png".to_owned();
+    }
+    if lower.starts_with("data:image/gif") {
+        return ".gif".to_owned();
+    }
+    if lower.starts_with("data:image/webp") {
+        return ".webp".to_owned();
+    }
+    if lower.starts_with("data:image/bmp") {
+        return ".bmp".to_owned();
+    }
+
+    let path = strip_url_query(source).to_ascii_lowercase();
+    for extension in [".jpeg", ".jpg", ".png", ".gif", ".bmp", ".webp"] {
+        if path.ends_with(extension) {
+            return extension.to_owned();
+        }
+    }
+    ".png".to_owned()
+}
+
+fn image_mime_type(source: &str, extension: &str) -> String {
+    if source.to_ascii_lowercase().starts_with("data:image/") {
+        return source
+            .split_once(':')
+            .and_then(|(_, rest)| rest.split_once(';').map(|(mime, _)| mime.to_owned()))
+            .unwrap_or_else(|| "image/png".to_owned());
+    }
+    match extension {
+        ".jpg" | ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        ".webp" => "image/webp",
+        _ => "image/png",
+    }
+    .to_owned()
+}
+
+fn strip_url_query(source: &str) -> &str {
+    source.split(['?', '#']).next().unwrap_or(source)
 }
 
 fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) {
@@ -356,17 +649,22 @@ fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
     fold_commentary: bool,
+    interleave_visible_text: bool,
     blocks: &mut Vec<Value>,
     assistant_parts: &mut Vec<String>,
     memory_citations: &mut Vec<Value>,
 ) {
     if let Some(content) = extract_text(item) {
-        match assistant_message_phase(item, fold_commentary) {
-            AssistantMessagePhase::Process => {
-                blocks.push(process_text_block(item, content, fallback_timestamp));
-            }
-            AssistantMessagePhase::Final => {
-                assistant_parts.push(content);
+        if interleave_visible_text {
+            blocks.push(process_text_block(item, content, fallback_timestamp));
+        } else {
+            match assistant_message_phase(item, fold_commentary) {
+                AssistantMessagePhase::Process => {
+                    blocks.push(process_text_block(item, content, fallback_timestamp));
+                }
+                AssistantMessagePhase::Final => {
+                    assistant_parts.push(content);
+                }
             }
         }
     }
@@ -406,6 +704,21 @@ fn process_text_block(item: &Value, content: String, fallback_timestamp: i64) ->
     })
 }
 
+fn guidance_block(item: &Value, timestamp: i64) -> Value {
+    json!({
+        "id": format!("guidance-{}", item_id(item, "user")),
+        "type": "tool",
+        "tool_use_id": format!("guidance-{}", item_id(item, "user")),
+        "tool_name": "conversation_guidance",
+        "tool_input": {
+            "message": extract_text(item).unwrap_or_default(),
+        },
+        "tool_output": Value::Null,
+        "status": "done",
+        "timestamp": timestamp,
+    })
+}
+
 fn file_changes_block(item: &Value, summary: &Value, fallback_timestamp: i64) -> Value {
     json!({
         "id": format!("file-changes-{}", item_id(item, "file-change")),
@@ -426,12 +739,14 @@ struct AssistantMessageDraft<'a> {
     turn_id: &'a str,
     subtask_id: i64,
     created_at: i64,
+    completed_at: Option<i64>,
+    status: &'a str,
+    stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
     context_events: &'a [Value],
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
-    status: &'a str,
 }
 
 fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
@@ -445,6 +760,16 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
     });
+    if let Some(completed_at) = draft.completed_at {
+        if let Some(object) = message.as_object_mut() {
+            object.insert("completedAt".to_owned(), json!(completed_at));
+        }
+    }
+    if draft.status == "cancelled" {
+        if let Some(object) = message.as_object_mut() {
+            object.insert("stoppedNotice".to_owned(), json!(draft.stopped_notice));
+        }
+    }
     if let Some(file_changes) = draft.file_changes {
         if let Some(object) = message.as_object_mut() {
             object.insert("fileChanges".to_owned(), file_changes);
@@ -560,6 +885,7 @@ fn is_tool_item_type(item_type: &str) -> bool {
             | "customtoolcall"
             | "dynamictoolcall"
             | "mcptoolcall"
+            | "mcpcall"
             | "toolsearchcall"
             | "websearchcall"
             | "websearch"
@@ -594,9 +920,11 @@ fn tool_name(item: &Value) -> String {
         "dynamictoolcall" => {
             string_field(item, "tool").unwrap_or_else(|| "dynamic_tool".to_owned())
         }
-        "mcptoolcall" => {
+        "mcptoolcall" | "mcpcall" => {
             let server = string_field(item, "server");
-            let tool = string_field(item, "tool").unwrap_or_else(|| "mcp_tool".to_owned());
+            let tool = string_field(item, "tool")
+                .or_else(|| string_field(item, "name"))
+                .unwrap_or_else(|| "mcp_tool".to_owned());
             server
                 .map(|server| format!("{server}.{tool}"))
                 .unwrap_or(tool)
@@ -619,7 +947,11 @@ fn tool_input(item: &Value) -> Value {
         "dynamictoolcall" | "toolsearchcall" => {
             item.get("arguments").cloned().unwrap_or(Value::Null)
         }
-        "mcptoolcall" => item.get("arguments").cloned().unwrap_or(Value::Null),
+        "mcptoolcall" | "mcpcall" => item
+            .get("arguments")
+            .or_else(|| item.get("input"))
+            .cloned()
+            .unwrap_or(Value::Null),
         "websearch" => json!({"query": string_field(item, "query").unwrap_or_default()}),
         "websearchcall" => item
             .get("action")
@@ -660,7 +992,7 @@ fn tool_output(item: &Value) -> Value {
             .map(output_content_items_text)
             .map(Value::String)
             .unwrap_or_else(|| item.get("result").cloned().unwrap_or(Value::Null)),
-        "mcptoolcall" => item
+        "mcptoolcall" | "mcpcall" => item
             .get("error")
             .and_then(|error| string_field(error, "message"))
             .map(Value::String)
@@ -1178,39 +1510,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn interrupted_turn_without_final_keeps_process_blocks() {
+    fn interrupted_turn_keeps_commentary_visible_and_cancelled_status() {
         let thread = json!({
-            "cwd": "/workspace/app",
+            "id": "thread-1",
+            "cwd": "/tmp/project",
             "turns": [
                 {
                     "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "interruptedAt": 1_780_000_152,
                     "status": "interrupted",
-                    "startedAt": 1_000,
                     "items": [
                         {
-                            "type": "userMessage",
                             "id": "user-1",
-                            "content": [
-                                {"type": "text", "text": "修一下"}
-                            ]
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "inspect package"}]
                         },
                         {
+                            "id": "commentary-1",
                             "type": "agentMessage",
-                            "id": "assistant-commentary-1",
                             "phase": "commentary",
-                            "message": "我先改文件。"
+                            "text": "I will inspect the package file."
                         },
                         {
-                            "type": "fileChange",
-                            "id": "file-change-1",
-                            "status": "completed",
-                            "changes": [
-                                {
-                                    "path": "/workspace/app/src/main.ts",
-                                    "kind": {"type": "update"},
-                                    "diff": "@@ -1 +1 @@\n-old\n+new\n"
-                                }
-                            ]
+                            "id": "call-1",
+                            "type": "functionCall",
+                            "call_id": "call-1",
+                            "name": "exec_command",
+                            "arguments": "{\"cmd\":\"cat package.json\",\"workdir\":\"/tmp/project\"}",
+                            "status": "completed"
+                        },
+                        {
+                            "id": "final-1",
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": "partial answer"
+                        },
+                        {
+                            "id": "user-2",
+                            "type": "userMessage",
+                            "timestamp": 1_780_000_140,
+                            "content": [{"type": "text", "text": "# Files mentioned by the user:\n\n## pnpm-lock.yaml: /tmp/project/pnpm-lock.yaml\n\n## My request for Codex:\n"}]
+                        },
+                        {
+                            "id": "commentary-2",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                            "timestamp": 1_780_000_145,
+                            "text": "I will use the lockfile context."
+                        },
+                        {
+                            "id": "abort-marker",
+                            "type": "userMessage",
+                            "timestamp": 1_780_000_150,
+                            "content": [{"type": "text", "text": "<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>"}]
                         }
                     ]
                 }
@@ -1218,33 +1571,41 @@ mod tests {
         });
 
         let messages = transcript_messages(&thread, "device-1");
-        assert_eq!(messages.len(), 2);
 
-        let assistant = &messages[1];
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1]["status"], "cancelled");
+        assert_eq!(messages[1]["stoppedNotice"], true);
+        assert_eq!(messages[1]["content"], "");
+        assert_eq!(messages[1]["completedAt"], 1_780_000_152_000_i64);
+        assert_eq!(messages[1]["blocks"][0]["type"], "text");
         assert_eq!(
-            assistant.get("role").and_then(Value::as_str),
-            Some("assistant")
+            messages[1]["blocks"][0]["content"],
+            "I will inspect the package file."
         );
+        assert_eq!(messages[1]["blocks"][1]["tool_name"], "exec_command");
         assert_eq!(
-            assistant.get("status").and_then(Value::as_str),
-            Some("cancelled")
+            messages[1]["blocks"][1]["tool_input"]["cmd"],
+            "cat package.json"
         );
-        assert_eq!(assistant.get("content").and_then(Value::as_str), Some(""));
-        assert!(assistant.get("fileChanges").is_some());
-
-        let blocks = assistant
-            .get("blocks")
-            .and_then(Value::as_array)
-            .expect("assistant should include process blocks");
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].get("type").and_then(Value::as_str), Some("text"));
+        assert_eq!(messages[1]["blocks"][2]["type"], "text");
+        assert_eq!(messages[1]["blocks"][2]["content"], "partial answer");
+        assert_eq!(messages[1]["blocks"][2]["timestamp"], 1_780_000_152_000_i64);
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["createdAt"], 1_780_000_140_000_i64);
+        assert!(messages[2]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("pnpm-lock.yaml"));
+        assert_eq!(messages[3]["status"], "cancelled");
+        assert_eq!(messages[3]["stoppedNotice"], false);
         assert_eq!(
-            blocks[0].get("content").and_then(Value::as_str),
-            Some("我先改文件。")
+            messages[3]["blocks"][0]["tool_name"],
+            "conversation_guidance"
         );
+        assert_eq!(messages[3]["blocks"][1]["type"], "text");
         assert_eq!(
-            blocks[1].get("type").and_then(Value::as_str),
-            Some("file_changes")
+            messages[3]["blocks"][1]["content"],
+            "I will use the lockfile context."
         );
     }
 }

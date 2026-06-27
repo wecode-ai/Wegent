@@ -2,6 +2,45 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 
+function mockRect(element: Element, top: number, bottom: number) {
+  element.getBoundingClientRect = vi.fn(
+    () =>
+      ({
+        top,
+        bottom,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: bottom - top,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect
+  )
+}
+
+function mockScrollRelativeRect(
+  element: Element,
+  scroller: HTMLElement,
+  topAtScrollZero: number,
+  height: number
+) {
+  element.getBoundingClientRect = vi.fn(() => {
+    const top = topAtScrollZero - scroller.scrollTop
+    return {
+      top,
+      bottom: top + height,
+      left: 0,
+      right: 320,
+      width: 320,
+      height,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect
+  })
+}
+
 describe('ScrollableMessageArea', () => {
   let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn>
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn>
@@ -199,7 +238,7 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 180,
+      value: 180.5,
       writable: true,
       configurable: true,
     })
@@ -207,26 +246,36 @@ describe('ScrollableMessageArea', () => {
 
     fireEvent.scroll(scroller)
     rerender(<ScrollableMessageArea conversationKey="conversation-b" messages={[messageB]} />)
-
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     rerender(<ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />)
 
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 180,
+      top: 180.5,
       behavior: 'auto',
     })
   })
 
-  test('scrolls to the bottom after a conversation finishes loading', () => {
-    const message = {
-      id: 'loaded-message',
+  test('does not overwrite a saved position while a reopened conversation is loading', () => {
+    const messageA = {
+      id: 'a-loading-restore',
       role: 'assistant' as const,
-      content: '加载后的历史消息',
+      content: '会话 A',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'b-loading-restore',
+      role: 'assistant' as const,
+      content: '会话 B',
       status: 'done' as const,
       createdAt: '2026-05-29T00:00:00.000Z',
     }
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[message]} />
+      <ScrollableMessageArea conversationKey="conversation-loading-a" messages={[messageA]} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -243,16 +292,21 @@ describe('ScrollableMessageArea', () => {
       writable: true,
       configurable: true,
     })
-    scroller.scrollTo = vi.fn()
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
 
     fireEvent.scroll(scroller)
     rerender(
-      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[]} loading />
+      <ScrollableMessageArea conversationKey="conversation-loading-b" messages={[messageB]} />
     )
-
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 0
     rerender(
-      <ScrollableMessageArea conversationKey="conversation-load-bottom" messages={[message]} />
+      <ScrollableMessageArea conversationKey="conversation-loading-a" messages={[]} loading />
+    )
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-loading-a" messages={[messageA]} />
     )
 
     act(() => {
@@ -260,7 +314,264 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 600,
+      top: 180,
+      behavior: 'auto',
+    })
+  })
+
+  test('restores reopened conversations relative to the saved message anchor', () => {
+    const messagesA = [
+      {
+        id: 'anchor-a-intro',
+        role: 'assistant' as const,
+        content: '会话 A 前置内容',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'anchor-a-target',
+        role: 'assistant' as const,
+        content: '会话 A 当前阅读内容',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'anchor-a-after',
+        role: 'assistant' as const,
+        content: '会话 A 后续内容',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const messageB = {
+      id: 'anchor-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="conversation-anchor-a" messages={messagesA} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    mockRect(scroller, 100, 300)
+    mockRect(screen.getByText('会话 A 前置内容').closest('[data-message-id]')!, -160, -20)
+    mockRect(screen.getByText('会话 A 当前阅读内容').closest('[data-message-id]')!, 80, 220)
+    mockRect(screen.getByText('会话 A 后续内容').closest('[data-message-id]')!, 240, 360)
+
+    fireEvent.scroll(scroller)
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-anchor-b" messages={[messageB]} />
+    )
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1400,
+      configurable: true,
+    })
+    scroller.scrollTop = 0
+    rerender(<ScrollableMessageArea conversationKey="conversation-anchor-a" messages={messagesA} />)
+    mockRect(scroller, 100, 300)
+    mockScrollRelativeRect(
+      screen.getByText('会话 A 当前阅读内容').closest('[data-message-id]')!,
+      scroller,
+      520,
+      140
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 440,
+      behavior: 'auto',
+    })
+  })
+
+  test('restores reopened conversations relative to markdown anchors inside long messages', () => {
+    const messageA = {
+      id: 'markdown-anchor-message',
+      role: 'assistant' as const,
+      content: [
+        '- 默认配置',
+        '- 构建运行',
+        '',
+        '## 主要功能',
+        '',
+        '- Node',
+        '- Pod',
+        '- NodeResourceTopology',
+      ].join('\n'),
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'markdown-anchor-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="conversation-markdown-anchor-a"
+        messages={[messageA]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    mockRect(scroller, 100, 300)
+    mockRect(screen.getByText('默认配置').closest('[data-scroll-anchor]')!, -220, -188)
+    mockRect(screen.getByText('构建运行').closest('[data-scroll-anchor]')!, -170, -138)
+    mockRect(screen.getByText('主要功能').closest('[data-scroll-anchor]')!, -78, -42)
+    mockRect(screen.getByText('Node').closest('[data-scroll-anchor]')!, 92, 124)
+    mockRect(screen.getByText('Pod').closest('[data-scroll-anchor]')!, 140, 172)
+
+    fireEvent.scroll(scroller)
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="conversation-markdown-anchor-b"
+        messages={[messageB]}
+      />
+    )
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1400,
+      configurable: true,
+    })
+    scroller.scrollTop = 0
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="conversation-markdown-anchor-a"
+        messages={[messageA]}
+      />
+    )
+    mockRect(scroller, 100, 300)
+    mockScrollRelativeRect(
+      screen.getByText('Node').closest('[data-scroll-anchor]')!,
+      scroller,
+      520,
+      32
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 428,
+      behavior: 'auto',
+    })
+  })
+
+  test('keeps the restored position while reopened conversation content grows', () => {
+    const messageA = {
+      id: 'a-growth',
+      role: 'assistant' as const,
+      content: '会话 A',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'b-growth',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 260,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-growth-b" messages={[messageB]} />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 240,
+      configurable: true,
+    })
+    scroller.scrollTop = 0
+    rerender(
+      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 40,
+      behavior: 'auto',
+    })
+
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1200,
+      configurable: true,
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(50)
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 260,
       behavior: 'auto',
     })
   })

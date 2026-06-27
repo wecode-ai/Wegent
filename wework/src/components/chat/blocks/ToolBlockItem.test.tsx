@@ -2,7 +2,7 @@ import '@/i18n'
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
 
@@ -115,6 +115,30 @@ describe('ToolBlockItem', () => {
       'Beijing weather today June 17 2026 temperature rain'
     )
     expect(screen.queryByText(/"query"/)).not.toBeInTheDocument()
+  })
+
+  test('uses Codex filePath aliases for file tool labels and open actions', async () => {
+    const user = userEvent.setup()
+    const onOpenWorkspaceFile = vi.fn()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'read-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'Read',
+          toolInput: { filePath: '/Users/crystal/package.json' },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /已读取 package.json/ }))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
 
   test('renders process text code blocks with shared syntax highlighting', () => {

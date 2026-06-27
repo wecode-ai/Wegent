@@ -4,7 +4,7 @@ export type ProcessingDisplayRow =
   | { type: 'block'; id: string; block: ProcessingBlock }
   | { type: 'activity_group'; id: string; blocks: ToolBlock[]; label: string }
 
-type ToolActivityKind = 'file' | 'search' | 'command' | 'create' | 'edit' | 'tool'
+type ToolActivityKind = 'file' | 'search' | 'command' | 'create' | 'edit' | 'guidance' | 'tool'
 
 interface ActivityStats {
   files: number
@@ -12,6 +12,7 @@ interface ActivityStats {
   commands: number
   creates: number
   edits: number
+  guidance: number
   tools: number
   failedCommands: number
   failedTools: number
@@ -27,6 +28,7 @@ const COMMAND_TOOLS = new Set([
 const FILE_TOOLS = new Set(['read', 'read_file'])
 const CREATE_TOOLS = new Set(['write', 'create_file', 'write_file'])
 const EDIT_TOOLS = new Set(['edit', 'str_replace_editor', 'edit_file'])
+const GUIDANCE_TOOLS = new Set(['conversation_guidance', 'user_guidance'])
 const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
 const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'du', 'file'])
@@ -78,6 +80,7 @@ export function summarizeToolBlocks(blocks: ToolBlock[]): string {
   if (exploreParts.length > 0) parts.push(`已探索 ${exploreParts.join(' ')}`)
   if (stats.creates > 0) parts.push(`已新增 ${formatCount(stats.creates, '个文件')}`)
   if (stats.edits > 0) parts.push(`已编辑 ${formatCount(stats.edits, '个文件')}`)
+  if (stats.guidance > 0) parts.push('已引导对话')
   if (stats.commands > 0) parts.push(`已运行 ${formatCount(stats.commands, '条命令')}`)
   if (stats.tools > 0) parts.push(`已运行 ${formatCount(stats.tools, '个工具')}`)
   if (stats.failedCommands > 0) {
@@ -106,6 +109,7 @@ function getActivityStats(blocks: ToolBlock[]): ActivityStats {
       if (kind === 'command') stats.commands += 1
       if (kind === 'create') stats.creates += 1
       if (kind === 'edit') stats.edits += 1
+      if (kind === 'guidance') stats.guidance += 1
       if (kind === 'tool') stats.tools += 1
       return stats
     },
@@ -115,6 +119,7 @@ function getActivityStats(blocks: ToolBlock[]): ActivityStats {
       commands: 0,
       creates: 0,
       edits: 0,
+      guidance: 0,
       tools: 0,
       failedCommands: 0,
       failedTools: 0,
@@ -127,8 +132,11 @@ function getToolActivityKind(block: ToolBlock): ToolActivityKind {
   if (FILE_TOOLS.has(name)) return 'file'
   if (CREATE_TOOLS.has(name)) return 'create'
   if (EDIT_TOOLS.has(name)) return 'edit'
+  if (GUIDANCE_TOOLS.has(name)) return 'guidance'
   if (SEARCH_TOOL_HINTS.some(hint => name.includes(hint))) return 'search'
-  if (isCommandToolName(name)) return getCommandActivityKind(getInputField(block, 'command', 'cmd'))
+  if (isCommandToolName(name)) {
+    return getCommandActivityKind(getInputField(block, 'command', 'cmd', 'commandLine'))
+  }
   return 'tool'
 }
 
@@ -170,6 +178,14 @@ export function isWebSearchToolName(name: string): boolean {
 
 export function isWebSearchActivityGroup(blocks: ToolBlock[]): boolean {
   return blocks.length > 0 && blocks.every(block => isWebSearchToolName(block.toolName))
+}
+
+export function isGuidanceActivityGroup(blocks: ToolBlock[]): boolean {
+  return blocks.length > 0 && blocks.every(block => isGuidanceToolName(block.toolName))
+}
+
+export function isGuidanceToolName(name: string): boolean {
+  return GUIDANCE_TOOLS.has(name.toLowerCase())
 }
 
 function getToolGroupId(blocks: ToolBlock[]): string {

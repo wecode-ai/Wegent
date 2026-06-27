@@ -888,7 +888,6 @@ async fn send_executor_request(
         "id": request_id,
         "method": request.method,
         "params": request.params,
-        "acceptCompressedRuntimeResult": false,
     });
     let line = format!(
         "{}\n",

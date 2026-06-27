@@ -8,6 +8,7 @@ import '@/i18n'
 
 const tauriCoreMock = vi.hoisted(() => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
+  invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
 
@@ -130,6 +131,179 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('shows stopped duration from completed time and keeps partial assistant content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-with-content',
+            role: 'assistant',
+            content: '停止前已经生成的内容。',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
+    expect(screen.getByText('停止前已经生成的内容。')).toBeInTheDocument()
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+  })
+
+  test('renders stopped assistant process text and activity rows in original order', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        subtaskId: 21,
+        type: 'text',
+        content: '我先看你提到的 package.json。',
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:10Z'),
+      },
+      {
+        id: 'call-1',
+        subtaskId: 21,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'cat package.json' },
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:20Z'),
+      },
+      {
+        id: 'process-2',
+        subtaskId: 21,
+        type: 'text',
+        content: '从常用目录看，可能的前端仓库很多。',
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:30Z'),
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-interleaved',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks,
+          },
+        ]}
+      />
+    )
+
+    const firstText = screen.getByText('我先看你提到的 package.json。')
+    const activityRow = screen.getByTestId('processing-activity-group-toggle')
+    const secondText = screen.getByText('从常用目录看，可能的前端仓库很多。')
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
+    expect(activityRow).toHaveTextContent('已探索 1 个文件')
+    expect(firstText.compareDocumentPosition(activityRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(activityRow.compareDocumentPosition(secondText) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+  })
+
+  test('shows one stopped notice for split stopped assistant turns and keeps guidance visible', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-first',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            stoppedNotice: true,
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks: [
+              {
+                id: 'process-1',
+                subtaskId: 21,
+                type: 'text',
+                content: '我先看 package.json。',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+          {
+            id: 'user-guidance',
+            role: 'user',
+            content: 'pnpm-lock.yaml',
+            status: 'done',
+            createdAt: '2026-06-11T10:01:00Z',
+          },
+          {
+            id: 'assistant-stopped-continuation',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            stoppedNotice: false,
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks: [
+              {
+                id: 'guidance-1',
+                subtaskId: 21,
+                type: 'tool',
+                toolName: 'conversation_guidance',
+                toolInput: { message: 'pnpm-lock.yaml' },
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:01:00Z'),
+              },
+              {
+                id: 'process-2',
+                subtaskId: 21,
+                type: 'text',
+                content: '我会继续看 lockfile。',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:01:05Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByTestId('assistant-stopped-notice')).toHaveLength(1)
+    expect(screen.getByText('我先看 package.json。')).toBeInTheDocument()
+    expect(screen.getByText('pnpm-lock.yaml')).toBeInTheDocument()
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
+  })
+
+  test('keeps cancelled assistant turns even when no processing blocks were persisted', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-empty',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 0s 后停止了')
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList
@@ -153,6 +327,7 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-11', 'pb-2')
     expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
   })
 
@@ -165,6 +340,7 @@ describe('MessageList', () => {
     tauriCoreMock.convertFileSrc = vi.fn(
       (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`
     )
+    tauriCoreMock.invoke = vi.fn()
     tauriCoreMock.isTauri = vi.fn(() => false)
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
@@ -624,13 +800,14 @@ describe('MessageList', () => {
             id: 'assistant-codex-rich',
             role: 'assistant',
             content:
-              'Updated [SKILL.md](/workspace/project/SKILL.md), [github-pr-flow.md](/workspace/project/references/github-pr-flow.md:18), and [notify_pr_ready.sh](/workspace/project/scripts/notify_pr_ready.sh).',
+              'Updated [SKILL.md](/workspace/project/SKILL.md), [github-pr-flow.md](/workspace/project/references/github-pr-flow.md:18), [paas-context.log](/workspace/project/logs/paas-context.log), and [notify_pr_ready.sh](/workspace/project/scripts/notify_pr_ready.sh).',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
             references: [
               { path: '/workspace/project/SKILL.md' },
               { path: '/workspace/project/references/github-pr-flow.md', lineStart: 18 },
               { path: '/workspace/project/SKILL.md:22' },
+              { path: '/workspace/project/logs/paas-context.log' },
               { path: '/workspace/project/scripts/notify_pr_ready.sh' },
             ],
             contextEvents: [
@@ -672,6 +849,7 @@ describe('MessageList', () => {
 
     const referenceCards = screen.getAllByTestId('codex-reference-card')
     expect(referenceCards).toHaveLength(2)
+    expect(screen.getByTestId('codex-reference-list')).not.toHaveTextContent('paas-context.log')
     expect(screen.getByTestId('codex-reference-list')).not.toHaveTextContent('notify_pr_ready.sh')
     expect(referenceCards[0]).toHaveTextContent('SKILL.md')
     expect(referenceCards[0]).toHaveTextContent('文档 · MD')
@@ -1043,6 +1221,93 @@ describe('MessageList', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  test('renders local path image attachment previews through Tauri asset URLs', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'screenshot.png',
+      file_size: 0,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'local-codex-image',
+            role: 'user',
+            content: '解释一下些图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/var/folders/tmp/codex-clipboard/screenshot.png'
+    )
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+    expect(screen.getByTestId('user-message-content').parentElement).toHaveClass('max-w-[80%]')
+    expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'justify-end',
+      'overflow-visible'
+    )
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('justify-start')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('downloads local path image attachments through the Tauri native command', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/crystal/Downloads/screenshot.png')
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'screenshot.png',
+      file_size: 0,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'local-codex-image',
+            role: 'user',
+            content: '解释一下这张图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('message-image-preview'))
+    await screen.findByTestId('attachment-image-lightbox-image')
+    await userEvent.click(screen.getByTestId('attachment-image-download'))
+
+    await waitFor(() => {
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('download_local_file_to_downloads', {
+        sourcePath: '/var/folders/tmp/codex-clipboard/screenshot.png',
+        filename: 'screenshot.png',
+      })
+    })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test('prefers persisted image attachments over stale Codex local image mentions', async () => {
     vi.stubGlobal('fetch', vi.fn())
 
@@ -1087,7 +1352,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('发出去图片')
   })
 
-  test('renders Codex local image file mentions as user image previews after refresh', () => {
+  test('renders Codex local image file mentions as user image previews after refresh', async () => {
     render(
       <MessageList
         messages={[
@@ -1109,11 +1374,80 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-local-image-preview')).toHaveAttribute(
+    expect(await screen.findByTestId('message-local-image-preview')).toHaveAttribute(
       'src',
       'asset://localhost/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
     )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+    expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
+  test('renders Codex local non-image file mentions as compact file chips', () => {
+    const onOpenWorkspaceFile = vi.fn()
+
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'codex-file-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## package.json: /Users/crystal/package.json',
+              '',
+              '## My request for Codex:',
+              '看看',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveTextContent('package.json')
+    expect(screen.getByTestId('message-codex-file-braces-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-document-icon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveAttribute(
+      'title',
+      '/Users/crystal/package.json'
+    )
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('看看')
+    expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('message-codex-file-mention'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
+  })
+
+  test('renders file-only Codex mentions without the raw markdown wrapper', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-file-only-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## pnpm-lock.yaml: /Users/crystal/pnpm-lock.yaml',
+              '',
+              '## My request for Codex:',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveTextContent('pnpm-lock.yaml')
+    expect(screen.getByTestId('message-codex-file-document-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-braces-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('user-message-content')).not.toBeInTheDocument()
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
@@ -1146,7 +1480,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
-  test('hides Codex local image previews when the converted file URL fails to load', () => {
+  test('hides Codex local image previews when the converted file URL fails to load', async () => {
     render(
       <MessageList
         messages={[
@@ -1168,7 +1502,7 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.error(screen.getByTestId('message-local-image-preview'))
+    fireEvent.error(await screen.findByTestId('message-local-image-preview'))
 
     expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
@@ -1235,7 +1569,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
   })
 
-  test('opens an enlarged image from a user message attachment preview', async () => {
+  test('opens an enlarged preview from a user message image attachment', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
@@ -1274,33 +1608,100 @@ describe('MessageList', () => {
     await userEvent.click(await screen.findByTestId('message-image-preview'))
 
     const lightbox = screen.getByTestId('attachment-image-lightbox')
-    const lightboxImage = screen.getByTestId('attachment-image-lightbox-image')
+    const lightboxImage = await screen.findByTestId('attachment-image-lightbox-image')
 
     expect(lightbox).toBeInTheDocument()
     expect(lightbox.parentElement).toBe(document.body)
-    expect(lightbox).toHaveClass('h-dvh', 'w-dvw', 'p-0')
-    expect(lightbox).toHaveClass('overflow-hidden')
-    expect(lightboxImage).toHaveClass(
-      'max-h-[calc(100dvh-6rem)]',
-      'max-w-[calc(100dvw-2rem)]',
-      'object-contain'
-    )
-    expect(lightboxImage).not.toHaveClass('h-full', 'w-full')
-    expect(screen.getByTestId('attachment-image-lightbox-close')).toHaveClass('z-20')
     expect(lightboxImage).toHaveAttribute('src', 'blob:message-image-preview')
     expect(lightboxImage).toHaveAttribute('alt', 'diagram.png')
     expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+    expect(screen.getByTestId('attachment-image-download')).toBeEnabled()
+    expect(screen.getByTestId('attachment-image-zoom-controls')).toHaveClass('bottom-6')
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('100%')
 
     await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
 
     expect(lightboxImage).toHaveStyle({ transform: 'scale(1.25)' })
-
-    await userEvent.click(screen.getByTestId('attachment-image-zoom-reset'))
-
-    expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
-  test('keeps image attachments compact and allows extras to wrap', async () => {
+  test('navigates between images in the enlarged preview gallery', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachments: Attachment[] = [
+      {
+        id: 43,
+        filename: 'first.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+        local_preview_url: 'blob:first-image',
+      },
+      {
+        id: 44,
+        filename: 'second.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+        local_preview_url: 'blob:second-image',
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '分析下这些图片',
+            status: 'done',
+            attachments,
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    const previews = await screen.findAllByTestId('message-image-preview')
+    await userEvent.click(previews[0])
+
+    expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'alt',
+      'first.png'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-next'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'blob:second-image'
+      )
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'alt',
+        'second.png'
+      )
+    })
+
+    await userEvent.click(screen.getByTestId('attachment-image-previous'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'blob:first-image'
+      )
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'alt',
+        'first.png'
+      )
+    })
+  })
+
+  test('keeps image attachments in a single horizontal strip', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
@@ -1369,12 +1770,16 @@ describe('MessageList', () => {
 
     expect(previews).toHaveLength(4)
     expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'w-full',
       'flex-row',
-      'flex-wrap',
-      'justify-end'
+      'flex-nowrap',
+      'justify-start',
+      'overflow-x-auto',
+      'scrollbar-none'
     )
-    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('overflow-x-auto')
-    expect(previews[0]).toHaveClass('max-h-36', 'max-w-[180px]', 'shrink-0', 'rounded-xl')
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('flex-wrap')
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+    expect(previews[0]).toHaveClass('h-20', 'w-20', 'shrink-0', 'rounded-xl', 'object-cover')
   })
 
   test('renders document attachments in user messages', () => {
