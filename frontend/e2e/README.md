@@ -196,10 +196,15 @@ E2E tests run automatically in GitHub Actions:
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
 
-CI starts the frontend with `pnpm run dev` instead of `pnpm run build && pnpm start`
-so E2E jobs do not spend time on a production Next.js build. This keeps E2E
-focused on browser/API behavior; production build failures need separate build
-coverage outside this workflow.
+CI builds the production Next.js frontend once in the `build-frontend-e2e`
+workflow job, uploads it as `frontend-next-build`, and restores that artifact in
+each browser/API shard and in the executor E2E job before starting the generated
+Next.js standalone server.
+
+The executor regression job also consumes `executor-e2e-runtime`, which is built
+once by `build-executor-e2e-runtime`. That artifact contains the
+`wegent/e2e-claudecode-executor:latest` Docker image and the extracted local
+executor binary used by device-mode coverage.
 
 The workflow caches Python virtualenvs, frontend `node_modules`, Playwright
 browsers, and the executor job's Claude Code CLI. Dependency install steps are
