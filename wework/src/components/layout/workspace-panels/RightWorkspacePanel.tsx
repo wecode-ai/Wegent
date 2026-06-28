@@ -49,7 +49,7 @@ interface RightWorkspacePanelProps {
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
   onSelectReview: () => void
-  onSelectTerminal?: () => void
+  onSelectTerminal: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
@@ -110,17 +110,13 @@ export function RightWorkspacePanel({
       disabled: !canOpenReview,
       onSelect: onSelectReview,
     },
-    ...(onSelectTerminal
-      ? [
-          {
-            id: 'terminal',
-            testId: 'right-workspace-terminal-option',
-            icon: SquareTerminal,
-            label: t('workbench.terminal', '终端'),
-            onSelect: onSelectTerminal,
-          },
-        ]
-      : []),
+    {
+      id: 'terminal',
+      testId: 'right-workspace-terminal-option',
+      icon: SquareTerminal,
+      label: t('workbench.terminal', '终端'),
+      onSelect: onSelectTerminal,
+    },
     ...(!browserOpen
       ? [
           {

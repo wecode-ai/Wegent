@@ -340,22 +340,32 @@ button:disabled {
   }
 
   .scrollbar-soft {
-    scrollbar-color: rgb(210 210 210 / 0.45) transparent;
+    scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);
     scrollbar-width: thin;
   }
 
   .scrollbar-soft::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 7px;
+    height: 7px;
+    background-color: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgb(210 210 210 / 0.8);
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-track-piece {
+    background: rgb(210 210 210 / 0.8);
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-corner {
+    background: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background-color: rgb(210 210 210 / 0.38);
+    border-radius: 0;
+    border: 0;
+    background-color: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb:hover {
