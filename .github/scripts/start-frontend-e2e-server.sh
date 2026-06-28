@@ -25,6 +25,6 @@ server_path="$(find_standalone_server)"
 test -n "$server_path"
 test -f "$server_path"
 
-HOSTNAME="${HOSTNAME:-0.0.0.0}" PORT="${PORT:-3000}" \
+HOSTNAME="${E2E_FRONTEND_HOSTNAME:-0.0.0.0}" PORT="${PORT:-3000}" \
   nohup node "$server_path" > next-dev.log 2>&1 &
 echo $! > next-dev.pid

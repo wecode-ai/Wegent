@@ -280,7 +280,7 @@ Create `.github/scripts/start-frontend-e2e-server.sh`. It must discover either
 to a non-`node_modules` `server.js` search, then run:
 
 ```bash
-HOSTNAME="${HOSTNAME:-0.0.0.0}" PORT="${PORT:-3000}" \
+HOSTNAME="${E2E_FRONTEND_HOSTNAME:-0.0.0.0}" PORT="${PORT:-3000}" \
   nohup node "$server_path" > next-dev.log 2>&1 &
 echo $! > next-dev.pid
 ```
