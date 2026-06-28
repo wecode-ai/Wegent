@@ -66,7 +66,7 @@ const DESKTOP_SPLIT_FLOATING_COMPOSER_CLASS =
 const DESKTOP_SPLIT_COMPOSER_FRAME_CLASS =
   'mx-auto w-[calc(100%_-_1.5rem)] min-w-0 max-w-[calc(100%_-_1.5rem)] -translate-y-12'
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
+  'pointer-events-none absolute left-0 right-8 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
@@ -844,7 +844,7 @@ export function DesktopWorkbenchMain({
               }
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}
+              scrollerClassName={cn('scrollbar-soft', hasQueuedComposerRows ? 'pb-52' : 'pb-40')}
               scrollButtonClassName={
                 hasQueuedComposerRows
                   ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
