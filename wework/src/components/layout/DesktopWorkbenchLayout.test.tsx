@@ -582,16 +582,20 @@ describe('DesktopWorkbenchLayout', () => {
       'h-full',
       'overflow-x-hidden',
       'overflow-y-auto',
+      'scrollbar-soft',
       'pb-40'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
+      'left-0',
+      'right-8',
       'bottom-0',
       'z-10',
       'from-background'
     )
+    expect(screen.getByTestId('desktop-floating-composer-backdrop')).not.toHaveClass('inset-x-0')
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'pointer-events-none',
       'absolute',
