@@ -226,6 +226,7 @@ describe('ScrollableMessageArea', () => {
     const navigation = screen.getByTestId('message-turn-navigation')
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(navigation).toHaveAccessibleName('历史发言导航')
+    expect(navigation).toHaveClass('z-popover')
     expect(Number.parseFloat(navigation.style.height)).toBeCloseTo(18.222)
     expect(markers).toHaveLength(2)
     expect(markers[0]).toHaveAccessibleName('跳转到第 1 条发言')
