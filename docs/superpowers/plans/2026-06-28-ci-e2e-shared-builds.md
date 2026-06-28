@@ -249,3 +249,67 @@ ordinary shard duration and executor E2E duration against the PR #1581 baseline:
 
 If the PR fails because of this workflow change, inspect the failed job logs,
 fix the workflow, and rerun the checks.
+
+### Task 8: Reduce frontend dependency work in E2E jobs
+
+**Files:**
+- Modify: `.github/scripts/archive-frontend-e2e-build.sh`
+- Modify: `.github/scripts/restore-frontend-e2e-build.sh`
+- Create: `.github/scripts/start-frontend-e2e-server.sh`
+- Modify: `.github/workflows/e2e-tests.yml`
+- Modify: `frontend/e2e/README.md`
+
+- [ ] **Step 1: Prepare the standalone frontend artifact**
+
+The archive script must verify `frontend/.next/standalone` contains a
+non-`node_modules` `server.js`, then copy `frontend/public` and
+`frontend/.next/static` beside that server entrypoint before packaging the
+artifact. This follows Next.js standalone deployment requirements and lets CI
+start the generated server without `pnpm exec next start`.
+
+- [ ] **Step 2: Verify the restored standalone artifact**
+
+The restore script must unpack `.ci-artifacts/frontend-next-build.tar.zst`,
+verify `frontend/.next/BUILD_ID`, rediscover the standalone `server.js`, and
+check that `public` and `.next/static` exist next to the server entrypoint.
+
+- [ ] **Step 3: Add a shared standalone startup helper**
+
+Create `.github/scripts/start-frontend-e2e-server.sh`. It must discover either
+`.next/standalone/server.js` or `.next/standalone/frontend/server.js`, fall back
+to a non-`node_modules` `server.js` search, then run:
+
+```bash
+HOSTNAME="${HOSTNAME:-0.0.0.0}" PORT="${PORT:-3000}" \
+  nohup node "$server_path" > next-dev.log 2>&1 &
+echo $! > next-dev.pid
+```
+
+- [ ] **Step 4: Skip frontend installs on exact node_modules cache hits**
+
+For `build-frontend-e2e`, ordinary E2E shards, executor E2E, and
+`merge-reports`, add:
+
+```yaml
+if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
+```
+
+to the `Install frontend dependencies` step. Keep the step on cache misses and
+partial restore-key matches so `pnpm` can reconcile dependencies safely.
+
+- [ ] **Step 5: Switch E2E frontend startup to standalone**
+
+In both E2E test jobs, replace `pnpm exec next start` with:
+
+```yaml
+run: ../.github/scripts/start-frontend-e2e-server.sh
+```
+
+from `working-directory: ./frontend`.
+
+- [ ] **Step 6: Validate and rerun CI**
+
+Run shell syntax checks, parse `.github/workflows/e2e-tests.yml`, check the
+diff, commit, push, and verify the updated PR checks. Compare the new E2E run
+against the previous PR run to confirm the dependency-install optimization did
+not regress end-to-end duration.

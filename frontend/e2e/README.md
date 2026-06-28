@@ -198,7 +198,8 @@ See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) f
 
 CI builds the production Next.js frontend once in the `build-frontend-e2e`
 workflow job, uploads it as `frontend-next-build`, and restores that artifact in
-each browser/API shard and in the executor E2E job before starting `next start`.
+each browser/API shard and in the executor E2E job before starting the generated
+Next.js standalone server.
 
 The executor regression job also consumes `executor-e2e-runtime`, which is built
 once by `build-executor-e2e-runtime`. That artifact contains the

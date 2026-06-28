@@ -48,6 +48,7 @@ jobs:
             ${{ runner.os }}-node-24-frontend-
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Cache Next.js build
@@ -238,6 +239,7 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Download frontend E2E build
@@ -310,9 +312,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: |
-          nohup pnpm exec next start > next-dev.log 2>&1 &
-          echo $! > next-dev.pid
+        run: ../.github/scripts/start-frontend-e2e-server.sh
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -554,6 +554,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@2.1.142
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Download frontend E2E build
@@ -647,9 +648,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: |
-          nohup pnpm exec next start > next-dev.log 2>&1 &
-          echo $! > next-dev.pid
+        run: ../.github/scripts/start-frontend-e2e-server.sh
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -915,6 +914,7 @@ jobs:
           merge-multiple: true
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Merge reports
