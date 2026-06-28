@@ -743,7 +743,12 @@ function GlobalImNotificationBell({
 
   const openSessionSettings = () => {
     onMenuOpenChange(false)
-    void (onOpenGlobalImNotificationSettings ?? onToggleGlobalImNotification)()
+    const openSettings = onOpenGlobalImNotificationSettings ?? onToggleGlobalImNotification
+    if (openSettings) {
+      void openSettings()
+      return
+    }
+    onOpenSettings()
   }
 
   const handlePrimaryAction = () => {

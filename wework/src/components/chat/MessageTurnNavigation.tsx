@@ -13,8 +13,9 @@ const NEARBY_MARKER_WIDTH_PX = 16
 const EXPANDED_MARKER_WIDTH_PX = 24
 const MARKER_HIT_AREA_WIDTH_PX = 28
 const MARKER_ROW_HEIGHT_PX = 8
-const MARKER_ROW_GAP_PX = 5
-const MAX_NAVIGATION_HEIGHT_PX = 96
+const MARKER_ROW_GAP_PX = 20 / 9
+const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
+const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -45,6 +46,7 @@ export function MessageTurnNavigation({
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
+  const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
   const rafRef = useRef<number | null>(null)
 
@@ -182,63 +184,83 @@ export function MessageTurnNavigation({
         left: '8px',
         width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
         height: `${navigationHeight}px`,
+        maxHeight: `calc(100% - ${NAVIGATION_VIEWPORT_PADDING_PX}px)`,
       }}
     >
-      <div className="relative h-full w-full">
-        {markers.map((marker, index) => {
-          const isActive = activeMarkerId === marker.id
-          const hoverDistance =
-            hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
+      <div
+        className="pointer-events-auto h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        data-testid="message-turn-navigation-rail"
+        style={{
+          overflowY: 'auto',
+          overscrollBehaviorY: 'contain',
+        }}
+        onScroll={event => setNavigationScrollTop(event.currentTarget.scrollTop)}
+      >
+        <div className="relative w-full" style={{ height: `${navigationHeight}px` }}>
+          {markers.map((marker, index) => {
+            const isActive = activeMarkerId === marker.id
+            const hoverDistance =
+              hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
 
-          return (
-            <div
-              key={marker.id}
-              className="group absolute left-0 -translate-y-1/2"
-              style={{
-                top: `${getMarkerTopPx(index, markers.length, navigationHeight)}px`,
-                height: `${MARKER_ROW_HEIGHT_PX}px`,
-                width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
-              }}
-              onMouseEnter={() => setHoveredMarkerId(marker.id)}
-              onMouseLeave={() => setHoveredMarkerId(null)}
-            >
-              <button
-                type="button"
-                aria-label={t('message_navigation.jump_to_message', {
-                  index: marker.turnIndex + 1,
-                  defaultValue: `跳转到第 ${marker.turnIndex + 1} 条发言`,
-                })}
-                className="pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
-                data-active={isActive}
-                data-testid="message-turn-navigation-marker"
-                onClick={() => handleMarkerClick(marker)}
-                onFocus={() => setHoveredMarkerId(marker.id)}
-                onBlur={() => setHoveredMarkerId(null)}
+            return (
+              <div
+                key={marker.id}
+                className="absolute left-0 -translate-y-1/2"
+                style={{
+                  top: `${getMarkerTopPx(index)}px`,
+                  height: `${MARKER_HOVER_ROW_HEIGHT_PX}px`,
+                  width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
+                }}
+                onMouseEnter={() => setHoveredMarkerId(marker.id)}
+                onMouseLeave={() => setHoveredMarkerId(null)}
               >
-                <span
-                  className={cn(
-                    'block h-[2px] rounded-full transition-all duration-150 ease-out',
-                    getMarkerToneClass(isActive, hoverDistance)
-                  )}
-                  style={{
-                    width: `${getMarkerWidthPx(hoverDistance)}px`,
-                  }}
-                />
-              </button>
-              <div className="pointer-events-none absolute left-8 top-1/2 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left opacity-0 shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-                <p className="break-words text-[11px] font-semibold leading-4 text-text-primary">
-                  {marker.promptPreview}
-                </p>
-                {marker.responsePreview && (
-                  <p className="mt-1 break-words text-[11px] leading-4 text-text-muted">
-                    {marker.responsePreview}
-                  </p>
-                )}
+                <button
+                  type="button"
+                  aria-label={t('message_navigation.jump_to_message', {
+                    index: marker.turnIndex + 1,
+                    defaultValue: `跳转到第 ${marker.turnIndex + 1} 条发言`,
+                  })}
+                  className="pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                  data-active={isActive}
+                  data-testid="message-turn-navigation-marker"
+                  onClick={() => handleMarkerClick(marker)}
+                  onFocus={() => setHoveredMarkerId(marker.id)}
+                  onBlur={() => setHoveredMarkerId(null)}
+                >
+                  <span
+                    className={cn(
+                      'block h-[2px] rounded-full transition-all duration-150 ease-out',
+                      getMarkerToneClass(isActive, hoverDistance)
+                    )}
+                    style={{
+                      width: `${getMarkerWidthPx(hoverDistance)}px`,
+                    }}
+                  />
+                </button>
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
+      {markers.map((marker, index) => (
+        <div
+          key={`${marker.id}-preview`}
+          className={cn(
+            'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
+            hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
+          )}
+          style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
+        >
+          <p className="break-words text-[11px] font-semibold leading-4 text-text-primary">
+            {marker.promptPreview}
+          </p>
+          {marker.responsePreview && (
+            <p className="mt-1 break-words text-[11px] leading-4 text-text-muted">
+              {marker.responsePreview}
+            </p>
+          )}
+        </div>
+      ))}
     </nav>
   )
 }
@@ -307,17 +329,11 @@ function truncatePreview(text: string, maxLength: number) {
 function getNavigationHeight(markerCount: number) {
   if (markerCount <= 1) return MARKER_ROW_HEIGHT_PX
 
-  const preferredHeight =
-    MARKER_ROW_HEIGHT_PX + (markerCount - 1) * (MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX)
-
-  return Math.min(MAX_NAVIGATION_HEIGHT_PX, preferredHeight)
+  return MARKER_ROW_HEIGHT_PX + (markerCount - 1) * (MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX)
 }
 
-function getMarkerTopPx(index: number, markerCount: number, navigationHeight: number) {
-  if (markerCount <= 1) return navigationHeight / 2
-
-  const availableHeight = Math.max(0, navigationHeight - MARKER_ROW_HEIGHT_PX)
-  return MARKER_ROW_HEIGHT_PX / 2 + (availableHeight * index) / (markerCount - 1)
+function getMarkerTopPx(index: number) {
+  return MARKER_ROW_HEIGHT_PX / 2 + index * (MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX)
 }
 
 function getMarkerWidthPx(hoverDistance: number | null) {
