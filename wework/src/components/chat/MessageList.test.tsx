@@ -38,9 +38,7 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
-    expect(screen.getByTestId('message-assistant').className).toContain(
-      '[content-visibility:auto]'
-    )
+    expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
   })
 
   test('renders one assistant turn file changes under its message', () => {
@@ -523,6 +521,12 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('最终建议放在 PR flow 里。')).toBeInTheDocument()
+    expect(
+      screen
+        .getByRole('button', { name: /已处理/ })
+        .compareDocumentPosition(screen.getByText('最终建议放在 PR flow 里。')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     const collapseContent = screen.getByTestId('processing-collapse-content')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
     expect(collapseContent).toHaveClass('opacity-0')
@@ -531,6 +535,53 @@ describe('MessageList', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByText('我会先看这个 skill 当前的流程结构和相关记忆。')).toBeInTheDocument()
+  })
+
+  test('collapses streaming processing as soon as final answer appears', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-with-process',
+            role: 'assistant',
+            content: '这是正在流式输出的最终答案。',
+            status: 'streaming',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const finalAnswer = screen.getByText('这是正在流式输出的最终答案。')
+    const processStatus = screen.getByRole('button', { name: /已处理/ })
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+
+    expect(
+      processStatus.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(processStatus).toHaveAttribute('aria-expanded', 'false')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.click(processStatus)
+
+    expect(processStatus).toHaveAttribute('aria-expanded', 'true')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('正在运行 pwd')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
   test('renders final answer web search sources as a Codex-style source chip', async () => {
@@ -914,6 +965,57 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
   })
 
+  test('waits until streaming finishes before rendering final answer artifacts', () => {
+    render(
+      <MessageList
+        onOpenWorkspaceFile={vi.fn()}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-streaming-artifacts',
+            subtaskId: 42,
+            role: 'assistant',
+            content: 'See [README.md](/workspace/project/README.md) for details.',
+            status: 'streaming',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            references: [{ path: '/workspace/project/README.md' }],
+            memoryCitations: [
+              {
+                entries: [{ path: 'MEMORY.md', lineStart: 10, note: 'repo guidance' }],
+                threadIds: ['thread-1'],
+              },
+            ],
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-42',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 2,
+              deletions: 0,
+              files: [
+                {
+                  path: 'README.md',
+                  change_type: 'modified',
+                  additions: 2,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/See/)).toBeInTheDocument()
+    expect(screen.queryByTestId('codex-reference-list')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('codex-memory-citations')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('file-changes-card')).not.toBeInTheDocument()
+  })
+
   test('adds deduped document references from turn file changes and expands hidden references', async () => {
     render(
       <MessageList
@@ -1289,6 +1391,10 @@ describe('MessageList', () => {
       'overflow-visible'
     )
     expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('justify-start')
+    expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
+      'ml-auto',
+      'justify-end'
+    )
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -1831,10 +1937,16 @@ describe('MessageList', () => {
       'w-full',
       'flex-row',
       'flex-nowrap',
-      'justify-start',
       'overflow-x-auto',
       'scrollbar-none'
     )
+    expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
+      'ml-auto',
+      'w-max',
+      'flex-nowrap',
+      'justify-end'
+    )
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('justify-start')
     expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('flex-wrap')
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
     expect(previews[0]).toHaveClass('h-20', 'w-20', 'shrink-0', 'rounded-xl', 'object-cover')
@@ -2024,6 +2136,31 @@ describe('MessageList', () => {
     }
   })
 
+  test('shows weekday and clock time for messages created within seven days', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-29T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '昨天的消息',
+              status: 'done',
+              createdAt: '2026-06-28T15:27:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('星期日15:27')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('shows date and clock time for messages not created today in the current year', () => {
     vi.useFakeTimers()
     try {
@@ -2099,7 +2236,7 @@ describe('MessageList', () => {
       'group-hover/message:opacity-100',
       'group-focus-within/message:opacity-100'
     )
-    expect(hoverRegion).toHaveClass('w-fit', 'max-w-full')
+    expect(hoverRegion).toHaveClass('w-full', 'max-w-full')
 
     fireEvent.pointerEnter(hoverRegion)
     expect(hoverActions).toHaveClass('opacity-100', 'pointer-events-auto')
@@ -2151,7 +2288,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
-  test('renders a compact thinking indicator before the first streamed block arrives', () => {
+  test('renders only thinking before the first streamed response arrives', () => {
     render(
       <MessageList
         messages={[
@@ -2171,6 +2308,55 @@ describe('MessageList', () => {
     expect(thinkingIndicator).toHaveTextContent('正在思考')
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows full-width processing status once final text starts streaming', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '我先',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    const status = screen.getByText('已处理 1 秒')
+
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+    expect(status.parentElement).toHaveClass('w-full', 'border-b')
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+  })
+
+  test('starts the live processing timer when the first visible response appears', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:46:08.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '2',
+              role: 'assistant',
+              content: '我先',
+              status: 'streaming',
+              createdAt: '2026-05-25T18:46:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByText('已处理 1 秒')).toBeInTheDocument()
+      expect(screen.queryByText('已处理 8 秒')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('shows thinking in the message list while waiting for the assistant response', () => {
@@ -2196,7 +2382,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
+  test('uses running tool rows instead of a generic thinking indicator when blocks are visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       turnId: 1,
@@ -2222,7 +2408,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getAllByText('正在思考')).toHaveLength(1)
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在运行 rg -n "foo" src')).toBeInTheDocument()
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {
@@ -2265,7 +2452,7 @@ describe('MessageList', () => {
     expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  test('does not duplicate a text block that matches the final assistant content', () => {
+  test('keeps process text even when it matches the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
       turnId: 1,
@@ -2290,8 +2477,10 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
-    expect(screen.getByText('这是最终回答。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
+    expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {

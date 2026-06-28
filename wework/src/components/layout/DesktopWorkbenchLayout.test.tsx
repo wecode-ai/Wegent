@@ -40,6 +40,10 @@ const tauriMenuMocks = vi.hoisted(() => ({
   menuPopup: vi.fn(),
 }))
 
+const authMocks = vi.hoisted(() => ({
+  logout: vi.fn(),
+}))
+
 function createRect({
   left,
   top,
@@ -62,6 +66,18 @@ function createRect({
     bottom: top + height,
     toJSON: () => ({}),
   } as DOMRect
+}
+
+function mockDesktopWorkbenchMainWidth(width: number) {
+  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    if (
+      this.tagName === 'MAIN' &&
+      this.querySelector('[data-testid="desktop-workbench-content"]')
+    ) {
+      return createRect({ left: 0, top: 0, width, height: 720 })
+    }
+    return createRect({ left: 0, top: 0, width: 0, height: 0 })
+  })
 }
 
 class ResizeObserverMock {
@@ -99,6 +115,13 @@ vi.mock('@/api/projects', () => ({
 
 vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
+}))
+
+vi.mock('@/features/auth/useAuth', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/auth/useAuth')>()),
+  useAuth: () => ({
+    logout: authMocks.logout,
+  }),
 }))
 
 vi.mock('@/lib/local-terminal', () => ({
@@ -876,7 +899,11 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  function renderWorkspacePanelLayout() {
+  function renderWorkspacePanelLayout({ mainWidth }: { mainWidth?: number } = {}) {
+    if (mainWidth) {
+      mockDesktopWorkbenchMainWidth(mainWidth)
+    }
+
     const workspacePanelState = createCloudWorkspacePanelState()
     return render(
       <DesktopWorkbenchLayout
@@ -915,9 +942,9 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(58vw,62rem)]',
-      'min-w-[32rem]',
-      'max-w-[calc(100vw-4rem)]',
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]',
       '-translate-y-12'
     )
   })
@@ -944,9 +971,15 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-x-hidden',
       'overflow-y-auto',
       'scrollbar-soft',
-      'pb-40'
+      'pb-[var(--desktop-floating-composer-clearance)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
+    expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]',
+      'px-0'
+    )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
@@ -960,7 +993,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'pointer-events-none',
       'absolute',
-      'bottom-4',
+      'bottom-2',
       'left-1/2',
       'z-chrome',
       '-translate-x-1/2'
@@ -1331,7 +1364,10 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.scroll(scroller)
 
-    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass('bottom-36', 'z-popover')
+    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
+      'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)]',
+      'z-popover'
+    )
   })
 
   test('reserves extra bottom space when queued messages are shown above the composer', () => {
@@ -1359,8 +1395,9 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-52')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
+      'pb-[var(--desktop-floating-composer-clearance)]'
+    )
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -1389,6 +1426,23 @@ describe('DesktopWorkbenchLayout', () => {
     expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('480')
   })
 
+  test('collapses the sidebar when dragging below the close threshold', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    expect(sidebar).toHaveStyle({ width: '240px' })
+
+    fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
+    fireEvent.pointerMove(document, { clientX: 150 })
+
+    expect(sidebar).toHaveStyle({ width: '0px' })
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('desktop-sidebar-hover-edge')).toBeInTheDocument()
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('ml-1.5')
+    expect(document.body.style.cursor).toBe('')
+    expect(document.body.style.userSelect).toBe('')
+  })
+
   test('uses the selected sidebar width as the default', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -1402,6 +1456,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-6px]', 'w-10')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
@@ -1422,12 +1477,21 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
-    expect(sidebar).toHaveClass('transition-[width,opacity]', 'duration-[220ms]')
+    expect(sidebar).toHaveClass('transition-[width]', 'duration-[300ms]', 'will-change-[width]')
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5', 'ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass(
+      'transition-[margin]',
+      'duration-[300ms]',
+      'will-change-[margin]'
+    )
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
     expect(document.querySelector('aside')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
@@ -1435,6 +1499,33 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+  })
+
+  test('slides out a sidebar preview from the left edge without resizing the workspace', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    const main = getDesktopWorkbenchMainElement()
+    const preview = screen.getByTestId('desktop-sidebar-preview')
+    expect(main).toHaveClass('ml-1.5')
+    expect(screen.getByTestId('desktop-sidebar-hover-edge')).toHaveClass('w-4')
+    expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
+
+    fireEvent.pointerEnter(screen.getByTestId('desktop-sidebar-hover-edge'))
+
+    expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
+    expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
+    expect(main).toHaveClass('ml-1.5')
+
+    fireEvent.pointerEnter(preview)
+
+    expect(preview).toHaveClass('translate-x-0', 'opacity-100')
+
+    fireEvent.pointerLeave(preview)
+
+    expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
+    expect(main).toHaveClass('ml-1.5')
   })
 
   test('keeps sidebar controls out of the page chrome in Tauri', async () => {
@@ -2481,6 +2572,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('placeholder', '要求后续变更')
     expect(screen.getByTestId('send-message-button')).not.toBeDisabled()
 
     await userEvent.click(screen.getByTestId('send-message-button'))
@@ -2688,7 +2780,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the right workspace panel', async () => {
-    renderWorkspacePanelLayout()
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -2712,16 +2804,25 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const content = screen.getByTestId('desktop-workbench-content')
-    expect(content).toHaveStyle({ width: '420px' })
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '640px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+    })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
-    expect(content).toHaveClass('transition-[width]', 'duration-300', 'ease-out')
+    expect(content).toHaveClass(
+      'transition-[width]',
+      'duration-[240ms]',
+      'ease-[cubic-bezier(0.2,0,0,1)]'
+    )
 
-    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
-    fireEvent.pointerMove(document, { clientX: 640 })
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 640 })
+    fireEvent.pointerMove(document, { clientX: 580 })
     fireEvent.pointerUp(document)
 
-    expect(content).toHaveStyle({ width: '360px' })
+    expect(content).toHaveStyle({ width: '580px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
@@ -2791,7 +2892,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('resizes the browser area while dragging and collapses the right panel at the edge', async () => {
-    renderWorkspacePanelLayout()
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
@@ -2804,27 +2905,34 @@ describe('DesktopWorkbenchLayout', () => {
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
 
-    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 420 })
-    fireEvent.pointerMove(document, { clientX: 640 })
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '640px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+    })
+
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 640 })
+    fireEvent.pointerMove(document, { clientX: 700 })
 
     expect(content).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
-    expect(content).toHaveStyle({ width: '640px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+    expect(content).toHaveStyle({ width: '700px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
 
     fireEvent.pointerMove(document, { clientX: 900 })
 
-    expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
-    expect(rightPanelShell).toHaveStyle({ width: '0px' })
-    expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+      expect(rightPanelShell).toHaveStyle({ width: '0px' })
+      expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
     expect(document.body.style.cursor).toBe('')
     expect(document.body.style.userSelect).toBe('')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(content).toHaveStyle({ width: '420px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(content).toHaveStyle({ width: '640px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
   })
 
@@ -2932,6 +3040,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
+    mockDesktopWorkbenchMainWidth(1000)
     const workspacePanelState = createCloudWorkspacePanelState()
     render(
       <DesktopWorkbenchLayout
@@ -2962,18 +3071,27 @@ describe('DesktopWorkbenchLayout', () => {
     const topBar = screen.getByTestId('workbench-topbar')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(topBar).toHaveStyle({ width: '100%' })
-    expect(content).toHaveClass('flex-none', 'transition-[width]', 'duration-300', 'ease-out')
+    expect(content).toHaveClass(
+      'flex-none',
+      'transition-[width]',
+      'duration-[240ms]',
+      'ease-[cubic-bezier(0.2,0,0,1)]'
+    )
     expect(content).toHaveStyle({ width: '100%' })
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
       'opacity-0',
       'transition-[width,opacity]',
-      'duration-300',
-      'ease-out'
+      'duration-[240ms]',
+      'ease-[cubic-bezier(0.2,0,0,1)]'
     )
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('min-w-[32rem]')
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]'
+    )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -2981,13 +3099,15 @@ describe('DesktopWorkbenchLayout', () => {
       'flex-none',
       'border-r',
       'transition-[width]',
-      'duration-300',
-      'ease-out'
+      'duration-[240ms]',
+      'ease-[cubic-bezier(0.2,0,0,1)]'
     )
-    expect(content).toHaveStyle({ width: '420px' })
-    expect(topBar).toHaveStyle({ width: '420px' })
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '640px' })
+      expect(topBar).toHaveStyle({ width: '640px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+    })
     expect(rightPanelShell).toHaveClass('opacity-100')
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
@@ -3005,11 +3125,19 @@ describe('DesktopWorkbenchLayout', () => {
       'ease-out'
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[calc(100%_-_1.5rem)]',
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
       'min-w-0',
       'max-w-[calc(100%_-_1.5rem)]'
     )
-    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass('min-w-[32rem]')
+    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]',
+      'px-0'
+    )
   })
 
   test('right workspace panel opens the file tab from the launcher', async () => {

@@ -123,6 +123,11 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                 },
                 "content": "continue from content",
                 "modelId": "gpt-4.1",
+                "modelOptions": {
+                    "reasoning": "extra_high",
+                    "summary": "concise",
+                    "speed": "fast"
+                },
                 "source": source,
                 "attachments": [attachment]
             }
@@ -142,6 +147,15 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
+    assert_eq!(
+        resume["params"]["config"]["model_reasoning_effort"],
+        "xhigh"
+    );
+    assert_eq!(
+        resume["params"]["config"]["model_reasoning_summary"],
+        "concise"
+    );
+    assert_eq!(resume["params"]["config"]["service_tier"], "priority");
 
     let last_turn_start = calls
         .iter()
@@ -149,14 +163,99 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .find(|call| call["method"] == "turn/start")
         .expect("send should start a turn");
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
+    assert_eq!(last_turn_start["params"]["effort"], "xhigh");
+    assert_eq!(last_turn_start["params"]["summary"], "concise");
     assert_eq!(last_turn_start["params"]["input"][0]["type"], "text");
     assert!(last_turn_start["params"]["input"][0]["text"]
         .as_str()
         .unwrap()
         .starts_with("continue from content"));
 
-    let created_event = recv_event(&mut events, "response.created").await;
+    let runtime_events = recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.created", |event| {
+            event["payload"]["source"] == source
+        })
+        .is_some()
+            && find_runtime_event(runtime_events, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
+                block["type"] == "text"
+                    && block["content"] == "Inspecting "
+                    && block["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.block.updated", |event| {
+                let data = &event["payload"]["data"];
+                data["updates"]["content"] == "Inspecting workspace."
+                    && data["updates"]["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
+                event["payload"]["data"]["delta"] == "done"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.completed", |event| {
+                event["payload"]["data"]["value"] == "done"
+            })
+            .is_some()
+    })
+    .await;
+
+    let created_event = find_runtime_event(&runtime_events, "response.created", |event| {
+        event["payload"]["source"] == source
+    })
+    .expect("send should emit response.created with source");
     assert_eq!(created_event["payload"]["source"], source);
+    let process_created = find_runtime_event(&runtime_events, "response.block.created", |event| {
+        let block = &event["payload"]["data"]["block"];
+        block["type"] == "text"
+            && block["content"] == "Inspecting "
+            && block["status"] == "streaming"
+    })
+    .expect("commentary delta should create a process text block");
+    let process_block_id = process_created["payload"]["data"]["block"]["id"]
+        .as_str()
+        .expect("process block should have a generated id")
+        .to_owned();
+    assert_eq!(process_block_id, "text-local-task-1-0-1");
+    assert_eq!(process_created["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(
+        process_created["payload"]["data"]["block"]["content"],
+        "Inspecting "
+    );
+    assert_eq!(
+        process_created["payload"]["data"]["block"]["status"],
+        "streaming"
+    );
+
+    let process_updated = find_runtime_event(&runtime_events, "response.block.updated", |event| {
+        let data = &event["payload"]["data"];
+        data["block_id"].as_str() == Some(process_block_id.as_str())
+            && data["updates"]["status"] == "streaming"
+    })
+    .expect("second commentary delta should update the process text block");
+    assert_eq!(
+        process_updated["payload"]["data"]["block_id"],
+        process_block_id
+    );
+    assert_eq!(
+        process_updated["payload"]["data"]["updates"]["content"],
+        "Inspecting workspace."
+    );
+    assert_eq!(
+        process_updated["payload"]["data"]["updates"]["status"],
+        "streaming"
+    );
+
+    let text_delta = find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
+        event["payload"]["data"]["delta"] == "done"
+    })
+    .expect("final answer delta should remain the main output text");
+    assert_eq!(text_delta["payload"]["data"]["delta"], "done");
+    let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
+        event["payload"]["data"]["value"] == "done"
+    })
+    .expect("completed response should contain only the final answer");
+    assert_eq!(completed["payload"]["data"]["value"], "done");
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -172,7 +271,11 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|message| message["content"] == "continue from content")
+        .find(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with("continue from content"))
+        })
         .expect("cached follow-up user message should be present");
     assert_eq!(user["source"], source);
     assert_eq!(user["attachments"][0]["filename"], "photo.png");
@@ -182,6 +285,19 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
 
 #[tokio::test]
 async fn runtime_tasks_send_rejects_missing_model_without_execution_request() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-missing-model-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-missing-model-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
     let error = handler
@@ -297,7 +413,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"turn/start"'*)
+      progress_id='progress-1'
+      case "$line" in
+        *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
+      esac
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"Inspecting "}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"workspace."}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
@@ -515,15 +639,41 @@ fn drain_events(events: &mut broadcast::Receiver<Value>) {
     while events.try_recv().is_ok() {}
 }
 
-async fn recv_event(events: &mut broadcast::Receiver<Value>, event: &str) -> Value {
-    for _ in 0..20 {
-        let message = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv())
-            .await
-            .expect("timed out waiting for runtime event")
-            .expect("runtime event channel should stay open");
-        if message["event"] == event {
-            return message;
+async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done: F) -> Vec<Value>
+where
+    F: FnMut(&[Value]) -> bool,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut received = Vec::new();
+    loop {
+        if done(&received) {
+            return received;
         }
+
+        let message = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .unwrap_or_else(|_| {
+                let names = received
+                    .iter()
+                    .map(|event| event["event"].as_str().unwrap_or("<missing>"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                panic!("timed out waiting for expected runtime events; received: {names}");
+            })
+            .expect("runtime event channel should stay open");
+        received.push(message);
     }
-    panic!("did not receive event {event}");
+}
+
+fn find_runtime_event<'a, F>(
+    events: &'a [Value],
+    event_name: &str,
+    mut matches: F,
+) -> Option<&'a Value>
+where
+    F: FnMut(&Value) -> bool,
+{
+    events
+        .iter()
+        .find(|event| event["event"] == event_name && matches(event))
 }

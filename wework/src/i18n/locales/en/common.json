@@ -269,6 +269,7 @@
     "empty_title": "What should we do?",
     "project_empty_title": "What should we build in {{projectName}}?",
     "input_placeholder": "Ask anything",
+    "follow_up_placeholder": "Request follow-up changes",
     "mobile_input_placeholder": "Ask Wework",
     "continue_im_title": "Continue in IM",
     "continue_im_close": "Close Continue in IM",

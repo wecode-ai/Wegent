@@ -21,6 +21,7 @@ import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
+import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
@@ -33,6 +34,7 @@ import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
   disableContentVisibility?: boolean
@@ -77,6 +79,7 @@ const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
 
 export const MessageList = memo(function MessageList({
   messages,
+  className,
   conversationKey,
   isWaitingForAssistant = false,
   disableContentVisibility = false,
@@ -93,13 +96,16 @@ export const MessageList = memo(function MessageList({
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+  const listLayoutClass = className
+    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-11'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11'
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11">
+    <div className={cn(listLayoutClass, className)}>
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -147,6 +153,7 @@ export const MessageList = memo(function MessageList({
 function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
+    previous.className !== next.className ? 'className' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
     previous.disableContentVisibility !== next.disableContentVisibility
@@ -185,7 +192,7 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
   if (visibleContent.trim()) return true
 
-  return getDisplayProcessingBlocks(message.blocks, visibleContent).length > 0
+  return getDisplayProcessingBlocks(message.blocks).length > 0
 }
 
 function WaitingAssistantIndicator() {
@@ -250,6 +257,22 @@ function getStoppedElapsedDuration(message: WorkbenchMessage): string {
   return formatCompactDuration(endedAt - startedAt)
 }
 
+function getProcessingSummaryStartMs(
+  message: WorkbenchMessage,
+  blocks: ProcessingBlock[],
+  isStreaming: boolean
+): number | undefined {
+  if (!isStreaming) return getTurnStartMs(message.createdAt)
+
+  const blockStartTimes = blocks
+    .map(block => block.createdAt)
+    .filter((createdAt): createdAt is number => Number.isFinite(createdAt))
+
+  if (blockStartTimes.length > 0) return Math.min(...blockStartTimes)
+
+  return undefined
+}
+
 function isCancelledAssistantMessage(message: WorkbenchMessage): boolean {
   return message.runtimeStatus === 'cancelled'
 }
@@ -257,6 +280,17 @@ function isCancelledAssistantMessage(message: WorkbenchMessage): boolean {
 function isCancelledPlaceholderContent(content: string): boolean {
   return ['interrupted', 'cancelled', 'canceled', 'aborted'].includes(content.trim().toLowerCase())
 }
+
+const RECENT_MESSAGE_TIME_RANGE_MS = 7 * 24 * 60 * 60 * 1000
+const CHINESE_WEEKDAY_LABELS = [
+  '星期日',
+  '星期一',
+  '星期二',
+  '星期三',
+  '星期四',
+  '星期五',
+  '星期六',
+]
 
 function formatMessageTime(createdAt: string) {
   const date = new Date(createdAt)
@@ -269,6 +303,11 @@ function formatMessageTime(createdAt: string) {
 
   const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
   if (isToday) return time
+
+  const ageMs = now.getTime() - date.getTime()
+  if (ageMs >= 0 && ageMs < RECENT_MESSAGE_TIME_RANGE_MS) {
+    return `${CHINESE_WEEKDAY_LABELS[date.getDay()]}${time}`
+  }
 
   const dateLabel = `${date.getMonth() + 1}月${date.getDate()}日`
   if (date.getFullYear() === now.getFullYear()) {
@@ -370,39 +409,44 @@ function UserMessage({
                 className={[
                   'flex w-full max-w-full flex-row flex-nowrap gap-2',
                   hasMultipleImagePreviews
-                    ? 'scrollbar-none justify-start overflow-x-auto overscroll-x-contain'
+                    ? 'scrollbar-none overflow-x-auto overscroll-x-contain'
                     : 'justify-end overflow-visible',
                 ].join(' ')}
               >
-                {imagePreviewAttachments.map((attachment, index) => (
-                  <MessageImageAttachmentPreview
-                    key={`${attachment.id}:${attachment.local_preview_url ?? attachment.filename}`}
-                    attachment={attachment}
-                    galleryAttachments={imagePreviewAttachments}
-                    galleryIndex={index}
-                    imageTestId={
-                      imageAttachments.length > 0
-                        ? 'message-image-preview'
-                        : 'message-local-image-preview'
-                    }
-                    buttonTestId={
-                      imageAttachments.length > 0
-                        ? 'message-image-preview-button'
-                        : 'message-local-image-preview-button'
-                    }
-                    loadingTestId={
-                      imageAttachments.length > 0
-                        ? 'message-image-preview-loading'
-                        : 'message-local-image-preview-loading'
-                    }
-                    errorTestId={
-                      imageAttachments.length > 0
-                        ? 'message-image-preview-error'
-                        : 'message-local-image-preview-error'
-                    }
-                    hideOnError={imageAttachments.length === 0}
-                  />
-                ))}
+                <div
+                  data-testid="message-image-attachment-strip"
+                  className="ml-auto flex w-max max-w-none flex-row flex-nowrap justify-end gap-2"
+                >
+                  {imagePreviewAttachments.map((attachment, index) => (
+                    <MessageImageAttachmentPreview
+                      key={`${attachment.id}:${attachment.local_preview_url ?? attachment.filename}`}
+                      attachment={attachment}
+                      galleryAttachments={imagePreviewAttachments}
+                      galleryIndex={index}
+                      imageTestId={
+                        imageAttachments.length > 0
+                          ? 'message-image-preview'
+                          : 'message-local-image-preview'
+                      }
+                      buttonTestId={
+                        imageAttachments.length > 0
+                          ? 'message-image-preview-button'
+                          : 'message-local-image-preview-button'
+                      }
+                      loadingTestId={
+                        imageAttachments.length > 0
+                          ? 'message-image-preview-loading'
+                          : 'message-local-image-preview-loading'
+                      }
+                      errorTestId={
+                        imageAttachments.length > 0
+                          ? 'message-image-preview-error'
+                          : 'message-local-image-preview-error'
+                      }
+                      hideOnError={imageAttachments.length === 0}
+                    />
+                  ))}
+                </div>
               </div>
             )}
             {localFileMentions.map(file => (
@@ -821,25 +865,13 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
-function normalizeTextForComparison(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function getDisplayProcessingBlocks(
-  blocks: ProcessingBlock[] | undefined,
-  visibleContent: string
-): ProcessingBlock[] {
+function getDisplayProcessingBlocks(blocks: ProcessingBlock[] | undefined): ProcessingBlock[] {
   if (!blocks?.length) return []
-
-  const normalizedVisibleContent = normalizeTextForComparison(visibleContent)
 
   return blocks.filter(block => {
     if (block.type !== 'text') return true
 
-    const normalizedBlockContent = normalizeTextForComparison(block.content)
-    if (!normalizedBlockContent) return false
-
-    return normalizedBlockContent !== normalizedVisibleContent
+    return Boolean(block.content.trim())
   })
 }
 
@@ -886,14 +918,17 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
+  const canShowFinalArtifacts = !isStreaming
+  const hasStreamedResponse = hasBlocks || hasVisibleContent
+  const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
+  const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
-  const shouldShowCompactThinking = isStreaming && !hasBlocks && !hasVisibleContent
   const contextEvents = message.contextEvents ?? []
   const memoryCitations = message.memoryCitations ?? []
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
@@ -920,12 +955,12 @@ function AssistantMessage({
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
       <div
-        className="w-fit max-w-full"
+        className="w-full max-w-full"
         data-testid="message-hover-region"
         onPointerEnter={() => setAreHoverActionsVisible(true)}
         onPointerLeave={() => setAreHoverActionsVisible(false)}
       >
-        <div className="w-fit max-w-full">
+        <div className="w-full max-w-full">
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
@@ -936,31 +971,33 @@ function AssistantMessage({
               })}
             </div>
           ) : null}
-          {hasBlocks && (
+          {shouldShowProcessingSummary && (
             <ToolBlocksDisplay
               blocks={displayBlocks}
               isStreaming={isStreaming}
-              startedAt={getTurnStartMs(message.createdAt)}
+              startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
               forceExpanded={isCancelled}
+              hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
+              showRunningPlaceholder={!hasVisibleContent}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )}
+          {shouldShowInitialThinking && <WaitingAssistantIndicator />}
           {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
           {hasVisibleContent && (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           )}
-          {hasVisibleContent && webSearchSources.length > 0 && (
+          {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
-          {memoryCitations.length > 0 && (
+          {canShowFinalArtifacts && memoryCitations.length > 0 && (
             <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
           )}
-          {references.length > 0 && (
+          {canShowFinalArtifacts && references.length > 0 && (
             <CodexReferenceList references={references} onOpenFile={openFileFromLink} />
           )}
-          {shouldShowCompactThinking && <WaitingAssistantIndicator />}
           {message.status === 'failed' && (
             <AssistantErrorCard
               error={message.error}
@@ -971,7 +1008,8 @@ function AssistantMessage({
               onSwitchModel={onSwitchModelForFailedMessage}
             />
           )}
-          {message.fileChanges &&
+          {canShowFinalArtifacts &&
+          message.fileChanges &&
           message.turnId &&
           onLoadFileChangesDiff &&
           onRevertFileChanges ? (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEventHandler } from 'react'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
@@ -10,6 +11,7 @@ import type {
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import {
@@ -71,7 +73,9 @@ export function DesktopWorkbenchLayout() {
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
   } = useWorkbench()
   const activeItem = 'chat'
-  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
+  const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -116,6 +120,14 @@ export function DesktopWorkbenchLayout() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  useEffect(() => {
+    if (sidebarCollapsed || !sidebarPreviewOpen) return
+    const timer = window.setTimeout(() => {
+      setSidebarPreviewOpen(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [sidebarCollapsed, sidebarPreviewOpen])
+
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
       setBlankProjectDialogOpen(mode === 'scratch')
@@ -145,6 +157,27 @@ export function DesktopWorkbenchLayout() {
     setSettingsOpen(true)
     navigateTo('/settings')
   }, [])
+
+  const openSidebarPreview = useCallback(() => {
+    if (!sidebarCollapsed) return
+    setSidebarPreviewOpen(true)
+  }, [sidebarCollapsed])
+
+  const closeSidebarPreview = useCallback(() => {
+    setSidebarPreviewOpen(false)
+  }, [])
+
+  const updateSidebarCollapsed = useCallback(
+    (collapsed: boolean) => {
+      setSidebarPreviewOpen(false)
+      setSidebarCollapsed(collapsed)
+    },
+    [setSidebarCollapsed]
+  )
+
+  const collapseSidebar = useCallback(() => {
+    updateSidebarCollapsed(true)
+  }, [updateSidebarCollapsed])
 
   useWorkbenchShellEventHandlers({
     onCreateProjectMode: openProjectFromWorkMenu,
@@ -340,57 +373,105 @@ export function DesktopWorkbenchLayout() {
     ]
   )
 
+  const renderDesktopSidebar = ({
+    collapsed,
+    containerTestId,
+    hideResizeHandle = false,
+    onPointerEnter,
+    onPointerLeave,
+  }: {
+    collapsed: boolean
+    containerTestId?: string
+    hideResizeHandle?: boolean
+    onPointerEnter?: PointerEventHandler<HTMLElement>
+    onPointerLeave?: PointerEventHandler<HTMLElement>
+  }) => (
+    <DesktopSidebar
+      user={state.user}
+      projects={state.projects}
+      devices={state.devices}
+      cloudWorkStatus={cloudWorkStatus}
+      runtimeWork={state.runtimeWork}
+      currentRuntimeTask={state.currentRuntimeTask}
+      standaloneDeviceId={state.standaloneDeviceId}
+      standaloneWorkspacePath={state.standaloneWorkspacePath}
+      imNotificationSettings={imNotificationSettings}
+      preferredDeviceId={
+        state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+      }
+      activeItem={activeItem}
+      collapsed={collapsed}
+      containerTestId={containerTestId}
+      hideResizeHandle={hideResizeHandle}
+      onResizeCollapse={collapseSidebar}
+      onResizeStateChange={setSidebarResizing}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onNewChat={onNewChat}
+      onOpenSearch={() => setSearchOpen(true)}
+      onSelectProject={onSelectProject}
+      onStartNewProjectChat={onStartNewProjectChat}
+      onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+      onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
+      onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+      onArchiveProjectConversations={onArchiveProjectConversations}
+      onArchiveProjectsConversations={onArchiveProjectsConversations}
+      onArchiveChatConversations={onArchiveChatConversations}
+      onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
+      onToggleGlobalImNotification={toggleGlobalImNotification}
+      onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
+      onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      onSelectStandaloneDevice={selectStandaloneDevice}
+      onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
+      onOpenPlugins={() => navigateTo('/plugins')}
+      onRefreshDevices={onRefreshDevices}
+      onUpdateProjectName={onUpdateProjectName}
+      onRemoveProject={onRemoveProject}
+      onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+      onListDeviceDirectories={onListDeviceDirectories}
+      onCreateDeviceDirectory={onCreateDeviceDirectory}
+      onOpenSettings={options => {
+        setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+        setSettingsOpen(true)
+        navigateTo('/settings')
+      }}
+      onRefreshWorkLists={onRefreshWorkLists}
+      onLogout={onLogout}
+    />
+  )
+
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && (
-        <DesktopSidebar
-          user={state.user}
-          projects={state.projects}
-          devices={state.devices}
-          cloudWorkStatus={cloudWorkStatus}
-          runtimeWork={state.runtimeWork}
-          currentRuntimeTask={state.currentRuntimeTask}
-          standaloneDeviceId={state.standaloneDeviceId}
-          standaloneWorkspacePath={state.standaloneWorkspacePath}
-          imNotificationSettings={imNotificationSettings}
-          preferredDeviceId={
-            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-          }
-          activeItem={activeItem}
-          collapsed={sidebarCollapsed}
-          onNewChat={onNewChat}
-          onOpenSearch={() => setSearchOpen(true)}
-          onSelectProject={onSelectProject}
-          onStartNewProjectChat={onStartNewProjectChat}
-          onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-          onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-          onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-          onArchiveProjectConversations={onArchiveProjectConversations}
-          onArchiveProjectsConversations={onArchiveProjectsConversations}
-          onArchiveChatConversations={onArchiveChatConversations}
-          onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
-          onToggleGlobalImNotification={toggleGlobalImNotification}
-          onOpenGlobalImNotificationSettings={() =>
-            openImNotificationTargetDialog({ type: 'global' })
-          }
-          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-          onSelectStandaloneDevice={selectStandaloneDevice}
-          onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-          onOpenPlugins={() => navigateTo('/plugins')}
-          onRefreshDevices={onRefreshDevices}
-          onUpdateProjectName={onUpdateProjectName}
-          onRemoveProject={onRemoveProject}
-          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onListDeviceDirectories={onListDeviceDirectories}
-          onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={options => {
-            setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-            setSettingsOpen(true)
-            navigateTo('/settings')
-          }}
-          onRefreshWorkLists={onRefreshWorkLists}
-          onLogout={onLogout}
-        />
+      {!settingsOpen && renderDesktopSidebar({ collapsed: sidebarCollapsed })}
+      {!settingsOpen && sidebarCollapsed && (
+        <>
+          <div
+            data-testid="desktop-sidebar-hover-edge"
+            aria-hidden="true"
+            onPointerEnter={openSidebarPreview}
+            className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+          />
+          <div
+            data-testid="desktop-sidebar-preview"
+            aria-hidden={!sidebarPreviewOpen}
+            onPointerEnter={openSidebarPreview}
+            onPointerLeave={closeSidebarPreview}
+            className={cn(
+              'absolute left-0 top-0 z-popover h-full bg-background transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+              sidebarPreviewOpen
+                ? 'pointer-events-auto translate-x-0 opacity-100 shadow-[6px_0_24px_rgba(15,23,42,0.10)]'
+                : 'pointer-events-none -translate-x-full opacity-100'
+            )}
+          >
+            {renderDesktopSidebar({
+              collapsed: false,
+              containerTestId: 'desktop-sidebar-preview-panel',
+              hideResizeHandle: true,
+              onPointerEnter: openSidebarPreview,
+              onPointerLeave: closeSidebarPreview,
+            })}
+          </div>
+        </>
       )}
       {settingsOpen ? (
         <ConnectionsSettingsPage
@@ -403,6 +484,9 @@ export function DesktopWorkbenchLayout() {
         />
       ) : (
         <DesktopWorkbenchMain
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarResizing={sidebarResizing}
+          onSidebarCollapsedChange={updateSidebarCollapsed}
           activePane={{
             currentRuntimeTask: state.currentRuntimeTask,
             currentProject: state.currentProject,
