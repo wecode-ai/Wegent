@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CloudWorkStatus,
   GuidanceWorkbenchMessage,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
@@ -32,13 +33,15 @@ import type {
   RuntimeWorkSearchResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
+import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
+  resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
   resolveWorkspaceTarget,
   workspaceTargetKey,
@@ -58,6 +61,7 @@ import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
@@ -65,7 +69,9 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning?: boolean
+  cloudWorkStatus?: CloudWorkStatus
   isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
   runtimeTranscriptHasMoreBefore?: boolean
@@ -94,6 +100,7 @@ interface DesktopWorkbenchLayoutProps {
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
@@ -178,7 +185,9 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  workspaceFileApi,
   currentRuntimeTaskRunning = false,
+  cloudWorkStatus,
   isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
   runtimeTranscriptHasMoreBefore = false,
@@ -202,6 +211,7 @@ export function DesktopWorkbenchLayout({
   onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
   onOpenStandaloneWorkspace,
+  onGetRemoteDeviceStartupCommand,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
@@ -245,6 +255,7 @@ export function DesktopWorkbenchLayout({
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
+  const isTauri = isTauriRuntime()
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
@@ -278,6 +289,7 @@ export function DesktopWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
+  const environmentInfoRequestSequence = useRef(0)
   const runtimeWorkspaceContext = useMemo(
     () =>
       resolveRuntimeWorkspaceContext({
@@ -288,11 +300,17 @@ export function DesktopWorkbenchLayout({
     [state.currentRuntimeTask, state.projects, state.runtimeWork]
   )
   const activeConversationProject = state.currentProject ?? runtimeWorkspaceContext?.project ?? null
+  const selectedWorkspaceProject = projectWork.currentProjectId
+    ? (projectWork.projects.find(project => project.id === projectWork.currentProjectId) ??
+      state.projects.find(project => project.id === projectWork.currentProjectId) ??
+      null)
+    : null
   const environmentProject = useMemo(() => {
     if (state.currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
     }
     return (
+      selectedWorkspaceProject ??
       activeConversationProject ??
       state.projects.find(project => project.config?.mode === 'workspace') ??
       null
@@ -300,6 +318,7 @@ export function DesktopWorkbenchLayout({
   }, [
     activeConversationProject,
     runtimeWorkspaceContext?.project,
+    selectedWorkspaceProject,
     state.currentRuntimeTask,
     state.projects,
   ])
@@ -308,10 +327,33 @@ export function DesktopWorkbenchLayout({
     [onGetProjectWorkspaceRoot]
   )
   const hasEnvironmentProject = Boolean(environmentProject)
-  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
+  const shouldAutoLoadEnvironmentInfo = Boolean(
+    activeConversationProject || state.currentRuntimeTask
+  )
   const workspaceTargetProject = environmentProject
   const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
   const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
+  const projectRuntimeWorkspaceTarget = useMemo(
+    () =>
+      state.currentRuntimeTask
+        ? null
+        : resolveProjectRuntimeWorkspaceTarget({
+            currentProject: workspaceTargetProject,
+            runtimeWork: state.runtimeWork,
+            selectedDeviceWorkspaceId: projectWork.selectedDeviceWorkspaceId,
+          }),
+    [
+      projectWork.selectedDeviceWorkspaceId,
+      state.currentRuntimeTask,
+      state.runtimeWork,
+      workspaceTargetProject,
+    ]
+  )
+  const projectRuntimeWorkspaceTargetKey = workspaceTargetKey(projectRuntimeWorkspaceTarget)
+  const activeWorkspaceTarget = state.currentRuntimeTask
+    ? runtimeWorkspaceTarget
+    : (projectRuntimeWorkspaceTarget ?? workspaceTarget)
+  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
 
   useEffect(() => {
     let cancelled = false
@@ -321,6 +363,19 @@ export function DesktopWorkbenchLayout({
         workspaceTargetKey(current) === runtimeWorkspaceTargetKey ? current : runtimeWorkspaceTarget
       )
       setWorkspaceTargetError(runtimeWorkspaceTarget ? null : 'Workspace is not ready')
+      setWorkspaceTargetResolving(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (projectRuntimeWorkspaceTarget) {
+      setWorkspaceTarget(current =>
+        workspaceTargetKey(current) === projectRuntimeWorkspaceTargetKey
+          ? current
+          : projectRuntimeWorkspaceTarget
+      )
+      setWorkspaceTargetError(null)
       setWorkspaceTargetResolving(false)
       return () => {
         cancelled = true
@@ -356,6 +411,8 @@ export function DesktopWorkbenchLayout({
       cancelled = true
     }
   }, [
+    projectRuntimeWorkspaceTarget,
+    projectRuntimeWorkspaceTargetKey,
     runtimeWorkspaceTarget,
     runtimeWorkspaceTargetKey,
     state.currentRuntimeTask,
@@ -364,6 +421,9 @@ export function DesktopWorkbenchLayout({
   ])
 
   const refreshEnvironmentInfo = useCallback(async () => {
+    const requestId = environmentInfoRequestSequence.current + 1
+    environmentInfoRequestSequence.current = requestId
+
     if (workspaceTargetResolving) {
       setEnvironmentInfo(info => ({ ...info, loading: true }))
       return
@@ -380,23 +440,32 @@ export function DesktopWorkbenchLayout({
 
     setEnvironmentInfo(info => ({ ...info, loading: true }))
     try {
-      const info = await onLoadEnvironmentInfo(environmentProject, workspaceTarget)
-      setEnvironmentInfo({ ...info, loading: false })
+      const info = await onLoadEnvironmentInfo(environmentProject, activeWorkspaceTarget)
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo({ ...info, loading: false })
+      }
     } catch (error) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load environment info',
-      }))
+      if (environmentInfoRequestSequence.current === requestId) {
+        setEnvironmentInfo(info => ({
+          ...info,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to load environment info',
+        }))
+      }
     }
   }, [
     environmentProject,
     environmentWorkspaceReady,
+    activeWorkspaceTarget,
     onLoadEnvironmentInfo,
-    workspaceTarget,
     workspaceTargetError,
     workspaceTargetResolving,
   ])
+
+  useEffect(() => {
+    if (!shouldAutoLoadEnvironmentInfo) return
+    void refreshEnvironmentInfo()
+  }, [refreshEnvironmentInfo, shouldAutoLoadEnvironmentInfo])
 
   useEffect(() => {
     const handlePopState = () => {
@@ -425,26 +494,26 @@ export function DesktopWorkbenchLayout({
   }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
   async function handleCommitEnvironmentChanges(message: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCommitEnvironmentChanges(environmentProject, message, workspaceTarget)
+    await onCommitEnvironmentChanges(environmentProject, message, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
   }
 
   async function handleCheckoutEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCheckoutEnvironmentBranch(environmentProject, branchName, workspaceTarget)
+    await onCheckoutEnvironmentBranch(environmentProject, branchName, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
   async function handleCreateEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
+    if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
-    await onCreateEnvironmentBranch(environmentProject, branchName, workspaceTarget)
+    await onCreateEnvironmentBranch(environmentProject, branchName, activeWorkspaceTarget)
     setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
@@ -701,8 +770,8 @@ export function DesktopWorkbenchLayout({
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
     onRefreshBranch: undefined,
-    onListBranches: workspaceTarget
-      ? () => onListEnvironmentBranches(environmentProject, workspaceTarget)
+    onListBranches: activeWorkspaceTarget
+      ? () => onListEnvironmentBranches(environmentProject, activeWorkspaceTarget)
       : undefined,
     onCheckoutBranch: handleCheckoutEnvironmentBranch,
     onCreateBranch: handleCreateEnvironmentBranch,
@@ -710,11 +779,12 @@ export function DesktopWorkbenchLayout({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && !sidebarCollapsed && (
+      {!settingsOpen && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
           devices={state.devices}
+          cloudWorkStatus={cloudWorkStatus}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
           standaloneDeviceId={state.standaloneDeviceId}
@@ -724,7 +794,7 @@ export function DesktopWorkbenchLayout({
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           activeItem={activeItem}
-          onCollapse={() => setSidebarCollapsed(true)}
+          collapsed={sidebarCollapsed}
           onNewChat={onNewChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={onSelectProject}
@@ -741,6 +811,8 @@ export function DesktopWorkbenchLayout({
             openImNotificationTargetDialog({ type: 'global' })
           }
           onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onUpdateProjectName={onUpdateProjectName}
@@ -773,7 +845,9 @@ export function DesktopWorkbenchLayout({
           currentRuntimeTask={state.currentRuntimeTask}
           runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
-          workspaceTarget={workspaceTarget}
+          workspaceProject={environmentProject}
+          workspaceTarget={activeWorkspaceTarget}
+          workspaceFileApi={workspaceFileApi}
           workspaceTargetError={workspaceTargetError}
           devices={state.devices}
           upgradingDevices={upgradingDevices}
@@ -801,10 +875,10 @@ export function DesktopWorkbenchLayout({
               : undefined
           }
           onListEnvironmentBranches={() => {
-            if (!workspaceTarget) {
+            if (!activeWorkspaceTarget) {
               return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
             }
-            return onListEnvironmentBranches(environmentProject, workspaceTarget)
+            return onListEnvironmentBranches(environmentProject, activeWorkspaceTarget)
           }}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
@@ -837,11 +911,16 @@ export function DesktopWorkbenchLayout({
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
           topBarLeftActions={
-            sidebarCollapsed ? (
+            sidebarCollapsed && !isTauri ? (
               <DesktopWindowControls
                 sidebarCollapsed
                 onToggleSidebar={() => setSidebarCollapsed(false)}
                 onNewChat={onNewChat}
+              />
+            ) : !isTauri ? (
+              <DesktopWindowControls
+                sidebarCollapsed={false}
+                onToggleSidebar={() => setSidebarCollapsed(true)}
               />
             ) : undefined
           }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
   test('selects a project and keeps runtime task empty', () => {
@@ -52,6 +53,56 @@ describe('workbenchReducer', () => {
 
     expect(state.runtimeWork).toBe(runtimeWork)
     expect(state.projects[0].tasks).toEqual([])
+  })
+
+  test('keeps selected runtime project when refreshed backend projects are empty', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          project: {
+            key: 'local:/Users/me/Wegent',
+            name: 'Wegent',
+          },
+          totalLocalTasks: 0,
+          deviceWorkspaces: [
+            {
+              id: null,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/Users/me/Wegent',
+              workspaceKind: 'workspace',
+              mapped: true,
+              localTasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 0,
+    }
+    const projectId = runtimeProjectUiId(runtimeWork.projects[0].project)
+    const selected = workbenchReducer(initialWorkbenchState, {
+      type: 'project_selected',
+      project: { id: projectId, name: 'Wegent', tasks: [] },
+    })
+
+    const refreshed = workbenchReducer(selected, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [],
+      runtimeWork,
+    })
+
+    expect(refreshed.currentProject).toMatchObject({
+      id: projectId,
+      name: 'Wegent',
+      config: {
+        execution: { targetType: 'local', deviceId: 'local-device' },
+        workspace: { source: 'local_path', localPath: '/Users/me/Wegent' },
+      },
+    })
   })
 
   test('clears selected project when opening a standalone runtime task', () => {

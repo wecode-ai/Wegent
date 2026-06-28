@@ -15,7 +15,7 @@ import { chromium, Page } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 
-const BASE_URL = process.env.TEST_BASE_URL || 'https://wegent.intra.weibo.com'
+const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
 
 // Determine auth file path from environment or generate from URL
 function getAuthFilePath(): string {

@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event'
 import {
   LOCAL_EXECUTOR_COMMANDS,
   LOCAL_EXECUTOR_EVENT,
+  connectLocalExecutorToBackend,
+  disconnectLocalExecutorFromBackend,
   ensureLocalExecutorStarted,
   getLocalExecutorStatus,
   requestLocalExecutor,
@@ -59,6 +61,36 @@ describe('localExecutor', () => {
       deviceId: 'local-device',
     })
     expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.restart)
+  })
+
+  test('connects the local executor to backend through the native app command', async () => {
+    invokeMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    await expect(
+      connectLocalExecutorToBackend({
+        backendUrl: 'https://cloud.example.com',
+        authToken: 'wg-token',
+      })
+    ).resolves.toEqual({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.connectBackend, {
+      backendUrl: 'https://cloud.example.com',
+      authToken: 'wg-token',
+    })
+  })
+
+  test('disconnects the local executor from backend through the native app command', async () => {
+    invokeMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    await expect(disconnectLocalExecutorFromBackend()).resolves.toEqual({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.disconnectBackend)
   })
 
   test('sends local executor requests through the native app command', async () => {

@@ -25,11 +25,10 @@ export function navigateTo(path: string) {
 export interface RuntimeTaskRoute {
   deviceId: string
   localTaskId: string
-}
-
-export interface RuntimeTaskRouteInput extends RuntimeTaskRoute {
   workspacePath?: string | null
 }
+
+export type RuntimeTaskRouteInput = RuntimeTaskRoute
 
 function getRequiredSearchParam(
   searchParams: URLSearchParams,

@@ -288,6 +288,59 @@ async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_device_register_passes_app_device_type_and_app_device_id(monkeypatch):
+    namespace = DeviceNamespace()
+    upsert_calls = []
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "203.0.113.20",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        upsert_calls.append((func, args))
+        return True, "MacBook", None
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "set_device_online",
+        AsyncMock(return_value=True),
+    )
+
+    result = await namespace.on_device_register(
+        "sid-app",
+        {
+            "device_id": "local-app-device",
+            "name": "MacBook App",
+            "device_type": DeviceType.APP.value,
+            "executor_version": "1.8.5",
+            "app_device_id": "local-app-device",
+        },
+    )
+
+    assert result == {"success": True, "device_id": "local-app-device"}
+    assert len(upsert_calls) == 1
+    assert upsert_calls[0][1][4] == DeviceType.APP.value
+    assert upsert_calls[0][1][7] == "local-app-device"
+
+
+@pytest.mark.asyncio
 async def test_cloud_device_register_matches_cloud_device(monkeypatch):
     namespace = DeviceNamespace()
     match_cloud_device = AsyncMock(return_value="standalone-admin-device")

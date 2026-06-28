@@ -913,6 +913,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
   })
@@ -1017,6 +1018,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: chatPath,
       localTaskId: 'chat-1',
     })
   })

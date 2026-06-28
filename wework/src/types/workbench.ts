@@ -1,5 +1,8 @@
 import type {
   Attachment,
+  CodexContextEvent,
+  CodexMemoryCitation,
+  CodexReference,
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
@@ -13,6 +16,7 @@ import type {
   WorkbenchMessage as CoreWorkbenchMessage,
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
+  WorkbenchFileChangesBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
@@ -33,14 +37,25 @@ export type ThinkingBlock = WorkbenchThinkingBlock
 
 export type TextBlock = WorkbenchTextBlock
 
-export type ProcessingBlock = WorkbenchProcessingBlock
+export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
+
+export type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
 
 export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
 
 export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
 
-export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary> & {
+export type WorkbenchMessage = Omit<
+  CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>,
+  'blocks'
+> & {
+  blocks?: ProcessingBlock[]
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
+  completedAt?: string | number | null
+  stoppedNotice?: boolean | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+  contextEvents?: CodexContextEvent[] | null
 }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
@@ -61,6 +76,17 @@ export interface GuidanceWorkbenchMessage {
   status: GuidanceMessageStatus
   createdAt: string
   error?: string
+}
+
+export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
+export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+
+export interface CloudWorkStatus {
+  availability: CloudWorkAvailability
+  checks: Record<CloudWorkCheckKey, CloudWorkCheckStatus>
+  error: string | null
+  updatedAt: string | null
 }
 
 export interface WorkbenchState {

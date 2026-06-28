@@ -19,10 +19,17 @@ interface ChromeTitlebarProps {
   tabs: AppTab[]
   activeKey: string
   onNavigate: (appKey: string) => void
+  beforeTabs?: ReactNode
   afterTabs?: ReactNode
 }
 
-export function ChromeTitlebar({ tabs, activeKey, onNavigate, afterTabs }: ChromeTitlebarProps) {
+export function ChromeTitlebar({
+  tabs,
+  activeKey,
+  onNavigate,
+  beforeTabs,
+  afterTabs,
+}: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
 
@@ -39,6 +46,12 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate, afterTabs }: Chrom
           data-testid="macos-traffic-light-spacer"
           data-tauri-drag-region
         />
+      )}
+
+      {beforeTabs && (
+        <div data-testid="chrome-titlebar-before-tabs" className="mr-1 flex shrink-0 items-center">
+          {beforeTabs}
+        </div>
       )}
 
       {/* Tab strip */}

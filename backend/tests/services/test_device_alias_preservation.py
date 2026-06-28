@@ -56,3 +56,23 @@ def test_upsert_device_crd_preserves_existing_custom_alias(test_db: Session, tes
     assert updated.json["metadata"]["displayName"] == "My Custom Alias"
     assert updated.json["spec"]["clientIp"] == "127.0.0.1"
     assert updated.json["spec"]["deviceType"] == DeviceType.LOCAL.value
+
+
+def test_upsert_app_device_uses_app_type_without_becoming_default(
+    test_db: Session,
+    test_user,
+):
+    """Desktop app registration should keep its explicit app type."""
+    updated = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        "app-device",
+        "MacBook App",
+        device_type=DeviceType.APP.value,
+        bind_shell="claudecode",
+        app_device_id="app-device",
+    )
+
+    assert updated.json["spec"]["deviceType"] == DeviceType.APP.value
+    assert updated.json["spec"]["appDeviceId"] == "app-device"
+    assert updated.json["spec"]["isDefault"] is False

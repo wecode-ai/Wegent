@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
 
@@ -23,11 +23,26 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WorkbenchProvider: ({
+    children,
+    onStartupReadyChange,
+  }: {
+    children: React.ReactNode
+    onStartupReadyChange?: (ready: boolean) => void
+  }) => {
+    queueMicrotask(() => onStartupReadyChange?.(true))
+    return <>{children}</>
+  },
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  connectLocalExecutorToBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  disconnectLocalExecutorFromBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
@@ -47,6 +62,7 @@ describe('App center route', () => {
   beforeEach(() => {
     localStorage.clear()
     enableTauri()
+    vi.stubEnv('DEV', false)
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -101,11 +117,22 @@ describe('App center route', () => {
     )
   })
 
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  async function waitForStartupScreenToClose() {
+    await waitFor(() => {
+      expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+    })
+  }
+
   test('opens the app center from the fixed titlebar tab', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
     await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
@@ -124,6 +151,7 @@ describe('App center route', () => {
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const appsPage = screen.getByTestId('apps-page')
@@ -143,6 +171,7 @@ describe('App center route', () => {
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const scrollContainer = screen.getByTestId('apps-scroll-container')

@@ -10,7 +10,7 @@ import {
   resolveProjectWorkspacePath,
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
@@ -22,6 +22,12 @@ interface ResolveRuntimeWorkspaceContextOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
   projects: ProjectWithTasks[]
   runtimeWork: RuntimeWorkListResponse | null
+}
+
+interface ResolveProjectRuntimeWorkspaceTargetOptions {
+  currentProject: ProjectWithTasks | null
+  runtimeWork: RuntimeWorkListResponse | null
+  selectedDeviceWorkspaceId?: number | null
 }
 
 export interface RuntimeWorkspaceContext {
@@ -52,14 +58,65 @@ export async function resolveWorkspaceTarget({
   return null
 }
 
+function projectDeviceWorkspaces(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): RuntimeDeviceWorkspace[] {
+  if (!projectId) return []
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
+  return projectWork?.deviceWorkspaces.filter(workspace => workspace.available) ?? []
+}
+
+function selectProjectDeviceWorkspace(
+  workspaces: RuntimeDeviceWorkspace[],
+  selectedDeviceWorkspaceId?: number | null
+): RuntimeDeviceWorkspace | null {
+  if (selectedDeviceWorkspaceId != null) {
+    return workspaces.find(workspace => workspace.id === selectedDeviceWorkspaceId) ?? null
+  }
+  return workspaces.length === 1 ? workspaces[0] : null
+}
+
+export function resolveProjectRuntimeWorkspaceTarget({
+  currentProject,
+  runtimeWork,
+  selectedDeviceWorkspaceId,
+}: ResolveProjectRuntimeWorkspaceTargetOptions): WorkspaceTarget | null {
+  const workspace = selectProjectDeviceWorkspace(
+    projectDeviceWorkspaces(runtimeWork, currentProject?.id),
+    selectedDeviceWorkspaceId
+  )
+  const workspacePath = workspace?.workspacePath.trim()
+  if (!workspace || !workspacePath) return null
+
+  return {
+    deviceId: workspace.deviceId,
+    path: workspacePath,
+    source: 'project',
+    ...(workspace.workspaceSource !== undefined
+      ? { workspaceSource: workspace.workspaceSource }
+      : {}),
+  }
+}
+
 function workspaceTargetFromRuntimeTask(
   workspace: RuntimeDeviceWorkspace,
   task: LocalTaskSummary
 ): WorkspaceTarget {
+  const workspacePath =
+    workspace.workspaceKind === 'worktree' || workspace.worktreeId
+      ? workspace.workspacePath
+      : task.workspacePath || workspace.workspacePath
+
   return {
     deviceId: workspace.deviceId,
-    path: task.workspacePath || workspace.workspacePath,
+    path: workspacePath,
     source: 'runtime',
+    ...(workspace.workspaceSource !== undefined
+      ? { workspaceSource: workspace.workspaceSource }
+      : {}),
   }
 }
 
@@ -95,7 +152,8 @@ export function resolveRuntimeWorkspaceContext({
 
       return {
         project:
-          projects.find(project => project.id === runtimeProjectUiId(projectWork.project)) ?? null,
+          projects.find(project => project.id === runtimeProjectUiId(projectWork.project)) ??
+          runtimeProjectToProject(projectWork),
         workspaceTarget: workspaceTargetFromRuntimeTask(workspace, task),
       }
     }

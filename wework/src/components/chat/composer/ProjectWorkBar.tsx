@@ -23,7 +23,7 @@ import {
   isSelectableProjectWorkspace,
 } from '@/lib/project-workspace-selection'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -109,24 +109,12 @@ function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
 
-function runtimeProjectToProject(
-  projectWork: RuntimeWorkListResponse['projects'][number]
-): ProjectWithTasks {
-  return {
-    id: runtimeProjectUiId(projectWork.project),
-    name: projectWork.project.name,
-    description: projectWork.project.description,
-    color: projectWork.project.color,
-    tasks: [],
-  }
-}
-
 function isLocalStandaloneDevice(device: DeviceInfo): boolean {
   return device.device_type !== 'cloud' && device.device_type !== 'remote'
 }
 
 function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
-  return device?.device_type === 'local'
+  return Boolean(device && isLocalStandaloneDevice(device))
 }
 
 function extractNetworkHost(value?: string | null): string | null {
@@ -177,6 +165,28 @@ function getProjectMenuDeviceLabel(
   )
 }
 
+function resolveProjectExecutionUi({
+  project,
+  executionMode,
+  executionModeLocked,
+  selectedWorkspaceIsRemote,
+}: {
+  project: ProjectWithTasks | null | undefined
+  executionMode: ProjectExecutionMode
+  executionModeLocked: boolean
+  selectedWorkspaceIsRemote: boolean
+}) {
+  const supportsWorktree = Boolean(project && supportsGitWorktreeExecution(project))
+  const displayedMode: ProjectExecutionMode =
+    supportsWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+
+  return {
+    displayedMode,
+    canShowModeControl: Boolean(project),
+    canOpenModeMenu: supportsWorktree && !selectedWorkspaceIsRemote && !executionModeLocked,
+  }
+}
+
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
@@ -200,8 +210,8 @@ interface ProjectWorkBarProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  worktreeBaseBranch?: string | null
-  onWorktreeBaseBranchChange?: (branchName: string) => void
+  worktreeBranch?: string | null
+  onWorktreeBranchChange?: (branchName: string | null) => void
   className?: string
   buttonClassName?: string
   menuClassName?: string
@@ -229,8 +239,8 @@ export function ProjectWorkBar({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
-  worktreeBaseBranch,
-  onWorktreeBaseBranchChange,
+  worktreeBranch,
+  onWorktreeBranchChange,
   className,
   buttonClassName,
   menuClassName,
@@ -275,20 +285,7 @@ export function ProjectWorkBar({
     [currentProjectId, currentProjectProp, runtimeProjectChoices]
   )
   const hasGitBranch = Boolean(branchName?.trim())
-  const hasLoadedBranchState = branchLoading === false
-  const supportsGitWorktree = Boolean(
-    currentProject && hasGitBranch && supportsGitWorktreeExecution(currentProject)
-  )
-  const canShowExecutionModeControl = Boolean(currentProject)
   const canShowBranchSelector = Boolean(currentProject && (hasGitBranch || onListBranches))
-  const canShowWorktreeBranchSelector = Boolean(
-    currentProject &&
-    executionMode === 'git_worktree' &&
-    !executionModeLocked &&
-    hasGitBranch &&
-    onListBranches &&
-    onWorktreeBaseBranchChange
-  )
   const getDeviceForProject = useCallback(
     (project: ProjectWithTasks): DeviceInfo | undefined => {
       const deviceId = getProjectDeviceId(project)
@@ -340,11 +337,14 @@ export function ProjectWorkBar({
   const selectedWorkspaceDeviceIp = selectedWorkspaceIsRemote
     ? getProjectMenuDeviceLabel(selectedWorkspaceDevice, selectedDeviceWorkspace)
     : null
-  const canOpenExecutionModeMenu = supportsGitWorktree && !selectedWorkspaceIsRemote
+  const projectExecutionUi = resolveProjectExecutionUi({
+    project: currentProject,
+    executionMode,
+    executionModeLocked,
+    selectedWorkspaceIsRemote,
+  })
   const executionModeOpen =
-    canOpenExecutionModeMenu && executionModeOpenProjectId === currentProjectId
-  const displayedExecutionMode =
-    supportsGitWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+    projectExecutionUi.canOpenModeMenu && executionModeOpenProjectId === currentProjectId
 
   const updateMenuLayout = useCallback(() => {
     if (!open || typeof window === 'undefined') return
@@ -421,33 +421,6 @@ export function ProjectWorkBar({
 
     searchInputRef.current?.focus()
   }, [isMobile, open])
-
-  useEffect(() => {
-    if (!canShowWorktreeBranchSelector || worktreeBaseBranch?.trim() || !branchName?.trim()) {
-      return
-    }
-    onWorktreeBaseBranchChange?.(branchName.trim())
-  }, [branchName, canShowWorktreeBranchSelector, onWorktreeBaseBranchChange, worktreeBaseBranch])
-
-  useEffect(() => {
-    if (
-      executionMode !== 'git_worktree' ||
-      executionModeLocked ||
-      !currentProject ||
-      !hasLoadedBranchState ||
-      hasGitBranch
-    ) {
-      return
-    }
-    onExecutionModeChange('current_workspace')
-  }, [
-    currentProject,
-    executionMode,
-    executionModeLocked,
-    hasGitBranch,
-    hasLoadedBranchState,
-    onExecutionModeChange,
-  ])
 
   const handleSelectDeviceWorkspace = useCallback(
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
@@ -553,7 +526,7 @@ export function ProjectWorkBar({
   }
 
   const handleToggleExecutionModeMenu = () => {
-    if (!canOpenExecutionModeMenu) {
+    if (!projectExecutionUi.canOpenModeMenu) {
       closeExecutionModeMenu()
       return
     }
@@ -567,12 +540,12 @@ export function ProjectWorkBar({
 
   const executionModeTriggerLabel = selectedWorkspaceIsRemote
     ? t('workbench.remote_short', '远程')
-    : displayedExecutionMode === 'git_worktree'
+    : projectExecutionUi.displayedMode === 'git_worktree'
       ? t('workbench.execution_mode_git_worktree', '新工作树')
       : t('workbench.execution_mode_current_workspace_trigger', '本地模式')
   const ExecutionModeTriggerIcon = selectedWorkspaceIsRemote
     ? Cloud
-    : displayedExecutionMode === 'git_worktree'
+    : projectExecutionUi.displayedMode === 'git_worktree'
       ? GitBranch
       : Laptop
 
@@ -952,7 +925,7 @@ export function ProjectWorkBar({
           <ChevronDown className="h-4 w-4" />
         </button>
       </div>
-      {canShowExecutionModeControl && (
+      {projectExecutionUi.canShowModeControl && (
         <div ref={executionModeContainerRef} className="relative">
           {executionModeOpen && isMobile && renderMobileBackdrop(closeExecutionModeMenu)}
           {executionModeOpen && (
@@ -1040,7 +1013,7 @@ export function ProjectWorkBar({
         </div>
       )}
       {currentProject &&
-        executionMode === 'current_workspace' &&
+        projectExecutionUi.displayedMode === 'current_workspace' &&
         !executionModeLocked &&
         canShowBranchSelector &&
         onListBranches &&
@@ -1056,15 +1029,19 @@ export function ProjectWorkBar({
             onCreateBranch={onCreateBranch}
           />
         )}
-      {canShowWorktreeBranchSelector && onListBranches && onWorktreeBaseBranchChange && (
-        <WorktreeBranchSelector
-          currentBranch={branchName}
-          selectedBranch={worktreeBaseBranch}
-          loading={branchLoading}
-          onListBranches={onListBranches}
-          onSelectBranch={onWorktreeBaseBranchChange}
-        />
-      )}
+      {currentProject &&
+        projectExecutionUi.displayedMode === 'git_worktree' &&
+        !executionModeLocked &&
+        onListBranches &&
+        onWorktreeBranchChange && (
+          <WorktreeBranchSelector
+            currentBranch={branchName}
+            selectedBranch={worktreeBranch}
+            loading={branchLoading}
+            onListBranches={onListBranches}
+            onSelectBranch={onWorktreeBranchChange}
+          />
+        )}
       {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
         <div
           data-testid="project-work-remote-status"

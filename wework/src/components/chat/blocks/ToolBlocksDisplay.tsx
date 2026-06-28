@@ -1,8 +1,18 @@
-import { useEffect, useState } from 'react'
-import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, TransitionEvent } from 'react'
+import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
-import { buildProcessingDisplayRows, type ProcessingDisplayRow } from './toolBlockActivity'
+import {
+  buildProcessingDisplayRows,
+  isCommandToolName,
+  isGuidanceActivityGroup,
+  isWebSearchActivityGroup,
+  type ProcessingDisplayRow,
+} from './toolBlockActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -15,6 +25,7 @@ interface ToolBlocksDisplayProps {
   startedAt?: number
   forceExpanded?: boolean
   showSummary?: boolean
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }
 
@@ -24,10 +35,13 @@ export function ToolBlocksDisplay({
   startedAt,
   forceExpanded = false,
   showSummary = true,
+  stateKey,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
+    stateKey ? `${stateKey}:processing` : undefined
+  )
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -56,63 +70,168 @@ export function ToolBlocksDisplay({
     }
   }, [completedAt, hasRenderedRunning, isRunning])
 
-  if (blocks.length === 0 && !isStreaming) return null
-
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning })
-  const expanded = forceExpanded || isRunning || userExpanded
-  const hasLiveNarrativeBlock = rows.some(
-    row =>
-      row.type === 'block' &&
-      (row.block.type === 'thinking' || row.block.type === 'text') &&
-      row.block.status !== 'done' &&
-      row.block.status !== 'error' &&
-      Boolean(row.block.content)
+  const rows = useMemo(
+    () => buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning }),
+    [blocks, isRunning]
   )
+  const expanded = forceExpanded || isRunning || userExpanded
+  const hasLiveNarrativeBlock = useMemo(
+    () =>
+      rows.some(
+        row =>
+          row.type === 'block' &&
+          (row.block.type === 'thinking' || row.block.type === 'text') &&
+          row.block.status !== 'done' &&
+          row.block.status !== 'error' &&
+          Boolean(row.block.content)
+      ),
+    [rows]
+  )
+  const processingContent = useMemo(
+    () => (
+      <div className="flex min-w-0 flex-col gap-3 pt-0.5">
+        {rows.map(row =>
+          row.type === 'activity_group' ? (
+            <ToolActivityGroup
+              key={row.id}
+              row={row}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          ) : (
+            <ToolBlockItem
+              key={row.id}
+              block={row.block}
+              forceExpanded={isRunning && row.block.type === 'tool'}
+              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          )
+        )}
+        {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+      </div>
+    ),
+    [hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
+  )
+
+  if (blocks.length === 0 && !isStreaming) return null
 
   return (
     <div className="mb-3 min-w-0">
       {showSummary && isRunning ? (
         // While the turn is still running the summary is informational only:
         // render it as plain, non-interactive text so it does not look clickable.
-        <div className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-xs text-text-muted">
-          <span>{duration}</span>
+        <div className="mb-3 border-b border-border pb-2 text-xs text-text-muted">
+          <span className="inline-flex items-center gap-1">{duration}</span>
         </div>
       ) : showSummary ? (
-        <button
-          type="button"
-          className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-left text-xs text-text-muted hover:text-text-secondary"
-          onClick={() => setUserExpanded(value => !value)}
-        >
-          <span>{duration}</span>
-          <svg
-            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
+        <div className="mb-3 border-b border-border pb-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-left text-xs text-text-muted hover:text-text-secondary"
+            onClick={() => setUserExpanded(value => !value)}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-      ) : null}
-      {expanded && (
-        <div className="flex min-w-0 flex-col gap-3">
-          {rows.map(row =>
-            row.type === 'activity_group' ? (
-              <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-            ) : (
-              <ToolBlockItem
-                key={row.id}
-                block={row.block}
-                forceExpanded={isRunning && row.block.type === 'tool'}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            )
-          )}
-          {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+            <span>{duration}</span>
+            <svg
+              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
-      )}
+      ) : null}
+      <CollapsibleProcessingContent expanded={expanded} keepMounted>
+        {processingContent}
+      </CollapsibleProcessingContent>
+    </div>
+  )
+}
+
+function CollapsibleProcessingContent({
+  expanded,
+  children,
+  keepMounted = false,
+  testId = 'processing-collapse-content',
+}: {
+  expanded: boolean
+  children: ReactNode
+  keepMounted?: boolean
+  testId?: string
+}) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const previousExpandedRef = useRef(expanded)
+  const [isRendered, setIsRendered] = useState(() => expanded || keepMounted)
+  const [maxHeight, setMaxHeight] = useState(() => (expanded ? 'none' : '0px'))
+  const shouldRender = expanded || keepMounted || isRendered
+
+  if (expanded && !isRendered) {
+    setIsRendered(true)
+  }
+
+  useLayoutEffect(() => {
+    if (!shouldRender) return
+
+    const content = contentRef.current
+    if (!content) return
+
+    const wasExpanded = previousExpandedRef.current
+    let frame: number | undefined
+
+    if (expanded) {
+      setMaxHeight(wasExpanded ? 'none' : `${content.scrollHeight}px`)
+    } else {
+      if (wasExpanded) {
+        setMaxHeight(`${content.scrollHeight}px`)
+        frame = requestAnimationFrame(() => setMaxHeight('0px'))
+      } else {
+        setMaxHeight('0px')
+      }
+    }
+
+    previousExpandedRef.current = expanded
+
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [expanded, shouldRender])
+
+  const handleTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.propertyName !== 'max-height') return
+    if (expanded) {
+      setMaxHeight('none')
+      return
+    }
+    if (!keepMounted) setIsRendered(false)
+  }
+
+  return (
+    <div
+      data-testid={testId}
+      aria-hidden={!expanded}
+      inert={!expanded ? true : undefined}
+      onTransitionEnd={handleTransitionEnd}
+      className={[
+        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
+      ].join(' ')}
+      style={{ maxHeight }}
+    >
+      {shouldRender ? (
+        <div
+          ref={contentRef}
+          className={[
+            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            expanded ? 'translate-y-0' : '-translate-y-1',
+          ].join(' ')}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -122,10 +241,12 @@ function ToolActivityGroup({
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
+  const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
+  const icon = renderActivityGroupIcon(row.blocks)
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
@@ -136,28 +257,57 @@ function ToolActivityGroup({
         onClick={() => setExpanded(value => !value)}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
       >
-        <Icon className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+        {icon}
         <span className="min-w-0 truncate">{row.label}</span>
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={2}
         />
       </button>
-      {expanded && (
-        <div className="mt-2 flex min-w-0 flex-col gap-3 border-l border-border pl-4">
-          {row.blocks.map(block => (
-            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          ))}
+      <CollapsibleProcessingContent expanded={expanded} testId="processing-activity-group-content">
+        <div
+          className={[
+            'mt-2 flex min-w-0 flex-col gap-3',
+            isWebSearchGroup ? '' : 'border-l border-border pl-4',
+          ].join(' ')}
+        >
+          {isWebSearchGroup ? (
+            <WebSearchActivityDetails blocks={row.blocks} />
+          ) : (
+            row.blocks.map(block => (
+              <ToolBlockItem
+                key={block.id}
+                block={block}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            ))
+          )}
         </div>
-      )}
+      </CollapsibleProcessingContent>
     </div>
   )
 }
 
+function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
+  const items = getWebSearchActivityItems(blocks)
+
+  if (items.length === 0) return null
+
+  return <WebSearchActivityRows items={items} />
+}
+
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
-  return blocks.some(block =>
-    ['bash', 'execute_command', 'run_terminal_command'].includes(block.toolName.toLowerCase())
-  )
+  return blocks.some(block => isCommandToolName(block.toolName))
+}
+
+function renderActivityGroupIcon(blocks: ToolBlock[]) {
+  if (hasCommandBlocks(blocks)) {
+    return <SquareTerminal className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  if (isGuidanceActivityGroup(blocks)) {
+    return <MessageCircle className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
 }
 
 function ThinkingIndicator() {

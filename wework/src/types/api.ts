@@ -98,7 +98,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type?: 'local' | 'cloud' | string
+  device_type?: 'local' | 'app' | 'cloud' | 'remote' | string
   capabilities?: string[] | null
   slot_used?: number
   slot_max?: number
@@ -111,6 +111,7 @@ export interface DeviceInfo {
   bind_shell?: 'claudecode' | 'openclaw' | string
   client_ip?: string | null
   runtime_transfer_host?: string | null
+  app_device_id?: string | null
 }
 
 export interface DeviceRunningTask {
@@ -251,11 +252,54 @@ export interface NormalizedRuntimeMessage {
   subtask_id?: number | null
   status?: string | null
   createdAt?: string | null
+  completedAt?: string | number | null
+  completed_at?: string | number | null
+  stoppedNotice?: boolean | null
+  stopped_notice?: boolean | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
   fileChanges?: TurnFileChangesSummary | null
   file_changes?: TurnFileChangesSummary | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+  memory_citations?: CodexMemoryCitation[] | null
+  memoryCitation?: CodexMemoryCitation | null
+  memory_citation?: CodexMemoryCitation | null
+  contextEvents?: CodexContextEvent[] | null
+  context_events?: CodexContextEvent[] | null
+}
+
+export interface CodexReference {
+  path: string
+  title?: string | null
+  lineStart?: number | null
+  lineEnd?: number | null
+}
+
+export interface CodexMemoryCitationEntry {
+  path: string
+  lineStart?: number | null
+  line_start?: number | null
+  lineEnd?: number | null
+  line_end?: number | null
+  note?: string | null
+}
+
+export interface CodexMemoryCitation {
+  entries?: CodexMemoryCitationEntry[]
+  rolloutIds?: string[]
+  rollout_ids?: string[]
+  threadIds?: string[]
+  thread_ids?: string[]
+}
+
+export interface CodexContextEvent {
+  id: string
+  type: 'context_compaction' | 'contextCompaction' | string
+  status?: 'pending' | 'streaming' | 'done' | 'error' | string | null
+  createdAt?: number | string | null
+  created_at?: number | string | null
 }
 
 export interface LocalTaskSummary {
@@ -411,6 +455,9 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  modelId?: string
+  modelType?: ModelType | null
+  modelOptions?: ModelOptions
   attachmentIds?: number[]
   source?: RuntimeMessageSource | null
 }

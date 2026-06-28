@@ -133,9 +133,8 @@ def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
-    Shared by :class:`ResponsesAPIEventParser` and
-    :class:`EmitterBridgeTransport` so the field list is maintained in one
-    place.
+    Shared by :class:`ResponsesAPIEventParser` and response bridge transport so
+    the field list is maintained in one place.
     """
     # Extract text content from response output
     value = ""
@@ -1559,8 +1558,9 @@ class ExecutionDispatcher:
     ) -> None:
         """Dispatch task via in-process execution (standalone mode).
 
-        Directly executes tasks within the Backend process. For Chat shell type,
-        uses chat_shell module. For ClaudeCode/Agno, uses executor module.
+        Directly executes Chat tasks within the Backend process when chat_shell
+        package mode is enabled. ClaudeCode/Agno are executed by the Rust
+        executor through HTTP callback mode.
 
         Args:
             request: Execution request
@@ -1587,11 +1587,10 @@ class ExecutionDispatcher:
             # Use chat_shell module for Chat type
             await self._dispatch_inprocess_chat(request, emitter)
         else:
-            # Use executor module for ClaudeCode/Agno
-            from .inprocess_executor import InprocessExecutor
-
-            executor = InprocessExecutor()
-            await executor.execute(request, emitter)
+            raise RuntimeError(
+                "Non-Chat standalone execution must be routed to the Rust "
+                "local executor device"
+            )
 
         logger.info(
             f"[ExecutionDispatcher] In-process dispatch completed: "
@@ -1797,43 +1796,9 @@ class ExecutionDispatcher:
         elif target.mode == CommunicationMode.POLLING:
             return await self._cancel_sse(request, target)
         elif target.mode == CommunicationMode.INPROCESS:
-            return await self._cancel_inprocess(request, target)
+            return False
         else:
             return await self._cancel_http(request, target)
-
-    async def _cancel_inprocess(
-        self,
-        request: ExecutionRequest,
-        target: ExecutionTarget,
-    ) -> bool:
-        """Cancel in-process task.
-
-        For in-process mode, we directly call the executor's cancel method.
-
-        Args:
-            request: Execution request
-            target: Execution target configuration (not used, kept for interface consistency)
-
-        Returns:
-            True if cancel was successful
-        """
-        from .inprocess_executor import InprocessExecutor
-
-        try:
-            executor = InprocessExecutor()
-            success = await executor.cancel(request.task_id)
-            if success:
-                logger.info(
-                    f"[ExecutionDispatcher] In-process task cancelled: "
-                    f"task_id={request.task_id}"
-                )
-            return success
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to cancel in-process task: "
-                f"task_id={request.task_id}, error={e}"
-            )
-            return False
 
     async def _cancel_sse(
         self,

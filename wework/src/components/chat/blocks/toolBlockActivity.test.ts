@@ -2,13 +2,18 @@ import { describe, expect, test } from 'vitest'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { buildProcessingDisplayRows, summarizeToolBlocks } from './toolBlockActivity'
 
-function tool(id: string, command: string, status: ToolBlock['status'] = 'done'): ToolBlock {
+function tool(
+  id: string,
+  command: string,
+  status: ToolBlock['status'] = 'done',
+  toolName = 'bash'
+): ToolBlock {
   return {
     id,
     subtaskId: 1,
     type: 'tool',
-    toolName: 'bash',
-    toolInput: { command },
+    toolName,
+    toolInput: toolName === 'exec_command' ? { cmd: command } : { command },
     status,
     createdAt: 1770000000000,
   }
@@ -24,6 +29,48 @@ describe('toolBlockActivity', () => {
         tool('failed-1', "/bin/zsh -lc 'wc -l missing.jsonl'", 'error'),
       ])
     ).toBe('已探索 1 个文件 1 次搜索 已运行 1 条命令 运行失败 1 条命令')
+  })
+
+  test('classifies Codex exec_command function calls as shell command activity', () => {
+    expect(
+      summarizeToolBlocks([
+        tool('read-1', "sed -n '1,5p' file.jsonl", 'done', 'exec_command'),
+        tool('search-1', 'rg session_meta .', 'done', 'exec_command'),
+        tool('cmd-1', 'node inspect.js', 'done', 'exec_command'),
+      ])
+    ).toBe('已探索 1 个文件 1 次搜索 已运行 1 条命令')
+  })
+
+  test('classifies commandLine aliases as shell command activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'cmdline-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { commandLine: 'find . -name package.json' },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已探索 1 次搜索')
+  })
+
+  test('summarizes mid-turn user guidance activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'guidance-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'conversation_guidance',
+          toolInput: { message: 'follow this file' },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已引导对话')
   })
 
   test('groups completed tools while preserving running tools as standalone rows', () => {

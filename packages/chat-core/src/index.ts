@@ -20,6 +20,7 @@ export type {
   WorkbenchMessageAction,
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
+  WorkbenchFileChangesBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,

@@ -1,5 +1,5 @@
-import { Globe2, Loader2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertCircle, Check, Copy, Globe2, Loader2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -10,10 +10,15 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/api'
+import type {
+  DockerRemoteDeviceCommandResponse,
+  RemoteDeviceStartupCommand,
+} from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { joinPath } from './device-folder-path'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
+export type StandaloneRemoteDialogIntent = 'project' | 'cloud-work' | 'add-device'
 
 function isLocalDevice(device: DeviceInfo): boolean {
   return !isCloudDevice(device) && !isRemoteDevice(device)
@@ -96,6 +101,22 @@ function getUniqueProjectDirectoryName(baseName: string, existingNames: string[]
   }
 
   return `${baseName} ${Date.now()}`
+}
+
+function normalizeRemoteDeviceStartupCommands(
+  response: DockerRemoteDeviceCommandResponse | null
+): RemoteDeviceStartupCommand[] {
+  if (!response) return []
+  if (Array.isArray(response.commands) && response.commands.length > 0) {
+    return response.commands.filter(command => command.command.trim())
+  }
+  return [
+    {
+      kind: 'docker',
+      label: 'Docker',
+      command: response.command,
+    },
+  ]
 }
 
 export function StandaloneBlankProjectDialog({
@@ -248,6 +269,7 @@ export function StandaloneBlankProjectDialog({
 export function StandaloneFolderProjectDialog({
   open,
   mode,
+  remoteIntent = 'project',
   devices,
   preferredDeviceId,
   onClose,
@@ -255,9 +277,12 @@ export function StandaloneFolderProjectDialog({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onOpenStandaloneWorkspace,
+  onGetRemoteDeviceStartupCommand,
+  onRefreshDevices,
 }: {
   open: boolean
   mode: StandaloneWorkspaceDialogMode
+  remoteIntent?: StandaloneRemoteDialogIntent
   devices: DeviceInfo[]
   preferredDeviceId?: string | null
   onClose: () => void
@@ -269,8 +294,15 @@ export function StandaloneFolderProjectDialog({
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
+  onRefreshDevices?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const [startupCommand, setStartupCommand] =
+    useState<DockerRemoteDeviceCommandResponse | null>(null)
+  const [startupCommandError, setStartupCommandError] = useState<string | null>(null)
+  const [startupCommandCopied, setStartupCommandCopied] = useState(false)
+  const [activeStartupCommandKind, setActiveStartupCommandKind] = useState<string>('docker')
   const selectableDevices = useMemo(
     () => getUsableStandaloneDevices(devices, mode),
     [devices, mode]
@@ -286,19 +318,96 @@ export function StandaloneFolderProjectDialog({
     selectableDevices.find(device => device.device_id === activeDeviceId) ??
     selectableDevices[0] ??
     null
+  const addingRemoteDevice = mode === 'remote' && remoteIntent === 'add-device'
+  const showStartupCommand =
+    mode === 'remote' &&
+    (addingRemoteDevice || !activeDevice) &&
+    Boolean(onGetRemoteDeviceStartupCommand)
 
   useEscapeKey(onClose, open)
 
-  if (!open) return null
-
   const title =
     mode === 'remote'
-      ? t('workbench.add_remote_project_title', '添加远程项目')
+      ? remoteIntent === 'add-device'
+        ? t('workbench.add_cloud_device_title', '添加新设备')
+        : remoteIntent === 'cloud-work'
+          ? t('workbench.cloud_work_title', '云端工作')
+          : t('workbench.add_remote_project_title', '添加远程项目')
       : t('workbench.use_existing_folder_title', '使用现有文件夹')
   const description =
     mode === 'remote'
-      ? t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
+      ? remoteIntent === 'add-device'
+        ? t(
+            'workbench.add_cloud_device_desc',
+            '在要接入的云主机或宿主机上运行连接脚本，启动后回到这里刷新设备。'
+          )
+        : remoteIntent === 'cloud-work'
+        ? showStartupCommand
+          ? t(
+              'workbench.cloud_work_connect_desc',
+              '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
+            )
+          : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
+        : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
       : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
+  const startupCommandLoading = showStartupCommand && !startupCommand && !startupCommandError
+  const startupCommands = useMemo(
+    () => normalizeRemoteDeviceStartupCommands(startupCommand),
+    [startupCommand]
+  )
+  const activeStartupCommand =
+    startupCommands.find(command => command.kind === activeStartupCommandKind) ??
+    startupCommands[0] ??
+    null
+
+  useEffect(() => {
+    if (!open || !showStartupCommand || startupCommand || startupCommandError) return undefined
+
+    let cancelled = false
+    onGetRemoteDeviceStartupCommand?.()
+      .then(command => {
+        if (!cancelled) {
+          setStartupCommand(command)
+          const firstCommand = normalizeRemoteDeviceStartupCommands(command)[0]
+          setActiveStartupCommandKind(firstCommand?.kind ?? 'docker')
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setStartupCommandError(
+            error instanceof Error
+              ? error.message
+              : t('workbench.remote_device_startup_error', '启动脚本生成失败')
+          )
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    onGetRemoteDeviceStartupCommand,
+    open,
+    showStartupCommand,
+    startupCommand,
+    startupCommandError,
+    t,
+  ])
+
+  const retryLoadStartupCommand = () => {
+    setStartupCommand(null)
+    setStartupCommandError(null)
+    setStartupCommandCopied(false)
+    setActiveStartupCommandKind('docker')
+  }
+
+  const copyStartupCommand = async () => {
+    if (!activeStartupCommand) return
+    await navigator.clipboard?.writeText(activeStartupCommand.command)
+    setStartupCommandCopied(true)
+  }
+
+  if (!open) return null
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
@@ -306,25 +415,27 @@ export function StandaloneFolderProjectDialog({
         role="dialog"
         aria-modal="true"
         data-testid="standalone-folder-project-dialog"
-        className="max-h-[92vh] w-full max-w-[720px] overflow-y-auto rounded-[28px] border border-border bg-surface p-7 text-text-primary shadow-2xl"
+        className="max-h-[92vh] w-full max-w-[760px] overflow-y-auto rounded-2xl border border-border bg-surface p-6 text-text-primary shadow-2xl"
       >
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-3xl font-semibold leading-tight">{title}</h2>
-            <p className="mt-4 text-lg text-text-secondary">{description}</p>
+          <div className="min-w-0">
+            <h2 className="text-2xl font-semibold leading-8">{title}</h2>
+            <p className="mt-2 max-w-[560px] text-sm leading-6 text-text-secondary">
+              {description}
+            </p>
           </div>
           <button
             type="button"
             data-testid="close-standalone-folder-project-dialog"
             onClick={onClose}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+            className="flex h-10 min-w-[40px] shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
             aria-label={t('workbench.close_dialog', '关闭')}
           >
-            <X className="h-6 w-6" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {mode === 'remote' && selectableDevices.length > 0 && (
+        {mode === 'remote' && selectableDevices.length > 0 && !addingRemoteDevice && (
           <label className="mt-7 block">
             <span className="text-lg font-semibold">{t('workbench.remote_host', '远程主机')}</span>
             <span className="mt-3 flex h-14 items-center gap-3 rounded-[16px] border border-border px-4">
@@ -345,15 +456,151 @@ export function StandaloneFolderProjectDialog({
           </label>
         )}
 
-        {!activeDevice ? (
-          <p
-            data-testid="standalone-folder-no-device"
-            className="mt-7 rounded-[16px] border border-border px-4 py-5 text-text-secondary"
-          >
-            {mode === 'remote'
-              ? t('workbench.no_remote_project_device', '暂无可用远程或云设备')
-              : t('workbench.no_local_project_device', '暂无可用本地设备')}
-          </p>
+        {!activeDevice || addingRemoteDevice ? (
+          showStartupCommand ? (
+            <div
+              data-testid="standalone-folder-no-device"
+              className="mt-6 rounded-2xl border border-border bg-background p-5 text-text-primary"
+            >
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Globe2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold">
+                    {t('workbench.remote_device_startup_title', '连接云设备')}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-text-secondary">
+                    {t(
+                      'workbench.remote_device_startup_desc',
+                      '在云主机或另一台电脑上运行脚本，把它接入为云端设备。启动后点击刷新设备。'
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {startupCommandLoading && (
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-border px-3 py-3 text-sm text-text-secondary">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  {t('workbench.remote_device_startup_loading', '正在生成启动脚本...')}
+                </div>
+              )}
+
+              {startupCommandError && (
+                <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-3 text-sm text-red-500">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1">{startupCommandError}</span>
+                  <button
+                    type="button"
+                    data-testid="retry-remote-device-startup-command"
+                    onClick={retryLoadStartupCommand}
+                    className="shrink-0 rounded-md px-2 py-1 text-xs font-medium hover:bg-red-500/10"
+                  >
+                    {t('workbench.remote_device_startup_retry', '重试')}
+                  </button>
+                </div>
+              )}
+
+              {startupCommands.length > 0 && activeStartupCommand && (
+                <div className="mt-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="inline-flex h-10 w-full rounded-xl border border-border bg-surface p-1 sm:w-auto">
+                      {startupCommands.map(command => {
+                        const isActive = command.kind === activeStartupCommand.kind
+                        return (
+                          <button
+                            key={command.kind}
+                            type="button"
+                            data-testid={`remote-device-startup-tab-${command.kind}`}
+                            onClick={() => {
+                              setActiveStartupCommandKind(command.kind)
+                              setStartupCommandCopied(false)
+                            }}
+                            className={[
+                              'flex h-8 flex-1 items-center justify-center rounded-lg px-3 text-sm font-medium sm:flex-none',
+                              isActive
+                                ? 'bg-background text-text-primary shadow-sm'
+                                : 'text-text-secondary hover:text-text-primary',
+                            ].join(' ')}
+                          >
+                            {command.kind === 'process'
+                              ? t('workbench.remote_device_startup_process', '宿主机启动')
+                              : command.kind === 'docker'
+                                ? t('workbench.remote_device_startup_docker', 'Docker')
+                                : command.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="flex gap-2 sm:justify-end">
+                      {onRefreshDevices && (
+                        <button
+                          type="button"
+                          data-testid="refresh-remote-devices-button"
+                          onClick={() => void onRefreshDevices()}
+                          className="h-10 flex-1 rounded-xl border border-border px-3 text-sm font-medium text-text-primary hover:bg-muted sm:flex-none"
+                        >
+                          {t('workbench.remote_device_refresh', '刷新设备')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-sm leading-5 text-text-secondary">
+                    {activeStartupCommand.kind === 'process'
+                      ? t(
+                          'workbench.remote_device_startup_process_desc',
+                          '适合不使用容器的远程机器，直接在宿主机运行云端设备连接程序。'
+                        )
+                      : activeStartupCommand.kind === 'docker'
+                        ? t(
+                            'workbench.remote_device_startup_docker_desc',
+                            '推荐方式。用容器启动云端设备连接程序，适合云主机或远程服务器。'
+                          )
+                        : activeStartupCommand.description}
+                  </p>
+
+                  <div className="mt-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+                    <div className="flex h-9 items-center justify-between gap-3 border-b border-zinc-800 px-3">
+                      <span className="truncate text-xs font-semibold text-zinc-300">
+                        {t('workbench.remote_device_startup_script_title', '启动脚本')}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="copy-remote-device-startup-command"
+                        onClick={() => void copyStartupCommand()}
+                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                      >
+                        {startupCommandCopied ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        {startupCommandCopied
+                          ? t('workbench.remote_device_startup_copied', '已复制')
+                          : t('workbench.remote_device_startup_copy', '复制')}
+                      </button>
+                    </div>
+                    <pre
+                      data-testid="remote-device-startup-command"
+                      className="max-h-[220px] overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-green-300"
+                    >
+                      {activeStartupCommand.command}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p
+              data-testid="standalone-folder-no-device"
+              className="mt-7 rounded-[16px] border border-border px-4 py-5 text-text-secondary"
+            >
+              {mode === 'remote'
+                ? t('workbench.no_remote_project_device', '暂无可用远程或云设备')
+                : t('workbench.no_local_project_device', '暂无可用本地设备')}
+            </p>
+          )
         ) : (
           <div className="mt-7">
             <DeviceFolderPicker

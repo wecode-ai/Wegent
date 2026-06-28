@@ -73,23 +73,9 @@ irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_
 - 下载适合您平台的二进制文件
 - 将二进制文件添加到系统 PATH
 
-#### Linux AMD64 无内置 Claude 版本
+#### Linux AMD64 Claude CLI 要求
 
-GitHub Release 同时提供 `wegent-executor-linux-amd64-no-claude`。这个二进制不会把 Claude CLI 打包进 executor，适用于以下场景：
-
-- 云设备或本地设备 Docker 镜像已经通过 npm、基础镜像或其他方式安装 `claude` 命令
-- 希望减小 executor 二进制体积
-- 需要由镜像或宿主环境统一管理 Claude Code 版本
-
-如果选择这个版本，请确保运行环境中已经存在可执行的 `claude` 命令，并满足 Wegent 要求的 Claude Code 最低版本。标准 `wegent-executor-linux-amd64` 仍会内置 Claude CLI，适合直接下载安装到普通 Linux 主机。
-
-手动下载示例：
-
-```bash
-curl -fL -o wegent-executor \
-  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
-chmod +x wegent-executor
-```
+Rust executor 二进制不会内置 Claude CLI。运行环境中必须存在可执行的 `claude` 命令，并满足 Wegent 要求的 Claude Code 最低版本。安装脚本和设备镜像会在 executor 二进制之外单独安装或升级 Claude Code。
 
 #### 使用个人 Codex CLI 配置
 
@@ -124,7 +110,7 @@ docker buildx build --platform linux/amd64 \
   --load .
 ```
 
-如果镜像中已经安装 Claude Code，建议使用 `wegent-executor-linux-amd64-no-claude` 作为 `executor/dist/wegent-executor` 的输入，避免在 executor 二进制和镜像中重复携带 Claude CLI。
+executor 二进制不包含 Claude Code，因此通过 npm、基础镜像或其他方式安装 Claude Code 的镜像可以直接复用 `executor/dist/wegent-executor`。
 
 运行设备镜像时通过环境变量传入 executor 连接信息，不要把 token 写入镜像：
 
@@ -225,7 +211,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；无参数启动且没有远端地址时，executor 监听 `~/.wegent-executor/app-ipc.sock` 并且不连接 Backend。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。`~/.wegent-executor/app-ipc.lock` 会限制同一用户目录下最多一个 executor 进程，避免网页版看到重复设备连接。日志写入 `~/.wegent-executor/logs/executor.log`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；无参数启动且没有远端地址时，executor 监听 `~/.wegent-executor/app-ipc.sock` 并且不连接 Backend。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 `WEGENT_EXECUTOR_HOME` 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
 
 ### 获取 JWT Token
 

@@ -1,1 +1,5 @@
-export function installDesktopExtensions() {}
+import { installTraySettingsNavigation } from '@/tauri/trayNavigation'
+
+export function installDesktopExtensions() {
+  installTraySettingsNavigation()
+}

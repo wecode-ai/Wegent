@@ -5,9 +5,23 @@ import { cn } from '@/lib/utils'
 import type { DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { MessageTurnNavigation } from './MessageTurnNavigation'
 
 const BOTTOM_THRESHOLD = 48
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
+const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
+const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
+
+interface ConversationScrollSnapshot {
+  scrollTop: number
+  anchorMessageId?: string
+  anchorOffsetTop?: number
+  anchorDocumentTop?: number
+  anchorIndex?: number
+  anchorKind?: 'message' | 'content'
+}
+
+const conversationScrollSnapshots = new Map<string, ConversationScrollSnapshot>()
 
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
@@ -65,8 +79,11 @@ export function ScrollableMessageArea({
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
+  const restoringScrollKeyRef = useRef<string | null>(null)
+  const applyingSavedScrollRef = useRef(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const lastMessage = messages[messages.length - 1]
+  const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
   const messageScrollSignature = useMemo(() => {
     if (!lastMessage) return 'empty'
 
@@ -74,6 +91,9 @@ export function ScrollableMessageArea({
       .map(block => {
         if (block.type === 'thinking' || block.type === 'text') {
           return `${block.id}:${block.status}:${block.content.length}`
+        }
+        if (block.type === 'file_changes') {
+          return `${block.id}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
         }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
       })
@@ -93,6 +113,7 @@ export function ScrollableMessageArea({
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
     scrollTimersRef.current = []
+    applyingSavedScrollRef.current = false
 
     if (scrollFrameRef.current !== null) {
       cancelAnimationFrame(scrollFrameRef.current)
@@ -100,35 +121,132 @@ export function ScrollableMessageArea({
     }
   }, [])
 
-  const updateScrollState = useCallback(() => {
-    const element = scrollRef.current
-    if (!element) return
+  const saveCurrentScrollPosition = useCallback(
+    (scrollTop?: number) => {
+      const element = scrollRef.current
+      const content = contentRef.current
+      if (!element || currentScrollKey === null || messages.length === 0) return
+      conversationScrollSnapshots.set(
+        currentScrollKey,
+        createScrollSnapshot(element, content, scrollTop)
+      )
+    },
+    [currentScrollKey, messages.length]
+  )
 
-    const overflow = element.scrollHeight > element.clientHeight + 8
-    const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
-    const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-    isAtBottomRef.current = isAtBottom
-    if (!isAtBottom) {
+  const updateScrollState = useCallback(
+    (options: { forceSave?: boolean; skipSave?: boolean } = {}) => {
+      const element = scrollRef.current
+      if (!element) return
+
+      if (messages.length === 0) {
+        isAtBottomRef.current = true
+        setShowScrollButton(false)
+        return
+      }
+
+      const overflow = element.scrollHeight > element.clientHeight + 8
+      const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
+      const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+      isAtBottomRef.current = isAtBottom
+      if (!isAtBottom && restoringScrollKeyRef.current !== currentScrollKey) {
+        clearScheduledScrolls()
+      }
+      if (
+        !options.skipSave &&
+        (options.forceSave || restoringScrollKeyRef.current !== currentScrollKey)
+      ) {
+        saveCurrentScrollPosition()
+      }
+      setShowScrollButton(overflow && !isAtBottom)
+    },
+    [clearScheduledScrolls, currentScrollKey, messages.length, saveCurrentScrollPosition]
+  )
+
+  const setScrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const element = scrollRef.current
+      if (!element) return
+
+      if (typeof element.scrollTo === 'function') {
+        element.scrollTo({
+          top: element.scrollHeight,
+          behavior,
+        })
+      } else {
+        element.scrollTop = element.scrollHeight
+      }
+      saveCurrentScrollPosition(element.scrollHeight)
+      isAtBottomRef.current = true
+      setShowScrollButton(false)
+    },
+    [saveCurrentScrollPosition]
+  )
+
+  const restoreSavedScrollPosition = useCallback(
+    (key: string, options: { clearScheduled?: boolean } = {}) => {
+      const element = scrollRef.current
+      const content = contentRef.current
+      const savedSnapshot = conversationScrollSnapshots.get(key)
+      if (!element || !savedSnapshot) return
+
+      if (options.clearScheduled) {
+        clearScheduledScrolls()
+      }
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+      const nextScrollTop = Math.min(
+        getRestoredScrollTop(element, content, savedSnapshot),
+        maxScrollTop
+      )
+      applyingSavedScrollRef.current = true
+      if (typeof element.scrollTo === 'function') {
+        element.scrollTo({
+          top: nextScrollTop,
+          behavior: 'auto',
+        })
+      } else {
+        element.scrollTop = nextScrollTop
+      }
+
+      const overflow = element.scrollHeight > element.clientHeight + 8
+      const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
+      const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+      isAtBottomRef.current = isAtBottom
+      setShowScrollButton(overflow && !isAtBottom)
+      conversationScrollSnapshots.set(key, savedSnapshot)
+
+      const applyingTimer = setTimeout(() => {
+        applyingSavedScrollRef.current = false
+      }, 0)
+      scrollTimersRef.current.push(applyingTimer)
+    },
+    [clearScheduledScrolls]
+  )
+
+  const scheduleStableRestoreSavedScrollPosition = useCallback(
+    (key: string) => {
       clearScheduledScrolls()
-    }
-    setShowScrollButton(overflow && !isAtBottom)
-  }, [clearScheduledScrolls])
+      restoringScrollKeyRef.current = key
 
-  const setScrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const element = scrollRef.current
-    if (!element) return
-
-    if (typeof element.scrollTo === 'function') {
-      element.scrollTo({
-        top: element.scrollHeight,
-        behavior,
+      STABLE_SCROLL_DELAYS.forEach(delay => {
+        const timer = setTimeout(() => {
+          restoreSavedScrollPosition(key, { clearScheduled: false })
+        }, delay)
+        scrollTimersRef.current.push(timer)
       })
-    } else {
-      element.scrollTop = element.scrollHeight
-    }
-    isAtBottomRef.current = true
-    setShowScrollButton(false)
-  }, [])
+
+      const clearRestoreTimer = setTimeout(
+        () => {
+          if (restoringScrollKeyRef.current === key) {
+            restoringScrollKeyRef.current = null
+          }
+        },
+        Math.max(...STABLE_SCROLL_DELAYS) + 50
+      )
+      scrollTimersRef.current.push(clearRestoreTimer)
+    },
+    [clearScheduledScrolls, restoreSavedScrollPosition]
+  )
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -165,8 +283,17 @@ export function ScrollableMessageArea({
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const shouldRestoreScroll = Boolean(
+      currentScrollKey &&
+      messages.length > 0 &&
+      (conversationChanged || messagesLoaded) &&
+      conversationScrollSnapshots.has(currentScrollKey)
+    )
     const shouldForceBottom =
-      conversationChanged || messagesLoaded || (lastMessageChanged && lastMessage?.role === 'user')
+      !shouldRestoreScroll &&
+      (conversationChanged ||
+        messagesLoaded ||
+        (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
@@ -174,21 +301,31 @@ export function ScrollableMessageArea({
 
     if (messages.length === 0) return
 
+    if (shouldRestoreScroll && currentScrollKey) {
+      scheduleStableRestoreSavedScrollPosition(currentScrollKey)
+      return
+    }
+
     if (shouldForceBottom || isAtBottomRef.current) {
       setScrollToBottom()
       scheduleStableScrollToBottom()
     }
   }, [
     conversationKey,
+    currentScrollKey,
     lastMessage,
     messageScrollSignature,
     messages.length,
+    scheduleStableRestoreSavedScrollPosition,
     scheduleStableScrollToBottom,
     setScrollToBottom,
   ])
 
   useLayoutEffect(() => {
-    updateScrollState()
+    const frame = requestAnimationFrame(() => {
+      updateScrollState()
+    })
+    return () => cancelAnimationFrame(frame)
   }, [isWaitingForAssistant, messages, updateScrollState])
 
   useEffect(() => {
@@ -196,6 +333,12 @@ export function ScrollableMessageArea({
     if (!content || typeof ResizeObserver === 'undefined') return
 
     const resizeObserver = new ResizeObserver(() => {
+      const restoringKey = restoringScrollKeyRef.current
+      if (restoringKey && restoringKey === currentScrollKey) {
+        restoreSavedScrollPosition(restoringKey, { clearScheduled: false })
+        return
+      }
+
       if (isAtBottomRef.current) {
         scrollToBottom()
       }
@@ -203,7 +346,7 @@ export function ScrollableMessageArea({
 
     resizeObserver.observe(content)
     return () => resizeObserver.disconnect()
-  }, [scrollToBottom])
+  }, [currentScrollKey, restoreSavedScrollPosition, scrollToBottom])
 
   useEffect(() => clearScheduledScrolls, [clearScheduledScrolls])
 
@@ -213,11 +356,23 @@ export function ScrollableMessageArea({
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
+      <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
       <div
         ref={scrollRef}
         data-testid={scrollTestId}
         className={cn('h-full overflow-x-hidden overflow-y-auto', scrollerClassName)}
-        onScroll={updateScrollState}
+        onScroll={() => {
+          if (
+            applyingSavedScrollRef.current &&
+            restoringScrollKeyRef.current === currentScrollKey
+          ) {
+            updateScrollState({ skipSave: true })
+            return
+          }
+          applyingSavedScrollRef.current = false
+          restoringScrollKeyRef.current = null
+          updateScrollState({ forceSave: true })
+        }}
       >
         <div
           ref={contentRef}
@@ -267,6 +422,7 @@ export function ScrollableMessageArea({
               )}
               <MessageList
                 messages={messages}
+                conversationKey={conversationKey}
                 isWaitingForAssistant={isWaitingForAssistant}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
@@ -296,4 +452,127 @@ export function ScrollableMessageArea({
       )}
     </div>
   )
+}
+
+function scrollPositionKey(conversationKey: string | number | null | undefined): string | null {
+  return conversationKey == null ? null : String(conversationKey)
+}
+
+function createScrollSnapshot(
+  scroller: HTMLElement,
+  content: HTMLElement | null,
+  scrollTop?: number
+): ConversationScrollSnapshot {
+  const snapshot: ConversationScrollSnapshot = {
+    scrollTop: scrollTop ?? scroller.scrollTop,
+  }
+  if (scrollTop !== undefined || !content) return snapshot
+
+  const anchor = findTopVisibleMessageAnchor(scroller, content)
+  if (!anchor) return snapshot
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor.getBoundingClientRect()
+  const message = anchor.matches(MESSAGE_ANCHOR_SELECTOR)
+    ? anchor
+    : anchor.closest<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)
+  const messageId = message?.dataset.messageId
+  if (!messageId) return snapshot
+
+  snapshot.anchorMessageId = messageId
+  snapshot.anchorOffsetTop = anchorRect.top - scrollerRect.top
+  snapshot.anchorDocumentTop = snapshot.scrollTop + snapshot.anchorOffsetTop
+  snapshot.anchorKind = anchor.matches(SCROLL_ANCHOR_SELECTOR) ? 'content' : 'message'
+  if (message && snapshot.anchorKind === 'content') {
+    snapshot.anchorIndex = getMessageScrollAnchors(message).indexOf(anchor)
+  }
+  return snapshot
+}
+
+function getRestoredScrollTop(
+  scroller: HTMLElement,
+  content: HTMLElement | null,
+  snapshot: ConversationScrollSnapshot
+): number {
+  if (!content || !snapshot.anchorMessageId || snapshot.anchorOffsetTop === undefined) {
+    return Math.max(0, snapshot.scrollTop)
+  }
+
+  const anchor = findSavedAnchor(content, snapshot)
+  if (!anchor || !hasMeasurableRect(anchor)) {
+    return Math.max(0, snapshot.scrollTop)
+  }
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor.getBoundingClientRect()
+  const currentAnchorOffsetTop = anchorRect.top - scrollerRect.top
+  if (snapshot.anchorDocumentTop !== undefined) {
+    const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
+    return Math.max(0, snapshot.scrollTop + currentAnchorDocumentTop - snapshot.anchorDocumentTop)
+  }
+
+  return Math.max(0, scroller.scrollTop + currentAnchorOffsetTop - snapshot.anchorOffsetTop)
+}
+
+function findTopVisibleMessageAnchor(
+  scroller: HTMLElement,
+  content: HTMLElement
+): HTMLElement | null {
+  return (
+    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(SCROLL_ANCHOR_SELECTOR))) ??
+    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(MESSAGE_ANCHOR_SELECTOR)))
+  )
+}
+
+function findTopVisibleAnchor(scroller: HTMLElement, anchors: Element[]): HTMLElement | null {
+  const scrollerRect = scroller.getBoundingClientRect()
+  let nearestAnchor: HTMLElement | null = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (const anchor of anchors) {
+    if (!(anchor instanceof HTMLElement)) continue
+    if (!hasMeasurableRect(anchor)) continue
+
+    const rect = anchor.getBoundingClientRect()
+    if (rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom) {
+      return anchor
+    }
+
+    const distance = Math.abs(rect.top - scrollerRect.top)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestAnchor = anchor
+    }
+  }
+
+  return nearestAnchor
+}
+
+function findSavedAnchor(
+  content: HTMLElement,
+  snapshot: ConversationScrollSnapshot
+): HTMLElement | null {
+  const message = findMessageAnchorById(content, snapshot.anchorMessageId ?? '')
+  if (!message) return null
+  if (snapshot.anchorKind !== 'content' || snapshot.anchorIndex === undefined) return message
+
+  return getMessageScrollAnchors(message)[snapshot.anchorIndex] ?? message
+}
+
+function findMessageAnchorById(content: HTMLElement, messageId: string): HTMLElement | null {
+  if (!messageId) return null
+  return (
+    Array.from(content.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)).find(
+      anchor => anchor.dataset.messageId === messageId
+    ) ?? null
+  )
+}
+
+function getMessageScrollAnchors(message: HTMLElement): HTMLElement[] {
+  return Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
+}
+
+function hasMeasurableRect(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect()
+  return rect.bottom > rect.top
 }

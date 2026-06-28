@@ -73,9 +73,8 @@ class ExecutionRouter:
         },
     }
 
-    # Shell types that support in-process execution in standalone mode
-    # ClaudeCode/Agno: executed via executor module
-    INPROCESS_EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno"}
+    # Shell types handled by the bundled Rust executor in standalone mode.
+    STANDALONE_EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno", "Dify", "ImageValidator"}
     # Chat: executed via chat_shell module (when CHAT_SHELL_MODE=package)
     INPROCESS_CHAT_SHELL_TYPES = {"Chat"}
 
@@ -128,7 +127,8 @@ class ExecutionRouter:
         0. Model type based routing (e.g., video models -> POLLING)
         1. Protocol-based routing (e.g., gemini-deep-research -> POLLING)
         2. If device_id is specified, use WebSocket mode
-        3. In standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        3. In standalone mode, route executor shells to the bundled Rust
+           executor over the local-executor WebSocket namespace
         4. If CHAT_SHELL_MODE=package, use INPROCESS for Chat shell type
         5. Otherwise, look up configuration by shell_type
         6. Default to HTTP+Callback mode
@@ -178,14 +178,27 @@ class ExecutionRouter:
             f"chat_shell_mode={self.chat_shell_mode}"
         )
 
-        # Priority 3: Standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        # Priority 3: standalone mode uses the bundled Rust executor process.
         if (
             self.standalone_mode
             and self.standalone_executor_enabled
-            and shell_type in self.INPROCESS_EXECUTOR_SHELL_TYPES
+            and shell_type in self.STANDALONE_EXECUTOR_SHELL_TYPES
         ):
-            logger.info(f"[ExecutionRouter.route] Routing to INPROCESS mode (executor)")
-            return ExecutionTarget(mode=CommunicationMode.INPROCESS)
+            standalone_device_id = getattr(
+                settings,
+                "STANDALONE_EXECUTOR_DEVICE_ID",
+                "standalone-admin-device",
+            )
+            logger.info(
+                "[ExecutionRouter.route] Routing standalone executor shell "
+                "to Rust local-executor device"
+            )
+            return ExecutionTarget(
+                mode=CommunicationMode.WEBSOCKET,
+                namespace="/local-executor",
+                event="task:execute",
+                room=f"device:{user_id}:{standalone_device_id}",
+            )
 
         # Priority 4: Chat shell in package mode, use INPROCESS for Chat type
         if (

@@ -1,9 +1,12 @@
+import { useEffect, useMemo } from 'react'
 import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayout'
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { navigateTo } from '@/lib/navigation'
+import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
+import { syncTrayMenuState } from '@/tauri/trayNavigation'
 
 export function WorkbenchPage() {
   const isMobile = useIsMobile()
@@ -14,7 +17,9 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    workspaceFileApi,
     currentRuntimeTaskRunning,
+    cloudWorkStatus,
     isAwaitingAssistantStart,
     isRuntimeTranscriptLoading,
     runtimeTranscriptHasMoreBefore,
@@ -22,8 +27,8 @@ export function WorkbenchPage() {
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
-    projectWorktreeBaseBranch,
-    setProjectWorktreeBaseBranch,
+    projectWorktreeBranch,
+    setProjectWorktreeBranch,
     projectChat,
     selectProject,
     selectProjectWorkspace,
@@ -43,6 +48,7 @@ export function WorkbenchPage() {
     forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
+    getRemoteDeviceStartupCommand,
     refreshWorkLists,
     upgradeDevice,
     createProject,
@@ -83,6 +89,15 @@ export function WorkbenchPage() {
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
   } = useWorkbench()
+  const trayMenuTaskGroups = useMemo(
+    () => buildTrayMenuTaskGroups(state.runtimeWork),
+    [state.runtimeWork]
+  )
+
+  useEffect(() => {
+    syncTrayMenuState(trayMenuTaskGroups)
+  }, [trayMenuTaskGroups])
+
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
     projects: state.projects,
@@ -102,8 +117,8 @@ export function WorkbenchPage() {
       selectProject(projectId)
     },
     onExecutionModeChange: setProjectExecutionMode,
-    worktreeBaseBranch: projectWorktreeBaseBranch,
-    onWorktreeBaseBranchChange: setProjectWorktreeBaseBranch,
+    worktreeBranch: projectWorktreeBranch,
+    onWorktreeBranchChange: setProjectWorktreeBranch,
   }
 
   return (
@@ -113,7 +128,9 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      workspaceFileApi={workspaceFileApi}
       currentRuntimeTaskRunning={currentRuntimeTaskRunning}
+      cloudWorkStatus={cloudWorkStatus}
       isAwaitingAssistantStart={isAwaitingAssistantStart}
       isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
@@ -137,6 +154,7 @@ export function WorkbenchPage() {
       onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onOpenStandaloneWorkspace={openStandaloneWorkspace}
+      onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}

@@ -28,6 +28,7 @@ class DeviceType(str, Enum):
     """
 
     LOCAL = "local"
+    APP = "app"
     CLOUD = "cloud"
     REMOTE = "remote"
 
@@ -82,7 +83,7 @@ class DeviceInfo(BaseModel):
     )
     # Device type and connection mode
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local, cloud, or remote)"
+        DeviceType.LOCAL, description="Device type (local, app, cloud, or remote)"
     )
     connection_mode: DeviceConnectionMode = Field(
         DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
@@ -107,6 +108,9 @@ class DeviceInfo(BaseModel):
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
     runtime_transfer_host: Optional[str] = Field(
         None, description="Host peers should use for runtime direct transfers"
+    )
+    app_device_id: Optional[str] = Field(
+        None, description="Desktop app IPC device ID for app registrations"
     )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
@@ -286,6 +290,11 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    app_device_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Desktop app IPC device ID when device_type is app",
     )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,

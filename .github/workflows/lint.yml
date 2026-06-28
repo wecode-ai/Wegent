@@ -99,13 +99,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24'
           cache: 'pnpm'
           cache-dependency-path: ./pnpm-lock.yaml
 
@@ -128,13 +126,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24'
           cache: 'pnpm'
           cache-dependency-path: ./pnpm-lock.yaml
 
@@ -159,6 +155,14 @@ jobs:
         run: |
           chmod +x ./scripts/hooks/check-settings-config.sh
           ./scripts/hooks/check-settings-config.sh
+
+      - name: Run repository policy check
+        env:
+          REPOSITORY_POLICY_PATTERN_B64: ${{ vars.RESTRICTED_DOMAIN_PATTERN_B64 }}
+          REPOSITORY_POLICY_APPROVED_B64: ${{ vars.APPROVED_DOMAIN_REFERENCES_B64 }}
+        run: |
+          chmod +x ./scripts/hooks/check-repository-policy.sh
+          ./scripts/hooks/check-repository-policy.sh
 
   check-alembic-heads:
     name: Check Alembic Multi-Head

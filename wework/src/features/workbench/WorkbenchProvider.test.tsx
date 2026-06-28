@@ -302,8 +302,20 @@ function BootstrapProbe() {
       <span data-testid="boot-state">
         {workbench.state.isBootstrapping ? 'loading' : workbench.state.user?.user_name}
       </span>
+      <span data-testid="startup-ready">{workbench.isStartupReady ? 'ready' : 'loading'}</span>
       <span data-testid="project-count">{workbench.state.projects.length}</span>
       <span data-testid="runtime-total">{workbench.state.runtimeWork?.totalLocalTasks ?? 0}</span>
+    </div>
+  )
+}
+
+function CloudWorkStatusProbe() {
+  const { cloudWorkStatus } = useWorkbench()
+  return (
+    <div>
+      <span data-testid="cloud-work-availability">{cloudWorkStatus.availability}</span>
+      <span data-testid="cloud-work-devices-check">{cloudWorkStatus.checks.devices}</span>
+      <span data-testid="cloud-work-error">{cloudWorkStatus.error ?? ''}</span>
     </div>
   )
 }
@@ -527,6 +539,8 @@ function FollowUpProbe() {
   const workbench = useWorkbench()
   const imageAttachment = createImageAttachment()
   const firstQueuedMessage = workbench.queuedMessages[0]
+  const gptModel =
+    workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
 
   return (
     <div>
@@ -541,6 +555,17 @@ function FollowUpProbe() {
         {workbench.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
       <span data-testid="runtime-attachment-count">{workbench.projectChat.attachments.length}</span>
+      <span data-testid="follow-up-models">
+        {workbench.projectChat.models.map(model => model.name).join('|')}
+      </span>
+      <span data-testid="follow-up-model-statuses">
+        {workbench.projectChat.models
+          .map(model => `${model.name}:${model.compatibilityDisabledReason ?? 'enabled'}`)
+          .join('|')}
+      </span>
+      <span data-testid="follow-up-selected-model">
+        {workbench.projectChat.selectedModel?.name ?? ''}
+      </span>
       <span data-testid="guidance-messages">
         {workbench.guidanceMessages
           .map(message => `${message.status}:${message.content}`)
@@ -551,6 +576,14 @@ function FollowUpProbe() {
       </button>
       <button type="button" onClick={() => workbench.setInput('执行ls')}>
         set ls follow-up
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (gptModel) workbench.projectChat.setSelectedModel(gptModel)
+        }}
+      >
+        select gpt model
       </button>
       <button
         type="button"
@@ -638,6 +671,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbenchWithDefaultServices(<BootstrapProbe />)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('local'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
@@ -650,10 +684,29 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<BootstrapProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('marks successful empty cloud devices as empty instead of unavailable', async () => {
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
+      },
+    })
+
+    renderWorkbench(<CloudWorkStatusProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('empty')
+    )
+    expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
+    expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
   test('applies device online events immediately when refresh falls back would be stale', async () => {
@@ -1323,6 +1376,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       localTaskId: 'runtime-restored',
+      workspacePath: '/workspace/project-alpha',
       limit: 50,
     })
   })
@@ -1576,8 +1630,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       address: {
         deviceId: 'device-1',
         localTaskId: 'runtime-restored',
+        workspacePath: '/workspace/project-alpha',
       },
-      fileChanges,
+      fileChanges: expect.objectContaining(fileChanges),
     })
     expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
   })
@@ -1704,6 +1759,106 @@ describe('WorkbenchProvider runtime tasks', () => {
       message: '继续修',
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('sends the currently selected model with runtime follow-up messages', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'codex-gpt-5.5',
+        type: 'runtime',
+        modelId: 'gpt-5.5',
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'gpt-5-2025-08-07',
+        type: 'public',
+        displayName: '海外:gpt-5-2025-08-07',
+        provider: 'openai',
+        runtime: { family: 'openai', provider: 'openai' },
+      },
+    ]
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      localTaskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  localTasks: [
+                    {
+                      localTaskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalLocalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-model-statuses')).toHaveTextContent(
+        'gpt-5-2025-08-07:enabled'
+      )
+    )
+    await userEvent.click(screen.getByText('select gpt model'))
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-selected-model')).toHaveTextContent('gpt-5-2025-08-07')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '继续修',
+        modelId: 'gpt-5-2025-08-07',
+        modelType: 'public',
+      })
+    )
   })
 
   test('queues runtime messages while current response is running', async () => {

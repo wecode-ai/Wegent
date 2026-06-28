@@ -6,7 +6,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type: 'local' | 'cloud' | 'remote'
+  device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
   slot_used?: number
@@ -16,8 +16,10 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  error?: string | null
   client_ip?: string | null
   runtime_transfer_host?: string | null
+  app_device_id?: string | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string
@@ -87,6 +89,14 @@ export interface DockerRemoteDeviceCommandResponse {
   name: string
   image: string
   env: Record<string, string>
+  command: string
+  commands?: RemoteDeviceStartupCommand[]
+}
+
+export interface RemoteDeviceStartupCommand {
+  kind: 'docker' | 'process' | string
+  label: string
+  description?: string | null
   command: string
 }
 

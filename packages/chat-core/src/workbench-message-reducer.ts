@@ -40,7 +40,17 @@ export interface WorkbenchTextBlock extends BaseWorkbenchProcessingBlock {
   content: string
 }
 
-export type WorkbenchProcessingBlock = WorkbenchToolBlock | WorkbenchThinkingBlock | WorkbenchTextBlock
+export interface WorkbenchFileChangesBlock<TFileChanges = unknown>
+  extends BaseWorkbenchProcessingBlock {
+  type: 'file_changes'
+  fileChanges: TFileChanges
+}
+
+export type WorkbenchProcessingBlock<TFileChanges = unknown> =
+  | WorkbenchToolBlock
+  | WorkbenchThinkingBlock
+  | WorkbenchTextBlock
+  | WorkbenchFileChangesBlock<TFileChanges>
 
 export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown> {
   id: string
@@ -53,7 +63,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   error?: string
   errorType?: string
   attachments?: TAttachment[]
-  blocks?: WorkbenchProcessingBlock[]
+  blocks?: WorkbenchProcessingBlock<TFileChanges>[]
   fileChanges?: TFileChanges
   source?: MessageSource
   createdAt: string
@@ -75,20 +85,20 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       taskId?: number
       subtaskId: number
       content: string
-      blocks?: WorkbenchProcessingBlock[]
+      blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
   | {
       type: 'assistant_chunk'
       subtaskId: number
       content: string
       reasoningChunk?: string
-      blocks?: WorkbenchProcessingBlock[]
+      blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
   | {
       type: 'assistant_done'
       subtaskId: number
       content?: string
-      blocks?: WorkbenchProcessingBlock[]
+      blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
     }
   | {
@@ -97,7 +107,7 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       fileChanges: TFileChanges
     }
   | { type: 'assistant_error'; subtaskId: number; error: string; errorType?: string }
-  | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock }
+  | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock<TFileChanges> }
   | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
 
 export function isGenericTaskStatusError(error?: string): boolean {
@@ -260,7 +270,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               ...withActiveStreamState(message, isActiveBlockStatus(action.updates.status)),
               blocks: (message.blocks ?? []).map(block =>
                 block.id === action.blockId
-                  ? ({ ...block, ...action.updates } as WorkbenchProcessingBlock)
+                  ? ({ ...block, ...action.updates } as WorkbenchProcessingBlock<TFileChanges>)
                   : block
               ),
             }
@@ -294,7 +304,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   shellType?: string
   content?: string
   status?: WorkbenchMessageStatus
-  blocks?: WorkbenchProcessingBlock[]
+  blocks?: WorkbenchProcessingBlock<TFileChanges>[]
   fileChanges?: TFileChanges
   error?: string
   errorType?: string
@@ -401,11 +411,11 @@ function getChunkBlocks<TAttachment, TFileChanges>(
   return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
 }
 
-function appendThinkingChunk(
-  blocks: WorkbenchProcessingBlock[] | undefined,
+function appendThinkingChunk<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
   subtaskId: number,
   chunk?: string
-): WorkbenchProcessingBlock[] | undefined {
+): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
   if (!chunk) return blocks
 
   const nextBlocks = [...(blocks ?? [])]
@@ -435,8 +445,8 @@ function appendThinkingChunk(
 function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
   subtaskId: number,
-  incomingBlock: WorkbenchProcessingBlock
-): WorkbenchProcessingBlock[] {
+  incomingBlock: WorkbenchProcessingBlock<TFileChanges>
+): WorkbenchProcessingBlock<TFileChanges>[] {
   const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
   if (!shouldMovePendingContentBeforeBlock(message, incomingBlock)) return finalizedBlocks
 
@@ -455,7 +465,7 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
 
 function shouldMovePendingContentBeforeBlock<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
-  incomingBlock: WorkbenchProcessingBlock
+  incomingBlock: WorkbenchProcessingBlock<TFileChanges>
 ): boolean {
   return incomingBlock.type !== 'text' && message.content.trim().length > 0
 }
@@ -464,9 +474,9 @@ function getTextBlockCount(blocks: WorkbenchProcessingBlock[]): number {
   return blocks.filter(block => block.type === 'text').length
 }
 
-function finalizeOpenNarrativeBlocks(
-  blocks: WorkbenchProcessingBlock[] | undefined
-): WorkbenchProcessingBlock[] {
+function finalizeOpenNarrativeBlocks<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map(block => {
     if (
       (block.type === 'thinking' || block.type === 'text') &&
@@ -479,10 +489,10 @@ function finalizeOpenNarrativeBlocks(
   })
 }
 
-function finalizeBlocks(
-  blocks: WorkbenchProcessingBlock[] | undefined,
+function finalizeBlocks<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
   finalStatus?: Extract<WorkbenchToolBlockStatus, 'done' | 'error'>
-): WorkbenchProcessingBlock[] {
+): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map(block => {
     if (block.type === 'thinking' && block.status === 'streaming') {
       return { ...block, status: 'done' as const }
@@ -492,26 +502,29 @@ function finalizeBlocks(
       return block
     }
 
-    return { ...block, status: finalStatus } as WorkbenchProcessingBlock
+    return { ...block, status: finalStatus } as WorkbenchProcessingBlock<TFileChanges>
   })
 }
 
-function finalizeProcessingBlocks(
-  blocks: WorkbenchProcessingBlock[] | undefined,
+function finalizeProcessingBlocks<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
   finalStatus: Extract<WorkbenchToolBlockStatus, 'done' | 'error'> = 'done'
-): WorkbenchProcessingBlock[] | undefined {
+): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
   if (!blocks) return undefined
   return finalizeBlocks(blocks, finalStatus)
 }
 
-function mergeProcessingBlock(
-  blocks: WorkbenchProcessingBlock[],
-  incomingBlock: WorkbenchProcessingBlock
-): WorkbenchProcessingBlock[] {
+function mergeProcessingBlock<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[],
+  incomingBlock: WorkbenchProcessingBlock<TFileChanges>
+): WorkbenchProcessingBlock<TFileChanges>[] {
   const index = blocks.findIndex(block => block.id === incomingBlock.id)
   if (index === -1) return [...blocks, incomingBlock]
 
   const nextBlocks = [...blocks]
-  nextBlocks[index] = { ...nextBlocks[index], ...incomingBlock } as WorkbenchProcessingBlock
+  nextBlocks[index] = {
+    ...nextBlocks[index],
+    ...incomingBlock,
+  } as WorkbenchProcessingBlock<TFileChanges>
   return nextBlocks
 }
