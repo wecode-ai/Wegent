@@ -100,6 +100,13 @@ export function RightWorkspacePanel({
     onCloseTab(tab)
   }
 
+  const getTabSelectHandler = (tab: RightWorkspacePanelTab): (() => void) => {
+    if (tab === 'review') return onSelectReview
+    if (tab === 'terminal') return onSelectTerminal ?? (() => {})
+    if (tab === 'browser') return onSelectBrowser
+    return onSelectFiles
+  }
+
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     {
       id: 'review',
@@ -155,15 +162,7 @@ export function RightWorkspacePanel({
               label={getRightWorkspaceTabLabel(tab, t, visibleBrowserTitle)}
               icon={getRightWorkspaceTabIcon(tab)}
               iconSrc={tab === 'browser' ? visibleBrowserFaviconUrl : null}
-              onSelect={
-                tab === 'review'
-                  ? onSelectReview
-                  : tab === 'terminal'
-                    ? onSelectTerminal
-                    : tab === 'browser'
-                      ? onSelectBrowser
-                      : onSelectFiles
-              }
+              onSelect={getTabSelectHandler(tab)}
               onClose={() => closeTab(tab)}
             />
           ))}

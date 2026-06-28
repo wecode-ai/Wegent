@@ -2,8 +2,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export const LOCAL_EXECUTOR_COMMANDS = {
+  copyDebugInfo: 'local_executor_copy_debug_info',
   ensure: 'local_executor_ensure_started',
   status: 'local_executor_status',
+  readLog: 'local_executor_read_log',
   request: 'local_executor_request',
   restart: 'local_executor_restart',
   connectBackend: 'local_executor_connect_backend',
@@ -18,6 +20,27 @@ export interface LocalExecutorStatus {
   deviceId?: string
   version?: string
   error?: string
+}
+
+export interface LocalExecutorLog {
+  path: string
+  content: string
+  truncated: boolean
+  lineCount: number
+  socketPath: string
+  socketExists: boolean
+  socketFileType: string
+  socketConnected: boolean
+  processPids: number[]
+  processPaths: string[]
+  sidecarSource: string
+  sidecarPath: string
+  currentDir: string
+  executorHome: string
+  backendUrl: string | null
+  hasBackendAuthToken: boolean
+  pendingRequestCount: number
+  status: LocalExecutorStatus
 }
 
 export interface LocalExecutorEvent {
@@ -36,6 +59,14 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.status)
+}
+
+export function readLocalExecutorLog(): Promise<LocalExecutorLog> {
+  return invoke<LocalExecutorLog>(LOCAL_EXECUTOR_COMMANDS.readLog)
+}
+
+export function copyLocalExecutorDebugInfo(text: string): Promise<void> {
+  return invoke<void>(LOCAL_EXECUTOR_COMMANDS.copyDebugInfo, { text })
 }
 
 export function restartLocalExecutor(): Promise<LocalExecutorStatus> {
