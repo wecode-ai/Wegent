@@ -897,7 +897,15 @@ impl RuntimeWorkRpcHandler {
                 notifications,
             )
             .await;
-            mapper_task.abort();
+            if let Err(error) = mapper_task.await {
+                log_executor_event(
+                    "runtime work notification mapper failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                );
+            }
 
             handler.handle_turn_result(&local_task_id, &request, result);
         });
@@ -1019,6 +1027,7 @@ impl RuntimeWorkRpcHandler {
                 } else if link.status == "archived" {
                     continue;
                 }
+                link.list_order = Some(links.len());
                 if let Some(thread_id) = &link.thread_id {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
@@ -1027,7 +1036,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        for link in self.local_task_links(true) {
+        for mut link in self.local_task_links(true) {
             let link_archived = link.status == "archived";
             if link_archived != archived {
                 continue;
@@ -1045,10 +1054,10 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
+            link.list_order = Some(links.len());
             links.push(link);
         }
 
-        links.sort_by_key(|link| std::cmp::Reverse(link.updated_at));
         links
     }
 
@@ -1793,6 +1802,23 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
             copy_attachment_field(object, &mut normalized, "mime_type");
             copy_attachment_field(object, &mut normalized, "subtask_id");
             copy_attachment_field(object, &mut normalized, "file_extension");
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_path",
+                &["local_path", "localPath"],
+            );
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_preview_url",
+                &["local_preview_url", "localPreviewUrl"],
+            );
+            if !normalized.contains_key("local_preview_url") {
+                if let Some(local_path) = normalized.get("local_path").cloned() {
+                    normalized.insert("local_preview_url".to_owned(), local_path);
+                }
+            }
             normalized.insert("status".to_owned(), Value::String("ready".to_owned()));
             normalized.insert("created_at".to_owned(), Value::Number(now_ms().into()));
             Some(Value::Object(normalized))
@@ -1803,6 +1829,20 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
+    }
+}
+
+fn copy_attachment_field_alias(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    target_key: &str,
+    source_keys: &[&str],
+) {
+    for source_key in source_keys {
+        if let Some(value) = source.get(*source_key).cloned() {
+            target.insert(target_key.to_owned(), value);
+            return;
+        }
     }
 }
 

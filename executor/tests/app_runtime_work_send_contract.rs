@@ -104,13 +104,18 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "conversation_id": "conv-1",
         "sender_id": "sender-1"
     });
+    let attachment_path = temp_path("runtime-send-photo", "png");
+    fs::write(&attachment_path, b"image").expect("attachment image should be writable");
+    let attachment_path = attachment_path.display().to_string();
     let attachment = json!({
         "id": 45,
         "original_filename": "photo.png",
         "mime_type": "image/png",
         "file_size": 1200,
         "subtask_id": 0,
-        "file_extension": ".png"
+        "file_extension": ".png",
+        "local_path": attachment_path,
+        "local_preview_url": attachment_path
     });
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -123,6 +128,11 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                 },
                 "content": "continue from content",
                 "modelId": "gpt-4.1",
+                "modelOptions": {
+                    "reasoning": "extra_high",
+                    "summary": "concise",
+                    "speed": "fast"
+                },
                 "source": source,
                 "attachments": [attachment]
             }
@@ -142,6 +152,15 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
+    assert_eq!(
+        resume["params"]["config"]["model_reasoning_effort"],
+        "xhigh"
+    );
+    assert_eq!(
+        resume["params"]["config"]["model_reasoning_summary"],
+        "concise"
+    );
+    assert_eq!(resume["params"]["config"]["service_tier"], "priority");
 
     let last_turn_start = calls
         .iter()
@@ -149,14 +168,108 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .find(|call| call["method"] == "turn/start")
         .expect("send should start a turn");
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
-    assert_eq!(last_turn_start["params"]["input"][0]["type"], "text");
-    assert!(last_turn_start["params"]["input"][0]["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("continue from content"));
+    assert_eq!(last_turn_start["params"]["effort"], "xhigh");
+    assert_eq!(last_turn_start["params"]["summary"], "concise");
+    let input = last_turn_start["params"]["input"].as_array().unwrap();
+    assert!(input.iter().any(|item| {
+        item["type"] == "text"
+            && item["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("continue from content"))
+    }));
+    assert_eq!(input[0]["type"], "text");
+    assert!(input.iter().any(|item| {
+        item["type"] == "localImage"
+            && item["path"]
+                .as_str()
+                .is_some_and(|path| path == attachment_path)
+    }));
 
-    let created_event = recv_event(&mut events, "response.created").await;
+    let runtime_events = recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.created", |event| {
+            event["payload"]["source"] == source
+        })
+        .is_some()
+            && find_runtime_event(runtime_events, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
+                block["type"] == "text"
+                    && block["content"] == "Inspecting "
+                    && block["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.block.updated", |event| {
+                let data = &event["payload"]["data"];
+                data["updates"]["content"] == "Inspecting workspace."
+                    && data["updates"]["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
+                event["payload"]["data"]["delta"] == "done"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.completed", |event| {
+                event["payload"]["data"]["value"] == "done"
+            })
+            .is_some()
+    })
+    .await;
+
+    let created_event = find_runtime_event(&runtime_events, "response.created", |event| {
+        event["payload"]["source"] == source
+    })
+    .expect("send should emit response.created with source");
     assert_eq!(created_event["payload"]["source"], source);
+    let process_created = find_runtime_event(&runtime_events, "response.block.created", |event| {
+        let block = &event["payload"]["data"]["block"];
+        block["type"] == "text"
+            && block["content"] == "Inspecting "
+            && block["status"] == "streaming"
+    })
+    .expect("commentary delta should create a process text block");
+    let process_block_id = process_created["payload"]["data"]["block"]["id"]
+        .as_str()
+        .expect("process block should have a generated id")
+        .to_owned();
+    assert_eq!(process_block_id, "text-local-task-1-0-1");
+    assert_eq!(process_created["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(
+        process_created["payload"]["data"]["block"]["content"],
+        "Inspecting "
+    );
+    assert_eq!(
+        process_created["payload"]["data"]["block"]["status"],
+        "streaming"
+    );
+
+    let process_updated = find_runtime_event(&runtime_events, "response.block.updated", |event| {
+        let data = &event["payload"]["data"];
+        data["block_id"].as_str() == Some(process_block_id.as_str())
+            && data["updates"]["status"] == "streaming"
+    })
+    .expect("second commentary delta should update the process text block");
+    assert_eq!(
+        process_updated["payload"]["data"]["block_id"],
+        process_block_id
+    );
+    assert_eq!(
+        process_updated["payload"]["data"]["updates"]["content"],
+        "Inspecting workspace."
+    );
+    assert_eq!(
+        process_updated["payload"]["data"]["updates"]["status"],
+        "streaming"
+    );
+
+    let text_delta = find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
+        event["payload"]["data"]["delta"] == "done"
+    })
+    .expect("final answer delta should remain the main output text");
+    assert_eq!(text_delta["payload"]["data"]["delta"], "done");
+    let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
+        event["payload"]["data"]["value"] == "done"
+    })
+    .expect("completed response should contain only the final answer");
+    assert_eq!(completed["payload"]["data"]["value"], "done");
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -172,16 +285,139 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|message| message["content"] == "continue from content")
+        .find(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with("continue from content"))
+        })
         .expect("cached follow-up user message should be present");
     assert_eq!(user["source"], source);
     assert_eq!(user["attachments"][0]["filename"], "photo.png");
     assert_eq!(user["attachments"][0]["status"], "ready");
     assert_eq!(user["attachments"][0]["file_size"], 1200);
+    assert_eq!(user["attachments"][0]["local_preview_url"], attachment_path);
+    assert_eq!(user["attachments"][0]["local_path"], attachment_path);
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_includes_local_text_attachment_content() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-text-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-text-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let sqlite_home = temp_path("runtime-send-text-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    write_codex_state_db_thread(&sqlite_home);
+    let log_path = temp_path("runtime-send-text-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-text",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "prompt": "first turn",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
+    drain_events(&mut events);
+
+    let attachment_path = temp_path("runtime-send-pasted-text", "txt");
+    fs::write(&attachment_path, "THE_USER_PASTED_TEXT_ATTACHMENT").unwrap();
+    let attachment_path = attachment_path.display().to_string();
+    let attachment = json!({
+        "id": -46,
+        "original_filename": "clipboard-text.txt",
+        "mime_type": "text/plain",
+        "file_size": 31,
+        "local_path": attachment_path,
+        "local_preview_url": attachment_path
+    });
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "localTaskId": "local-task-text"
+                },
+                "content": "我贴的是啥",
+                "modelId": "gpt-4.1",
+                "attachments": [attachment]
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+
+    assert_eq!(sent["success"], true);
+    wait_for_turn_count(&log_path, 2).await;
+
+    let calls = read_json_lines(&log_path);
+    let last_turn_start = calls
+        .iter()
+        .rev()
+        .find(|call| call["method"] == "turn/start")
+        .expect("send should start a turn");
+    let input_text = last_turn_start["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "text")
+        .filter_map(|item| item["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(input_text.contains("clipboard-text.txt"));
+    assert!(input_text.contains("THE_USER_PASTED_TEXT_ATTACHMENT"));
+    assert!(input_text.contains("我贴的是啥"));
 }
 
 #[tokio::test]
 async fn runtime_tasks_send_rejects_missing_model_without_execution_request() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-missing-model-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-missing-model-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
     let error = handler
@@ -297,7 +533,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"turn/start"'*)
+      progress_id='progress-1'
+      case "$line" in
+        *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
+      esac
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"Inspecting "}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"workspace."}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
@@ -515,15 +759,41 @@ fn drain_events(events: &mut broadcast::Receiver<Value>) {
     while events.try_recv().is_ok() {}
 }
 
-async fn recv_event(events: &mut broadcast::Receiver<Value>, event: &str) -> Value {
-    for _ in 0..20 {
-        let message = tokio::time::timeout(std::time::Duration::from_millis(200), events.recv())
-            .await
-            .expect("timed out waiting for runtime event")
-            .expect("runtime event channel should stay open");
-        if message["event"] == event {
-            return message;
+async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done: F) -> Vec<Value>
+where
+    F: FnMut(&[Value]) -> bool,
+{
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut received = Vec::new();
+    loop {
+        if done(&received) {
+            return received;
         }
+
+        let message = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .unwrap_or_else(|_| {
+                let names = received
+                    .iter()
+                    .map(|event| event["event"].as_str().unwrap_or("<missing>"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                panic!("timed out waiting for expected runtime events; received: {names}");
+            })
+            .expect("runtime event channel should stay open");
+        received.push(message);
     }
-    panic!("did not receive event {event}");
+}
+
+fn find_runtime_event<'a, F>(
+    events: &'a [Value],
+    event_name: &str,
+    mut matches: F,
+) -> Option<&'a Value>
+where
+    F: FnMut(&Value) -> bool,
+{
+    events
+        .iter()
+        .find(|event| event["event"] == event_name && matches(event))
 }

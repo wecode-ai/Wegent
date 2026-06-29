@@ -117,7 +117,13 @@ describe('DesktopSidebar', () => {
 
     const actions = screen.getByTestId('projects-section-toggle-actions')
 
-    expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
+    expect(actions).toHaveClass(
+      'absolute',
+      'right-2.5',
+      'z-[70]',
+      'pointer-events-none',
+      'opacity-0'
+    )
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
@@ -814,9 +820,11 @@ describe('DesktopSidebar', () => {
       )
       expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
-      expect(
-        screen.getByTestId('runtime-local-task-hover-actions-codex-1').className
-      ).not.toContain('focus-within')
+      expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1')).toHaveClass(
+        'z-[70]',
+        'hover:pointer-events-auto',
+        'focus-within:pointer-events-auto'
+      )
       expect(screen.getByTestId('runtime-local-task-time-codex-1').className).not.toContain(
         'focus-within'
       )

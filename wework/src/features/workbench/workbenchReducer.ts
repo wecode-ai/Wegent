@@ -144,15 +144,30 @@ function mergeRuntimeWorkPreservingTaskOrder(
 ): RuntimeWorkListResponse | null {
   if (!current || !next) return next
 
+  const nextProjectTaskKeys = new Map(
+    next.projects.map(projectWork => [
+      runtimeProjectUiId(projectWork.project),
+      collectRuntimeTaskKeys(projectWork.deviceWorkspaces),
+    ])
+  )
+  const nextChatTaskKeys = collectRuntimeTaskKeys(next.chats)
+
   const mergeProjectWorkspace = (
     projectWork: RuntimeProjectWork,
     workspace: RuntimeDeviceWorkspace
   ): RuntimeDeviceWorkspace => {
     const currentWorkspace = findMatchingProjectRuntimeWorkspace(current, projectWork, workspace)
     if (!currentWorkspace) return workspace
+    const resolvedTaskKeys =
+      nextProjectTaskKeys.get(runtimeProjectUiId(projectWork.project)) ?? new Set<string>()
     return {
       ...workspace,
-      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+      localTasks: mergeRuntimeLocalTasks(
+        currentWorkspace.localTasks,
+        workspace.localTasks,
+        workspace.deviceId,
+        resolvedTaskKeys
+      ),
     }
   }
 
@@ -161,7 +176,12 @@ function mergeRuntimeWorkPreservingTaskOrder(
     if (!currentWorkspace) return workspace
     return {
       ...workspace,
-      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+      localTasks: mergeRuntimeLocalTasks(
+        currentWorkspace.localTasks,
+        workspace.localTasks,
+        workspace.deviceId,
+        nextChatTaskKeys
+      ),
     }
   }
 
@@ -172,11 +192,13 @@ function mergeRuntimeWorkPreservingTaskOrder(
       deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
         mergeProjectWorkspace(project, workspace)
       ),
-    }))
+    })),
+    nextProjectTaskKeys
   )
   const chats = preserveMissingOptimisticWorkspaces(
     current.chats,
-    next.chats.map(mergeChatWorkspace)
+    next.chats.map(mergeChatWorkspace),
+    nextChatTaskKeys
   )
   const merged = {
     ...next,
@@ -242,11 +264,19 @@ function runtimeWorkspaceMatches(
 
 function mergeRuntimeLocalTasks(
   currentTasks: RuntimeDeviceWorkspace['localTasks'],
-  nextTasks: RuntimeDeviceWorkspace['localTasks']
+  nextTasks: RuntimeDeviceWorkspace['localTasks'],
+  deviceId: string,
+  resolvedTaskKeys: ReadonlySet<string>
 ) {
   const nextById = new Map(nextTasks.map(task => [task.localTaskId, task]))
   const merged = currentTasks
-    .map(task => nextById.get(task.localTaskId) ?? (isOptimisticRuntimeTask(task) ? task : null))
+    .map(
+      task =>
+        nextById.get(task.localTaskId) ??
+        (isOptimisticRuntimeTask(task) && !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
+          ? task
+          : null)
+    )
     .filter((task): task is RuntimeDeviceWorkspace['localTasks'][number] => Boolean(task))
   const mergedIds = new Set(merged.map(task => task.localTaskId))
   nextTasks.forEach(task => {
@@ -261,21 +291,43 @@ function isOptimisticRuntimeTask(task: LocalTaskSummary): boolean {
   return task.status === 'creating'
 }
 
-function optimisticWorkspaceOnly(workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace | null {
-  const localTasks = workspace.localTasks.filter(isOptimisticRuntimeTask)
+function runtimeTaskKey(deviceId: string, task: Pick<LocalTaskSummary, 'localTaskId'>): string {
+  return `${deviceId}\0${task.localTaskId}`
+}
+
+function collectRuntimeTaskKeys(workspaces: RuntimeDeviceWorkspace[]): Set<string> {
+  const keys = new Set<string>()
+  workspaces.forEach(workspace => {
+    workspace.localTasks.forEach(task => {
+      keys.add(runtimeTaskKey(workspace.deviceId, task))
+    })
+  })
+  return keys
+}
+
+function optimisticWorkspaceOnly(
+  workspace: RuntimeDeviceWorkspace,
+  resolvedTaskKeys: ReadonlySet<string>
+): RuntimeDeviceWorkspace | null {
+  const localTasks = workspace.localTasks.filter(
+    task =>
+      isOptimisticRuntimeTask(task) &&
+      !resolvedTaskKeys.has(runtimeTaskKey(workspace.deviceId, task))
+  )
   return localTasks.length > 0 ? { ...workspace, localTasks } : null
 }
 
 function preserveMissingOptimisticWorkspaces(
   currentWorkspaces: RuntimeDeviceWorkspace[],
-  nextWorkspaces: RuntimeDeviceWorkspace[]
+  nextWorkspaces: RuntimeDeviceWorkspace[],
+  resolvedTaskKeys: ReadonlySet<string>
 ): RuntimeDeviceWorkspace[] {
   const mergedWorkspaces = [...nextWorkspaces]
   currentWorkspaces.forEach(currentWorkspace => {
     if (mergedWorkspaces.some(workspace => runtimeWorkspaceMatches(workspace, currentWorkspace))) {
       return
     }
-    const optimisticWorkspace = optimisticWorkspaceOnly(currentWorkspace)
+    const optimisticWorkspace = optimisticWorkspaceOnly(currentWorkspace, resolvedTaskKeys)
     if (optimisticWorkspace) {
       mergedWorkspaces.push(optimisticWorkspace)
     }
@@ -285,17 +337,19 @@ function preserveMissingOptimisticWorkspaces(
 
 function preserveMissingOptimisticProjects(
   currentProjects: RuntimeProjectWork[],
-  nextProjects: RuntimeProjectWork[]
+  nextProjects: RuntimeProjectWork[],
+  resolvedTaskKeysByProject: ReadonlyMap<number, ReadonlySet<string>>
 ): RuntimeProjectWork[] {
   const mergedProjects = [...nextProjects]
   currentProjects.forEach(currentProject => {
     const projectId = runtimeProjectUiId(currentProject.project)
+    const resolvedTaskKeys = resolvedTaskKeysByProject.get(projectId) ?? new Set<string>()
     const existingIndex = mergedProjects.findIndex(
       project => runtimeProjectUiId(project.project) === projectId
     )
     if (existingIndex < 0) {
       const optimisticWorkspaces = currentProject.deviceWorkspaces
-        .map(optimisticWorkspaceOnly)
+        .map(workspace => optimisticWorkspaceOnly(workspace, resolvedTaskKeys))
         .filter((workspace): workspace is RuntimeDeviceWorkspace => Boolean(workspace))
       if (optimisticWorkspaces.length > 0) {
         mergedProjects.push({
@@ -309,7 +363,8 @@ function preserveMissingOptimisticProjects(
 
     const deviceWorkspaces = preserveMissingOptimisticWorkspaces(
       currentProject.deviceWorkspaces,
-      mergedProjects[existingIndex].deviceWorkspaces
+      mergedProjects[existingIndex].deviceWorkspaces,
+      resolvedTaskKeys
     )
     mergedProjects[existingIndex] = {
       ...mergedProjects[existingIndex],

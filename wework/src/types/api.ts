@@ -480,6 +480,7 @@ export interface RuntimeSendRequest {
   modelType?: ModelType | null
   modelOptions?: ModelOptions
   attachmentIds?: number[]
+  attachments?: Attachment[]
   source?: RuntimeMessageSource | null
 }
 
@@ -666,6 +667,7 @@ export interface RuntimeTaskCreateRequest {
   modelOptions?: Record<string, string>
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
+  attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
 }
 
@@ -972,6 +974,7 @@ export interface ChatSendPayload {
   force_override_bot_model_type?: ModelType
   model_options?: ModelOptions
   attachment_ids?: number[]
+  attachments?: Attachment[]
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
@@ -1564,6 +1567,7 @@ export interface Attachment {
   file_extension: string
   created_at: string
   local_preview_url?: string
+  local_path?: string
 }
 
 export interface AttachmentUploadProgress {

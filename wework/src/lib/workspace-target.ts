@@ -184,5 +184,7 @@ export function resolveRuntimeWorkspaceContext({
 }
 
 export function workspaceTargetKey(target: WorkspaceTarget | null): string {
-  return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
+  return target
+    ? `${target.deviceId}:${target.path}:${target.source}:${target.workspaceSource ?? ''}`
+    : ''
 }

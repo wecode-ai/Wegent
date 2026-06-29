@@ -25,7 +25,7 @@ use tokio::{
 
 use crate::{
     agents::runtime_capabilities,
-    attachments::{process_prompt, AttachmentRecord},
+    attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
@@ -1558,6 +1558,11 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let text_attachment_context =
+        AttachmentPromptProcessor::build_text_attachment_context(&success);
+    if !text_attachment_context.is_empty() {
+        request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
+    }
 
     PreparedCodexExecutionRequest {
         request,
@@ -1737,6 +1742,47 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
     format!(
         "\n# Files mentioned by the user:\n\n{file_lines}\n\n## My request for Codex:\n{request_text}\n"
     )
+}
+
+fn append_text_attachment_context(prompt: &Value, context: &str) -> Value {
+    match prompt {
+        Value::String(text) => Value::String(format!("{text}{context}")),
+        Value::Array(blocks) => {
+            let mut output = blocks.clone();
+            if append_context_to_first_text_block(&mut output, context) {
+                Value::Array(output)
+            } else {
+                output.insert(
+                    0,
+                    json!({"type": "input_text", "text": context.trim_start()}),
+                );
+                Value::Array(output)
+            }
+        }
+        _ => Value::String(format!("{}{}", prompt_text(prompt), context)),
+    }
+}
+
+fn append_context_to_first_text_block(blocks: &mut [Value], context: &str) -> bool {
+    for block in blocks {
+        let Some(object) = block.as_object_mut() else {
+            continue;
+        };
+        let block_type = object.get("type").and_then(Value::as_str).unwrap_or("");
+        if !matches!(block_type, "input_text" | "text") {
+            continue;
+        }
+        let Some(text) = object
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        object.insert("text".to_owned(), Value::String(format!("{text}{context}")));
+        return true;
+    }
+    false
 }
 
 fn extract_user_request_text(text_parts: &[String]) -> String {

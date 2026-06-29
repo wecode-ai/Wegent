@@ -97,6 +97,16 @@ const completedFileChangesBlock: ProcessingBlock = {
   },
 }
 
+const completedGuidanceBlock: ProcessingBlock = {
+  id: 'guidance-1',
+  subtaskId: 1,
+  type: 'tool',
+  toolName: 'conversation_guidance',
+  toolInput: { message: '继续分析 package.json' },
+  status: 'done',
+  createdAt: 1770000004000,
+}
+
 describe('ToolBlocksDisplay', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -109,6 +119,16 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+  })
+
+  test('renders completed conversation guidance as a static activity label', () => {
+    render(<ToolBlocksDisplay blocks={[completedGuidanceBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('processing-activity-group-label')).toHaveTextContent('已引导对话')
+    expect(screen.queryByRole('button', { name: '已引导对话' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-content')).not.toBeInTheDocument()
   })
 
   test('renders completed web search tools as a Codex-style web search activity', () => {
@@ -305,11 +325,83 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps completed tools collapsed while the assistant turn is still running', () => {
+  test('keeps running process visible with inner tool details collapsed', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
-    expect(screen.queryByText('已运行 1 条命令')).not.toBeInTheDocument()
-    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+    expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+  })
+
+  test('shows a thinking placeholder while streaming with only completed activity', () => {
+    render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
+  test('collapses streaming processing once final content is visible', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        hasFinalContent={true}
+      />
+    )
+
+    const toggle = screen.getByRole('button', { name: /已处理/ })
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+  })
+
+  test('groups completed tools while keeping the current running command visible', () => {
+    const completedSearchBlock: ProcessingBlock = {
+      id: 'search-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: "/bin/zsh -lc 'rg -n paas-context .'" },
+      status: 'done',
+      createdAt: 1770000001000,
+    }
+    const runningBlock: ProcessingBlock = {
+      id: 'running-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'bin/paas-context --help' },
+      status: 'streaming',
+      createdAt: 1770000002000,
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock, completedSearchBlock, runningBlock]}
+        isStreaming={true}
+      />
+    )
+
+    const activityToggle = screen.getByRole('button', {
+      name: /已搜索代码 已运行 1 条命令/,
+    })
+
+    expect(activityToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/已运行 \/bin\/zsh/)).not.toBeInTheDocument()
+    expect(screen.getByText('正在运行 bin/paas-context --help')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
@@ -339,7 +431,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 10 秒')).toBeInTheDocument()
   })
 
-  test('renders the header as plain text (not a button) while running', () => {
+  test('renders the running header as plain text', () => {
     const runningBlock: ProcessingBlock = {
       ...completedCommandBlock,
       status: 'streaming',
@@ -347,8 +439,7 @@ describe('ToolBlocksDisplay', () => {
 
     render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
-    // While running the summary is informational only and must not be clickable.
-    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理 .* 秒/ })).not.toBeInTheDocument()
     expect(screen.getByText(/已处理 .* 秒/)).toBeInTheDocument()
   })
 

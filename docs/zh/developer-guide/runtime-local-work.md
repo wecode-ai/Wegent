@@ -141,7 +141,7 @@ POST /api/runtime-work/archived-conversations/delete-bulk
 
 executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unarchive` 和 `thread/delete` 执行归档、恢复和删除；重命名使用 `thread/name/set`。归档列表响应来自 state DB `threads.archived` 过滤结果并合并 JSON LocalTask 索引，标准化 `id`、`localTaskId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。刚执行归档/恢复时，如果 state DB 尚未同步，设备侧 LocalTask 索引中的本地覆盖态会先参与列表，避免 UI 短暂消失。批量删除只作用于前端当前提交的归档项集合。
 
-图片附件上传成功后，Wework 会在当前页面的 `Attachment` 对象上保留一个前端本地的 `local_preview_url`，用于发送后立即展示图片预览，避免刚发送的消息再通过附件下载接口拉取同一张图片。该字段只属于前端渲染状态，不写入 Backend，也不会进入 `attachment_ids` 或 executor 请求；页面刷新后仍以持久化附件 ID 为准重新读取附件。
+在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到当前工作区的 `.wegent/attachments` 目录，并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
@@ -186,7 +186,7 @@ Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体
 - Codex 创建时先返回 Wegent 侧 `localTaskId`，让前端立即打开任务并接收 stream；后台通过 app-server `thread/start` 和 `turn/start` 创建真实 Codex thread 后，会把 `localTaskId -> threadId` 关联写入 JSON LocalTask 索引用于后续 send/resume。
 - Codex 创建和继续时不把完整 transcript 缓存到 executor JSON 索引；executor 重启后通过 `thread/list` 和本地索引恢复任务链接，再用 `thread/read` metadata 加 rollout JSONL 读取 transcript。
 - Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
-- Codex app-server 输入支持 `input_text`、`input_image` 和 `localImage` prompt block 映射；Backend 附件 id 下载与沙箱路径重写需要单独的设备侧附件处理能力，前端不应直接把本机附件路径传给 Backend。
+- Codex app-server 输入支持 `input_text`、`input_image` 和 `localImage` prompt block 映射。Backend 附件 id 下载与沙箱路径重写仍和 local-first 附件分离：本地 App 模式通过 executor IPC 发送同设备附件记录，云端/Backend 路径继续使用上传后的附件 ID。
 - Codex 回复完成时如果 Responses `response.completed` 中带有 `file_changes` 或 `fileChanges`，executor 会把它保存到当前 assistant message 的 `fileChanges` 字段，后续 transcript 刷新继续展示同一张文件变更卡片。
 
 Project 场景使用运行时 workspace 引用：
