@@ -303,6 +303,9 @@ class TestKnowledgeFactoryDynamicContext:
             mock_kb_ls_class.assert_not_called()
             mock_kb_head_class.assert_not_called()
             assert len(result.extra_tools) == 1
+            assert result.knowledge_base_ids == [1]
+            assert result.default_knowledge_base_ids == [1]
+            assert result.is_user_selected_kb is False
 
     @pytest.mark.asyncio
     async def test_default_kb_only_without_rag_uses_search_only_prompt(self):
@@ -339,6 +342,9 @@ class TestKnowledgeFactoryDynamicContext:
             )
             assert "Call `kb_ls`" not in result.enhanced_system_prompt
             assert "MUST NOT use `kb_ls` or `kb_head`" in result.enhanced_system_prompt
+            assert result.knowledge_base_ids == [1]
+            assert result.default_knowledge_base_ids == [1]
+            assert result.is_user_selected_kb is False
 
     @pytest.mark.asyncio
     async def test_default_kb_is_filtered_from_exploration_tools(self):
@@ -383,6 +389,9 @@ class TestKnowledgeFactoryDynamicContext:
                 explicit_scope
             ]
             assert len(result.extra_tools) == 3
+            assert result.knowledge_base_ids == [1, 2]
+            assert result.default_knowledge_base_ids == [1]
+            assert result.knowledge_base_scopes == [default_scope, explicit_scope]
 
     @pytest.mark.asyncio
     async def test_full_permission_default_kb_keeps_exploration_tools(self):

@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from shared.models.knowledge import KnowledgeBaseScope
+from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolsResult
 
 
 class _FakeStorageBackend:
@@ -69,6 +69,53 @@ def test_search_only_default_kb_ids_follow_current_user_permission() -> None:
         assert _get_search_only_default_knowledge_base_ids(
             Mock(), user_id=10, default_knowledge_base_ids=[1, 2, 3]
         ) == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_prepare_contexts_preserves_default_kb_ids_after_final_wrap() -> None:
+    """Final context wrapping must not drop search-only default KB markers."""
+    from app.services.chat.preprocessing.contexts import prepare_contexts_for_chat
+
+    kb_result = KnowledgeBaseToolsResult(
+        extra_tools=[],
+        enhanced_system_prompt="Base prompt\nKB prompt",
+        kb_meta_prompt="KB meta",
+        knowledge_base_ids=[73],
+        is_user_selected_kb=False,
+        document_ids=[],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=73,
+                scope_restricted=False,
+                document_ids=[],
+            )
+        ],
+        default_knowledge_base_ids=[73],
+        kb_tool_access_mode="full",
+    )
+
+    with (
+        patch(
+            "app.services.chat.preprocessing.contexts.context_service.get_by_subtask",
+            return_value=[],
+        ),
+        patch(
+            "app.services.chat.preprocessing.contexts._prepare_kb_tools_from_contexts",
+            return_value=kb_result,
+        ),
+    ):
+        result = await prepare_contexts_for_chat(
+            db=Mock(),
+            user_subtask_id=591,
+            user_id=2,
+            message="用kb_head查看OpenSearchAPI这个文档",
+            base_system_prompt="Base prompt",
+            task_id=368,
+        )
+
+    assert result.kb.knowledge_base_ids == [73]
+    assert result.kb.knowledge_base_scopes == kb_result.knowledge_base_scopes
+    assert result.kb.default_knowledge_base_ids == [73]
 
 
 class TestSubtaskContextBrief:

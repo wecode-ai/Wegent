@@ -191,6 +191,11 @@ async def prepare_knowledge_base_tools(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
+            knowledge_base_ids=knowledge_base_ids,
+            is_user_selected_kb=is_user_selected,
+            document_ids=legacy_document_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
+            default_knowledge_base_ids=default_knowledge_base_ids or [],
             kb_tool_access_mode=kb_tool_access_mode,
         )
 
@@ -213,6 +218,11 @@ async def prepare_knowledge_base_tools(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
+            knowledge_base_ids=knowledge_base_ids,
+            is_user_selected_kb=is_user_selected,
+            document_ids=legacy_document_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
+            default_knowledge_base_ids=default_knowledge_base_ids or [],
             kb_tool_access_mode=kb_tool_access_mode,
         )
 
@@ -258,6 +268,11 @@ async def prepare_knowledge_base_tools(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt="",
+        knowledge_base_ids=knowledge_base_ids,
+        is_user_selected_kb=is_user_selected,
+        document_ids=legacy_document_ids,
+        knowledge_base_scopes=knowledge_base_scopes or [],
+        default_knowledge_base_ids=default_knowledge_base_ids or [],
         kb_tool_access_mode=kb_tool_access_mode,
     )
 

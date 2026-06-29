@@ -1176,6 +1176,7 @@ async def prepare_contexts_for_chat(
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
         knowledge_base_scopes=kb_result.knowledge_base_scopes,
+        default_knowledge_base_ids=kb_result.default_knowledge_base_ids,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
