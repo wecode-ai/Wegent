@@ -1716,6 +1716,7 @@ fn cached_user_message(
     let content = payload
         .get("message")
         .and_then(Value::as_str)
+        .or_else(|| payload.get("content").and_then(Value::as_str))
         .filter(|content| !content.trim().is_empty())?;
 
     let mut message = Map::new();
@@ -1875,7 +1876,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cached_user_message_uses_payload_message_only() {
+    fn cached_user_message_uses_explicit_payload_text() {
         let request = ExecutionRequest {
             subtask_id: 42,
             prompt: json!([
@@ -1893,6 +1894,15 @@ mod tests {
         .expect("payload message should create a cached user message");
 
         assert_eq!(message["content"], "visible user text");
+
+        let content_message = cached_user_message(
+            "local-task",
+            &request,
+            &json!({"content": "visible content text"}),
+        )
+        .expect("payload content should create a cached user message");
+
+        assert_eq!(content_message["content"], "visible content text");
     }
 
     #[test]

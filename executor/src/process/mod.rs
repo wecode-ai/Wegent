@@ -128,7 +128,7 @@ impl AgentEngine for StreamProcessEngine {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
-                        claude_session::save_session_id(&request, &session_id);
+                        claude_session::save_session_id(&request, session_id);
                     }
                     let summary =
                         handle_retryable_api_errors(spec.clone(), &request, summary).await;

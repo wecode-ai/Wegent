@@ -547,11 +547,11 @@ fn parse_mcp_response_body(body: &str) -> Option<Value> {
         return Some(value);
     }
     body.lines()
+        .rev()
         .map(str::trim)
         .filter_map(|line| line.strip_prefix("data:").map(str::trim))
         .filter(|line| !line.is_empty() && *line != "[DONE]")
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .last()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
 }
 
 fn build_prompt_follow_up(prompt: &str, cwd: Option<&str>) -> String {
