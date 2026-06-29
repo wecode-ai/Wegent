@@ -25,6 +25,7 @@ import type {
   TurnFileChangesSummary,
   RuntimeWorkListResponse,
   UnifiedModel,
+  User,
 } from '@/types/api'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -311,6 +312,18 @@ function renderWorkbench(children: React.ReactNode, services = createWorkbenchSe
   )
 }
 
+function renderWorkbenchForUser(
+  children: React.ReactNode,
+  user: User,
+  services = createWorkbenchServices()
+) {
+  return render(
+    <WorkbenchProvider user={user} services={services}>
+      <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
+    </WorkbenchProvider>
+  )
+}
+
 function renderStrictWorkbench(children: React.ReactNode, services = createWorkbenchServices()) {
   return render(
     <StrictMode>
@@ -585,6 +598,36 @@ function RuntimeProjectMutationProbe() {
       </button>
       <button type="button" onClick={() => void workbench.removeProject(7)}>
         remove runtime project
+      </button>
+    </div>
+  )
+}
+
+function ProjectWorkPreferenceProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="current-project-id">{workbench.state.currentProject?.id ?? 'none'}</span>
+      <span data-testid="project-execution-mode">{workbench.projectExecutionMode}</span>
+      <span data-testid="project-worktree-branch">{workbench.projectWorktreeBranch ?? ''}</span>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 22)}>
+        select project 7
+      </button>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(8, 33)}>
+        select project 8
+      </button>
+      <button type="button" onClick={() => workbench.setProjectExecutionMode('git_worktree')}>
+        use worktree
+      </button>
+      <button type="button" onClick={() => workbench.setProjectExecutionMode('current_workspace')}>
+        use local
+      </button>
+      <button type="button" onClick={() => workbench.setProjectWorktreeBranch('feature/alpha')}>
+        select alpha
+      </button>
+      <button type="button" onClick={() => workbench.setProjectWorktreeBranch('feature/beta')}>
+        select beta
       </button>
     </div>
   )
@@ -1021,6 +1064,187 @@ describe('WorkbenchProvider runtime tasks', () => {
     unmount()
 
     expect(socketClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  test('restores project execution mode and worktree branch per project preference', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, key: 'project:7', name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+            {
+              project: { id: 8, key: 'project:8', name: 'Docs' },
+              deviceWorkspaces: [
+                {
+                  id: 33,
+                  projectId: 8,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+          ],
+          totalLocalTasks: 0,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+    const user: User = {
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/alpha',
+          },
+          'project:8': {
+            executionMode: 'current_workspace',
+            worktreeBranch: 'feature/beta',
+          },
+        },
+      },
+    }
+
+    renderWorkbenchForUser(<ProjectWorkPreferenceProbe />, user, services)
+
+    await waitFor(() => expect(screen.getByText('select project 7')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project 7'))
+
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('7'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('git_worktree')
+    )
+    expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/alpha')
+
+    await userEvent.click(screen.getByText('select project 8'))
+
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('8'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('current_workspace')
+    )
+    expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/beta')
+  })
+
+  test('keeps newly selected project execution preferences isolated by project', async () => {
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, key: 'project:7', name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+            {
+              project: { id: 8, key: 'project:8', name: 'Docs' },
+              deviceWorkspaces: [
+                {
+                  id: 33,
+                  projectId: 8,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+          ],
+          totalLocalTasks: 0,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    })
+
+    renderWorkbench(<ProjectWorkPreferenceProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project 7')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project 7'))
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('7'))
+    await userEvent.click(screen.getByText('use worktree'))
+    await userEvent.click(screen.getByText('select alpha'))
+
+    await waitFor(() =>
+      expect(updateCurrentUser).toHaveBeenLastCalledWith({
+        preferences: expect.objectContaining({
+          wework_project_work_preferences: expect.objectContaining({
+            'project:7': {
+              executionMode: 'git_worktree',
+              worktreeBranch: 'feature/alpha',
+            },
+          }),
+        }),
+      })
+    )
+
+    await userEvent.click(screen.getByText('select project 8'))
+
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('8'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('current_workspace')
+    )
+    expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('')
+
+    await userEvent.click(screen.getByText('use worktree'))
+    await userEvent.click(screen.getByText('select beta'))
+    await userEvent.click(screen.getByText('select project 7'))
+
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('7'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('git_worktree')
+    )
+    expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/alpha')
+
+    await userEvent.click(screen.getByText('select project 8'))
+
+    await waitFor(() => expect(screen.getByTestId('current-project-id')).toHaveTextContent('8'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('git_worktree')
+    )
+    expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/beta')
   })
 
   test('locks existing runtime task model choices to its runtime protocol', async () => {

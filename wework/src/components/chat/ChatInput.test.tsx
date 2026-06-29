@@ -1980,7 +1980,24 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          projects: [
+            {
+              id: 7,
+              name: 'Wegent',
+              tasks: [],
+              config: {
+                mode: 'workspace',
+                execution: {
+                  targetType: 'local',
+                  deviceId: 'device-1',
+                },
+                workspace: {
+                  source: 'local_path',
+                  localPath: '/workspace/wegent',
+                },
+              },
+            },
+          ],
           currentProjectId: 7,
           onSelectStandaloneDevice,
         })}
@@ -2380,8 +2397,24 @@ describe('ChatInput', () => {
     }
   )
 
-  test('limits the desktop project branch menu while branches scroll', async () => {
+  test('limits the desktop worktree branch menu while branches scroll', async () => {
     const branches = Array.from({ length: 50 }, (_, index) => `feature/branch-${index}`)
+    const worktreeProject = {
+      id: 7,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-1',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/wegent',
+        },
+      },
+    }
     vi.stubGlobal('innerHeight', 380)
 
     render(
@@ -2392,21 +2425,22 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          projects: [worktreeProject],
+          currentProject: worktreeProject,
           currentProjectId: 7,
-          executionMode: 'current_workspace',
+          executionMode: 'git_worktree',
           executionModeLocked: false,
           onExecutionModeChange: vi.fn(),
           branchName: 'main',
           branchLoading: false,
-          onRefreshBranch: vi.fn().mockResolvedValue(undefined),
           onListBranches: vi.fn().mockResolvedValue(branches),
-          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+          worktreeBranch: null,
+          onWorktreeBranchChange: vi.fn(),
         })}
       />
     )
 
-    const branchButton = screen.getByTestId('project-branch-button')
+    const branchButton = screen.getByTestId('project-worktree-branch-button')
     vi.spyOn(branchButton, 'getBoundingClientRect').mockReturnValue({
       x: 0,
       y: 300,
@@ -2421,15 +2455,15 @@ describe('ChatInput', () => {
 
     await userEvent.click(branchButton)
 
-    const menu = await screen.findByTestId('project-branch-menu')
+    const menu = await screen.findByTestId('project-worktree-branch-menu')
     await waitFor(() => expect(menu).toHaveStyle({ maxHeight: '276px' }))
     expect(menu).toHaveClass('bottom-11', 'overflow-hidden')
-    expect(screen.getByTestId('project-branch-list')).toHaveClass(
+    expect(screen.getByTestId('project-worktree-branch-list')).toHaveClass(
       'min-h-0',
       'flex-1',
       'overflow-y-auto'
     )
-    expect(await screen.findAllByTestId('project-branch-option')).toHaveLength(50)
+    expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
   })
 
   test('submits typed content', async () => {
