@@ -977,7 +977,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-[52px]')
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-x-hidden',
@@ -1020,6 +1020,29 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'workspace',
+                localTasks: [
+                  {
+                    localTaskId: 'runtime-empty',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Fix pane title',
+                    runtime: 'codex',
+                    createdAt: '2026-06-20T00:00:00.000Z',
+                    updatedAt: '2026-06-20T00:00:00.000Z',
+                    running: true,
+                  },
+                ],
+              },
+            ],
+            totalLocalTasks: 1,
+          },
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
@@ -1032,6 +1055,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    const paneTitle = screen.getByTestId('workbench-pane-task-title')
+    expect(paneTitle).toHaveTextContent('Fix pane title')
+    expect(paneTitle).toHaveClass('truncate', 'text-[13px]', 'text-text-primary')
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass(
+      'h-11',
+      'border-b',
+      'border-border/50',
+      'bg-background/95'
+    )
   })
 
   test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
@@ -1554,7 +1586,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
     )
-    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-[52px]')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mb-1.5', 'mr-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
   })
@@ -3179,14 +3211,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
+      'absolute',
+      'right-1',
       'rounded-full',
-      'border',
-      'bg-muted',
       'opacity-0',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
@@ -3327,14 +3360,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
+      'absolute',
+      'right-1',
       'rounded-full',
-      'border',
-      'bg-muted',
       'opacity-0',
+      'hover:bg-black/70',
+      'hover:text-white',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
     expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)

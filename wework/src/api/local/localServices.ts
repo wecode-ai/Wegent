@@ -202,6 +202,11 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+function timestampValue(value: unknown): string | number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return stringValue(value)
+}
+
 function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unknown> {
   const address = recordValue(value.address)
   return {
@@ -258,8 +263,8 @@ function normalizeRuntimeTaskSummary(
   const workspaceKind =
     stringValue(taskRecord.workspaceKind) ?? stringValue(taskRecord.workspace_kind)
   const worktreeId = stringValue(taskRecord.worktreeId) ?? stringValue(taskRecord.worktree_id)
-  const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
-  const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
+  const createdAt = timestampValue(taskRecord.createdAt) ?? timestampValue(taskRecord.created_at)
+  const updatedAt = timestampValue(taskRecord.updatedAt) ?? timestampValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
   const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
 

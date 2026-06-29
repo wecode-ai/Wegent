@@ -98,6 +98,52 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('preserves numeric runtime task timestamps from local executor lists', async () => {
+    const request = vi.fn().mockResolvedValue({
+      workspaces: [
+        {
+          workspace_path: '/Users/me/project',
+          local_tasks: [
+            {
+              local_task_id: 'newer-task',
+              workspace_path: '/Users/me/project',
+              title: 'Newer task',
+              runtime: 'codex',
+              createdAt: 1780000100000,
+              updatedAt: 1780000120000,
+            },
+            {
+              local_task_id: 'older-task',
+              workspace_path: '/Users/me/project',
+              title: 'Older task',
+              runtime: 'codex',
+              created_at: 1780000000000,
+              updated_at: 1780000060000,
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+    const tasks = response?.projects[0].deviceWorkspaces[0].localTasks
+
+    expect(tasks?.map(task => task.localTaskId)).toEqual(['newer-task', 'older-task'])
+    expect(tasks?.[0]).toMatchObject({
+      createdAt: 1780000100000,
+      updatedAt: 1780000120000,
+    })
+    expect(tasks?.[1]).toMatchObject({
+      createdAt: 1780000000000,
+      updatedAt: 1780000060000,
+    })
+  })
+
   test('keeps local device visible when executor startup fails', async () => {
     const services = createLocalAppServices({
       ensure: vi.fn().mockRejectedValue(new Error('sidecar missing')),

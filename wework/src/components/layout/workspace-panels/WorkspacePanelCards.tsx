@@ -604,9 +604,9 @@ export function WorkspacePanelCards({
               return (
                 <div
                   key={session.session_id}
-                  className={`group relative flex h-8 max-w-[200px] shrink-0 items-center overflow-hidden rounded-md border border-transparent transition-colors ${
+                  className={`group relative flex h-8 max-w-[200px] shrink-0 items-center overflow-hidden rounded-xl border border-transparent transition-colors ${
                     isActive
-                      ? 'border-border bg-white text-text-primary shadow-sm after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary'
+                      ? 'border-border bg-white text-text-primary shadow-sm'
                       : 'text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
                   }`}
                   title={terminalTabLabel || session.device_id}
@@ -626,10 +626,10 @@ export function WorkspacePanelCards({
                     type="button"
                     data-testid={testId('workspace-terminal-close-button')}
                     onClick={() => handleCloseTerminalSession(session.session_id)}
-                    className="flex h-8 w-7 shrink-0 items-center justify-center text-text-secondary transition-colors group-hover:text-text-primary"
+                    className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
                     aria-label={t('workbench.close_terminal', '关闭终端')}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-3 w-3" />
                   </button>
                 </div>
               )
