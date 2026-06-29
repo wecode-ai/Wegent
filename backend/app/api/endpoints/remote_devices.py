@@ -285,6 +285,7 @@ async def create_docker_start_command(
         "DEVICE_TYPE": DeviceType.REMOTE.value,
         "DEVICE_ID": device_id,
         "DEVICE_NAME": device_name,
+        "EXECUTOR_STARTUP_MODE": "socket",
         "WEGENT_BACKEND_URL": backend_url,
         "WEGENT_AUTH_TOKEN": auth_token,
         "DEVICE_PUBLIC_BASE_URL": public_base_url,

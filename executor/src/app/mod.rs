@@ -4,7 +4,7 @@
 
 pub mod cli;
 
-use crate::config::device::{load_device_config, DeviceConfig, RuntimeMode};
+use crate::config::device::{load_device_config, DeviceConfig};
 use crate::local::{
     app_ipc::{normalize_device_id, serve_app_ipc_sidecar},
     backend::serve_local_backend_sidecar,
@@ -25,6 +25,7 @@ pub enum AppError {
     NotImplemented(&'static str),
     Server(String),
     ServerConfig(crate::server::ServerConfigError),
+    StartupMode(String),
     Upgrade(String),
 }
 
@@ -36,6 +37,7 @@ impl AppError {
             Self::NotImplemented(_) => 2,
             Self::Server(_) => 1,
             Self::ServerConfig(_) => 1,
+            Self::StartupMode(_) => 2,
             Self::Upgrade(_) => 1,
         }
     }
@@ -54,6 +56,10 @@ impl fmt::Display for AppError {
             }
             Self::Server(error) => write!(formatter, "{error}"),
             Self::ServerConfig(error) => write!(formatter, "{error}"),
+            Self::StartupMode(value) => write!(
+                formatter,
+                "invalid EXECUTOR_STARTUP_MODE: {value}; expected http or socket"
+            ),
             Self::Upgrade(error) => write!(formatter, "{error}"),
         }
     }
@@ -79,11 +85,11 @@ impl From<crate::server::ServerConfigError> for AppError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupPlan {
-    DockerServer {
+    HttpServer {
         host: String,
         port: u16,
     },
-    LocalSidecar {
+    SocketSidecar {
         backend_enabled: bool,
         device_id: String,
     },
@@ -96,11 +102,37 @@ impl StartupPlan {
 
     fn server_config(&self) -> Result<ServerConfig, AppError> {
         match self {
-            Self::DockerServer { host, port } => Ok(ServerConfig {
+            Self::HttpServer { host, port } => Ok(ServerConfig {
                 host: host.clone(),
                 port: *port,
             }),
-            Self::LocalSidecar { .. } => Err(AppError::NotImplemented("Local sidecar server")),
+            Self::SocketSidecar { .. } => Err(AppError::NotImplemented("Socket sidecar server")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupMode {
+    Http,
+    Socket,
+}
+
+impl StartupMode {
+    fn from_env() -> Result<Self, AppError> {
+        let Some(value) = env::var("EXECUTOR_STARTUP_MODE")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(Self::Http);
+        };
+
+        if value.eq_ignore_ascii_case("http") {
+            Ok(Self::Http)
+        } else if value.eq_ignore_ascii_case("socket") {
+            Ok(Self::Socket)
+        } else {
+            Err(AppError::StartupMode(value))
         }
     }
 }
@@ -130,16 +162,16 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
     match startup_plan_for_config(&config)? {
-        plan @ StartupPlan::DockerServer { .. } => server::serve(plan.server_config()?)
+        plan @ StartupPlan::HttpServer { .. } => server::serve(plan.server_config()?)
             .await
             .map_err(AppError::Server),
-        StartupPlan::LocalSidecar {
+        StartupPlan::SocketSidecar {
             backend_enabled: true,
             ..
         } => serve_local_backend_sidecar(config)
             .await
             .map_err(AppError::Server),
-        StartupPlan::LocalSidecar { device_id, .. } => serve_app_ipc_sidecar(device_id)
+        StartupPlan::SocketSidecar { device_id, .. } => serve_app_ipc_sidecar(device_id)
             .await
             .map_err(AppError::Server),
     }
@@ -180,15 +212,15 @@ pub fn startup_plan(args: CliArgs) -> Result<StartupPlan, AppError> {
 fn startup_plan_for_config(
     config: &crate::config::device::DeviceConfig,
 ) -> Result<StartupPlan, AppError> {
-    match config.runtime_mode() {
-        RuntimeMode::Docker => {
+    match StartupMode::from_env()? {
+        StartupMode::Http => {
             let server = ServerConfig::from_env()?;
-            Ok(StartupPlan::DockerServer {
+            Ok(StartupPlan::HttpServer {
                 host: server.host,
                 port: server.port,
             })
         }
-        RuntimeMode::Local => Ok(StartupPlan::LocalSidecar {
+        StartupMode::Socket => Ok(StartupPlan::SocketSidecar {
             backend_enabled: !config.connection.backend_url.trim().is_empty(),
             device_id: normalize_device_id(config.device_id.clone()),
         }),

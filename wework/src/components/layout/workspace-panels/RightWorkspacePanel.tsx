@@ -91,7 +91,6 @@ export function RightWorkspacePanel({
     setBrowserTitle(null)
     onSelectBrowser()
   }
-  const selectTerminal = onSelectTerminal ?? (() => undefined)
 
   const closeTab = (tab: RightWorkspacePanelTab) => {
     if (tab === 'browser') {
@@ -99,6 +98,13 @@ export function RightWorkspacePanel({
       setBrowserTitle(null)
     }
     onCloseTab(tab)
+  }
+
+  const getTabSelectHandler = (tab: RightWorkspacePanelTab): (() => void) => {
+    if (tab === 'review') return onSelectReview
+    if (tab === 'terminal') return onSelectTerminal ?? (() => {})
+    if (tab === 'browser') return onSelectBrowser
+    return onSelectFiles
   }
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
@@ -156,15 +162,7 @@ export function RightWorkspacePanel({
               label={getRightWorkspaceTabLabel(tab, t, visibleBrowserTitle)}
               icon={getRightWorkspaceTabIcon(tab)}
               iconSrc={tab === 'browser' ? visibleBrowserFaviconUrl : null}
-              onSelect={
-                tab === 'review'
-                  ? onSelectReview
-                  : tab === 'terminal'
-                    ? selectTerminal
-                    : tab === 'browser'
-                      ? onSelectBrowser
-                      : onSelectFiles
-              }
+              onSelect={getTabSelectHandler(tab)}
               onClose={() => closeTab(tab)}
             />
           ))}
