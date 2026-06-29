@@ -18,6 +18,8 @@ use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+use crate::process_environment;
+
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
@@ -620,7 +622,13 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
-    let mut envs = vec![("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string())];
+    let mut envs = vec![
+        ("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string()),
+        (
+            "PATH".to_string(),
+            process_environment::normalized_current_path(),
+        ),
+    ];
     let Some(connection) = &inner.backend_connection else {
         return envs;
     };
@@ -1577,6 +1585,28 @@ mod tests {
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
+    }
+
+    #[test]
+    fn backend_env_includes_normalized_developer_path() {
+        let _guard = env_lock();
+        let previous_path = std::env::var_os("PATH");
+        let previous_extra = std::env::var_os("WEGENT_EXTRA_PATHS");
+        std::env::set_var("PATH", "/usr/bin:/bin");
+        std::env::set_var("WEGENT_EXTRA_PATHS", "/custom/bin:/opt/homebrew/bin");
+
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        restore_env("PATH", previous_path);
+        restore_env("WEGENT_EXTRA_PATHS", previous_extra);
+
+        let path = envs.get("PATH").expect("PATH should be present");
+        assert!(path.starts_with("/usr/bin:/bin:/custom/bin:/opt/homebrew/bin"));
+        assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);
+        assert!(path.contains("/opt/homebrew/sbin"));
+        assert!(path.contains("/usr/local/bin"));
     }
 
     #[cfg(unix)]

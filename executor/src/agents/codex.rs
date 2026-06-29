@@ -29,6 +29,7 @@ use crate::{
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
+    process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -421,6 +422,12 @@ fn spawn_codex_app_server(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    command.env(
+        "PATH",
+        process_environment::normalized_process_path(
+            env::var("PATH").ok().as_deref().unwrap_or_default(),
+        ),
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -934,6 +941,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
+    launch_config
+        .config_overrides
+        .push(shell_path_config_override());
 
     if let Some(model) = &model {
         launch_config
@@ -998,6 +1008,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
     launch_config
+}
+
+fn shell_path_config_override() -> String {
+    let path = process_environment::normalized_process_path(
+        env::var("PATH").ok().as_deref().unwrap_or_default(),
+    );
+    format!("shell_environment_policy.set.PATH={}", toml_value(&path))
 }
 
 fn thread_config(

@@ -4,7 +4,6 @@
 
 use std::{
     collections::HashMap,
-    env,
     future::Future,
     path::Path,
     pin::Pin,
@@ -15,6 +14,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{process::Command, time};
+
+use crate::process_environment;
 
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const MAX_TIMEOUT_SECONDS: f64 = 600.0;
@@ -231,12 +232,12 @@ impl CommandHandler {
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut process_env = env::vars().collect::<HashMap<_, _>>();
-    process_env.extend(extra_env.clone());
-    process_env.retain(|key, _| {
-        !key.starts_with("_PYI_") && !key.starts_with("_MEI_") && key != "_MEIPASS"
-    });
-    process_env
+    process_environment::process_env(
+        &extra_env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn process_command(request: &CommandRequest) -> Command {
