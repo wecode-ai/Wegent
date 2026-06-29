@@ -9,6 +9,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+use chrono::Local;
+
 use crate::config::device::DeviceConfig;
 
 const DEFAULT_LOG_FILE_NAME: &str = "executor.log";
@@ -122,7 +124,7 @@ pub fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)>
 }
 
 pub fn format_executor_log(event: &str, fields: &[(&str, String)]) -> String {
-    let mut line = format!("Wegent executor {event}");
+    let mut line = format!("{} {event}", executor_log_timestamp());
     for (key, value) in fields {
         line.push(' ');
         line.push_str(key);
@@ -130,6 +132,10 @@ pub fn format_executor_log(event: &str, fields: &[(&str, String)]) -> String {
         line.push_str(&format_field_value(value));
     }
     line
+}
+
+pub fn executor_log_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 fn format_field_value(value: &str) -> String {

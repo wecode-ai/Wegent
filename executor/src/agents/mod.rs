@@ -16,12 +16,17 @@ mod agno;
 mod claude_options;
 mod codex;
 mod dify;
+mod git_auth;
+mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
+mod runtime_capabilities;
 
 use crate::{
     agents::interactive_mcp::build_interactive_form_answer_query,
-    attachments::{AttachmentPromptProcessor, AttachmentRecord},
+    attachments::{
+        append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
+    },
     claude_session,
     emitter::ResponsesEventBuilder,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
@@ -118,6 +123,7 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
+                    runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
                         .await
@@ -125,12 +131,26 @@ impl AgentEngine for AgentProcessEngine {
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
                 _ => {
-                    let mut request = request;
-                    if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                        prepare_claude_attachments(&mut request).await;
-                    }
+                    let request = if agent_kind == AgentKind::ClaudeCode {
+                        let request =
+                            runtime_capabilities::prepare_claude_execution_request(request).await;
+                        match git_workspace::prepare_git_workspace(request).await {
+                            Ok(request) => request,
+                            Err(message) => {
+                                let mut failed_fields = fields.clone();
+                                failed_fields.push(("error_len", message.len().to_string()));
+                                log_executor_event(
+                                    "git workspace preparation failed",
+                                    &failed_fields,
+                                );
+                                return ExecutionOutcome::Failed { message };
+                            }
+                        }
+                    } else {
+                        request
+                    };
                     match planner.command_for(&request) {
-                        Ok(spec) => {
+                        Ok(mut spec) => {
                             let mut command_fields = fields.clone();
                             command_fields.push(("program", spec.program().to_owned()));
                             command_fields.push(("arg_count", spec.args().len().to_string()));
@@ -139,9 +159,22 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                spec = runtime_capabilities::prepare_claude_runtime(&request, spec)
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        let mut failed_fields =
+                                            task_fields(request.task_id, request.subtask_id);
+                                        failed_fields.push(("error_len", error.len().to_string()));
+                                        log_executor_event(
+                                            "claude runtime capability preparation failed",
+                                            &failed_fields,
+                                        );
+                                        build_claude_command(&request, &planner.claude_binary)
+                                    });
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_file_edit_hooks(&request, &spec);
+                                git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;
                             }
                             StreamProcessEngine::new(spec).run(request).await
@@ -176,6 +209,7 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
+                    runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
                         .await
@@ -183,12 +217,26 @@ impl AgentEngine for AgentProcessEngine {
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
                 _ => {
-                    let mut request = request;
-                    if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                        prepare_claude_attachments(&mut request).await;
-                    }
+                    let request = if agent_kind == AgentKind::ClaudeCode {
+                        let request =
+                            runtime_capabilities::prepare_claude_execution_request(request).await;
+                        match git_workspace::prepare_git_workspace(request).await {
+                            Ok(request) => request,
+                            Err(message) => {
+                                let mut failed_fields = fields.clone();
+                                failed_fields.push(("error_len", message.len().to_string()));
+                                log_executor_event(
+                                    "git workspace preparation failed",
+                                    &failed_fields,
+                                );
+                                return ExecutionOutcome::Failed { message };
+                            }
+                        }
+                    } else {
+                        request
+                    };
                     match planner.command_for(&request) {
-                        Ok(spec) => {
+                        Ok(mut spec) => {
                             let mut command_fields = fields.clone();
                             command_fields.push(("program", spec.program().to_owned()));
                             command_fields.push(("arg_count", spec.args().len().to_string()));
@@ -197,9 +245,22 @@ impl AgentEngine for AgentProcessEngine {
                             }
                             log_executor_event("command planned", &command_fields);
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                spec = runtime_capabilities::prepare_claude_runtime(&request, spec)
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        let mut failed_fields =
+                                            task_fields(request.task_id, request.subtask_id);
+                                        failed_fields.push(("error_len", error.len().to_string()));
+                                        log_executor_event(
+                                            "claude runtime capability preparation failed",
+                                            &failed_fields,
+                                        );
+                                        build_claude_command(&request, &planner.claude_binary)
+                                    });
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_file_edit_hooks(&request, &spec);
+                                git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;
                             }
                             StreamProcessEngine::new(spec)
@@ -217,228 +278,6 @@ impl AgentEngine for AgentProcessEngine {
             }
         })
     }
-}
-
-async fn prepare_claude_attachments(request: &mut ExecutionRequest) {
-    let attachments = attachment_records(request.extra.get("attachments"));
-    if attachments.is_empty() {
-        return;
-    }
-    let Some(backend_url) = request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let Some(auth_token) = request
-        .auth_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let Some(task_dir) = claude_task_dir(request) else {
-        return;
-    };
-    let _ = fs::create_dir_all(&task_dir);
-
-    let client = reqwest::Client::new();
-    let mut success = Vec::new();
-    let mut failed = Vec::new();
-    for attachment in attachments {
-        match download_claude_attachment(
-            &client,
-            backend_url,
-            auth_token,
-            request,
-            &task_dir,
-            &attachment,
-        )
-        .await
-        {
-            Ok(local_path) => {
-                let mut downloaded = attachment;
-                downloaded.local_path = Some(local_path.display().to_string());
-                success.push(downloaded);
-            }
-            Err(error) => {
-                let mut unavailable = attachment;
-                unavailable.error = Some(error);
-                failed.push(unavailable);
-            }
-        }
-    }
-
-    if success.is_empty() && failed.is_empty() {
-        return;
-    }
-    let attachment_subtask_id = success
-        .iter()
-        .chain(failed.iter())
-        .find_map(|attachment| attachment.subtask_id)
-        .unwrap_or(request.subtask_id);
-    request.prompt = AttachmentPromptProcessor::process_prompt(
-        &request.prompt,
-        &success,
-        &failed,
-        Some(request.task_id),
-        Some(attachment_subtask_id),
-    );
-
-    let mut fields = task_fields(request.task_id, request.subtask_id);
-    fields.push(("success_count", success.len().to_string()));
-    fields.push(("failed_count", failed.len().to_string()));
-    log_executor_event("claude attachments prepared", &fields);
-}
-
-async fn download_claude_attachment(
-    client: &reqwest::Client,
-    backend_url: &str,
-    auth_token: &str,
-    request: &ExecutionRequest,
-    task_dir: &Path,
-    attachment: &AttachmentRecord,
-) -> Result<PathBuf, String> {
-    let local_path = claude_attachment_path(request, task_dir, attachment);
-    if let Some(parent) = local_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
-    let url = format!(
-        "{}/api/attachments/{}/executor-download",
-        backend_url.trim_end_matches('/'),
-        attachment.id
-    );
-    let response = client
-        .get(url)
-        .bearer_auth(auth_token)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("download failed with HTTP {}", response.status()));
-    }
-    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
-    fs::write(&local_path, &bytes).map_err(|error| error.to_string())?;
-    Ok(local_path)
-}
-
-fn claude_attachment_path(
-    request: &ExecutionRequest,
-    task_dir: &Path,
-    attachment: &AttachmentRecord,
-) -> PathBuf {
-    let subtask_id = attachment.subtask_id.unwrap_or(request.subtask_id);
-    if let Some(project_workspace) = request
-        .project_workspace_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| resolve_workspace_path(task_dir, value))
-    {
-        return project_workspace
-            .join(".wegent/attachments")
-            .join(request.task_id.to_string())
-            .join(subtask_id.to_string())
-            .join(sanitize_attachment_filename(&attachment.original_filename));
-    }
-
-    task_dir
-        .join(attachment_task_subdir(request.task_id))
-        .join(subtask_id.to_string())
-        .join(sanitize_attachment_filename(&attachment.original_filename))
-}
-
-fn resolve_workspace_path(task_dir: &Path, value: &str) -> PathBuf {
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        return path;
-    }
-    task_dir
-        .parent()
-        .map(|workspace_root| workspace_root.join(path))
-        .unwrap_or_else(|| PathBuf::from(value))
-}
-
-fn attachment_task_subdir(task_id: i64) -> String {
-    let raw = format!("{task_id}:executor:attachments");
-    if cfg!(windows) {
-        raw.replace(':', "_")
-    } else {
-        raw
-    }
-}
-
-fn sanitize_attachment_filename(filename: &str) -> String {
-    let basename = filename
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(filename)
-        .replace(['\n', '\r'], "")
-        .replace(['/', '\\'], "_");
-    if basename.is_empty() {
-        "document".to_owned()
-    } else {
-        basename
-    }
-}
-
-fn attachment_records(value: Option<&Value>) -> Vec<AttachmentRecord> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(attachment_record)
-        .collect()
-}
-
-fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
-    Some(AttachmentRecord {
-        id: value.get("id").and_then(value_i64)?,
-        original_filename: value
-            .get("original_filename")
-            .or_else(|| value.get("originalFilename"))
-            .or_else(|| value.get("filename"))
-            .or_else(|| value.get("name"))
-            .and_then(value_string)
-            .unwrap_or_else(|| "attachment".to_owned()),
-        local_path: value
-            .get("local_path")
-            .or_else(|| value.get("localPath"))
-            .and_then(value_string),
-        file_size: value
-            .get("file_size")
-            .or_else(|| value.get("fileSize"))
-            .and_then(value_u64),
-        mime_type: value
-            .get("mime_type")
-            .or_else(|| value.get("mimeType"))
-            .and_then(value_string),
-        subtask_id: value
-            .get("subtask_id")
-            .or_else(|| value.get("subtaskId"))
-            .and_then(value_i64),
-        error: value.get("error").and_then(value_string),
-    })
-}
-
-fn value_string(value: &Value) -> Option<String> {
-    value.as_str().map(ToOwned::to_owned)
-}
-
-fn value_i64(value: &Value) -> Option<i64> {
-    value
-        .as_i64()
-        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
-}
-
-fn value_u64(value: &Value) -> Option<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
 }
 
 fn restore_claude_plugin_cache(request: &ExecutionRequest, spec: &CommandSpec) {
@@ -616,6 +455,11 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
             .arg("--input-format")
             .arg("stream-json")
             .stdin(format!("{query}\n"));
+    } else if let Some(query) = claude_content_block_stdin_query(request) {
+        spec = spec
+            .arg("--input-format")
+            .arg("stream-json")
+            .stdin(format!("{query}\n"));
     } else {
         spec = spec.arg(claude_prompt_text(request));
     }
@@ -641,6 +485,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
 
     spec = apply_model_environment(spec, request);
     spec = apply_task_identity_environment(spec, request);
+    spec = apply_git_environment(spec, request);
     spec = apply_claude_header_environment(spec, request);
 
     let task_dir = claude_task_dir(request);
@@ -664,7 +509,37 @@ pub(crate) fn prompt_text(prompt: &Value) -> String {
 }
 
 fn claude_prompt_text(request: &ExecutionRequest) -> String {
-    let prompt = kb_meta_prompt(request)
+    let prompt = claude_prompt_value(request);
+    let text = prompt_text(&prompt);
+    let emphasis = crate::services::skill_deployer::build_skill_emphasis_prompt(
+        &user_selected_skills(request),
+    );
+    if emphasis.is_empty() {
+        text
+    } else {
+        format!("{emphasis}\n\n{text}")
+    }
+}
+
+fn claude_content_block_stdin_query(request: &ExecutionRequest) -> Option<String> {
+    let prompt = claude_prompt_value(request);
+    prompt.as_array()?;
+    let anthropic_content = convert_openai_to_anthropic_content(&prompt);
+    let query = create_multimodal_query(&anthropic_content);
+    query
+        .as_array()
+        .map(|messages| {
+            messages
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn claude_prompt_value(request: &ExecutionRequest) -> Value {
+    let mut prompt = kb_meta_prompt(request)
         .map(|kb_meta_prompt| {
             crate::prompt_enrichment::inject_kb_meta_prompt(
                 &request.prompt,
@@ -674,7 +549,13 @@ fn claude_prompt_text(request: &ExecutionRequest) -> String {
             )
         })
         .unwrap_or_else(|| request.prompt.clone());
-    prompt_text(&prompt)
+    let emphasis = crate::services::skill_deployer::build_skill_emphasis_prompt(
+        &user_selected_skills(request),
+    );
+    if !emphasis.is_empty() && prompt.as_array().is_some() {
+        prompt = append_text_to_vision_prompt(&prompt, &emphasis, true);
+    }
+    prompt
 }
 
 fn interactive_form_answer_query(request: &ExecutionRequest) -> Option<String> {
@@ -760,6 +641,23 @@ fn apply_task_identity_environment(
     spec
 }
 
+fn apply_git_environment(mut spec: CommandSpec, request: &ExecutionRequest) -> CommandSpec {
+    for (source_key, env_key) in [
+        ("git_domain", "GIT_DOMAIN"),
+        ("git_repo", "GIT_REPO"),
+        ("git_repo_id", "GIT_REPO_ID"),
+        ("branch_name", "BRANCH_NAME"),
+    ] {
+        if let Some(value) = extra_string(request, source_key) {
+            spec = spec.env(env_key, value);
+        }
+    }
+    if let Some(git_url) = request.git_url() {
+        spec = spec.env("GIT_URL", git_url);
+    }
+    spec
+}
+
 fn apply_claude_header_environment(
     mut spec: CommandSpec,
     request: &ExecutionRequest,
@@ -830,14 +728,17 @@ fn apply_claude_workspace_environment(
     spec
 }
 
-fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
+pub(crate) fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
     request
         .cwd()
         .map(PathBuf::from)
         .or_else(|| claude_session::preferred_task_dir(request))
 }
 
-fn claude_config_dir(_request: &ExecutionRequest, _task_dir: Option<&PathBuf>) -> Option<PathBuf> {
+pub(crate) fn claude_config_dir(
+    _request: &ExecutionRequest,
+    _task_dir: Option<&PathBuf>,
+) -> Option<PathBuf> {
     Some(home_claude_dir())
 }
 
@@ -934,6 +835,21 @@ async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: &CommandSpe
             }
         }
     }
+}
+
+fn user_selected_skills(request: &ExecutionRequest) -> Vec<String> {
+    request
+        .extra
+        .get("user_selected_skills")
+        .or_else(|| request.extra.get("userSelectedSkills"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn home_claude_dir() -> PathBuf {
@@ -1176,4 +1092,13 @@ fn headers_to_anthropic_custom_headers(headers: &HeaderMap) -> String {
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn extra_string(request: &ExecutionRequest, key: &str) -> Option<String> {
+    request
+        .extra
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| non_empty(Some(value)))
+        .map(ToOwned::to_owned)
 }

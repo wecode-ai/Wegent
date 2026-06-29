@@ -1,9 +1,16 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createQuotaApi } from '@/api/quota'
+import { AuthContext } from '@/features/auth/useAuth'
+import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type {
+  WorkbenchContextValue,
+  WorkbenchPaneContextValue,
+} from '@/features/workbench/workbenchContextTypes'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -11,10 +18,21 @@ import {
   localPathExists,
   startLocalTerminal,
 } from '@/lib/local-terminal'
+import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
+import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
-import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
+import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
+
+const paneSessionMockRef = vi.hoisted(() => ({
+  current: undefined as unknown,
+}))
+
+vi.mock('./useWorkbenchPaneSession', () => ({
+  useWorkbenchPaneSession: () => paneSessionMockRef.current,
+}))
 
 const tauriMenuMocks = vi.hoisted(() => ({
   getCurrentWindow: vi.fn(),
@@ -268,6 +286,17 @@ const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 
+function createDefaultImNotificationSettings() {
+  return {
+    global: {
+      enabled: false,
+      sessionKey: null,
+      session: null,
+    },
+    runtimeTaskSubscriptions: [],
+  }
+}
+
 describe('DesktopWorkbenchLayout', () => {
   function createDeferred<T>() {
     let resolve!: (value: T) => void
@@ -277,6 +306,14 @@ describe('DesktopWorkbenchLayout', () => {
       reject = promiseReject
     })
     return { promise, resolve, reject }
+  }
+
+  function getDesktopWorkbenchMainElement() {
+    const main = screen.getByTestId('desktop-workbench-content').closest('main')
+    if (!main) {
+      throw new Error('Desktop workbench main element was not rendered')
+    }
+    return main
   }
 
   function createMockDeviceApi(overrides: Record<string, unknown> = {}) {
@@ -328,7 +365,10 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    tauriMenuMocks.getCurrentWindow.mockReturnValue({ label: 'main' })
+    tauriMenuMocks.getCurrentWindow.mockReturnValue({
+      label: 'main',
+      onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()),
+    })
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
     tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
@@ -478,6 +518,327 @@ describe('DesktopWorkbenchLayout', () => {
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
+  }
+
+  type LegacyDesktopWorkbenchLayoutProps = {
+    state?: Record<string, unknown>
+    messages?: WorkbenchMessage[]
+    queuedMessages?: unknown[]
+    guidanceMessages?: unknown[]
+    codeCommentContexts?: unknown[]
+    workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
+    currentRuntimeTaskRunning?: boolean
+    isAwaitingAssistantStart?: boolean
+    isRuntimeTranscriptLoading?: boolean
+    runtimeTranscriptHasMoreBefore?: boolean
+    isRuntimeTranscriptLoadingMore?: boolean
+    projectChat?: Partial<ProjectChatControls>
+    projectWork?: Record<string, unknown>
+    onSelectProject?: (projectId: number | null) => void
+    onStartStandaloneChat?: () => void
+    onStartNewProjectChat?: (projectId: number) => void
+    onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
+    onOpenRuntimeLocalTask?: (...args: unknown[]) => Promise<void> | void
+    onSearchRuntimeWork?: (...args: unknown[]) => Promise<unknown>
+    onListImPrivateSessions?: () => Promise<unknown>
+    onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
+    onGetImNotificationSettings?: () => Promise<unknown>
+    onUpdateGlobalImNotification?: (...args: unknown[]) => Promise<unknown>
+    onSubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
+    onUnsubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
+    onRefreshDevices?: () => Promise<void>
+    onRefreshWorkLists?: () => Promise<void>
+    onUpgradeDevice?: (...args: unknown[]) => Promise<void>
+    onCreateProject?: (...args: unknown[]) => Promise<unknown>
+    onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
+    onPrepareDeviceWorkspace?: (...args: unknown[]) => Promise<unknown>
+    onDeleteDeviceWorkspace?: (...args: unknown[]) => Promise<void>
+    onListGitRepositories?: () => Promise<unknown[]>
+    onListGitBranches?: (...args: unknown[]) => Promise<unknown[]>
+    onUpdateProjectName?: (...args: unknown[]) => Promise<void> | void
+    onRemoveProject?: (...args: unknown[]) => Promise<void> | void
+    onGetDeviceHomeDirectory?: (...args: unknown[]) => Promise<string>
+    onGetProjectWorkspaceRoot?: (...args: unknown[]) => Promise<string>
+    onListDeviceDirectories?: (...args: unknown[]) => Promise<string[]>
+    onCreateDeviceDirectory?: (...args: unknown[]) => Promise<void>
+    onLoadEnvironmentInfo?: (...args: unknown[]) => Promise<unknown>
+    onLoadEnvironmentDiff?: (...args: unknown[]) => Promise<string>
+    onCommitEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+    onListEnvironmentBranches?: (...args: unknown[]) => Promise<string[]>
+    onCheckoutEnvironmentBranch?: (...args: unknown[]) => Promise<void>
+    onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
+    onInputChange?: (input: string) => void
+    onSend?: () => void | Promise<void>
+    onLogout?: () => void
+  }
+
+  function DesktopWorkbenchLayout(props: LegacyDesktopWorkbenchLayoutProps) {
+    const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
+    paneSessionMockRef.current = paneSession
+
+    return (
+      <AuthContext.Provider value={authValue}>
+        <WorkbenchContext.Provider value={workbenchValue}>
+          <WorkbenchPaneContext.Provider value={paneValue}>
+            <ActualDesktopWorkbenchLayout />
+          </WorkbenchPaneContext.Provider>
+        </WorkbenchContext.Provider>
+      </AuthContext.Provider>
+    )
+  }
+
+  const derivedRuntimeWorkCache = new Map<string, RuntimeWorkListResponse>()
+
+  function createRuntimeWorkForProject(
+    project: ProjectWithTasks | null | undefined,
+    selectedDeviceWorkspaceId?: unknown
+  ): RuntimeWorkListResponse | null {
+    if (!project) return null
+
+    const deviceId = executionDeviceId(project)
+    const workspacePath = configuredWorkspacePath(project)
+    if (!deviceId || !workspacePath?.startsWith('/')) return null
+
+    const workspaceId =
+      typeof selectedDeviceWorkspaceId === 'number' ? selectedDeviceWorkspaceId : project.id
+    const cacheKey = JSON.stringify([
+      project.id,
+      project.name,
+      deviceId,
+      workspacePath,
+      workspaceId,
+    ])
+    const cached = derivedRuntimeWorkCache.get(cacheKey)
+    if (cached) return cached
+
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: `project:${project.id}`, id: project.id, name: project.name },
+          deviceWorkspaces: [
+            {
+              id: workspaceId,
+              projectId: project.id,
+              deviceId,
+              available: true,
+              mapped: true,
+              workspacePath,
+              localTasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 0,
+    }
+    derivedRuntimeWorkCache.set(cacheKey, runtimeWork)
+    return runtimeWork
+  }
+
+  function createWorkbenchMocks(props: LegacyDesktopWorkbenchLayoutProps) {
+    const projectWork = props.projectWork === baseProps.projectWork ? {} : (props.projectWork ?? {})
+    const rawStateProjects = (projectWork.projects ??
+      props.state?.projects ??
+      baseProps.state.projects) as WorkbenchContextValue['state']['projects'] | undefined
+    const activeProject =
+      props.state?.currentProject ??
+      projectWork.currentProject ??
+      (projectWork.currentProjectId != null && rawStateProjects
+        ? rawStateProjects.find(project => project.id === projectWork.currentProjectId)
+        : null) ??
+      null
+    const stateProjects =
+      activeProject && rawStateProjects
+        ? rawStateProjects.some(project => project.id === activeProject.id)
+          ? rawStateProjects.map(project =>
+              project.id === activeProject.id ? activeProject : project
+            )
+          : [...rawStateProjects, activeProject]
+        : rawStateProjects
+    const selectedDeviceWorkspaceId =
+      props.state?.selectedDeviceWorkspaceId ?? projectWork.selectedDeviceWorkspaceId ?? null
+    const explicitRuntimeWork = projectWork.runtimeWork ?? props.state?.runtimeWork
+    const shouldDeriveRuntimeWork =
+      props.projectWork == null || props.projectWork === baseProps.projectWork
+    const runtimeWork =
+      explicitRuntimeWork ??
+      (shouldDeriveRuntimeWork
+        ? createRuntimeWorkForProject(
+            activeProject as ProjectWithTasks | null,
+            selectedDeviceWorkspaceId
+          )
+        : null) ??
+      baseProps.state.runtimeWork
+    const state = {
+      ...baseProps.state,
+      selectedDeviceWorkspaceId: null,
+      pendingProjectWorkspaceProjectId: null,
+      standaloneWorkspacePath: null,
+      ...props.state,
+      projects: stateProjects,
+      devices: projectWork.devices ?? props.state?.devices ?? baseProps.state.devices,
+      runtimeWork,
+      currentProject: activeProject,
+      standaloneDeviceId:
+        props.state?.standaloneDeviceId ?? projectWork.currentStandaloneDeviceId ?? null,
+      selectedDeviceWorkspaceId,
+      pendingProjectWorkspaceProjectId:
+        props.state?.pendingProjectWorkspaceProjectId ??
+        projectWork.pendingProjectWorkspaceProjectId ??
+        null,
+    }
+    const projectChat = {
+      ...baseProps.projectChat,
+      isModelSelectionReady: true,
+      onBlockedModelSelect: vi.fn(),
+      ...props.projectChat,
+    }
+    const workbenchValue = {
+      state,
+      isStartupReady: true,
+      workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
+      currentRuntimeTaskRunning:
+        props.currentRuntimeTaskRunning ?? Boolean(state.currentRuntimeTask),
+      cloudWorkStatus: {
+        availability: 'available',
+        checks: { teams: 'available', devices: 'available', runtimeWork: 'available' },
+        error: null,
+        updatedAt: null,
+      },
+      projectChat,
+      upgradingDevices: {},
+      projectExecutionMode: projectWork.executionMode ?? 'current_workspace',
+      setProjectExecutionMode: projectWork.onExecutionModeChange ?? vi.fn(),
+      projectWorktreeBranch: projectWork.worktreeBranch ?? null,
+      setProjectWorktreeBranch: projectWork.onWorktreeBranchChange ?? vi.fn(),
+      selectProject: props.onSelectProject ?? projectWork.onSelectProject ?? vi.fn(),
+      selectProjectWorkspace: projectWork.onSelectProjectWorkspace ?? vi.fn(),
+      selectStandaloneDevice: projectWork.onSelectStandaloneDevice ?? vi.fn(),
+      openStandaloneWorkspace:
+        props.onOpenStandaloneWorkspace ?? baseProps.onOpenStandaloneWorkspace,
+      startNewChat: baseProps.onNewChat,
+      startStandaloneChat: props.onStartStandaloneChat ?? vi.fn(),
+      startNewProjectChat: props.onStartNewProjectChat ?? baseProps.onStartNewProjectChat,
+      openRuntimeLocalTask: props.onOpenRuntimeLocalTask ?? vi.fn().mockResolvedValue(undefined),
+      searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
+      loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
+      subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
+      renameRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+      archiveRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+      archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
+      archiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
+      archiveChatConversations: vi.fn().mockResolvedValue(undefined),
+      forkCurrentRuntimeTask: vi.fn().mockResolvedValue(undefined),
+      listImPrivateSessions:
+        props.onListImPrivateSessions ?? vi.fn().mockResolvedValue({ total: 0, items: [] }),
+      bindRuntimeTaskToImSessions:
+        props.onBindRuntimeTaskToImSessions ??
+        vi.fn().mockRejectedValue(new Error('Missing bind handler')),
+      getImNotificationSettings:
+        props.onGetImNotificationSettings ??
+        vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
+      updateGlobalImNotification:
+        props.onUpdateGlobalImNotification ??
+        vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
+      subscribeRuntimeTaskNotifications:
+        props.onSubscribeRuntimeTaskNotifications ??
+        vi.fn().mockResolvedValue({ subscribed: true }),
+      unsubscribeRuntimeTaskNotifications:
+        props.onUnsubscribeRuntimeTaskNotifications ??
+        vi.fn().mockResolvedValue({ subscribed: false }),
+      rememberExecutionDevice: vi.fn(),
+      refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
+      refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
+      getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
+      upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
+      createProject:
+        props.onCreateProject ?? baseProps.onCreateProject ?? vi.fn().mockResolvedValue({}),
+      createGitWorkspaceProject:
+        props.onCreateGitWorkspaceProject ??
+        baseProps.onCreateGitWorkspaceProject ??
+        vi.fn().mockResolvedValue({}),
+      prepareDeviceWorkspace:
+        props.onPrepareDeviceWorkspace ??
+        vi.fn().mockResolvedValue({ deviceWorkspaceId: 1, workspaceId: 1 }),
+      deleteDeviceWorkspace: props.onDeleteDeviceWorkspace ?? vi.fn().mockResolvedValue(undefined),
+      listGitRepositories: props.onListGitRepositories ?? baseProps.onListGitRepositories,
+      listGitBranches: props.onListGitBranches ?? baseProps.onListGitBranches,
+      updateProjectName: props.onUpdateProjectName ?? baseProps.onUpdateProjectName,
+      removeProject: props.onRemoveProject ?? baseProps.onRemoveProject,
+      getDeviceHomeDirectory: props.onGetDeviceHomeDirectory ?? baseProps.onGetDeviceHomeDirectory,
+      getProjectWorkspaceRoot:
+        props.onGetProjectWorkspaceRoot ?? baseProps.onGetProjectWorkspaceRoot,
+      listDeviceDirectories: props.onListDeviceDirectories ?? baseProps.onListDeviceDirectories,
+      createDeviceDirectory: props.onCreateDeviceDirectory ?? baseProps.onCreateDeviceDirectory,
+      loadEnvironmentInfo: props.onLoadEnvironmentInfo ?? baseProps.onLoadEnvironmentInfo,
+      loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? baseProps.onLoadEnvironmentDiff,
+      commitEnvironmentChanges:
+        props.onCommitEnvironmentChanges ?? baseProps.onCommitEnvironmentChanges,
+      listEnvironmentBranches:
+        props.onListEnvironmentBranches ?? baseProps.onListEnvironmentBranches,
+      checkoutEnvironmentBranch:
+        props.onCheckoutEnvironmentBranch ?? baseProps.onCheckoutEnvironmentBranch,
+      createEnvironmentBranch:
+        props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
+      sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
+      cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
+      sendCurrentInput: props.onSend ?? baseProps.onSend,
+      retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+      pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
+      loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
+      revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
+    } as unknown as WorkbenchContextValue
+    const paneValue = {
+      ...workbenchValue,
+      state: {
+        isBootstrapping: state.isBootstrapping,
+        projects: state.projects,
+        devices: state.devices,
+        runtimeWork: state.runtimeWork,
+        standaloneDeviceId: state.standaloneDeviceId,
+        selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
+        pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
+        user: state.user,
+        error: state.error,
+      },
+    } as unknown as WorkbenchPaneContextValue
+    const paneSession = {
+      messages: props.messages ?? [],
+      queuedMessages: props.queuedMessages ?? [],
+      guidanceMessages: props.guidanceMessages ?? [],
+      codeCommentContexts: props.codeCommentContexts ?? [],
+      input: String(state.input ?? ''),
+      setInput: props.onInputChange ?? baseProps.onInputChange,
+      sending: Boolean(state.isSending),
+      waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
+      transcriptLoading: Boolean(props.isRuntimeTranscriptLoading),
+      transcriptHasMoreBefore: Boolean(props.runtimeTranscriptHasMoreBefore),
+      transcriptLoadingMoreBefore: Boolean(props.isRuntimeTranscriptLoadingMore),
+      turnNavigation: [],
+      loadMoreTranscriptBefore: vi.fn().mockResolvedValue(undefined),
+      loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
+      loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
+      send: props.onSend ?? baseProps.onSend,
+      addCodeComment: vi.fn(),
+      clearCodeComments: vi.fn(),
+      cancelQueuedMessage: vi.fn(),
+      sendQueuedAsGuidance: vi.fn().mockResolvedValue(undefined),
+      editQueuedMessage: vi.fn(),
+      cancelGuidanceMessage: vi.fn(),
+    }
+    const authValue = {
+      user: (state.user as WorkbenchContextValue['state']['user']) ?? null,
+      isLoading: false,
+      adminPasswordSetupRequired: false,
+      adminUsername: 'admin',
+      login: vi.fn().mockResolvedValue(state.user),
+      logout: props.onLogout ?? baseProps.onLogout,
+      refresh: vi.fn().mockResolvedValue(undefined),
+      loginWithOidcToken: vi.fn().mockResolvedValue(undefined),
+      setupAdminPassword: vi.fn().mockResolvedValue(state.user),
+    }
+
+    return { authValue, workbenchValue, paneValue, paneSession }
   }
 
   function createCloudWorkspacePanelState() {
@@ -1038,8 +1399,8 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
-    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -1066,12 +1427,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
-    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
-      'mt-1.5',
-      'mb-1.5',
-      'mr-1.5',
-      'ml-1.5'
-    )
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(document.querySelector('aside')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
@@ -1096,8 +1452,8 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('environment-info-button')
     )
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-[52px]')
-    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mb-1.5', 'mr-1.5')
-    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mb-1.5', 'mr-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -1652,9 +2008,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent(
-      '暂无可用远程或云设备'
-    )
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
     expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
@@ -1785,9 +2140,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent(
-      '暂无可用远程或云设备'
-    )
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
   })
 
   test('opens the standalone remote dialog from the project work menu', async () => {
@@ -2443,7 +2797,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
     await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
 
-    vi.spyOn(screen.getByTestId('desktop-workbench-main'), 'getBoundingClientRect').mockReturnValue(
+    vi.spyOn(getDesktopWorkbenchMainElement(), 'getBoundingClientRect').mockReturnValue(
       createRect({ left: 0, top: 0, width: 1000, height: 720 })
     )
 
@@ -3663,7 +4017,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
-    await userEvent.click(screen.getByTestId('environment-changes-button'))
+    await userEvent.click(await screen.findByTestId('environment-changes-button'))
 
     await waitFor(() =>
       expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
@@ -3715,7 +4069,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
-    await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
     await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'feat: ship')
     await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
 
@@ -3769,7 +4123,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
-    await userEvent.click(screen.getByTestId('environment-branch-row'))
+    await userEvent.click(await screen.findByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
     await waitFor(() => expect(onListEnvironmentBranches).toHaveBeenCalledTimes(1))
@@ -3793,7 +4147,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
 
-    await userEvent.click(screen.getByTestId('environment-branch-row'))
+    await userEvent.click(await screen.findByTestId('environment-branch-row'))
     await userEvent.click(await screen.findByTestId('environment-open-new-branch-button'))
     await userEvent.type(screen.getByTestId('environment-new-branch-input'), 'human/new-branch')
     await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
@@ -4462,7 +4816,7 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
     const visibleLocalTerminals = () =>
-      screen
+      within(screen.getByTestId('desktop-workbench-main'))
         .queryAllByTestId('embedded-local-terminal')
         .filter(element => !element.hasAttribute('hidden'))
 

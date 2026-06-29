@@ -31,6 +31,7 @@ import type {
 } from './workbenchContextTypes'
 import {
   getBlockedModelSelectionMessage,
+  getCurrentRuntimeTaskCompatibilityFamily,
   getNewChatModelSelection,
   isRuntimeLocalTaskRunning,
 } from './workbenchProviderHelpers'
@@ -44,6 +45,8 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
+
+const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 
 export function WorkbenchProvider({
   children,
@@ -169,7 +172,10 @@ export function WorkbenchProvider({
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser])
   const modelCompatibilityConfig = useMemo(() => null, [])
-  const modelCompatibilityFamily = useMemo(() => null, [])
+  const modelCompatibilityFamily = useMemo(
+    () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
+    [state.currentRuntimeTask, state.runtimeWork]
+  )
   const defaultModelSelectionConfig = useCallback(() => null, [])
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {

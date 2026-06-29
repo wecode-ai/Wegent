@@ -402,6 +402,70 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
+    let _lock = env_lock().await;
+    let executor_home = unique_dir("codex-request-mcp-home");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-request-mcp-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(&log_path, &[]);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{
+            "shell_type": "Codex",
+            "mcp_servers": {
+                "bot-shell": {
+                    "type": "stdio",
+                    "command": "uvx",
+                    "args": ["bot-tool"],
+                    "env": {"BOT_ENV": "1"}
+                }
+            }
+        }]),
+        mcp_servers: vec![json!({
+            "name": "request-docs",
+            "type": "streamable-http",
+            "url": "https://mcp.example.com/request-docs",
+            "bearer_token_env_var": "REQUEST_DOCS_TOKEN"
+        })],
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+
+    let messages = read_json_lines(&log_path);
+    let args = messages[0]["args"].as_array().unwrap();
+    assert_config_arg(
+        args,
+        "mcp_servers.request-docs.url=\"https://mcp.example.com/request-docs\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-docs.bearer_token_env_var=\"REQUEST_DOCS_TOKEN\"",
+    );
+    assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
+    assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");
+    assert_config_arg(args, "mcp_servers.bot-shell.env.BOT_ENV=\"1\"");
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_times_out_unresponsive_rpc() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");

@@ -132,6 +132,61 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
 }
 
 #[test]
+fn claude_command_maps_git_fields_to_process_environment() {
+    let request = ExecutionRequest {
+        prompt: json!("open a pull request"),
+        extra: serde_json::Map::from_iter([
+            ("git_domain".to_owned(), json!("github.com")),
+            ("git_repo".to_owned(), json!("wecode-ai/Wegent")),
+            ("git_repo_id".to_owned(), json!("12345")),
+            ("branch_name".to_owned(), json!("feature/test")),
+            (
+                "git_url".to_owned(),
+                json!("https://github.com/wecode-ai/Wegent.git"),
+            ),
+        ]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(spec.envs().get("GIT_DOMAIN").unwrap(), "github.com");
+    assert_eq!(spec.envs().get("GIT_REPO").unwrap(), "wecode-ai/Wegent");
+    assert_eq!(spec.envs().get("GIT_REPO_ID").unwrap(), "12345");
+    assert_eq!(spec.envs().get("BRANCH_NAME").unwrap(), "feature/test");
+    assert_eq!(
+        spec.envs().get("GIT_URL").unwrap(),
+        "https://github.com/wecode-ai/Wegent.git"
+    );
+}
+
+#[test]
+fn claude_command_sends_content_block_prompts_through_stdin() {
+    let large_image = "a".repeat(256 * 1024);
+    let request = ExecutionRequest {
+        prompt: json!([
+            {"type": "input_text", "text": "describe image"},
+            {"type": "input_image", "image_url": format!("data:image/png;base64,{large_image}")}
+        ]),
+        model_config: json!({"model_id": "claude-sonnet-4-6"}),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(spec.args()[0], "-p");
+    assert!(spec.args().contains(&"--input-format".to_owned()));
+    assert!(spec.args().contains(&"stream-json".to_owned()));
+    assert!(!spec.args().iter().any(|arg| arg.contains(&large_image)));
+    let stdin = spec
+        .stdin_input()
+        .expect("content block prompt should be sent through stdin");
+    assert!(stdin.contains("\"type\":\"user\""));
+    assert!(stdin.contains("\"type\":\"image\""));
+    assert!(stdin.contains(&large_image));
+}
+
+#[test]
 fn claude_command_appends_execution_system_prompt() {
     let request = ExecutionRequest {
         prompt: json!("Previous stage output:\nMANUAL_PIPELINE_STAGE_ONE_OUTPUT_CTX_MANUAL_STAGE"),
@@ -346,6 +401,86 @@ fn claude_command_prefers_workspace_task_session_over_executor_home() {
 
     assert!(spec.args().contains(&"--resume".to_owned()));
     assert!(spec.args().contains(&"workspace-session".to_owned()));
+}
+
+#[test]
+fn claude_command_falls_back_to_legacy_task_session_file() {
+    let _lock = env_lock();
+    let workspace_root = unique_dir("claude-session-legacy-workspace-root");
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let session_dir = workspace_root.join("77");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(session_dir.join(".claude_session_id"), "legacy-session\n").unwrap();
+    let request = ExecutionRequest {
+        task_id: 77,
+        prompt: json!("follow up"),
+        bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert!(spec.args().contains(&"--resume".to_owned()));
+    assert!(spec.args().contains(&"legacy-session".to_owned()));
+}
+
+#[test]
+fn claude_command_seeds_inherited_session_when_no_saved_session_exists() {
+    let _lock = env_lock();
+    let executor_home = unique_dir("claude-session-inherited-home");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let request = ExecutionRequest {
+        task_id: 77,
+        prompt: json!("fork follow up"),
+        bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
+        inherited_sessions: vec![json!({
+            "agent": "ClaudeCode",
+            "botId": 987,
+            "sessionId": "inherited-session"
+        })],
+        model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert!(spec.args().contains(&"--resume".to_owned()));
+    assert!(spec.args().contains(&"inherited-session".to_owned()));
+    assert_eq!(
+        fs::read_to_string(executor_home.join("workspace/77/.claude_session_id_987")).unwrap(),
+        "inherited-session"
+    );
+}
+
+#[test]
+fn claude_command_new_session_deletes_saved_session_and_skips_resume() {
+    let _lock = env_lock();
+    let executor_home = unique_dir("claude-session-new-session-home");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let session_dir = executor_home.join("sessions/77");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(session_dir.join(".claude_session_id_987"), "old-session\n").unwrap();
+    fs::write(
+        session_dir.join(".claude_session_id"),
+        "legacy-old-session\n",
+    )
+    .unwrap();
+    let request = ExecutionRequest {
+        task_id: 77,
+        new_session: true,
+        prompt: json!("fresh stage"),
+        bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert!(!spec.args().contains(&"--resume".to_owned()));
+    assert!(!session_dir.join(".claude_session_id_987").exists());
+    assert!(!session_dir.join(".claude_session_id").exists());
 }
 
 #[test]

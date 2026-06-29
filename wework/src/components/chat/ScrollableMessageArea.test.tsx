@@ -41,6 +41,12 @@ function mockScrollRelativeRect(
   })
 }
 
+function flushScheduledTimers() {
+  act(() => {
+    vi.runOnlyPendingTimers()
+  })
+}
+
 describe('ScrollableMessageArea', () => {
   let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn>
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn>
@@ -218,10 +224,12 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 300)
+    scroller.scrollTo = vi.fn()
     mockRect(screen.getByText('第一条用户需求').closest('[data-message-id]')!, 120, 180)
     mockRect(screen.getByText('第二条用户需求').closest('[data-message-id]')!, 620, 680)
 
     fireEvent.resize(window)
+    flushScheduledTimers()
 
     const navigation = screen.getByTestId('message-turn-navigation')
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
@@ -282,6 +290,7 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 240)
+    scroller.scrollTo = vi.fn()
     userMessages.forEach((message, index) => {
       mockRect(
         screen.getByText(message.content).closest('[data-message-id]')!,
@@ -291,6 +300,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     fireEvent.resize(window)
+    flushScheduledTimers()
 
     const navigation = screen.getByTestId('message-turn-navigation')
     const navigationRail = screen.getByTestId('message-turn-navigation-rail')
@@ -346,12 +356,14 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 300)
+    scroller.scrollTo = vi.fn()
     for (let index = 0; index < 12; index += 1) {
       mockRect(screen.getByText(`bulk user ${index}`).closest('[data-message-id]')!, 120, 180)
     }
 
     querySelectorAllSpy.mockClear()
     fireEvent.resize(window)
+    flushScheduledTimers()
 
     const messageAnchorQueries = querySelectorAllSpy.mock.calls.filter(([selector]) =>
       String(selector).includes('[data-message-id]')
@@ -410,6 +422,7 @@ describe('ScrollableMessageArea', () => {
     mockRect(screen.getByText('需要跳转的需求').closest('[data-message-id]')!, 620, 680)
 
     fireEvent.resize(window)
+    flushScheduledTimers()
     fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[1])
 
     expect(scroller.scrollTo).toHaveBeenCalledWith({

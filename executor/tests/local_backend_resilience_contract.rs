@@ -76,29 +76,46 @@ async fn send_heartbeat_propagates_transport_error() {
 
 #[test]
 fn local_backend_connection_failure_log_line_includes_backend_url() {
-    assert_eq!(
-        local_backend_connection_failure_log_line(
-            "http://localhost:8000",
-            "device:register timed out",
-        ),
-        "Wegent executor local backend connection failed backend_url=http://localhost:8000 error=\"device:register timed out\""
+    let line = local_backend_connection_failure_log_line(
+        "http://localhost:8000",
+        "device:register timed out",
+    );
+
+    assert_log_timestamp(&line);
+    assert!(
+        line.ends_with(
+            " local backend connection failed backend_url=http://localhost:8000 error=\"device:register timed out\""
+        )
     );
 }
 
 #[test]
 fn local_backend_starting_log_line_includes_backend_url_and_device() {
-    assert_eq!(
-        local_backend_starting_log_line("http://localhost:8000", "device-1"),
-        "Wegent executor local backend runner starting backend_url=http://localhost:8000 device_id=device-1"
-    );
+    let line = local_backend_starting_log_line("http://localhost:8000", "device-1");
+
+    assert_log_timestamp(&line);
+    assert!(line.ends_with(
+        " local backend runner starting backend_url=http://localhost:8000 device_id=device-1"
+    ));
 }
 
 #[test]
 fn local_backend_registered_log_line_includes_backend_url_and_device() {
-    assert_eq!(
-        local_backend_registered_log_line("http://localhost:8000", "device-1"),
-        "Wegent executor local backend registered backend_url=http://localhost:8000 device_id=device-1"
-    );
+    let line = local_backend_registered_log_line("http://localhost:8000", "device-1");
+
+    assert_log_timestamp(&line);
+    assert!(line.ends_with(
+        " local backend registered backend_url=http://localhost:8000 device_id=device-1"
+    ));
+}
+
+fn assert_log_timestamp(line: &str) {
+    let timestamp = &line[..19];
+    assert_eq!(timestamp.as_bytes()[4], b'-');
+    assert_eq!(timestamp.as_bytes()[7], b'-');
+    assert_eq!(timestamp.as_bytes()[10], b' ');
+    assert_eq!(timestamp.as_bytes()[13], b':');
+    assert_eq!(timestamp.as_bytes()[16], b':');
 }
 
 #[tokio::test]

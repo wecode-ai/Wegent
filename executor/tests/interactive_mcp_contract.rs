@@ -38,6 +38,7 @@ fn waiting_proxy_result(tool_use_id: &str) -> DeferredMcpProxyResult {
             "content": [{"type": "text", "text": output_text}]
         }),
         output_text,
+        is_error: false,
         is_deferred_user_input: true,
     }
 }
@@ -52,6 +53,7 @@ fn invalid_form_proxy_result(tool_use_id: &str) -> DeferredMcpProxyResult {
             "content": [{"type": "text", "text": r#"{"error": "question field required"}"#}]
         }),
         output_text: r#"{"error": "question field required"}"#.to_owned(),
+        is_error: false,
         is_deferred_user_input: false,
     }
 }
@@ -478,17 +480,18 @@ fn agent_keeps_normal_follow_up_on_prompt_channel() {
 }
 
 #[test]
-fn claude_code_executor_does_not_implement_interactive_form_tool() {
+fn claude_code_executor_implements_interactive_form_deferred_proxy() {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-
-    assert!(!repo_root
-        .join("src")
-        .join("agents")
-        .join("deferred_input.rs")
-        .exists());
 
     let agent_source = std::fs::read_to_string(repo_root.join("src").join("agents").join("mod.rs"))
         .expect("agent module should be readable");
+    let runtime_source = std::fs::read_to_string(
+        repo_root
+            .join("src")
+            .join("agents")
+            .join("runtime_capabilities.rs"),
+    )
+    .expect("runtime capabilities module should be readable");
     let proxy_source = std::fs::read_to_string(
         repo_root
             .join("src")
@@ -497,7 +500,8 @@ fn claude_code_executor_does_not_implement_interactive_form_tool() {
     )
     .unwrap_or_default();
 
-    assert!(!agent_source.contains("install_deferred_input_hook"));
-    assert!(!proxy_source.contains("build_interactive_form_render_payload"));
-    assert!(!proxy_source.contains("RenderedInteractiveForm"));
+    assert!(agent_source.contains("prepare_claude_runtime"));
+    assert!(runtime_source.contains("install_deferred_mcp_hook"));
+    assert!(proxy_source.contains("proxy_deferred_mcp_tool"));
+    assert!(proxy_source.contains("call_streamable_http_mcp"));
 }

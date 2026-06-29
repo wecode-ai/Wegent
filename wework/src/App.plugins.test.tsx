@@ -222,6 +222,7 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => workbenchValue,
+  useWorkbenchPaneContext: () => workbenchValue,
 }))
 
 vi.mock('@/hooks/useIsMobile', () => ({

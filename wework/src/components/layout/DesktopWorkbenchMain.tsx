@@ -518,11 +518,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id: 'previous-turn',
         label: tChat('file_changes.previous_turn_label'),
         active: reviewState.reviewMode === 'previous-turn',
-        disabled:
-          (!loadTurnFileChangesDiff || latestPreviousTurnTurnId === null) && !hasPreviousTurnReview,
+        disabled: latestPreviousTurnTurnId === null && !hasPreviousTurnReview,
         onSelect: () => {
           const previousTurn =
-            loadTurnFileChangesDiff && latestPreviousTurnTurnId !== null
+            latestPreviousTurnTurnId !== null
               ? {
                   loadDiff: () => loadTurnFileChangesDiff(latestPreviousTurnTurnId, paneMessages),
                   defaultFileTreeVisible: false,

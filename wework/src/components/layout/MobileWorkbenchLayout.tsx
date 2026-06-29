@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -243,17 +243,15 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               </div>
               {currentRuntimeTask ? (
                 <div className="pointer-events-auto flex items-center gap-1">
-                  {forkCurrentRuntimeTask && (
-                    <button
-                      type="button"
-                      data-testid="mobile-fork-runtime-task-button"
-                      className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                      aria-label={t('workbench.task_fork_title', '复制任务')}
-                      onClick={() => setForkDialogOpen(true)}
-                    >
-                      <ArrowLeftRight className="h-5 w-5" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    data-testid="mobile-fork-runtime-task-button"
+                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                    aria-label={t('workbench.task_fork_title', '复制任务')}
+                    onClick={() => setForkDialogOpen(true)}
+                  >
+                    <ArrowLeftRight className="h-5 w-5" />
+                  </button>
                   <button
                     type="button"
                     data-testid="mobile-continue-in-im-button"

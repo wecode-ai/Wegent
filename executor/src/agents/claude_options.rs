@@ -51,6 +51,13 @@ fn collect_mcp_servers_for_claude(
         append_mcp_servers(&mut collected, bot_mcp_servers(bot));
     }
 
+    if !request.mcp_servers.is_empty() {
+        append_mcp_servers(
+            &mut collected,
+            Some(&Value::Array(request.mcp_servers.clone())),
+        );
+    }
+
     for (name, record) in global_mcps {
         let server = record.get("server").unwrap_or(record);
         if server.as_object().is_some() {
@@ -139,6 +146,18 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
                 .filter(|headers| headers.as_object().is_some_and(|object| !object.is_empty()))
             {
                 normalized.insert("headers".to_owned(), headers.clone());
+            }
+            for key in [
+                "bearer_token_env_var",
+                "bearerTokenEnvVar",
+                "oauth_client_id",
+                "oauthClientId",
+                "oauth_resource",
+                "oauthResource",
+            ] {
+                if let Some(value) = config.get(key) {
+                    normalized.insert(key.to_owned(), value.clone());
+                }
             }
             Value::Object(normalized)
         }

@@ -10,10 +10,13 @@ use crate::protocol::ExecutionRequest;
 
 pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String> {
     if request.new_session || request.task_id <= 0 {
+        if request.new_session {
+            delete_saved_session_files(request);
+        }
         return None;
     }
 
-    read_session_file(request)
+    read_session_file(request).or_else(|| seed_inherited_session(request))
 }
 
 pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
@@ -50,6 +53,51 @@ fn read_session_file(request: &ExecutionRequest) -> Option<String> {
     None
 }
 
+fn seed_inherited_session(request: &ExecutionRequest) -> Option<String> {
+    let session_id = inherited_session_id(request)?;
+    save_session_id(request, &session_id);
+    Some(session_id)
+}
+
+fn inherited_session_id(request: &ExecutionRequest) -> Option<String> {
+    let current_bot_id = bot_id(&request.bot);
+    request.inherited_sessions.iter().find_map(|session| {
+        let agent = value_string(
+            session
+                .get("agent")
+                .or_else(|| session.get("agentName"))
+                .or_else(|| session.get("agent_name")),
+        )?;
+        if agent != "ClaudeCode" && agent != "Claude Code" {
+            return None;
+        }
+
+        if let (Some(current_bot_id), Some(inherited_bot_id)) = (
+            current_bot_id.as_deref(),
+            session
+                .get("botId")
+                .or_else(|| session.get("bot_id"))
+                .and_then(value_to_identifier),
+        ) {
+            if inherited_bot_id != current_bot_id {
+                return None;
+            }
+        }
+
+        value_string(
+            session
+                .get("sessionId")
+                .or_else(|| session.get("session_id")),
+        )
+    })
+}
+
+fn delete_saved_session_files(request: &ExecutionRequest) {
+    for path in session_file_candidates(request) {
+        let _ = fs::remove_file(path);
+    }
+}
+
 fn write_session_file(path: &PathBuf, session_id: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -68,10 +116,10 @@ fn session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     for root in workspace_roots() {
-        candidates.push(session_file_path(root.join(&task_id), request));
+        candidates.extend(session_file_paths(root.join(&task_id), request));
     }
 
-    candidates.push(session_file_path(
+    candidates.extend(session_file_paths(
         executor_home_session_root().join(task_id),
         request,
     ));
@@ -79,11 +127,13 @@ fn session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
     dedup_paths(candidates)
 }
 
-fn session_file_path(task_dir: PathBuf, request: &ExecutionRequest) -> PathBuf {
-    match bot_id(&request.bot) {
-        Some(bot_id) => task_dir.join(format!(".claude_session_id_{bot_id}")),
-        None => task_dir.join(".claude_session_id"),
+fn session_file_paths(task_dir: PathBuf, request: &ExecutionRequest) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(bot_id) = bot_id(&request.bot) {
+        paths.push(task_dir.join(format!(".claude_session_id_{bot_id}")));
     }
+    paths.push(task_dir.join(".claude_session_id"));
+    paths
 }
 
 fn workspace_roots() -> Vec<PathBuf> {
@@ -177,6 +227,16 @@ fn value_to_identifier(value: &Value) -> Option<String> {
     match value {
         Value::String(value) => safe_session_identifier(value),
         Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+    .filter(|value| !value.is_empty())
+}
+
+fn value_string(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => safe_session_identifier(value),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
         _ => None,
     }
     .filter(|value| !value.is_empty())

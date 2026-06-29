@@ -202,6 +202,60 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_clones_git_workspace_before_running_claude() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("claude-git-workspace-root");
+    let bin_dir = unique_dir("claude-git-bin");
+    let marker = unique_dir("claude-git-marker").join("git-args.txt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_fake_git(&bin_dir, &marker);
+    let fake_claude = write_fake_executable(
+        "fake-claude-git-cwd",
+        r#"#!/bin/sh
+if [ ! -d ".git" ]; then exit 30; fi
+if [ ! -f "source.txt" ]; then exit 31; fi
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
+"#,
+    );
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let path_value = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let _path = EnvGuard::set("PATH", &path_value);
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 85,
+        prompt: json!("run in cloned repo"),
+        bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        extra: serde_json::Map::from_iter([
+            (
+                "git_url".to_owned(),
+                json!("https://github.com/wecode-ai/Wegent.git"),
+            ),
+            ("branch_name".to_owned(), json!("feature/test")),
+        ]),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let expected_cwd = fs::canonicalize(workspace_root.join("85/Wegent")).unwrap();
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: expected_cwd.display().to_string()
+        }
+    );
+    let git_args = fs::read_to_string(marker).unwrap();
+    assert!(git_args.contains("clone --branch feature/test --single-branch"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_downloads_claude_attachments_to_local_task_workspace() {
     let _lock = env_lock().lock().await;
     let executor_home = unique_dir("claude-local-attachment-home");
@@ -210,7 +264,11 @@ async fn agent_process_engine_downloads_claude_attachments_to_local_task_workspa
     let fake_claude = write_fake_executable(
         "fake-claude-attachment-prompt",
         r#"#!/bin/sh
-printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$2")}]}}"
+payload="$(cat)"
+for arg in "$@"; do
+  payload="$payload $arg"
+done
+printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$payload")}]}}"
 "#,
     );
     let _executor_home =
@@ -336,7 +394,9 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();
     assert!(
-        request.starts_with("GET /api/v1/kinds/skills/42/download?namespace=default HTTP/1.1"),
+        request.starts_with(
+            "GET /api/v1/kinds/skills/42/download?namespace=default&task_id=86 HTTP/1.1"
+        ),
         "{request}"
     );
     assert!(
@@ -401,7 +461,9 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let request = requests.lock().unwrap().first().cloned().unwrap();
     assert!(
-        request.starts_with("GET /api/v1/kinds/skills/43/download?namespace=default HTTP/1.1"),
+        request.starts_with(
+            "GET /api/v1/kinds/skills/43/download?namespace=default&task_id=87 HTTP/1.1"
+        ),
         "{request}"
     );
 }
@@ -510,6 +572,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 83,
+        skip_git_clone: true,
         prompt: json!("run with hook"),
         bot: json!([{"id": 323, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -551,16 +614,21 @@ with open(settings_path, "r", encoding="utf-8") as handle:
 hooks = settings.get("hooks", {})
 pre = hooks.get("PreToolUse", [])
 post = hooks.get("PostToolUse", [])
+file_edit_groups = [
+    group
+    for group in pre + post
+    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
+]
 commands = [
     hook.get("command")
-    for group in pre + post
+    for group in file_edit_groups
     for hook in group.get("hooks", [])
 ]
 payload = {
-    "has_pre": bool(pre),
-    "has_post": bool(post),
+    "has_pre": any(group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit" for group in pre),
+    "has_post": any(group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit" for group in post),
     "commands": commands,
-    "matchers": [group.get("matcher") for group in pre + post],
+    "matchers": [group.get("matcher") for group in file_edit_groups],
 }
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
 PY
@@ -651,12 +719,22 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     settings = json.load(handle)
 hooks = settings.get("hooks", {})
+pre = [
+    group
+    for group in hooks.get("PreToolUse", [])
+    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
+]
+post = [
+    group
+    for group in hooks.get("PostToolUse", [])
+    if group.get("matcher") == "Write|Edit|MultiEdit|NotebookEdit"
+]
 payload = {
-    "pre_count": len(hooks.get("PreToolUse", [])),
-    "post_count": len(hooks.get("PostToolUse", [])),
+    "pre_count": len(pre),
+    "post_count": len(post),
     "commands": [
         hook.get("command")
-        for group in hooks.get("PreToolUse", []) + hooks.get("PostToolUse", [])
+        for group in pre + post
         for hook in group.get("hooks", [])
     ],
 }
@@ -744,6 +822,41 @@ fn write_fake_executable(name: &str, content: &str) -> PathBuf {
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+#[cfg(unix)]
+fn write_fake_git(bin_dir: &std::path::Path, marker: &std::path::Path) {
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let path = bin_dir.join("git");
+    let content = format!(
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+if [ "$1" = "clone" ]; then
+  shift
+  BRANCH=""
+  if [ "$1" = "--branch" ]; then
+    BRANCH="$2"
+    shift 3
+  fi
+  URL="$1"
+  DEST="$2"
+  mkdir -p "$DEST/.git"
+  printf '%s\n%s\n' "$URL" "$BRANCH" > "$DEST/source.txt"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "config" ]; then
+  exit 0
+fi
+exit 21
+"#,
+        marker.display()
+    );
+    fs::write(&path, content).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
 }
 
 fn unique_dir(name: &str) -> PathBuf {

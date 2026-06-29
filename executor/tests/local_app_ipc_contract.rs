@@ -333,10 +333,21 @@ fn app_ipc_socket_path_can_be_overridden() {
 
 #[test]
 fn app_ipc_listening_log_line_includes_device_and_socket_path() {
-    assert_eq!(
-        app_ipc_listening_log_line("device-1", "/tmp/wegent executor/app-ipc.sock"),
-        "Wegent executor app IPC listening device_id=device-1 socket_path=\"/tmp/wegent executor/app-ipc.sock\""
-    );
+    let line = app_ipc_listening_log_line("device-1", "/tmp/wegent executor/app-ipc.sock");
+
+    assert_log_timestamp(&line);
+    assert!(line.ends_with(
+        " app IPC listening device_id=device-1 socket_path=\"/tmp/wegent executor/app-ipc.sock\""
+    ));
+}
+
+fn assert_log_timestamp(line: &str) {
+    let timestamp = &line[..19];
+    assert_eq!(timestamp.as_bytes()[4], b'-');
+    assert_eq!(timestamp.as_bytes()[7], b'-');
+    assert_eq!(timestamp.as_bytes()[10], b' ');
+    assert_eq!(timestamp.as_bytes()[13], b':');
+    assert_eq!(timestamp.as_bytes()[16], b':');
 }
 
 #[cfg(unix)]
