@@ -3,12 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin, process::Stdio,
-    time::Duration, time::Instant,
+    collections::{BTreeMap, HashMap},
+    env, fs,
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    process::Stdio,
+    time::Duration,
+    time::Instant,
 };
 
 use serde_json::Value;
-use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
+    process::Command,
+    time::timeout,
+};
 
 use crate::{
     agents::interactive_mcp::{
@@ -16,13 +26,19 @@ use crate::{
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
     claude_session,
+    emitter::ResponsesEventBuilder,
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
-    runner::{AgentEngine, ExecutionOutcome},
-    stream::collect_claude_stream_summary,
+    runner::{AgentEngine, EventSink, ExecutionOutcome},
+    stream::{
+        collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
+        extract_reasoning, extract_text, ClaudeToolUse,
+    },
 };
 
 const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 300;
+const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
+const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
 
@@ -125,6 +141,46 @@ impl AgentEngine for StreamProcessEngine {
         let spec = self.spec.clone();
         Box::pin(async move {
             match run_command_output(spec.clone()).await {
+                CommandOutcome::Success { stdout } => {
+                    let summary = collect_claude_stream_summary(&stdout);
+                    if let Some(session_id) = &summary.session_id {
+                        claude_session::save_session_id(&request, session_id);
+                    }
+                    let summary =
+                        handle_retryable_api_errors(spec.clone(), &request, summary).await;
+                    if summary.deferred_tool_use.is_some() {
+                        handle_deferred_mcp_loop(spec, request, summary).await
+                    } else {
+                        summary.outcome
+                    }
+                }
+                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
+                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                },
+            }
+        })
+    }
+
+    fn run_with_events<S>(
+        &self,
+        request: ExecutionRequest,
+        sink: S,
+        builder: ResponsesEventBuilder,
+    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+    where
+        S: EventSink,
+    {
+        let spec = self.spec.clone();
+        Box::pin(async move {
+            match run_streaming_command_output(
+                spec.clone(),
+                sink,
+                builder,
+                request.task_id,
+                request.subtask_id,
+            )
+            .await
+            {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
@@ -427,6 +483,365 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
     outcome
 }
 
+async fn run_streaming_command_output<S>(
+    spec: CommandSpec,
+    sink: S,
+    builder: ResponsesEventBuilder,
+    task_id: i64,
+    subtask_id: i64,
+) -> CommandOutcome
+where
+    S: EventSink,
+{
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .envs(&spec.env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(cwd) = spec.cwd.as_ref() {
+        if let Err(error) = fs::create_dir_all(cwd) {
+            return CommandOutcome::Failure {
+                stderr: format!("failed to create command cwd {}: {error}", cwd.display()),
+                stdout: String::new(),
+                exit_code: None,
+            };
+        }
+        command.current_dir(cwd);
+    }
+
+    let timeout_seconds = process_timeout_seconds();
+    let mut fields = command_log_fields(&spec);
+    fields.push(("timeout_seconds", timeout_seconds.to_string()));
+    log_executor_event("process started", &fields);
+    let started = Instant::now();
+    let outcome = match timeout(
+        Duration::from_secs(timeout_seconds),
+        run_prepared_streaming_command(
+            command,
+            spec.stdin.clone(),
+            sink,
+            builder,
+            task_id,
+            subtask_id,
+        ),
+    )
+    .await
+    {
+        Err(_) => CommandOutcome::Failure {
+            stderr: format!("command timed out after {timeout_seconds}s"),
+            stdout: String::new(),
+            exit_code: None,
+        },
+        Ok(result) => result,
+    };
+    fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
+    fields.extend(command_outcome_fields(&outcome));
+    log_executor_event("process finished", &fields);
+    outcome
+}
+
+async fn run_prepared_streaming_command<S>(
+    mut command: Command,
+    stdin: Option<String>,
+    sink: S,
+    builder: ResponsesEventBuilder,
+    task_id: i64,
+    subtask_id: i64,
+) -> CommandOutcome
+where
+    S: EventSink,
+{
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return CommandOutcome::Failure {
+                stderr: error.to_string(),
+                stdout: String::new(),
+                exit_code: None,
+            };
+        }
+    };
+
+    let writer = stdin.and_then(|input| {
+        child.stdin.take().map(|mut child_stdin| {
+            tokio::spawn(async move { child_stdin.write_all(input.as_bytes()).await })
+        })
+    });
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = stdout.map(|stdout| {
+        tokio::spawn(read_streaming_stdout(
+            stdout, sink, builder, task_id, subtask_id,
+        ))
+    });
+    let stderr_task = stderr.map(|stderr| tokio::spawn(read_process_output(stderr)));
+
+    let status = child.wait().await;
+    if let Some(writer) = writer {
+        if let Ok(Err(error)) = writer.await {
+            if status.is_ok() {
+                return CommandOutcome::Failure {
+                    stderr: error.to_string(),
+                    stdout: String::new(),
+                    exit_code: None,
+                };
+            }
+        }
+    }
+    let stdout = join_output(stdout_task).await;
+    let stderr = join_output(stderr_task).await;
+
+    match status {
+        Ok(status) if status.success() => CommandOutcome::Success { stdout },
+        Ok(status) => CommandOutcome::Failure {
+            stderr,
+            stdout,
+            exit_code: status.code(),
+        },
+        Err(error) => CommandOutcome::Failure {
+            stderr: error.to_string(),
+            stdout,
+            exit_code: None,
+        },
+    }
+}
+
+async fn read_streaming_stdout<R, S>(
+    stdout: R,
+    sink: S,
+    builder: ResponsesEventBuilder,
+    task_id: i64,
+    subtask_id: i64,
+) -> String
+where
+    R: AsyncRead + Unpin,
+    S: EventSink,
+{
+    let mut output = String::new();
+    let mut offset = 0usize;
+    let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
+    let mut lines = BufReader::new(stdout).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        output.push_str(&line);
+        output.push('\n');
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if let Some(reasoning) = extract_reasoning(&value) {
+            if !reasoning.is_empty() {
+                emit_reasoning_chunks(&sink, &builder, &reasoning, task_id, subtask_id).await;
+            }
+        }
+        for tool_use in extract_claude_tool_uses(&value) {
+            emit_claude_tool_use(&sink, &builder, &tool_use, task_id, subtask_id).await;
+            tool_uses.insert(tool_use.id.clone(), tool_use);
+        }
+        for tool_result in extract_claude_tool_results(&value) {
+            let tool_use = tool_uses
+                .remove(&tool_result.tool_use_id)
+                .unwrap_or_else(|| ClaudeToolUse {
+                    id: tool_result.tool_use_id.clone(),
+                    name: "Tool".to_owned(),
+                    input: Value::Object(Default::default()),
+                });
+            emit_claude_tool_result(
+                &sink,
+                &builder,
+                &tool_use,
+                tool_result.content.as_deref(),
+                tool_result.is_error,
+                task_id,
+                subtask_id,
+            )
+            .await;
+        }
+        let Some(text) = extract_text(&value) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let emitted =
+            emit_text_chunks(&sink, &builder, &text, &mut offset, task_id, subtask_id).await;
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            ("chunk_count", emitted.to_string()),
+            ("text_chars", text.chars().count().to_string()),
+        ];
+        log_executor_event("streaming text chunks emitted", &fields);
+    }
+    output.trim().to_owned()
+}
+
+async fn emit_claude_tool_use<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    tool_use: &ClaudeToolUse,
+    task_id: i64,
+    subtask_id: i64,
+) where
+    S: EventSink,
+{
+    let event = builder.response_tool_block_created(&tool_use.id, &tool_use.name, &tool_use.input);
+    if let Err(message) = sink.send(event).await {
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            ("tool_use_id", tool_use.id.clone()),
+            ("error_len", message.len().to_string()),
+        ];
+        log_executor_event("streaming tool use callback failed", &fields);
+    }
+}
+
+async fn emit_claude_tool_result<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    tool_use: &ClaudeToolUse,
+    output: Option<&str>,
+    is_error: bool,
+    task_id: i64,
+    subtask_id: i64,
+) where
+    S: EventSink,
+{
+    let event =
+        builder.response_tool_block_updated(&tool_use.id, &tool_use.input, output, is_error);
+    if let Err(message) = sink.send(event).await {
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            ("tool_use_id", tool_use.id.clone()),
+            ("error_len", message.len().to_string()),
+        ];
+        log_executor_event("streaming tool result callback failed", &fields);
+    }
+}
+
+async fn emit_reasoning_chunks<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    reasoning: &str,
+    task_id: i64,
+    subtask_id: i64,
+) where
+    S: EventSink,
+{
+    let chunks = split_stream_text(reasoning, stream_chunk_chars());
+    let delay = Duration::from_millis(stream_chunk_delay_ms());
+    let should_delay = chunks.len() > 1 && !delay.is_zero();
+    let chunk_count = chunks.len();
+    for (index, delta) in chunks.into_iter().enumerate() {
+        let event = builder.response_reasoning_delta(&delta);
+        if let Err(message) = sink.send(event).await {
+            let fields = vec![
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("error_len", message.len().to_string()),
+            ];
+            log_executor_event("streaming reasoning callback failed", &fields);
+        }
+        if should_delay && index + 1 < chunk_count {
+            tokio::time::sleep(delay).await;
+        }
+    }
+    let fields = vec![
+        ("task_id", task_id.to_string()),
+        ("subtask_id", subtask_id.to_string()),
+        ("reasoning_chars", reasoning.chars().count().to_string()),
+        ("chunk_count", chunk_count.to_string()),
+    ];
+    log_executor_event("streaming reasoning chunks emitted", &fields);
+}
+
+async fn emit_text_chunks<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    text: &str,
+    offset: &mut usize,
+    task_id: i64,
+    subtask_id: i64,
+) -> usize
+where
+    S: EventSink,
+{
+    let chunks = split_stream_text(text, stream_chunk_chars());
+    let delay = Duration::from_millis(stream_chunk_delay_ms());
+    let should_delay = chunks.len() > 1 && !delay.is_zero();
+    let chunk_count = chunks.len();
+    for (index, delta) in chunks.into_iter().enumerate() {
+        let event = builder.response_text_delta(&delta, *offset);
+        *offset += delta.chars().count();
+        if let Err(message) = sink.send(event).await {
+            let fields = vec![
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("error_len", message.len().to_string()),
+            ];
+            log_executor_event("streaming chunk callback failed", &fields);
+        }
+        if should_delay && index + 1 < chunk_count {
+            tokio::time::sleep(delay).await;
+        }
+    }
+    chunk_count
+}
+
+fn split_stream_text(text: &str, chunk_chars: usize) -> Vec<String> {
+    let chunk_chars = chunk_chars.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        current.push(character);
+        if current.chars().count() >= chunk_chars {
+            chunks.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn stream_chunk_chars() -> usize {
+    env::var("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_STREAM_CHUNK_CHARS)
+}
+
+fn stream_chunk_delay_ms() -> u64 {
+    env::var("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_STREAM_CHUNK_DELAY_MS)
+}
+
+async fn read_process_output<R>(output: R) -> String
+where
+    R: AsyncRead + Unpin,
+{
+    let mut text = String::new();
+    let mut lines = BufReader::new(output).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        text.push_str(&line);
+        text.push('\n');
+    }
+    text.trim().to_owned()
+}
+
+async fn join_output(handle: Option<tokio::task::JoinHandle<String>>) -> String {
+    match handle {
+        Some(handle) => handle.await.unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
 async fn run_prepared_command(
     mut command: Command,
     stdin: Option<String>,
@@ -526,4 +941,51 @@ fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
 
 fn decode_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::*;
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_chunk_defaults_are_tuned_for_smooth_device_chat() {
+        let _lock = env_lock();
+        let _chunk_chars = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS");
+        let _chunk_delay = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS");
+
+        assert_eq!(stream_chunk_chars(), 20);
+        assert_eq!(stream_chunk_delay_ms(), 0);
+    }
 }

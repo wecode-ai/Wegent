@@ -261,6 +261,7 @@ function normalizeRuntimeTaskSummary(
   const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
   const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
+  const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
 
   const normalized = {
     ...taskRecord,
@@ -273,6 +274,7 @@ function normalizeRuntimeTaskSummary(
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
+    ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
   }
 
   return normalized as LocalTaskSummary
@@ -376,19 +378,13 @@ type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   text_length?: number
 }
 
-function isLocalRuntimeAttachmentPayload(
-  attachment: LocalRuntimeAttachmentPayload | null
-): attachment is LocalRuntimeAttachmentPayload {
-  return attachment !== null
-}
-
 function localRuntimeAttachments(
   attachments: RuntimeTaskCreateRequest['attachments'],
   subtaskId: number
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
   return attachments
-    .map(attachment => {
+    .map((attachment): LocalRuntimeAttachmentPayload | null => {
       const localPath = stringValue(attachment.local_path)
       if (!localPath) return null
 
@@ -405,7 +401,7 @@ function localRuntimeAttachments(
         ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
       }
     })
-    .filter(isLocalRuntimeAttachmentPayload)
+    .filter((attachment): attachment is LocalRuntimeAttachmentPayload => attachment !== null)
 }
 
 function skillName(skill: unknown): string | null {

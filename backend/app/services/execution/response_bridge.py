@@ -55,6 +55,7 @@ class EmitterBridgeTransport(EventTransport):
         self.message_id = message_id
         self._offset = 0  # Track cumulative text offset
         self._tool_contexts: dict[str, dict] = {}
+        self._reasoning_content = ""
 
     def _pop_tool_context(self, tool_use_id: str) -> dict:
         """Return tracked tool context or fail fast for invalid tool lifecycles."""
@@ -145,12 +146,15 @@ class EmitterBridgeTransport(EventTransport):
         # response.completed -> DONE
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             response_data = data.get("response", {})
+            result = extract_completed_result(response_data)
+            if not result.get("reasoning_content") and self._reasoning_content:
+                result["reasoning_content"] = self._reasoning_content
             return ExecutionEvent(
                 type=EventType.DONE.value,
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
                 content="",
-                result=extract_completed_result(response_data),
+                result=result,
                 message_id=message_id,
             )
 
@@ -407,6 +411,7 @@ class EmitterBridgeTransport(EventTransport):
         ):
             reasoning_content = _extract_reasoning_event_content(event_type, data)
             if reasoning_content is not None:
+                self._reasoning_content += reasoning_content
                 return ExecutionEvent(
                     type=EventType.THINKING.value,
                     task_id=self.task_id,

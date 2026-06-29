@@ -369,8 +369,68 @@ async def test_responses_api_event_passes_raw_response_event_to_task_room(monkey
 
 
 @pytest.mark.asyncio
+async def test_device_response_created_emits_chat_start_to_frontend_task_room(
+    monkeypatch,
+):
+    from app.services.chat import webpage_ws_chat_emitter
+
+    namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
+    frontend_emitter = webpage_ws_chat_emitter.WebPageSocketEmitter(sio)
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    class PassthroughStatusUpdatingEmitter:
+        def __init__(self, **kwargs):
+            self.wrapped = kwargs["wrapped"]
+
+        async def emit(self, event):
+            await self.wrapped.emit(event)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        webpage_ws_chat_emitter,
+        "_ws_emitter",
+        frontend_emitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "StatusUpdatingEmitter",
+        PassthroughStatusUpdatingEmitter,
+    )
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.created",
+        {
+            "task_id": 101,
+            "subtask_id": 202,
+            "message_id": 303,
+            "data": {"shell_type": "ClaudeCode"},
+        },
+    )
+
+    assert result == {"success": True}
+    chat_start = find_emit_call(sio, device_namespace.ServerEvents.CHAT_START)
+    assert chat_start.args[1] == {
+        "task_id": 101,
+        "subtask_id": 202,
+        "bot_name": None,
+        "shell_type": "ClaudeCode",
+        "message_id": 303,
+    }
+    assert chat_start.kwargs == {"room": "task:101", "namespace": "/chat"}
+
+
+@pytest.mark.asyncio
 async def test_responses_api_delta_event_forwards_to_channel_callbacks(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
     event = SimpleNamespace(
         type=device_namespace.EventType.CHUNK.value,
         content="hi",
@@ -428,6 +488,7 @@ async def test_responses_api_delta_event_forwards_to_channel_callbacks(monkeypat
         fake_forward_event_to_channel_callbacks,
         raising=False,
     )
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
 
     result = await namespace._handle_responses_api_event(
         "sid-1", "response.output_text.delta", payload
@@ -763,6 +824,7 @@ async def test_local_task_responses_api_events_are_serialized(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     first_event_started = asyncio.Event()
     emitted_chunks = []
+    sio = SimpleNamespace(emit=AsyncMock())
 
     async def fake_get_session(sid):
         return {"user_id": 7, "device_id": "device-1"}
@@ -788,6 +850,7 @@ async def test_local_task_responses_api_events_are_serialized(monkeypatch):
         "forward_channel_callbacks",
         fake_forward_local_task_event_to_channel_callbacks,
     )
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
 
     first = asyncio.create_task(
         namespace._handle_responses_api_event(

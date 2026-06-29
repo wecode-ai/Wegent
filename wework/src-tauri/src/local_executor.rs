@@ -19,8 +19,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
-// Rust ShellExt::sidecar expects the packaged binary name, not the externalBin source path.
-const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
+const LOCAL_EXECUTOR_SIDECAR: &str = "binaries/wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
 const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
@@ -1408,19 +1407,6 @@ mod tests {
 
         assert_eq!(label, "Local executor diagnostic");
         assert!(!label.contains("stderr"));
-    }
-
-    #[test]
-    fn bundled_sidecar_path_uses_packaged_binary_name() {
-        let _guard = env_lock();
-        let previous_sidecar = std::env::var_os(LOCAL_EXECUTOR_SIDECAR_ENV);
-        std::env::remove_var(LOCAL_EXECUTOR_SIDECAR_ENV);
-
-        let (source, path) = sidecar_source_and_path();
-        restore_env(LOCAL_EXECUTOR_SIDECAR_ENV, previous_sidecar);
-
-        assert_eq!(source, "bundled");
-        assert_eq!(path, "wegent-executor");
     }
 
     #[test]

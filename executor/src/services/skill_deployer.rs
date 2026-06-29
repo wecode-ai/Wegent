@@ -156,8 +156,10 @@ pub fn build_skill_deployment_plan(
         .unwrap_or_else(|| "default".to_owned());
     let preload_skills = string_array(request.extra.get("preload_skills"));
     let skill_configs = value_array(request.extra.get("skill_configs"));
-    let skill_refs = value_object_map(request.extra.get("skill_refs"));
-    let preload_skill_refs = value_object_map(request.extra.get("preload_skill_refs"));
+    let mut skill_refs = value_object_map(bot_config.get("skill_refs"));
+    skill_refs.extend(value_object_map(request.extra.get("skill_refs")));
+    let mut preload_skill_refs = value_object_map(bot_config.get("preload_skill_refs"));
+    preload_skill_refs.extend(value_object_map(request.extra.get("preload_skill_refs")));
     let resolved_skill_map = resolve_skill_download_map(
         &skills,
         &preload_skills,

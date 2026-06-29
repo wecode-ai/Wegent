@@ -57,6 +57,10 @@ import type {
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus } from '@/types/workbench'
+import type {
+  ArchiveRuntimeLocalTaskOptions,
+  ArchiveRuntimeLocalTaskResult,
+} from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import {
   getRuntimeChatSidebarTaskItems,
@@ -97,7 +101,10 @@ interface DesktopSidebarProps {
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveRuntimeLocalTask?: (
+    address: RuntimeTaskAddress,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
   onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
   onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void> | void
   onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void> | void
@@ -982,7 +989,10 @@ function RuntimeLocalTaskRow({
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onToggleMark?: (address: RuntimeTaskAddress) => void
   onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveRuntimeLocalTask?: (
+    address: RuntimeTaskAddress,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
@@ -993,6 +1003,7 @@ function RuntimeLocalTaskRow({
   const [archiving, setArchiving] = useState(false)
   const [archivePending, setArchivePending] = useState(false)
   const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
+  const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const archiveDelayRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const worktreeTask = isRuntimeWorktreeTask(task)
@@ -1028,6 +1039,21 @@ function RuntimeLocalTaskRow({
       }
     }
   }, [])
+  const runArchive = async (options?: ArchiveRuntimeLocalTaskOptions) => {
+    setArchiving(true)
+    try {
+      const result = await Promise.resolve(
+        options
+          ? onArchiveRuntimeLocalTask?.(taskAddress, options)
+          : onArchiveRuntimeLocalTask?.(taskAddress)
+      )
+      if (result?.status === 'dirty_worktree') {
+        setForceArchiveConfirmOpen(true)
+      }
+    } finally {
+      setArchiving(false)
+    }
+  }
   const handleArchive = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     event.currentTarget.blur()
@@ -1038,10 +1064,7 @@ function RuntimeLocalTaskRow({
       archiveDelayRef.current = null
       setArchivePending(false)
       setArchiveNoticeOpen(false)
-      setArchiving(true)
-      void Promise.resolve(onArchiveRuntimeLocalTask?.(taskAddress)).finally(() => {
-        setArchiving(false)
-      })
+      void runArchive()
     }, RUNTIME_ARCHIVE_UNDO_DELAY_MS)
   }
   const handleUndoArchive = () => {
@@ -1054,6 +1077,15 @@ function RuntimeLocalTaskRow({
   }
   const handleDismissArchiveNotice = () => {
     setArchiveNoticeOpen(false)
+  }
+  const handleCloseForceArchiveConfirm = () => {
+    if (!archiving) {
+      setForceArchiveConfirmOpen(false)
+    }
+  }
+  const handleConfirmForceArchive = async () => {
+    await runArchive({ force: true })
+    setForceArchiveConfirmOpen(false)
   }
   const handleToggleNotification = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -1261,6 +1293,17 @@ function RuntimeLocalTaskRow({
           </div>,
           document.body
         )}
+      <ArchiveConversationsConfirmDialog
+        open={forceArchiveConfirmOpen}
+        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+        description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
+        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+        cancelLabel={t('workbench.cancel')}
+        submitting={archiving}
+        testId={`runtime-local-task-force-archive-dialog-${task.localTaskId}`}
+        onClose={handleCloseForceArchiveConfirm}
+        onConfirm={handleConfirmForceArchive}
+      />
     </>
   )
 }
@@ -1298,7 +1341,10 @@ function ProjectItem({
   onRenameProject: (project: ProjectWithTasks) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveRuntimeLocalTask?: (
+    address: RuntimeTaskAddress,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
   onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,

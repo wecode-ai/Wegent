@@ -26,7 +26,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/standalone/Dockerfile",
         "../frontend/e2e/fixtures/claudecode-executor/Dockerfile",
         "../wework/scripts/dev-executor-sidecar.sh",
-        "../wework/scripts/release-mac-app.sh",
         "../wework/src-tauri/build.rs",
         "local.sh",
         "build.sh",
@@ -61,13 +60,9 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     }
 
     let local_sh = fs::read_to_string("local.sh").unwrap();
-    assert!(local_sh.contains("cargo_args=(build --release --locked)"));
+    assert!(local_sh.contains("cargo build --release --locked"));
     assert!(local_sh.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
-    assert!(local_sh.contains("WEGENT_EXECUTOR_BUILD_TARGET"));
-    assert!(local_sh.contains("cargo_args+=(--target \"$build_target\")"));
-    assert!(local_sh.contains("binary_profile=\"$build_target/release\""));
-    assert!(local_sh
-        .contains("cargo_target_binary_path \"$ROOT_DIR\" \"$binary_profile\" wegent-executor"));
+    assert!(local_sh.contains("cargo_target_binary_path \"$ROOT_DIR\" release wegent-executor"));
 
     let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
@@ -78,19 +73,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_sidecar
         .contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor-dev"));
     assert!(!dev_sidecar.contains("exec cargo run"));
-
-    let release_script = fs::read_to_string("../wework/scripts/release-mac-app.sh").unwrap();
-    assert!(release_script.contains("ensure_local_executor_sidecar \"$next_version\""));
-    assert!(release_script
-        .contains("WEGENT_EXECUTOR_BUILD_TARGET=\"$rust_target\" \"$executor_dir/local.sh\" build \"$release_version\""));
-    assert!(release_script.contains("build_universal_executor_sidecar \"$release_version\""));
-    assert!(release_script.contains("lipo -create"));
-    assert!(release_script.contains("WEWORK_EXECUTOR_SIDECAR"));
-    let prepare_sidecar_index = release_script
-        .find("ensure_local_executor_sidecar \"$next_version\"")
-        .unwrap();
-    let tauri_build_index = release_script.find("pnpm exec tauri build").unwrap();
-    assert!(prepare_sidecar_index < tauri_build_index);
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));

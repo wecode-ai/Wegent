@@ -112,6 +112,52 @@ if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_
   exit 1
 fi
 
+is_port_available() {
+  node - "$1" <<'NODE'
+const net = require('node:net')
+const port = Number(process.argv[2])
+
+const canListen = host =>
+  new Promise(resolve => {
+    const server = net.createServer()
+
+    server.once('error', () => resolve(false))
+    server.listen(port, host, () => {
+      server.close(() => resolve(true))
+    })
+  })
+
+;(async () => {
+  for (const host of ['127.0.0.1', '0.0.0.0']) {
+    if (!(await canListen(host))) {
+      process.exit(1)
+    }
+  }
+})()
+NODE
+}
+
+find_available_wework_port() {
+  local port="$1"
+
+  while [ "$port" -le 65535 ]; do
+    if is_port_available "$port"; then
+      echo "$port"
+      return 0
+    fi
+    port="$((port + 1))"
+  done
+
+  echo "Error: no available WEWORK_PORT found from $1 to 65535." >&2
+  return 1
+}
+
+AVAILABLE_WEWORK_PORT="$(find_available_wework_port "$WEWORK_PORT")"
+if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
+  echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
+fi
+WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
+
 normalize_api_proxy_target() {
   local value="${1%/}"
 

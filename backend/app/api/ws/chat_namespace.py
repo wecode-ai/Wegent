@@ -76,6 +76,9 @@ from app.services.chat.operations import (
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
+from app.services.chat.task_device_resolution import (
+    resolve_chat_task_dispatch_device_id,
+)
 from app.services.chat.trigger import (
     collect_completed_result,
     persist_completed_result,
@@ -738,6 +741,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Get task JSON for group chat check
             task_json = {}
+            existing_task = None
             if payload.task_id:
                 existing_task = task_stores.task_store.get_regular_active_task(
                     db,
@@ -858,6 +862,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     user=user,
                     params=params,
                 )
+            resolved_device_id = await resolve_chat_task_dispatch_device_id(
+                db,
+                user_id=user_id,
+                params=params,
+                task=existing_task,
+            )
+            if resolved_device_id:
+                params.device_id = resolved_device_id
 
             result = await create_chat_task(
                 db=db,
@@ -998,7 +1010,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 user_subtask_id_for_context = (
                     user_subtask_for_context.id if user_subtask_for_context else None
                 )
-                device_id = payload.device_id
+                device_id = params.device_id
 
                 # Create async task for AI response - don't await it
                 # This ensures the ACK is returned before chat:start is sent

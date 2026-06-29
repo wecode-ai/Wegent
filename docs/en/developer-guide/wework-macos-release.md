@@ -14,9 +14,6 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. The release 
 - The updater manifest includes both `darwin-aarch64` and `darwin-x86_64`; both platform entries can point to the same universal archive.
 - `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. The release script injects them through a temporary Tauri config at build time.
 - Updater private keys and publish tokens are read only from environment variables or local files and must not be committed.
-- The release script automatically prepares the local executor sidecar before the Tauri build. The default universal build compiles both `aarch64-apple-darwin` and `x86_64-apple-darwin`, then combines them into `executor/dist/wegent-executor` with `lipo`.
-
-To use an external sidecar, set `WEWORK_EXECUTOR_SIDECAR` to an existing file. The script validates the file before handing it to the Tauri build.
 
 ## Environment Variables
 

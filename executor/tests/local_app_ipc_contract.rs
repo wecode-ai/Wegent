@@ -274,6 +274,30 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
     assert_eq!(request.argv[6], "main");
 
+    let remove_worktree_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-worktree-remove",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_worktree_remove",
+                    "args": ["/tmp/worktrees/2/project", "/tmp/worktrees/2/project"]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(remove_worktree_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "sh");
+    assert_eq!(request.argv[3], "--");
+    assert_eq!(request.argv[4], "/tmp/worktrees/2/project");
+    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
+    assert_eq!(request.argv.len(), 6);
+
     let review_response = server
         .handle_line(
             &json!({
