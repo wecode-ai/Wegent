@@ -61,7 +61,8 @@ async fn runtime_transcript_preserves_assistant_file_changes_from_codex_items() 
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -97,7 +98,8 @@ async fn runtime_transcript_normalizes_codex_file_change_items_without_backend_s
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -156,7 +158,8 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -214,7 +217,8 @@ async fn runtime_transcript_preserves_codex_web_search_actions() {
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -265,7 +269,8 @@ async fn runtime_transcript_keeps_interrupted_commentary_visible() {
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -306,7 +311,8 @@ async fn runtime_transcript_merges_multiple_codex_file_change_items_in_one_turn(
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await
@@ -365,7 +371,8 @@ async fn runtime_transcript_accumulates_codex_file_changes_and_uses_move_target_
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1"
+                "localTaskId": "thread-1",
+                "runtimeHandle": {"threadId": "thread-1"}
             }
         }))
         .await

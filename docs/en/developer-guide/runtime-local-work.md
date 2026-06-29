@@ -31,6 +31,8 @@ $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 
 Codex tasks are discovered and controlled through the `codex app-server --stdio` JSON-RPC protocol. The executor stores the Wegent `localTaskId`, workspace, title, status, and real Codex `threadId` mapping in its local index so app-mode task creation can recover after a restart. The full transcript remains authoritative in the Codex app-server `thread/read` metadata plus the local rollout JSONL and is not synced to the central database.
 
+`localTaskId` is the Wegent-side local task identity, not the provider runtime's session id. When the frontend, Backend, and executor need to pass provider session identity, they must use the opaque `runtimeHandle`, such as a Codex `threadId`, Claude Code `sessionId`, or OpenCode `sessionId`, or an explicit `providerSessionId`. `runtime.tasks.transcript` must not treat `localTaskId` as a provider session id when there is no LocalTask index mapping and no `runtimeHandle`; optimistic tasks that are still being created should return an empty local transcript until create/link completes.
+
 ## List Refresh
 
 Wework requests the task list on startup, explicit refresh, or device-state changes. It no longer refreshes the list through a fixed polling interval.

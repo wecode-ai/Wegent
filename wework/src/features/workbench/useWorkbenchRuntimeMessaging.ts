@@ -21,7 +21,9 @@ import {
 import type {
   Attachment,
   ChatSendPayload,
+  LocalTaskSummary,
   ModelOptions,
+  RuntimeDeviceWorkspace,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
@@ -324,11 +326,32 @@ export function useWorkbenchRuntimeMessaging({
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
         localTaskId,
       }
+      const optimisticWorkspacePath =
+        ('workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined) ??
+        selectedProjectWorkspace?.workspacePath
+      const optimisticWorkspace =
+        optimisticWorkspacePath && optimisticDeviceId
+          ? buildOptimisticRuntimeWorkspace({
+              baseWorkspace: selectedProjectWorkspace,
+              devices: state.devices,
+              deviceId: optimisticDeviceId,
+              workspacePath: optimisticWorkspacePath,
+              projectId,
+            })
+          : null
       const runtimeProject = projectId
         ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
         : null
 
       if (optimisticAddress.deviceId) rememberExecutionDevice(optimisticAddress.deviceId)
+      debugRuntimeCreateFlow('create-optimistic-open', {
+        localTaskId,
+        runtime,
+        projectId,
+        optimisticAddress: runtimeAddressLog(optimisticAddress),
+        hasSelectedProjectWorkspace: Boolean(selectedProjectWorkspace),
+        optimisticWorkspacePath: optimisticWorkspacePath ?? null,
+      })
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
       attachmentSelection.resetAttachments()
@@ -343,14 +366,55 @@ export function useWorkbenchRuntimeMessaging({
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
           localTaskId: response.localTaskId || optimisticAddress.localTaskId,
         }
+        debugRuntimeCreateFlow('create-resolved', {
+          localTaskId,
+          runtime,
+          projectId,
+          accepted: response.accepted,
+          optimisticAddress: runtimeAddressLog(optimisticAddress),
+          resolvedAddress: runtimeAddressLog(address),
+          sameIdentity: isSameRuntimeTaskIdentity(optimisticAddress, address),
+          responseHasWorkspacePath: Boolean(response.workspacePath),
+          responseHasLocalTaskId: Boolean(response.localTaskId),
+        })
+        const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
+        if (resolvedWorkspacePath) {
+          dispatch({
+            type: 'runtime_task_optimistic_upserted',
+            project: runtimeProject,
+            workspace: buildOptimisticRuntimeWorkspace({
+              baseWorkspace: optimisticWorkspace,
+              devices: state.devices,
+              deviceId: address.deviceId,
+              workspacePath: resolvedWorkspacePath,
+              projectId,
+            }),
+            task: buildOptimisticRuntimeTask({
+              localTaskId: address.localTaskId,
+              workspacePath: resolvedWorkspacePath,
+              title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
+              runtime,
+            }),
+          })
+        }
         if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {
           if (address.deviceId) rememberExecutionDevice(address.deviceId)
+          debugRuntimeCreateFlow('create-final-open', {
+            localTaskId,
+            runtime,
+            previousAddress: runtimeAddressLog(optimisticAddress),
+            finalAddress: runtimeAddressLog(address),
+          })
+          options?.onRuntimeTaskOptimisticOpen?.(address, {
+            previousAddress: optimisticAddress,
+          })
           runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
         }
         await refreshWorkLists()
         runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
         return address
       } catch (error) {
+        dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
         if (runtimeTasks.isCurrentRuntimeTask(optimisticAddress)) {
           runtimeTasks.clearCurrentRuntimeTaskView()
         }
@@ -371,6 +435,7 @@ export function useWorkbenchRuntimeMessaging({
       reportSendBlocked,
       runtimeTasks,
       state.currentProject,
+      state.devices,
       state.projects,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
@@ -695,4 +760,78 @@ export function useWorkbenchRuntimeMessaging({
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
   }
+}
+
+function buildOptimisticRuntimeWorkspace({
+  baseWorkspace,
+  devices,
+  deviceId,
+  workspacePath,
+  projectId,
+}: {
+  baseWorkspace?: RuntimeDeviceWorkspace | null
+  devices: WorkbenchState['devices']
+  deviceId: string
+  workspacePath: string
+  projectId: number | null
+}): RuntimeDeviceWorkspace {
+  const device = findWorkbenchDevice(devices, deviceId)
+  return {
+    ...baseWorkspace,
+    projectId: projectId ?? baseWorkspace?.projectId,
+    deviceId,
+    deviceName: device?.name ?? baseWorkspace?.deviceName ?? deviceId,
+    deviceStatus: device?.status ?? baseWorkspace?.deviceStatus ?? null,
+    workspacePath,
+    workspaceKind: baseWorkspace?.workspaceKind ?? (projectId ? 'workspace' : 'chat'),
+    mapped: baseWorkspace?.mapped ?? Boolean(projectId),
+    available: baseWorkspace?.available ?? (device ? device.status !== 'offline' : true),
+    localTasks: [],
+  }
+}
+
+function buildOptimisticRuntimeTask({
+  localTaskId,
+  workspacePath,
+  title,
+  runtime,
+}: {
+  localTaskId: string
+  workspacePath: string
+  title: string
+  runtime: LocalTaskSummary['runtime']
+}): LocalTaskSummary {
+  const now = new Date().toISOString()
+  return {
+    localTaskId,
+    workspacePath,
+    title,
+    runtime,
+    createdAt: now,
+    updatedAt: now,
+    running: true,
+    status: 'creating',
+  }
+}
+
+function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {
+  return {
+    deviceId: address.deviceId,
+    localTaskId: address.localTaskId,
+    workspacePath: address.workspacePath ?? null,
+    hasRuntimeHandle: Boolean(address.runtimeHandle),
+    runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
+  }
+}
+
+function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>) {
+  if (!isRuntimeDebugEnabled()) return
+  console.debug('[Wework] Runtime create flow', {
+    event,
+    ...details,
+  })
+}
+
+function isRuntimeDebugEnabled(): boolean {
+  return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
 }

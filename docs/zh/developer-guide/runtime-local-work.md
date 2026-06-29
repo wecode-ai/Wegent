@@ -31,6 +31,8 @@ $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 
 Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制。executor 会在本地索引中保存 Wegent 侧 `localTaskId`、工作区、标题、状态以及真实 Codex `threadId` 的关联，便于 app 模式创建任务后重启仍能恢复映射；完整 transcript 仍以 Codex app-server `thread/read` 返回的会话 metadata 和本机 rollout JSONL 为准，不同步到中心数据库。
 
+`localTaskId` 是 Wegent 侧本地任务身份，不等同于底层 runtime 的 provider 会话 id。前端、Backend 和 executor 需要传递 provider 会话定位信息时必须使用 opaque `runtimeHandle`，例如 Codex `threadId`、Claude Code `sessionId` 或 OpenCode `sessionId`，也可以使用明确的 `providerSessionId`。`runtime.tasks.transcript` 不能在缺少 LocalTask 索引映射或 `runtimeHandle` 时把 `localTaskId` 当成 provider 会话 id 读取；这种仍在创建中的 optimistic 任务应先返回空本地 transcript，等待 create/link 完成后再读取真实运行时会话。
+
 ## 列表刷新
 
 任务列表由 Wework 在启动、显式刷新或设备状态变化时请求，不再由固定 interval 轮询触发。

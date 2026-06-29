@@ -62,6 +62,11 @@ const LOCAL_DEVICE_ID = 'local-device'
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
+
+function isRuntimeDebugEnabled(): boolean {
+  return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
+}
+
 const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
@@ -203,6 +208,28 @@ function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unk
     localTaskId: stringValue(value.localTaskId) ?? stringValue(address.localTaskId),
     workspacePath: stringValue(value.workspacePath) ?? stringValue(address.workspacePath),
   }
+}
+
+function runtimeHandleDebug(value: Record<string, unknown>): Record<string, unknown> {
+  const handle = recordValue(value.runtimeHandle ?? value.runtime_handle)
+  return {
+    present: Object.keys(handle).length > 0,
+    keys: Object.keys(handle).sort(),
+    hasSessionId: Boolean(
+      stringValue(handle.sessionId) ??
+      stringValue(handle.session_id) ??
+      stringValue(handle.threadId) ??
+      stringValue(handle.thread_id) ??
+      stringValue(handle.conversationId) ??
+      stringValue(handle.conversation_id)
+    ),
+  }
+}
+
+function runtimeTranscriptMessageCount(response: unknown): number | null {
+  const responseRecord = recordValue(response)
+  const messages = responseRecord.messages
+  return Array.isArray(messages) ? messages.length : null
 }
 
 function workspaceLabel(workspacePath: string, label: unknown): string {
@@ -868,8 +895,23 @@ function createRuntimeWorkApi(
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
     const startedAt = nowMs()
+    const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
-      return await request<TResponse>(method, normalizedData)
+      if (debugTranscript) {
+        console.debug('[Wework] Local runtime IPC transcript request', {
+          address: runtimeAddressDebug(normalizedData),
+          runtimeHandle: runtimeHandleDebug(normalizedData),
+        })
+      }
+      const response = await request<TResponse>(method, normalizedData)
+      if (debugTranscript) {
+        console.debug('[Wework] Local runtime IPC transcript response', {
+          address: runtimeAddressDebug(normalizedData),
+          elapsedMs: Math.round(nowMs() - startedAt),
+          messageCount: runtimeTranscriptMessageCount(response),
+        })
+      }
+      return response
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
         console.error('[Wework] Local runtime IPC transcript failed', {

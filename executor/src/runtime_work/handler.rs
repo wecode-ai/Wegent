@@ -250,18 +250,19 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
         let local_link = self.local_task_link(&local_task_id);
-        let thread_id = self.thread_id_for_local_task(&local_task_id);
-        let running_hint = local_link.as_ref().is_some_and(|link| link.running);
-        if local_link
+        let session_id = local_link
             .as_ref()
-            .is_some_and(|link| link.runtime != "codex" || link.thread_id.is_none())
-        {
-            let link = local_link.expect("local link was checked");
-            let messages = cached_messages(&link);
+            .and_then(runtime_session_id_from_link)
+            .or_else(|| runtime_session_id_from_payload(&payload));
+        let running_hint = local_link.as_ref().is_some_and(|link| link.running);
+        if let Some(link) = local_link.as_ref().filter(|link| {
+            !runtime_has_provider_transcript_reader(&link.runtime) || session_id.is_none()
+        }) {
+            let messages = cached_messages(link);
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
-                thread_id: &thread_id,
+                thread_id: session_id.as_deref().unwrap_or(""),
                 source: "runtime_handle",
                 refresh,
                 running_hint,
@@ -272,13 +273,40 @@ impl RuntimeWorkRpcHandler {
                 running: link.running,
             });
             return Ok(cached_transcript_response(
-                &link,
+                link,
                 messages,
                 limit,
                 before_cursor.as_deref(),
                 after_cursor.as_deref(),
             ));
         }
+
+        let Some(thread_id) = session_id else {
+            let workspace_path = workspace_path(&payload).unwrap_or_default();
+            let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "runtime".to_owned());
+            log_runtime_transcript_finished(RuntimeTranscriptLog {
+                started_at,
+                local_task_id: &local_task_id,
+                thread_id: "",
+                source: "pending_local_task",
+                refresh,
+                running_hint,
+                limit,
+                before_cursor: before_cursor.as_deref(),
+                after_cursor: after_cursor.as_deref(),
+                message_count: 0,
+                running: false,
+            });
+            return Ok(transcript_response(
+                &local_task_id,
+                workspace_path,
+                runtime,
+                Vec::new(),
+                limit,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            ));
+        };
 
         if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
             let messages = local_link
@@ -1300,12 +1328,6 @@ impl RuntimeWorkRpcHandler {
         self.store.find_by_thread_id(thread_id)
     }
 
-    fn thread_id_for_local_task(&self, local_task_id: &str) -> String {
-        self.local_task_link(local_task_id)
-            .and_then(|link| link.thread_id)
-            .unwrap_or_else(|| local_task_id.to_owned())
-    }
-
     fn upsert_local_task(&self, link: RuntimeTaskLink) {
         self.store.upsert_task(link);
         self.thread_list_cache.invalidate();
@@ -1800,6 +1822,34 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
     Value::Object(object)
 }
 
+fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    link.thread_id
+        .clone()
+        .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
+}
+
+fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
+    payload
+        .get("runtimeHandle")
+        .or_else(|| payload.get("runtime_handle"))
+        .and_then(runtime_session_id_from_handle)
+        .or_else(|| string_field(payload, "providerSessionId"))
+        .or_else(|| string_field(payload, "provider_session_id"))
+}
+
+fn runtime_session_id_from_handle(handle: &Value) -> Option<String> {
+    string_field(handle, "sessionId")
+        .or_else(|| string_field(handle, "session_id"))
+        .or_else(|| string_field(handle, "threadId"))
+        .or_else(|| string_field(handle, "thread_id"))
+        .or_else(|| string_field(handle, "conversationId"))
+        .or_else(|| string_field(handle, "conversation_id"))
+}
+
+fn runtime_has_provider_transcript_reader(runtime: &str) -> bool {
+    runtime.trim().eq_ignore_ascii_case("codex")
+}
+
 fn source_parent_json(source: &super::fork_transfer::SourceTaskIdentity) -> Value {
     let mut parent = Map::new();
     if let Some(device_id) = &source.device_id {
@@ -2063,6 +2113,59 @@ mod tests {
             .expect("cached transcript should return");
 
         assert_eq!(result["localTaskId"], "local-task-1");
+        assert_eq!(result["messages"][0]["content"], "cached");
+    }
+
+    #[tokio::test]
+    async fn transcript_without_runtime_link_returns_empty_local_transcript() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "localTaskId": "optimistic-local-task",
+                    "workspacePath": "/tmp/project"
+                }
+            }))
+            .await
+            .expect("missing runtime link should not read provider session");
+
+        assert_eq!(result["success"], true);
+        assert_eq!(result["localTaskId"], "optimistic-local-task");
+        assert_eq!(result["workspacePath"], "/tmp/project");
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn transcript_uses_explicit_runtime_handle_session_without_rewriting_local_task_id() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.transcript_cache.insert(
+            "provider-session-1",
+            CachedTranscript::new(
+                "/tmp/project".to_owned(),
+                "codex".to_owned(),
+                vec![json!({"id":"assistant-1","role":"assistant","content":"cached"})],
+                false,
+                None,
+            ),
+        );
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.transcript",
+                "payload": {
+                    "localTaskId": "local-visible-task",
+                    "workspacePath": "/tmp/project",
+                    "runtimeHandle": {
+                        "threadId": "provider-session-1"
+                    }
+                }
+            }))
+            .await
+            .expect("explicit runtime handle should read cached provider session");
+
+        assert_eq!(result["localTaskId"], "local-visible-task");
         assert_eq!(result["messages"][0]["content"], "cached");
     }
 
