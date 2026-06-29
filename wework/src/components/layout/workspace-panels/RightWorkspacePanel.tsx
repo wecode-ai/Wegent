@@ -290,7 +290,7 @@ function RightWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active
           ? 'bg-muted text-text-primary'
           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -309,7 +309,7 @@ function RightWorkspaceTitleTab({
           event.stopPropagation()
           onClose()
         }}
-        className="pointer-events-none ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted text-text-secondary opacity-0 transition-colors hover:border-text-muted hover:bg-hover hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
+        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
         aria-label={t('workbench.close_right_workspace_panel')}
       >
         <X className="h-3 w-3" />
