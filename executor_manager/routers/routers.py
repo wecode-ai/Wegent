@@ -1601,11 +1601,3 @@ async def restore_executor_workspace(
 
 # Mount api_router to app
 app.include_router(api_router)
-
-# Load wecode route extensions if available
-try:
-    from executor_manager.wecode.routers import register as _register_wecode_routes
-
-    _register_wecode_routes(api_router)
-except ImportError:
-    pass
