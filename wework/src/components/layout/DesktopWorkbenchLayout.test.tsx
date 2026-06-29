@@ -3172,14 +3172,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
+      'absolute',
+      'right-1',
       'rounded-full',
-      'border',
-      'bg-muted',
       'opacity-0',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
@@ -3320,14 +3321,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
+      'absolute',
+      'right-1',
       'rounded-full',
-      'border',
-      'bg-muted',
       'opacity-0',
+      'hover:bg-black/70',
+      'hover:text-white',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
     )
-    expect(closeButton).toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
     expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)

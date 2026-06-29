@@ -99,7 +99,7 @@ export function BottomWorkspacePanel({
     <section
       data-testid={testId('bottom-workspace-panel')}
       className={cn(
-        'relative flex shrink-0 flex-col overflow-hidden bg-background transition-[height,opacity,transform] duration-300 ease-out',
+        'relative flex shrink-0 flex-col overflow-hidden rounded-t-xl bg-background transition-[height,opacity,transform] duration-300 ease-out',
         open
           ? 'pointer-events-auto translate-y-0 border-t border-border opacity-100'
           : 'pointer-events-none translate-y-3 border-t border-transparent opacity-0'
@@ -208,9 +208,9 @@ function BottomWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-md py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active
-          ? 'border border-border bg-white text-text-primary shadow-sm after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary'
+          ? 'border border-border bg-white text-text-primary shadow-sm'
           : 'border border-transparent text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
       )}
     >
@@ -226,7 +226,7 @@ function BottomWorkspaceTitleTab({
           event.stopPropagation()
           onClose()
         }}
-        className="ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
         aria-label={t('workbench.close_terminal', '关闭终端')}
       >
         <X className="h-3 w-3" />
