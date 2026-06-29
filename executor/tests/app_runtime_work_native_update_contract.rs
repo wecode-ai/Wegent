@@ -129,7 +129,7 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
 }
 
 #[tokio::test]
-async fn runtime_task_list_preserves_local_running_state_when_native_thread_is_idle() {
+async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-running-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -198,7 +198,8 @@ async fn runtime_task_list_preserves_local_running_state_when_native_thread_is_i
         .unwrap();
 
     assert_eq!(locally_running["title"], "Locally running idle");
-    assert_eq!(locally_running["running"], true);
+    assert_eq!(locally_running["status"], "active");
+    assert_eq!(locally_running["running"], false);
 }
 
 #[tokio::test]

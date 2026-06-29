@@ -578,6 +578,130 @@ async fn runtime_task_list_ignores_stale_cached_codex_store_entries() {
     assert_eq!(listed, json!({"success": true, "workspaces": []}));
 }
 
+#[tokio::test]
+async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_thread_exists() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-pending-shadow-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-pending-shadow-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let threads = json!([
+        {
+            "id": "thread-real",
+            "cwd": "/repo/Wegent",
+            "name": "Fix cloud connection state",
+            "preview": "Fix cloud connection state",
+            "path": "/tmp/codex/thread-real.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-pending-shadow-log", "jsonl"), &threads);
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                "local-pending": {
+                    "local_task_id": "local-pending",
+                    "thread_id": null,
+                    "workspace_path": "/repo/Wegent",
+                    "title": "Fix cloud connection state",
+                    "runtime": "codex",
+                    "status": "running",
+                    "running": true,
+                    "created_at": 4102444800000_i64,
+                    "updated_at": 4102444800000_i64,
+                    "runtime_handle": {},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["localTaskId"], "thread-real");
+    assert_eq!(tasks[0]["running"], false);
+}
+
+#[tokio::test]
+async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-stale-pending-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-stale-pending-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let fake_codex = write_fake_codex_empty(&temp_path("runtime-stale-pending-log", "jsonl"));
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                "unmapped-pending": {
+                    "local_task_id": "unmapped-pending",
+                    "thread_id": null,
+                    "workspace_path": "/repo/Wegent",
+                    "title": "Unmapped pending task",
+                    "runtime": "codex",
+                    "status": "running",
+                    "running": true,
+                    "created_at": 4102444800000_i64,
+                    "updated_at": 4102444800000_i64,
+                    "runtime_handle": {},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["localTaskId"], "unmapped-pending");
+    assert_eq!(tasks[0]["status"], "active");
+    assert_eq!(tasks[0]["running"], false);
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
     write_fake_codex_with_threads(
         log_path,
