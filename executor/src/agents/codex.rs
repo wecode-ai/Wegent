@@ -340,6 +340,16 @@ pub async fn run_codex_app_server_turn(
             .to_owned();
         thread_fields.push(("thread_id", thread_id.clone()));
         log_executor_event("codex thread request finished", &thread_fields);
+        if let Some(sender) = &notifications {
+            let _ = sender.send(json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": thread_id.clone()
+                    }
+                }
+            }));
+        }
 
         let turn_input = turn_input(&request.prompt);
         let mut turn_fields = task_fields(request.task_id, request.subtask_id);

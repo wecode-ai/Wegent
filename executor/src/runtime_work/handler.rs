@@ -599,10 +599,6 @@ impl RuntimeWorkRpcHandler {
                 "code": "bad_request",
             }));
         }
-        let thread_id = existing_link
-            .as_ref()
-            .and_then(|link| link.thread_id.clone())
-            .unwrap_or_else(|| local_task_id.clone());
         let workspace_path = workspace_path(&payload)
             .or_else(|| {
                 existing_link
@@ -620,6 +616,19 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
+            existing_link
+                .as_ref()
+                .and_then(runtime_session_id_from_link)
+        }) else {
+            return Ok(json!({
+                "success": false,
+                "error": "runtime task session is not ready",
+                "code": "missing_runtime_session",
+                "localTaskId": local_task_id,
+                "runtime": "codex",
+            }));
+        };
 
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -1869,12 +1878,23 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
 }
 
 fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
+    let address = payload.get("address");
     payload
         .get("runtimeHandle")
         .or_else(|| payload.get("runtime_handle"))
         .and_then(runtime_session_id_from_handle)
+        .or_else(|| {
+            address.and_then(|address| {
+                address
+                    .get("runtimeHandle")
+                    .or_else(|| address.get("runtime_handle"))
+                    .and_then(runtime_session_id_from_handle)
+            })
+        })
         .or_else(|| string_field(payload, "providerSessionId"))
         .or_else(|| string_field(payload, "provider_session_id"))
+        .or_else(|| address.and_then(|address| string_field(address, "providerSessionId")))
+        .or_else(|| address.and_then(|address| string_field(address, "provider_session_id")))
 }
 
 fn runtime_session_id_from_handle(handle: &Value) -> Option<String> {

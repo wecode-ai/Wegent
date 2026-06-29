@@ -100,11 +100,7 @@ export function isSameRuntimeTaskAddress(
 
 function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
   return workspaces.flatMap(workspace =>
-    workspace.localTasks.map(task => ({
-      deviceId: workspace.deviceId,
-      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-      localTaskId: task.localTaskId,
-    }))
+    workspace.localTasks.map(task => runtimeTaskAddressFromWorkspace(workspace, task))
   )
 }
 
@@ -116,6 +112,18 @@ export function getRuntimeTaskWorkspacePath(
     return workspace.workspacePath
   }
   return task.workspacePath || workspace.workspacePath
+}
+
+function runtimeTaskAddressFromWorkspace(
+  workspace: RuntimeDeviceWorkspace,
+  task: LocalTaskSummary
+): RuntimeTaskAddress {
+  return {
+    deviceId: workspace.deviceId,
+    workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+    localTaskId: task.localTaskId,
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
+  }
 }
 
 export function projectTaskAddresses(

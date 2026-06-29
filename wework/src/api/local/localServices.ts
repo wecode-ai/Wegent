@@ -261,6 +261,7 @@ function normalizeRuntimeTaskSummary(
   const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
   const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
+  const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
 
   const normalized = {
     ...taskRecord,
@@ -273,6 +274,7 @@ function normalizeRuntimeTaskSummary(
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
+    ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
   }
 
   return normalized as LocalTaskSummary
@@ -368,25 +370,24 @@ function localRuntimeAttachments(
   subtaskId: number
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
-  return attachments
-    .map(attachment => {
-      const localPath = stringValue(attachment.local_path)
-      if (!localPath) return null
+  return attachments.flatMap(attachment => {
+    const localPath = stringValue(attachment.local_path)
+    if (!localPath) return []
 
-      return {
-        id: attachment.id,
-        filename: attachment.filename,
-        original_filename: attachment.filename,
-        file_size: attachment.file_size,
-        mime_type: attachment.mime_type,
-        subtask_id: attachment.subtask_id ?? subtaskId,
-        file_extension: attachment.file_extension,
-        local_path: localPath,
-        local_preview_url: attachment.local_preview_url ?? localPath,
-        ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
-      }
-    })
-    .filter((attachment): attachment is Record<string, unknown> => attachment !== null)
+    const payload: Record<string, unknown> = {
+      id: attachment.id,
+      filename: attachment.filename,
+      original_filename: attachment.filename,
+      file_size: attachment.file_size,
+      mime_type: attachment.mime_type,
+      subtask_id: attachment.subtask_id ?? subtaskId,
+      file_extension: attachment.file_extension,
+      local_path: localPath,
+      local_preview_url: attachment.local_preview_url ?? localPath,
+      ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+    }
+    return [payload]
+  })
 }
 
 function skillName(skill: unknown): string | null {

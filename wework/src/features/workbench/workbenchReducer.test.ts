@@ -259,7 +259,7 @@ describe('workbenchReducer', () => {
     expect(refreshed.devices).toEqual([device])
   })
 
-  test('reconciles legacy local-device current task to the refreshed ready device id', () => {
+  test('reconciles legacy local-device current task to the refreshed ready task address', () => {
     const state = {
       ...initialWorkbenchState,
       currentRuntimeTask: {
@@ -294,6 +294,9 @@ describe('workbenchReducer', () => {
                 workspacePath: '/Users/me/chat',
                 title: 'Chat',
                 runtime: 'codex',
+                runtimeHandle: {
+                  threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                },
               },
             ],
           },
@@ -305,6 +308,10 @@ describe('workbenchReducer', () => {
     expect(refreshed.currentRuntimeTask).toEqual({
       deviceId: 'device-uuid',
       localTaskId: 'task-1',
+      workspacePath: '/Users/me/chat',
+      runtimeHandle: {
+        threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+      },
     })
   })
 
