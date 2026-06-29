@@ -64,6 +64,7 @@ where
             {
                 let mut failed_fields = fields.clone();
                 failed_fields.push(("error_len", message.len().to_string()));
+                failed_fields.push(("error", truncate_for_log(&message)));
                 log_executor_event("response.created callback failed", &failed_fields);
                 return RunnerResult {
                     status: TaskStatus::Failed,
@@ -107,8 +108,20 @@ async fn run_in_background<E, S>(
         Ok(()) => log_executor_event("final callback sent", &outcome_fields),
         Err(message) => {
             outcome_fields.push(("error_len", message.len().to_string()));
+            outcome_fields.push(("error", truncate_for_log(&message)));
             log_executor_event("final callback failed", &outcome_fields);
         }
+    }
+}
+
+fn truncate_for_log(value: &str) -> String {
+    const LIMIT: usize = 500;
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(LIMIT).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
     }
 }
 

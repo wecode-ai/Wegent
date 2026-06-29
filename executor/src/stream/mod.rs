@@ -4,11 +4,35 @@
 
 use serde_json::Value;
 
-use crate::{agents::interactive_mcp::is_deferred_user_input_result, runner::ExecutionOutcome};
+use crate::{
+    agents::interactive_mcp::{
+        is_deferred_user_input_result, is_interactive_form_tool, DeferredToolUse,
+    },
+    runner::ExecutionOutcome,
+};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeStreamSummary {
+    pub outcome: ExecutionOutcome,
+    pub session_id: Option<String>,
+    pub deferred_tool_use: Option<DeferredToolUse>,
+    pub stop_reason: Option<String>,
+    pub usage: Value,
+    pub retryable_api_error: bool,
+}
 
 pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
+    collect_claude_stream_summary(output).outcome
+}
+
+pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut text = String::new();
     let mut terminal_outcome = None;
+    let mut session_id = None;
+    let mut deferred_tool_use = None;
+    let mut stop_reason = None;
+    let mut usage = Value::Null;
+    let mut retryable_api_error = false;
     for line in output
         .lines()
         .map(str::trim)
@@ -17,12 +41,42 @@ pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        retryable_api_error |= contains_retryable_api_error(line);
+        if let Some(value) = value.get("session_id").and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() {
+                session_id = Some(value.to_owned());
+            }
+        }
+        if value.get("type").and_then(Value::as_str) == Some("result") {
+            if let Some(reason) = value
+                .get("stop_reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                stop_reason = Some(reason.to_owned());
+            }
+            if let Some(value) = value.get("usage") {
+                usage = value.clone();
+            }
+            if let Some(tool_use) = extract_deferred_tool_use(&value) {
+                deferred_tool_use = Some(tool_use);
+            }
+        }
         if let Some(outcome) = extract_result_outcome(&value) {
             if matches!(
                 outcome,
                 ExecutionOutcome::Cancelled { .. } | ExecutionOutcome::WaitingForUserInput { .. }
             ) {
-                return outcome;
+                return ClaudeStreamSummary {
+                    outcome,
+                    session_id,
+                    deferred_tool_use,
+                    stop_reason,
+                    usage,
+                    retryable_api_error,
+                };
             }
             terminal_outcome = Some(outcome);
             continue;
@@ -36,7 +90,14 @@ pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
         }
     }
 
-    terminal_outcome.unwrap_or(ExecutionOutcome::Completed { content: text })
+    ClaudeStreamSummary {
+        outcome: terminal_outcome.unwrap_or(ExecutionOutcome::Completed { content: text }),
+        session_id,
+        deferred_tool_use,
+        stop_reason,
+        usage,
+        retryable_api_error,
+    }
 }
 
 pub fn extract_claude_session_id(output: &str) -> Option<String> {
@@ -114,9 +175,44 @@ fn result_stop_reason(value: &Value) -> String {
         .to_owned()
 }
 
+fn extract_deferred_tool_use(value: &Value) -> Option<DeferredToolUse> {
+    let stop_reason = value.get("stop_reason").and_then(Value::as_str)?;
+    if stop_reason != "tool_deferred" && stop_reason != "tool_deferred_unavailable" {
+        return None;
+    }
+    let raw = value
+        .get("deferred_tool_use")
+        .or_else(|| value.get("deferredToolUse"))?;
+    let name = raw.get("name").and_then(Value::as_str)?.to_owned();
+    if !is_interactive_form_tool(&name) {
+        return None;
+    }
+    let id = raw
+        .get("id")
+        .or_else(|| raw.get("tool_use_id"))
+        .or_else(|| raw.get("toolUseId"))
+        .and_then(Value::as_str)?
+        .to_owned();
+    let input = raw
+        .get("input")
+        .or_else(|| raw.get("arguments"))
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    Some(DeferredToolUse { id, name, input })
+}
+
 fn is_interruption_message(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value.contains("interrupted") || value.contains("cancelled") || value.contains("canceled")
+}
+
+fn contains_retryable_api_error(value: &str) -> bool {
+    [
+        "API Error: Cannot read properties of undefined",
+        "API Error: undefined is not an object",
+    ]
+    .iter()
+    .any(|pattern| value.contains(pattern))
 }
 
 fn extract_text(value: &Value) -> Option<String> {

@@ -449,7 +449,8 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
-            executor_name=subtask.executor_name,
+            executor_name=getattr(subtask, "executor_name", None),
+            executor_namespace=getattr(subtask, "executor_namespace", None),
         )
 
     @staticmethod

@@ -95,9 +95,9 @@ fn server_config_rejects_invalid_bind_host() {
 #[test]
 fn startup_log_line_includes_bound_address() {
     let bind_addr: SocketAddr = "127.0.0.1:10002".parse().unwrap();
+    let line = startup_log_line(bind_addr);
 
-    assert_eq!(
-        startup_log_line(bind_addr),
-        "Wegent executor listening on 127.0.0.1:10002"
-    );
+    assert_eq!(line.as_bytes()[4], b'-');
+    assert_eq!(line.as_bytes()[7], b'-');
+    assert!(line.ends_with(" listening on 127.0.0.1:10002"));
 }

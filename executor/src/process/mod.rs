@@ -7,17 +7,24 @@ use std::{
     time::Duration, time::Instant,
 };
 
+use serde_json::Value;
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 use crate::{
+    agents::interactive_mcp::{
+        deferred_proxy_exception_failure, deferred_proxy_response_decision,
+        proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
+    },
     claude_session,
-    logging::log_executor_event,
+    logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
-    stream::{collect_ndjson_outcome, extract_claude_session_id},
+    stream::collect_claude_stream_summary,
 };
 
 const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 300;
+const MAX_DEFERRED_MCP_RETRIES: usize = 2;
+const MAX_API_ERROR_RETRIES: usize = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -117,12 +124,19 @@ impl AgentEngine for StreamProcessEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let spec = self.spec.clone();
         Box::pin(async move {
-            match run_command_output(spec).await {
+            match run_command_output(spec.clone()).await {
                 CommandOutcome::Success { stdout } => {
-                    if let Some(session_id) = extract_claude_session_id(&stdout) {
+                    let summary = collect_claude_stream_summary(&stdout);
+                    if let Some(session_id) = &summary.session_id {
                         claude_session::save_session_id(&request, &session_id);
                     }
-                    collect_ndjson_outcome(&stdout)
+                    let summary =
+                        handle_retryable_api_errors(spec.clone(), &request, summary).await;
+                    if summary.deferred_tool_use.is_some() {
+                        handle_deferred_mcp_loop(spec, request, summary).await
+                    } else {
+                        summary.outcome
+                    }
                 }
                 CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
                     message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
@@ -130,6 +144,228 @@ impl AgentEngine for StreamProcessEngine {
             }
         })
     }
+}
+
+async fn handle_retryable_api_errors(
+    base_spec: CommandSpec,
+    request: &ExecutionRequest,
+    mut summary: crate::stream::ClaudeStreamSummary,
+) -> crate::stream::ClaudeStreamSummary {
+    let fields = task_fields(request.task_id, request.subtask_id);
+    let mut retry_count = 0;
+    while summary.retryable_api_error && retry_count < MAX_API_ERROR_RETRIES {
+        let Some(session_id) = summary.session_id.clone() else {
+            return summary;
+        };
+        retry_count += 1;
+        let mut retry_fields = fields.clone();
+        retry_fields.push(("retry_count", retry_count.to_string()));
+        log_executor_event("claude api error retry started", &retry_fields);
+        let retry_spec = claude_follow_up_resume_spec(
+            &base_spec,
+            &session_id,
+            ClaudeFollowUpQuery::Prompt("Retry to proceed".to_owned()),
+        );
+        match run_command_output(retry_spec).await {
+            CommandOutcome::Success { stdout } => {
+                summary = collect_claude_stream_summary(&stdout);
+                if let Some(session_id) = &summary.session_id {
+                    claude_session::save_session_id(request, session_id);
+                }
+            }
+            CommandOutcome::Failure { stderr, stdout, .. } => {
+                return crate::stream::ClaudeStreamSummary {
+                    outcome: ExecutionOutcome::Failed {
+                        message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                    },
+                    session_id: Some(session_id),
+                    deferred_tool_use: None,
+                    stop_reason: None,
+                    usage: Value::Null,
+                    retryable_api_error: false,
+                };
+            }
+        }
+    }
+    summary
+}
+
+async fn handle_deferred_mcp_loop(
+    base_spec: CommandSpec,
+    request: ExecutionRequest,
+    mut summary: crate::stream::ClaudeStreamSummary,
+) -> ExecutionOutcome {
+    let mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
+    let mut retry_count = 0;
+    let mut stale_answer_defer_drained = false;
+    let fields = task_fields(request.task_id, request.subtask_id);
+
+    loop {
+        let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
+            return summary.outcome;
+        };
+        if !stale_answer_defer_drained
+            && answered_interactive_form_tool_use_id(&request)
+                .is_some_and(|tool_use_id| tool_use_id == deferred_tool_use.id)
+        {
+            stale_answer_defer_drained = true;
+            log_executor_event("draining stale answered interactive form defer", &fields);
+            match run_command_output(base_spec.clone()).await {
+                CommandOutcome::Success { stdout } => {
+                    summary = collect_claude_stream_summary(&stdout);
+                    if let Some(session_id) = &summary.session_id {
+                        claude_session::save_session_id(&request, session_id);
+                    }
+                    continue;
+                }
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    return ExecutionOutcome::Failed {
+                        message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                    }
+                }
+            }
+        }
+        log_executor_event("deferred mcp proxy started", &fields);
+        let proxy_result = match proxy_deferred_mcp_tool(&deferred_tool_use, &mcp_servers).await {
+            Ok(proxy_result) => proxy_result,
+            Err(error) => {
+                let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
+                let mut failed_fields = fields.clone();
+                failed_fields.push(("error_len", error.len().to_string()));
+                log_executor_event("deferred mcp proxy failed", &failed_fields);
+                return ExecutionOutcome::Failed {
+                    message: decision
+                        .user_error
+                        .unwrap_or_else(|| "交互式表单生成失败".to_owned()),
+                };
+            }
+        };
+        let decision = deferred_proxy_response_decision(
+            &proxy_result,
+            summary.stop_reason.as_deref().unwrap_or("tool_deferred"),
+            summary.usage.clone(),
+            retry_count,
+            MAX_DEFERRED_MCP_RETRIES,
+        );
+        match decision.action {
+            DeferredMcpResponseAction::CompleteWaitingForUser => {
+                log_executor_event("deferred mcp proxy waiting for user", &fields);
+                return ExecutionOutcome::WaitingForUserInput {
+                    stop_reason: decision
+                        .done
+                        .as_ref()
+                        .map(|done| done.stop_reason.clone())
+                        .unwrap_or_else(|| "tool_deferred".to_owned()),
+                };
+            }
+            DeferredMcpResponseAction::Fail => {
+                log_executor_event("deferred mcp proxy invalid form", &fields);
+                return ExecutionOutcome::Failed {
+                    message: decision
+                        .user_error
+                        .unwrap_or_else(|| "模型给出的表单格式不对".to_owned()),
+                };
+            }
+            DeferredMcpResponseAction::Retry => {
+                let Some(retry_query) = decision.retry_query else {
+                    return ExecutionOutcome::Failed {
+                        message: "模型给出的表单格式不对".to_owned(),
+                    };
+                };
+                let Some(session_id) = summary.session_id.clone() else {
+                    return ExecutionOutcome::Failed {
+                        message: "模型给出的表单格式不对".to_owned(),
+                    };
+                };
+                retry_count += 1;
+                log_executor_event("deferred mcp retry started", &fields);
+                let retry_spec = claude_follow_up_resume_spec(
+                    &base_spec,
+                    &session_id,
+                    ClaudeFollowUpQuery::ToolResult(retry_query),
+                );
+                match run_command_output(retry_spec).await {
+                    CommandOutcome::Success { stdout } => {
+                        summary = collect_claude_stream_summary(&stdout);
+                        if let Some(session_id) = &summary.session_id {
+                            claude_session::save_session_id(&request, session_id);
+                        }
+                        if summary.deferred_tool_use.is_none() {
+                            return summary.outcome;
+                        }
+                    }
+                    CommandOutcome::Failure { stderr, stdout, .. } => {
+                        return ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn answered_interactive_form_tool_use_id(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("interactive_form_answer")?
+        .get("tool_use_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn claude_follow_up_resume_spec(
+    base_spec: &CommandSpec,
+    session_id: &str,
+    query: ClaudeFollowUpQuery,
+) -> CommandSpec {
+    let mut spec = CommandSpec::new(base_spec.program.clone());
+    spec.env = base_spec.env.clone();
+    spec.cwd = base_spec.cwd.clone();
+    let mut skip_next = false;
+    for arg in &base_spec.args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--print" || arg == "--resume" || arg == "--input-format" {
+            skip_next = true;
+            continue;
+        }
+        spec.args.push(arg.clone());
+    }
+    spec.args.push("--resume".to_owned());
+    spec.args.push(session_id.to_owned());
+    match query {
+        ClaudeFollowUpQuery::Prompt(prompt) => {
+            spec.args.push("-p".to_owned());
+            spec.args.push(prompt);
+        }
+        ClaudeFollowUpQuery::ToolResult(value) => {
+            spec.args.push("--input-format".to_owned());
+            spec.args.push("stream-json".to_owned());
+            spec.stdin = Some(format!("{value}\n"));
+        }
+    }
+    spec
+}
+
+fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
+    if let Some(path) = spec.env.get("WEGENT_MCP_CONFIG_PATH") {
+        return read_json_file(path);
+    }
+    spec.args
+        .windows(2)
+        .find_map(|window| (window[0] == "--mcp-config").then(|| read_json_file(&window[1])))
+        .flatten()
+}
+
+fn read_json_file(path: &str) -> Option<Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
 }
 
 async fn run_command(spec: CommandSpec) -> ExecutionOutcome {

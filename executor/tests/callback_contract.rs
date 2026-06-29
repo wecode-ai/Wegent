@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use axum::{routing::post, Json, Router};
+use axum::{http::StatusCode, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use wegent_executor::{callback::CallbackSink, emitter::EventEnvelope, runner::EventSink};
@@ -44,6 +44,25 @@ async fn callback_sink_skips_empty_url() {
     let sink = CallbackSink::new("").unwrap();
 
     sink.send(sample_event()).await.unwrap();
+}
+
+#[tokio::test]
+async fn callback_sink_returns_status_and_url_for_non_success_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/callback", listener.local_addr().unwrap());
+    let app = Router::new().route(
+        "/callback",
+        post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "backend unavailable") }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let sink = CallbackSink::new(url.clone()).unwrap();
+    let error = sink.send(sample_event()).await.unwrap_err();
+
+    assert!(error.contains("status=500"));
+    assert!(error.contains(&url));
 }
 
 fn sample_event() -> EventEnvelope {

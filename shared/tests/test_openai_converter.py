@@ -95,6 +95,23 @@ def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
     assert converted.skip_git_clone is True
 
 
+def test_round_trip_preserves_executor_identity():
+    request = ExecutionRequest(
+        executor_name="wegent-task-user7-pod7",
+        executor_namespace="default",
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["executor_name"] == request.executor_name
+    assert (
+        openai_request["metadata"]["executor_namespace"] == request.executor_namespace
+    )
+    assert converted.executor_name == request.executor_name
+    assert converted.executor_namespace == request.executor_namespace
+
+
 def test_round_trip_preserves_fork_runtime_and_inherited_sessions():
     request = ExecutionRequest(
         fork_runtime={

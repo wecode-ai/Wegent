@@ -24,6 +24,7 @@ use tokio::{
 };
 
 use crate::{
+    agents::runtime_capabilities,
     attachments::{process_prompt, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
@@ -993,6 +994,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .extend(global_mcp_config_overrides());
+    launch_config
+        .config_overrides
+        .extend(runtime_capabilities::request_mcp_config_overrides(request));
     launch_config
 }
 
