@@ -673,6 +673,93 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
+  test('persists unread dot when a runtime task finishes while the app is closed', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
+    const runningRuntimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalLocalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              localTasks: [
+                {
+                  localTaskId: 'codex-background',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Background task',
+                  runtime: 'codex' as const,
+                  running: true,
+                  updatedAt: '2026-06-20T03:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 1,
+    }
+    const completedRuntimeWork = {
+      ...runningRuntimeWork,
+      projects: [
+        {
+          ...runningRuntimeWork.projects[0],
+          deviceWorkspaces: [
+            {
+              ...runningRuntimeWork.projects[0].deviceWorkspaces[0],
+              localTasks: [
+                {
+                  ...runningRuntimeWork.projects[0].deviceWorkspaces[0].localTasks[0],
+                  running: false,
+                  updatedAt: '2026-06-20T03:02:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    const firstRender = renderSidebar({
+      runtimeWork: runningRuntimeWork,
+      onOpenRuntimeLocalTask,
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem('wework.desktop.sidebar.runningRuntimeTaskKeys.1')).toContain(
+        'codex-background'
+      )
+    })
+    firstRender.unmount()
+
+    renderSidebar({
+      runtimeWork: completedRuntimeWork,
+      onOpenRuntimeLocalTask,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    const unreadDot = screen.getByTestId('runtime-local-task-unread-dot-codex-background')
+    expect(unreadDot).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-time-codex-background')).toContainElement(
+      unreadDot
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-background'))
+
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('runtime-local-task-unread-dot-codex-background')
+      ).not.toBeInTheDocument()
+    })
+  })
+
   test('does not render online devices section and keeps all runtime tasks visible', async () => {
     renderSidebar({
       devices: [
