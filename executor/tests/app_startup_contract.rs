@@ -48,9 +48,10 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn docker_mode_plans_http_server_with_image_defaults() {
+fn default_startup_mode_plans_http_server_with_image_defaults() {
     let _lock = env_lock();
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _startup_mode = EnvGuard::remove("EXECUTOR_STARTUP_MODE");
+    let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _port = EnvGuard::set("PORT", "10088");
     let _host = EnvGuard::remove("HOST");
 
@@ -59,7 +60,7 @@ fn docker_mode_plans_http_server_with_image_defaults() {
 
     assert_eq!(
         plan,
-        StartupPlan::DockerServer {
+        StartupPlan::HttpServer {
             host: "0.0.0.0".to_owned(),
             port: 10088
         }
@@ -68,8 +69,9 @@ fn docker_mode_plans_http_server_with_image_defaults() {
 }
 
 #[test]
-fn local_mode_without_backend_plans_app_ipc_sidecar() {
+fn socket_startup_mode_without_backend_plans_app_ipc_sidecar() {
     let _lock = env_lock();
+    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "socket");
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
     let _device_id = EnvGuard::remove("DEVICE_ID");
@@ -80,7 +82,7 @@ fn local_mode_without_backend_plans_app_ipc_sidecar() {
     let plan = startup_plan(args).unwrap();
 
     match plan {
-        StartupPlan::LocalSidecar {
+        StartupPlan::SocketSidecar {
             backend_enabled,
             device_id,
         } => {
@@ -93,8 +95,9 @@ fn local_mode_without_backend_plans_app_ipc_sidecar() {
 }
 
 #[test]
-fn local_mode_with_backend_plans_sidecar_plus_backend_runner() {
+fn socket_startup_mode_with_backend_plans_sidecar_plus_backend_runner() {
     let _lock = env_lock();
+    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "socket");
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
@@ -106,11 +109,26 @@ fn local_mode_with_backend_plans_sidecar_plus_backend_runner() {
 
     assert_eq!(
         plan,
-        StartupPlan::LocalSidecar {
+        StartupPlan::SocketSidecar {
             backend_enabled: true,
             device_id: "device-1".to_owned()
         }
     );
+}
+
+#[test]
+fn invalid_startup_mode_fails_fast() {
+    let _lock = env_lock();
+    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "pipe");
+    let home = unique_home("invalid-startup-mode");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+
+    let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
+    let error = startup_plan(args).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("invalid EXECUTOR_STARTUP_MODE: pipe"));
 }
 
 #[tokio::test]

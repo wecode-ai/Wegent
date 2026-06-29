@@ -270,6 +270,7 @@ start_executor() {
     export WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects
     export WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats
     export WEGENT_EXECUTOR_HOME=/app/data/standalone-executor
+    export EXECUTOR_STARTUP_MODE=socket
     export DEVICE_SESSION_GATEWAY_ENABLED=false
 
     mkdir -p "$WEGENT_EXECUTOR_PROJECTS_DIR" "$WEGENT_EXECUTOR_CHATS_DIR" "$WEGENT_EXECUTOR_HOME"

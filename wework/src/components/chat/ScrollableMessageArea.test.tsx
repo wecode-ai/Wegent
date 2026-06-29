@@ -226,7 +226,7 @@ describe('ScrollableMessageArea', () => {
     const navigation = screen.getByTestId('message-turn-navigation')
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(navigation).toHaveAccessibleName('历史发言导航')
-    expect(navigation).toHaveStyle({ height: '21px' })
+    expect(Number.parseFloat(navigation.style.height)).toBeCloseTo(18.222)
     expect(markers).toHaveLength(2)
     expect(markers[0]).toHaveAccessibleName('跳转到第 1 条发言')
     expect(markers[1]).toHaveAccessibleName('跳转到第 2 条发言')
@@ -253,6 +253,60 @@ describe('ScrollableMessageArea', () => {
     fireEvent.blur(markers[0])
     expect(screen.getAllByText('第一条用户需求')).toHaveLength(2)
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
+  })
+
+  test('keeps message navigation marker spacing fixed when the rail overflows', () => {
+    const userMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `overflow-user-${index + 1}`,
+      role: 'user' as const,
+      content: `第 ${index + 1} 条用户需求`,
+      status: 'done' as const,
+      createdAt: `2026-05-29T00:00:${String(index).padStart(2, '0')}.000Z`,
+    }))
+
+    render(<ScrollableMessageArea messages={userMessages} />)
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 240,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 2200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 240)
+    userMessages.forEach((message, index) => {
+      mockRect(
+        screen.getByText(message.content).closest('[data-message-id]')!,
+        80 + index * 140,
+        128 + index * 140
+      )
+    })
+
+    fireEvent.resize(window)
+
+    const navigation = screen.getByTestId('message-turn-navigation')
+    const navigationRail = screen.getByTestId('message-turn-navigation-rail')
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    const markerRows = markers.map(marker => marker.parentElement!)
+    const markerTops = markerRows.map(row => Number.parseFloat(row.style.top))
+
+    expect(Number.parseFloat(navigation.style.height)).toBeCloseTo(120.444)
+    expect(navigation).toHaveStyle({ maxHeight: 'calc(100% - 48px)' })
+    expect(navigationRail).toHaveStyle({
+      overflowY: 'auto',
+    })
+    expect(markerTops[1] - markerTops[0]).toBeCloseTo(10.222)
+    expect(markerTops[markerTops.length - 1] - markerTops[markerTops.length - 2]).toBeCloseTo(
+      10.222
+    )
+    expect(Number.parseFloat(markerRows[0].style.height)).toBeCloseTo(10.222)
   })
 
   test('clicks a message navigation marker to jump to that user message', () => {

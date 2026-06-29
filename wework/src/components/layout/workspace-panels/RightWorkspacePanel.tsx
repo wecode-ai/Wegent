@@ -49,7 +49,7 @@ interface RightWorkspacePanelProps {
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
   onSelectReview: () => void
-  onSelectTerminal?: () => void
+  onSelectTerminal: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
@@ -100,6 +100,13 @@ export function RightWorkspacePanel({
     onCloseTab(tab)
   }
 
+  const getTabSelectHandler = (tab: RightWorkspacePanelTab): (() => void) => {
+    if (tab === 'review') return onSelectReview
+    if (tab === 'terminal') return onSelectTerminal ?? (() => {})
+    if (tab === 'browser') return onSelectBrowser
+    return onSelectFiles
+  }
+
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     {
       id: 'review',
@@ -109,17 +116,13 @@ export function RightWorkspacePanel({
       disabled: !canOpenReview,
       onSelect: onSelectReview,
     },
-    ...(onSelectTerminal
-      ? [
-          {
-            id: 'terminal',
-            testId: 'right-workspace-terminal-option',
-            icon: SquareTerminal,
-            label: t('workbench.terminal', '终端'),
-            onSelect: onSelectTerminal,
-          },
-        ]
-      : []),
+    {
+      id: 'terminal',
+      testId: 'right-workspace-terminal-option',
+      icon: SquareTerminal,
+      label: t('workbench.terminal', '终端'),
+      onSelect: onSelectTerminal,
+    },
     ...(!browserOpen
       ? [
           {
@@ -159,15 +162,7 @@ export function RightWorkspacePanel({
               label={getRightWorkspaceTabLabel(tab, t, visibleBrowserTitle)}
               icon={getRightWorkspaceTabIcon(tab)}
               iconSrc={tab === 'browser' ? visibleBrowserFaviconUrl : null}
-              onSelect={
-                tab === 'review'
-                  ? onSelectReview
-                  : tab === 'terminal'
-                    ? onSelectTerminal
-                    : tab === 'browser'
-                      ? onSelectBrowser
-                      : onSelectFiles
-              }
+              onSelect={getTabSelectHandler(tab)}
               onClose={() => closeTab(tab)}
             />
           ))}

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AlertCircle,
+  Check,
+  Copy,
   FileText,
   FolderOpen,
   MessageSquareText,
@@ -14,12 +16,20 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { ensureLocalExecutorStarted, type LocalExecutorStatus } from '@/tauri/localExecutor'
+import {
+  copyLocalExecutorDebugInfo,
+  ensureLocalExecutorStarted,
+  readLocalExecutorLog,
+  type LocalExecutorLog,
+  type LocalExecutorStatus,
+} from '@/tauri/localExecutor'
 
 const LOCAL_EXECUTOR_LOG_PATH = '~/.wegent-executor/logs/executor.log'
 const LOCAL_RUNTIME_ANIMATION_CYCLE_MS = 4800
+const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 
 type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
+type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
@@ -34,6 +44,18 @@ interface LocalRuntimeState {
 interface LocalRuntimeErrorText {
   notRunning: string
   notReady: string
+}
+
+interface LocalRuntimeDebugInfo {
+  capturedAt: string
+  runtimeMode: string
+  phase: LocalRuntimePhase
+  startupReady: boolean
+  minimumDelayElapsed: boolean
+  ensureCallState: string
+  error: string | null
+  log: LocalExecutorLog | null
+  logError: string | null
 }
 
 function shouldInitializeLocalRuntime(): boolean {
@@ -52,6 +74,10 @@ function localRuntimeError(
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : String(error || fallback)
+}
+
+function sanitizeLocalRuntimeDebugText(text: string): string {
+  return text.replace(/\btauri\b/gi, 'desktop app').replace(/\bsidecar\b/gi, 'executor process')
 }
 
 function localRuntimeMinimumReadyDelayMs(): number {
@@ -75,6 +101,59 @@ async function resolveLocalRuntimeState(
       error: errorMessage(error, fallbackError),
     }
   }
+}
+
+function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
+  const logPath = info.log?.path ?? LOCAL_EXECUTOR_LOG_PATH
+  const logContent = info.logError
+    ? `Failed to read executor log: ${info.logError}`
+    : info.log?.content || '(executor log is empty)'
+
+  const debugText = [
+    'Wework startup debug',
+    `Captured at: ${info.capturedAt}`,
+    `App mode: ${info.runtimeMode}`,
+    `Startup phase: ${info.phase}`,
+    `Startup ready: ${info.startupReady ? 'true' : 'false'}`,
+    `Minimum delay elapsed: ${info.minimumDelayElapsed ? 'true' : 'false'}`,
+    `Startup check: ${info.ensureCallState}`,
+    `Error: ${info.error ?? 'none'}`,
+    `Socket path: ${info.log?.socketPath ?? 'unknown'}`,
+    `Socket exists: ${info.log ? String(info.log.socketExists) : 'unknown'}`,
+    `Socket type: ${info.log?.socketFileType ?? 'unknown'}`,
+    `Socket connected: ${info.log ? String(info.log.socketConnected) : 'unknown'}`,
+    `Executor PID(s): ${info.log?.processPids.length ? info.log.processPids.join(', ') : 'none'}`,
+    `Executor process path(s): ${info.log?.processPaths.length ? info.log.processPaths.join(', ') : 'none'}`,
+    `Executor launch source: ${info.log?.sidecarSource ?? 'unknown'}`,
+    `Executor launch path: ${info.log?.sidecarPath ?? 'unknown'}`,
+    `Current working directory: ${info.log?.currentDir ?? 'unknown'}`,
+    `Executor home: ${info.log?.executorHome ?? 'unknown'}`,
+    `Backend URL: ${info.log?.backendUrl ?? 'none'}`,
+    `Backend auth token configured: ${info.log ? String(info.log.hasBackendAuthToken) : 'unknown'}`,
+    `Pending request count: ${info.log?.pendingRequestCount ?? 'unknown'}`,
+    `Local executor status: running=${info.log?.status.running ?? 'unknown'} ready=${info.log?.status.ready ?? 'unknown'} deviceId=${info.log?.status.deviceId ?? 'none'} version=${info.log?.status.version ?? 'none'} error=${info.log?.status.error ?? 'none'}`,
+    `Executor log path: ${logPath}`,
+    `Executor log truncated: ${info.log?.truncated ? 'true' : 'false'}`,
+    `Executor log lines: last ${info.log?.lineCount ?? 0}`,
+    '',
+    '--- Executor log ---',
+    logContent,
+  ].join('\n')
+
+  return sanitizeLocalRuntimeDebugText(debugText)
+}
+
+async function copyDebugInfoText(text: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+  } catch (error) {
+    console.warn('[Wework] Clipboard copy failed; retrying with native app copy.', error)
+  }
+
+  await copyLocalExecutorDebugInfo(text)
 }
 
 function WorkspaceSetupAnimation() {
@@ -148,6 +227,47 @@ function StartupStatusList() {
   )
 }
 
+interface SlowStartupHelpProps {
+  copyState: CopyDebugState
+  onCopyDebugInfo: () => void
+}
+
+function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
+  const { t } = useTranslation('localRuntime')
+  const copied = copyState === 'copied'
+  const copying = copyState === 'copying'
+  const failed = copyState === 'failed'
+  const buttonLabel = copied
+    ? t('copy_debug_copied')
+    : copying
+      ? t('copy_debug_copying')
+      : failed
+        ? t('copy_debug_failed')
+        : t('copy_debug')
+  const Icon = copied ? Check : Copy
+
+  return (
+    <div
+      data-testid="local-runtime-slow-startup-help"
+      className="mt-5 w-full max-w-[420px] rounded-lg border border-border bg-surface px-4 py-3 text-left"
+    >
+      <p className="text-sm font-medium text-text-primary">{t('slow_startup_title')}</p>
+      <p className="mt-1 text-xs leading-5 text-text-secondary">{t('slow_startup_description')}</p>
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-3 h-11 min-w-[150px]"
+        onClick={onCopyDebugInfo}
+        disabled={copying}
+        data-testid="local-runtime-copy-debug-button"
+      >
+        <Icon className="h-4 w-4" />
+        {buttonLabel}
+      </Button>
+    </div>
+  )
+}
+
 export function LocalRuntimeInitializer({
   children,
   startupReady = true,
@@ -157,6 +277,9 @@ export function LocalRuntimeInitializer({
   const fallbackError = t('fallback_error')
   const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
   const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
+  const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
+  const [startupAttempt, setStartupAttempt] = useState(0)
+  const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
   const runtimeErrorText = useMemo(
     () => ({
       notRunning: t('error_not_running'),
@@ -168,6 +291,17 @@ export function LocalRuntimeInitializer({
     phase: enabled ? 'starting' : 'ready',
     error: null,
   }))
+
+  useEffect(() => {
+    if (!enabled) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      setSlowStartupTimedOut(true)
+    }, LOCAL_RUNTIME_SLOW_STARTUP_MS)
+    return () => window.clearTimeout(timer)
+  }, [enabled, startupAttempt])
 
   useEffect(() => {
     if (minimumReadyDelayMs === 0) {
@@ -182,6 +316,9 @@ export function LocalRuntimeInitializer({
 
   const retryInitialize = useCallback(async () => {
     if (!enabled) return
+    setStartupAttempt(attempt => attempt + 1)
+    setSlowStartupTimedOut(false)
+    setCopyDebugState('idle')
     setState({ phase: 'starting', error: null })
     setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
   }, [enabled, fallbackError, runtimeErrorText])
@@ -198,6 +335,38 @@ export function LocalRuntimeInitializer({
       cancelled = true
     }
   }, [enabled, fallbackError, runtimeErrorText])
+
+  const handleCopyDebugInfo = useCallback(async () => {
+    setCopyDebugState('copying')
+    let log: LocalExecutorLog | null = null
+    let logError: string | null = null
+
+    try {
+      log = await readLocalExecutorLog()
+    } catch (error) {
+      logError = errorMessage(error, t('debug_log_read_failed'))
+    }
+
+    const debugInfo = formatLocalRuntimeDebugInfo({
+      capturedAt: new Date().toISOString(),
+      runtimeMode: getRuntimeConfig().runtimeMode,
+      phase: state.phase,
+      startupReady,
+      minimumDelayElapsed,
+      ensureCallState:
+        state.phase === 'starting' ? 'pending' : state.phase === 'failed' ? 'failed' : 'resolved',
+      error: state.error,
+      log,
+      logError,
+    })
+
+    try {
+      await copyDebugInfoText(debugInfo)
+      setCopyDebugState('copied')
+    } catch {
+      setCopyDebugState('failed')
+    }
+  }, [minimumDelayElapsed, startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase === 'ready'
   const canRevealChildren = canMountChildren && (!enabled || (startupReady && minimumDelayElapsed))
@@ -256,6 +425,10 @@ export function LocalRuntimeInitializer({
               </div>
             ) : (
               <StartupStatusList />
+            )}
+
+            {!failed && slowStartupTimedOut && (
+              <SlowStartupHelp copyState={copyDebugState} onCopyDebugInfo={handleCopyDebugInfo} />
             )}
 
             {failed && (

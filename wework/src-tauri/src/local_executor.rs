@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -20,8 +22,14 @@ const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "binaries/wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
 const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
+const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
+const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
+const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
+const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
+const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
+const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 120;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
@@ -265,6 +273,48 @@ pub struct LocalExecutorStatus {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalExecutorLog {
+    path: String,
+    content: String,
+    truncated: bool,
+    line_count: usize,
+    socket_path: String,
+    socket_exists: bool,
+    socket_file_type: String,
+    socket_connected: bool,
+    process_pids: Vec<u32>,
+    process_paths: Vec<String>,
+    sidecar_source: String,
+    sidecar_path: String,
+    current_dir: String,
+    executor_home: String,
+    backend_url: Option<String>,
+    has_backend_auth_token: bool,
+    pending_request_count: usize,
+    status: LocalExecutorStatus,
+}
+
+struct LocalExecutorLogTail {
+    path: String,
+    content: String,
+    truncated: bool,
+    line_count: usize,
+}
+
+struct LocalExecutorSocketDebug {
+    path: String,
+    exists: bool,
+    file_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalExecutorProcessInfo {
+    pid: u32,
+    path: String,
+}
+
 pub fn parse_executor_line(line: &str) -> Result<ExecutorLine, String> {
     serde_json::from_str::<ExecutorLine>(line).map_err(|error| error.to_string())
 }
@@ -282,7 +332,7 @@ fn app_ipc_socket_path() -> Result<PathBuf, String> {
         }
     }
 
-    if let Ok(path) = std::env::var("WEGENT_EXECUTOR_HOME") {
+    if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             return Ok(PathBuf::from(trimmed).join(LOCAL_EXECUTOR_SOCKET_NAME));
@@ -293,6 +343,228 @@ fn app_ipc_socket_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home)
         .join(".wegent-executor")
         .join(LOCAL_EXECUTOR_SOCKET_NAME))
+}
+
+fn local_executor_home_path() -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join(".wegent-executor"))
+}
+
+fn local_executor_log_path() -> Result<PathBuf, String> {
+    let log_dir = std::env::var(LOCAL_EXECUTOR_LOG_DIR_ENV)
+        .ok()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| local_executor_home_path().map(|path| path.join("logs")))?;
+    let log_file = std::env::var(LOCAL_EXECUTOR_LOG_FILE_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| LOCAL_EXECUTOR_LOG_FILE_NAME.to_string());
+
+    Ok(log_dir.join(log_file))
+}
+
+fn read_local_executor_log_tail(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<LocalExecutorLogTail, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("Failed to open local executor log: {error}"))?;
+    let len = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect local executor log: {error}"))?
+        .len();
+    let byte_truncated = len > max_bytes;
+    let offset = if byte_truncated { len - max_bytes } else { 0 };
+    let starts_on_line_boundary = if offset == 0 {
+        true
+    } else {
+        file.seek(SeekFrom::Start(offset - 1))
+            .map_err(|error| format!("Failed to seek local executor log: {error}"))?;
+        let mut previous = [0_u8; 1];
+        file.read_exact(&mut previous)
+            .map_err(|error| format!("Failed to read local executor log: {error}"))?;
+        previous[0] == b'\n'
+    };
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("Failed to seek local executor log: {error}"))?;
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read local executor log: {error}"))?;
+    let mut content = String::from_utf8_lossy(&bytes).into_owned();
+    if byte_truncated && !starts_on_line_boundary {
+        if let Some(index) = content.find('\n') {
+            content = content[index + 1..].to_string();
+        }
+    }
+    let (content, line_truncated, line_count) =
+        limit_log_lines(&content, LOCAL_EXECUTOR_LOG_TAIL_LINES);
+
+    Ok(LocalExecutorLogTail {
+        path: path.display().to_string(),
+        content,
+        truncated: byte_truncated || line_truncated,
+        line_count,
+    })
+}
+
+fn limit_log_lines(content: &str, max_lines: usize) -> (String, bool, usize) {
+    let has_trailing_newline = content.ends_with('\n');
+    let lines = content.lines().collect::<Vec<_>>();
+    let line_count = lines.len();
+    let line_truncated = line_count > max_lines;
+    let kept = if line_truncated {
+        &lines[line_count - max_lines..]
+    } else {
+        &lines[..]
+    };
+    let mut content = kept.join("\n");
+    if has_trailing_newline && !content.is_empty() {
+        content.push('\n');
+    }
+
+    (content, line_truncated, kept.len())
+}
+
+fn local_executor_socket_debug() -> LocalExecutorSocketDebug {
+    let path = match app_ipc_socket_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return LocalExecutorSocketDebug {
+                path: format!("unavailable: {error}"),
+                exists: false,
+                file_type: "unknown".to_string(),
+            };
+        }
+    };
+
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => LocalExecutorSocketDebug {
+            path: path.display().to_string(),
+            exists: true,
+            file_type: file_type_label(metadata.file_type()).to_string(),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => LocalExecutorSocketDebug {
+            path: path.display().to_string(),
+            exists: false,
+            file_type: "missing".to_string(),
+        },
+        Err(error) => LocalExecutorSocketDebug {
+            path: path.display().to_string(),
+            exists: false,
+            file_type: format!("unavailable: {error}"),
+        },
+    }
+}
+
+fn file_type_label(file_type: std::fs::FileType) -> &'static str {
+    #[cfg(unix)]
+    {
+        if file_type.is_socket() {
+            return "socket";
+        }
+    }
+    if file_type.is_file() {
+        "file"
+    } else if file_type.is_dir() {
+        "directory"
+    } else if file_type.is_symlink() {
+        "symlink"
+    } else {
+        "other"
+    }
+}
+
+fn parse_executor_processes(output: &str) -> Vec<LocalExecutorProcessInfo> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid = parts.next()?.parse::<u32>().ok()?;
+            let executable = parts.next()?;
+            let file_name = Path::new(executable)
+                .file_name()
+                .and_then(|name| name.to_str())?;
+            if file_name != "wegent-executor" {
+                return None;
+            }
+            Some(LocalExecutorProcessInfo {
+                pid,
+                path: executable.to_string(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn parse_executor_process_pids(output: &str) -> Vec<u32> {
+    parse_executor_processes(output)
+        .into_iter()
+        .map(|process| process.pid)
+        .collect()
+}
+
+#[cfg(unix)]
+fn local_executor_processes() -> Vec<LocalExecutorProcessInfo> {
+    let Ok(output) = Command::new("ps").args(["-axo", "pid=,command="]).output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_executor_processes(&stdout)
+}
+
+#[cfg(not(unix))]
+fn local_executor_processes() -> Vec<LocalExecutorProcessInfo> {
+    Vec::new()
+}
+
+fn sidecar_source_and_path() -> (String, String) {
+    if let Some(path) = configured_sidecar_path() {
+        return ("configured".to_string(), path.display().to_string());
+    }
+
+    ("bundled".to_string(), LOCAL_EXECUTOR_SIDECAR.to_string())
+}
+
+fn path_or_error(result: Result<PathBuf, String>) -> String {
+    result
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|error| format!("unavailable: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn write_text_to_native_clipboard(text: &str) -> Result<(), String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+    let text = NSString::from_str(text);
+    let string_type = unsafe { NSPasteboardTypeString };
+    if pasteboard.setString_forType(&text, string_type) {
+        Ok(())
+    } else {
+        Err("Failed to write text to the macOS pasteboard".to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_text_to_native_clipboard(_text: &str) -> Result<(), String> {
+    Err("Native clipboard copy is only available in the desktop macOS app".to_string())
 }
 
 fn configured_sidecar_path() -> Option<PathBuf> {
@@ -348,8 +620,9 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
+    let mut envs = vec![("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string())];
     let Some(connection) = &inner.backend_connection else {
-        return Vec::new();
+        return envs;
     };
     let app_ipc_device_id = inner
         .device_id
@@ -359,7 +632,7 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         .unwrap_or(LOCAL_EXECUTOR_DEVICE_ID)
         .to_string();
 
-    vec![
+    envs.extend([
         (
             "WEGENT_BACKEND_URL".to_string(),
             connection.backend_url.clone(),
@@ -376,7 +649,8 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         ("DEVICE_TYPE".to_string(), "app".to_string()),
         ("BIND_SHELL".to_string(), "claudecode".to_string()),
         ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
-    ]
+    ]);
+    envs
 }
 
 fn response_error(response: ExecutorResponse) -> String {
@@ -923,6 +1197,93 @@ pub async fn local_executor_status(
 }
 
 #[tauri::command]
+pub async fn local_executor_read_log(
+    state: State<'_, LocalExecutorState>,
+) -> Result<LocalExecutorLog, String> {
+    let path = local_executor_log_path()?;
+    let path_for_read = path.clone();
+    let tail_result = tauri::async_runtime::spawn_blocking(move || {
+        read_local_executor_log_tail(&path_for_read, LOCAL_EXECUTOR_LOG_TAIL_BYTES)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let tail = tail_result.unwrap_or_else(|error| LocalExecutorLogTail {
+        path: path.display().to_string(),
+        content: format!("Executor log unavailable: {error}"),
+        truncated: false,
+        line_count: 0,
+    });
+    let socket = local_executor_socket_debug();
+    let processes = local_executor_processes();
+    let process_pids = processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<Vec<_>>();
+    let process_paths = processes
+        .iter()
+        .map(|process| process.path.clone())
+        .collect::<Vec<_>>();
+    let (sidecar_source, sidecar_path) = sidecar_source_and_path();
+    let current_dir = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|error| format!("unavailable: {error}"));
+    let executor_home = path_or_error(local_executor_home_path());
+    let (status, backend_url, has_backend_auth_token, pending_request_count, socket_connected) = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?;
+        let backend_url = inner
+            .backend_connection
+            .as_ref()
+            .map(|connection| connection.backend_url.clone());
+        let has_backend_auth_token = inner
+            .backend_connection
+            .as_ref()
+            .map(|connection| !connection.auth_token.trim().is_empty())
+            .unwrap_or(false);
+        (
+            status_from_inner(&inner),
+            backend_url,
+            has_backend_auth_token,
+            inner.pending.len(),
+            has_connected_stream(&inner),
+        )
+    };
+
+    Ok(LocalExecutorLog {
+        path: tail.path,
+        content: tail.content,
+        truncated: tail.truncated,
+        line_count: tail.line_count,
+        socket_path: socket.path,
+        socket_exists: socket.exists,
+        socket_file_type: socket.file_type,
+        socket_connected,
+        process_pids,
+        process_paths,
+        sidecar_source,
+        sidecar_path,
+        current_dir,
+        executor_home,
+        backend_url,
+        has_backend_auth_token,
+        pending_request_count,
+        status,
+    })
+}
+
+#[tauri::command]
+pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("Debug info must not be empty".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || write_text_to_native_clipboard(&text))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn local_executor_ensure_started(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
@@ -1074,6 +1435,78 @@ mod tests {
     }
 
     #[test]
+    fn local_executor_log_path_uses_executor_home() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("WEGENT_EXECUTOR_HOME");
+        std::env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/wegent-executor-debug");
+
+        let path = local_executor_log_path().expect("log path should resolve");
+        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/wegent-executor-debug/logs/executor.log")
+        );
+    }
+
+    #[test]
+    fn read_local_executor_log_tail_limits_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "wework-local-executor-log-tail-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logs")).expect("test log dir should be created");
+        let log_path = dir.join("logs").join("executor.log");
+        fs::write(&log_path, "old log line\nrecent executor failure\n")
+            .expect("test log should be written");
+
+        let log = read_local_executor_log_tail(&log_path, 24).expect("log should be read");
+
+        assert!(log.truncated);
+        assert_eq!(log.path, log_path.display().to_string());
+        assert_eq!(log.content, "recent executor failure\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_local_executor_log_tail_limits_to_last_twenty_lines() {
+        let dir = std::env::temp_dir().join(format!(
+            "wework-local-executor-log-lines-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logs")).expect("test log dir should be created");
+        let log_path = dir.join("logs").join("executor.log");
+        let content = (1..=25)
+            .map(|line| format!("line-{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&log_path, content).expect("test log should be written");
+
+        let log = read_local_executor_log_tail(&log_path, 200 * 1024).expect("log should be read");
+
+        assert!(log.truncated);
+        assert_eq!(log.line_count, 20);
+        assert!(log.content.starts_with("line-6\n"));
+        assert!(log.content.ends_with("line-25"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_executor_process_pids_filters_executor_binary() {
+        let output = r#"
+111 /bin/zsh -c echo wegent-executor
+222 /Applications/Wework.app/Contents/MacOS/wegent-executor --app
+333 /usr/local/bin/wegent-executor --config /tmp/device-config.json
+"#;
+
+        assert_eq!(parse_executor_process_pids(output), vec![222, 333]);
+    }
+
+    #[test]
     fn ready_event_updates_status_device_id() {
         let inner = Arc::new(Mutex::new(LocalExecutorInner::default()));
         let event = ExecutorEvent {
@@ -1110,6 +1543,10 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
 
+        assert_eq!(
+            envs.get("EXECUTOR_STARTUP_MODE").map(String::as_str),
+            Some("socket")
+        );
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")
