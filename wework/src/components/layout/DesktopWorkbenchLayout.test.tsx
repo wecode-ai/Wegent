@@ -11,6 +11,7 @@ import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
+import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -35,6 +36,10 @@ vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn(),
+}))
+
 const tauriMenuMocks = vi.hoisted(() => ({
   getCurrentWindow: vi.fn(),
   menuNew: vi.fn(),
@@ -44,6 +49,8 @@ const tauriMenuMocks = vi.hoisted(() => ({
 const authMocks = vi.hoisted(() => ({
   logout: vi.fn(),
 }))
+
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 
 function createRect({
   left,
@@ -416,6 +423,7 @@ describe('DesktopWorkbenchLayout', () => {
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     fetchQuotaMock.mockResolvedValue({
@@ -1588,7 +1596,6 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
       value: {},
     })
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 
     render(
       <DesktopWorkbenchLayout
@@ -1626,7 +1633,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
     await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(1))
-    expect(openSpy).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )

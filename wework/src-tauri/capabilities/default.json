@@ -16,6 +16,7 @@
     "core:webview:allow-set-webview-focus",
     "opener:allow-open-url",
     "opener:allow-default-urls",
+    "shell:allow-open",
     "updater:default",
     "process:allow-restart",
     {

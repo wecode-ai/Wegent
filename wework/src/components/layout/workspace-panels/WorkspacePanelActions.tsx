@@ -14,6 +14,7 @@ import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
+import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -116,7 +117,7 @@ export function WorkspacePanelActions({
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      window.open(session.url, '_blank', 'noopener')
+      await openExternalUrl(session.url)
     } catch (error) {
       console.error('Failed to start project IDE:', error)
       setIdeError(getStartFailedMessage(error))

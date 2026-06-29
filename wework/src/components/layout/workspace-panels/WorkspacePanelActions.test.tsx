@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
+import { openExternalUrl } from '@/lib/external-links'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
 
@@ -22,7 +23,12 @@ vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn(),
+}))
+
 const createProjectApiMock = vi.mocked(createProjectApi)
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startCodeServerSessionMock = vi.fn()
@@ -57,6 +63,7 @@ describe('WorkspacePanelActions', () => {
     createProjectApiMock.mockReturnValue({
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
+    openExternalUrlMock.mockResolvedValue(true)
   })
 
   test('shows environment info while loading and keeps it when environment context is available', () => {
@@ -201,5 +208,40 @@ describe('WorkspacePanelActions', () => {
         path: '/Users/me/project38',
       })
     )
+  })
+
+  test('opens cloud IDE sessions through the external URL helper', async () => {
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        currentProject={{
+          id: 7,
+          name: 'project38',
+          config: {
+            execution: {
+              targetType: 'cloud',
+              deviceId: 'device-1',
+            },
+          },
+          tasks: [],
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Cloud Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(7))
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
   })
 })
