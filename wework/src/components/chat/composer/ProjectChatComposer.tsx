@@ -222,8 +222,8 @@ export function ProjectChatComposer({
           onListBranches={projectWork.onListBranches}
           onCheckoutBranch={projectWork.onCheckoutBranch}
           onCreateBranch={projectWork.onCreateBranch}
-          worktreeBaseBranch={projectWork.worktreeBaseBranch}
-          onWorktreeBaseBranchChange={projectWork.onWorktreeBaseBranchChange}
+          worktreeBranch={projectWork.worktreeBranch}
+          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
           className="min-h-11 px-4"
         />
       )}

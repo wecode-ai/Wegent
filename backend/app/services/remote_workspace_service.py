@@ -5,6 +5,7 @@
 import json
 import logging
 import posixpath
+from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -143,7 +144,7 @@ class RemoteWorkspaceService:
                     path=str(item.get("path", normalized_path)),
                     is_directory=bool(item.get("is_directory", False)),
                     size=int(item.get("size", 0) or 0),
-                    modified_at=item.get("modified_at"),
+                    modified_at=self._normalize_modified_at(item),
                 )
             )
 
@@ -809,6 +810,20 @@ class RemoteWorkspaceService:
             return ""
         compact = " ".join(raw.split())
         return compact[:LOG_PREVIEW_LIMIT]
+
+    def _normalize_modified_at(self, item: dict[str, Any]) -> Optional[str]:
+        value = item.get("modified_at", item.get("modified_time"))
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return (
+                datetime.fromtimestamp(value, tz=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        return str(value)
 
     def normalize_and_validate_workspace_path(
         self, path: Optional[str], root_path: str = WORKSPACE_ROOT

@@ -27,6 +27,12 @@ vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn(() => ({})),
 }))
 
+vi.mock('@/api/models', () => ({
+  createModelApi: vi.fn(() => ({
+    listModels: vi.fn().mockResolvedValue({ data: [] }),
+  })),
+}))
+
 vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
@@ -772,6 +778,34 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+  })
+
+  test('groups the current app backend registration with local devices', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'local-claude',
+        name: 'Current App Backend Registration',
+        device_type: 'app',
+        app_device_id: 'local-claude',
+        status: 'online',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    const localSection = screen.getByText('本地设备').closest('section')
+    expect(localSection).not.toBeNull()
+    expect(
+      within(localSection as HTMLElement).getByText('Current App Backend Registration')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('远程设备')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/在线云设备.*0/)
+
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
+
+    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
+    expect(api.startTerminal).not.toHaveBeenCalled()
   })
 
   test('generates and copies a remote Docker device command from the add device dialog', async () => {

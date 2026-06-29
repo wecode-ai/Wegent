@@ -6,38 +6,34 @@
 ARG DEVICE_BASE_IMAGE=ubuntu:22.04
 
 # ---------------------------------------------------------------------------
-# Builder stage: compile the wegent-executor binary with PyInstaller.
-# The binary is built without the bundled Claude CLI because the runtime image
-# provides claude via npm (@anthropic-ai/claude-code).
+# Builder stage: compile the Rust wegent-executor binary.
+# The runtime image provides claude via npm (@anthropic-ai/claude-code).
 # Uses the same base image as runtime to ensure glibc compatibility.
 # ---------------------------------------------------------------------------
 FROM ${DEVICE_BASE_IMAGE} AS builder
 ARG TARGETPLATFORM
 ARG DEVICE_IMAGE_PLATFORM=${TARGETPLATFORM}
+ARG APP_VERSION=dev
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    binutils \
+    build-essential \
     ca-certificates \
     curl \
-    file \
-    libpython3.10 \
-    patchelf \
-    python3 \
-    python3-venv \
+    libssl-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
 
-WORKDIR /build
-COPY executor/ executor/
-COPY shared/ shared/
+ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /build/executor
-RUN rm -rf .venv
-RUN uv sync --group build --python /usr/bin/python3
-RUN uv run python scripts/build_local.py --no-bundle-claude
+COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/src ./src
+RUN APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 # ---------------------------------------------------------------------------
 # Runtime stage: the actual device image.
@@ -45,8 +41,10 @@ RUN uv run python scripts/build_local.py --no-bundle-claude
 FROM ${DEVICE_BASE_IMAGE}
 ARG TARGETPLATFORM
 ARG DEVICE_IMAGE_PLATFORM=${TARGETPLATFORM}
+ARG APP_VERSION=dev
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 
 # Install base tools, Python, Node.js 22, and code-server.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -128,7 +126,7 @@ WORKDIR /app
 # Keep both paths available:
 # - /app/executor is the executor-manager entrypoint-compatible path.
 # - ~/.wecode/wegent-executor/bin/wegent-executor is the local device install path.
-COPY --from=builder --chown=wegent:wegent /build/executor/dist/wegent-executor /app/executor
+COPY --from=builder --chown=wegent:wegent /build/executor/target/release/wegent-executor /app/executor
 RUN set -e; \
     executor_type="$(file /app/executor)"; \
     case "$DEVICE_IMAGE_PLATFORM" in \
@@ -144,6 +142,7 @@ RUN set -e; \
     && chown -R wegent:wegent /app /home/wegent
 
 ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
+ENV EXECUTOR_STARTUP_MODE=socket
 ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
 ENV DEVICE_PUBLIC_BASE_URL=

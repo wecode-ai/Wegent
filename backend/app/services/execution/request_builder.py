@@ -449,7 +449,8 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
-            executor_name=subtask.executor_name,
+            executor_name=getattr(subtask, "executor_name", None),
+            executor_namespace=getattr(subtask, "executor_namespace", None),
         )
 
     @staticmethod
@@ -669,7 +670,7 @@ class TaskRequestBuilder:
     ) -> str:
         """Build a concise execution environment label for web guidance."""
         if has_device_id:
-            if device_type == "local":
+            if device_type in {"local", "app"}:
                 return "local device selected in Wegent"
             if device_type == "cloud":
                 return "cloud device or remote sandbox selected in Wegent"

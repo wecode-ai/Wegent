@@ -14,7 +14,7 @@ E2E_EXECUTOR_DOCKERFILE: Path = (
 
 
 def test_executor_container_images_start_in_docker_mode() -> None:
-    """Container executor images must not inherit the local sidecar default."""
+    """Container executor images keep Docker runtime semantics and HTTP startup."""
     dockerfiles = [
         EXECUTOR_DOCKERFILE.read_text(encoding="utf-8"),
         E2E_EXECUTOR_DOCKERFILE.read_text(encoding="utf-8"),
@@ -22,3 +22,4 @@ def test_executor_container_images_start_in_docker_mode() -> None:
 
     for dockerfile in dockerfiles:
         assert "ENV EXECUTOR_MODE=docker" in dockerfile
+        assert "ENV EXECUTOR_STARTUP_MODE=http" in dockerfile

@@ -7,13 +7,94 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
   id: 'call-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
   toolOutput: '/workspace/project\n',
   status: 'done',
   createdAt: 1770000000000,
+}
+
+const completedWebSearchBlocks: ProcessingBlock[] = [
+  {
+    id: 'web-search-1',
+    turnId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'search',
+      query: 'Beijing weather today June 17 2026 temperature rain',
+      queries: [
+        'Beijing weather today June 17 2026 temperature rain',
+        'Beijing China current weather forecast today AccuWeather',
+      ],
+    },
+    status: 'done',
+    createdAt: 1770000000000,
+  },
+  {
+    id: 'web-search-2',
+    turnId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'search',
+      query: 'site:weather.com weather today Beijing China',
+    },
+    status: 'done',
+    createdAt: 1770000001000,
+  },
+  {
+    id: 'web-open-1',
+    turnId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'open_page',
+      url: 'https://www.weather.com/weather/today/l/Beijing+China',
+    },
+    status: 'done',
+    createdAt: 1770000002000,
+  },
+]
+
+const completedFileChangesBlock: ProcessingBlock = {
+  id: 'file-changes-1',
+  turnId: 1,
+  type: 'file_changes',
+  status: 'done',
+  createdAt: 1770000003000,
+  fileChanges: {
+    version: 1,
+    status: 'active',
+    artifact_id: 'artifact-1',
+    device_id: 'device-1',
+    workspace_path: '/tmp/project',
+    file_count: 1,
+    additions: 2,
+    deletions: 1,
+    files: [
+      {
+        path: 'scripts/env',
+        change_type: 'modified',
+        additions: 2,
+        deletions: 1,
+        binary: false,
+      },
+    ],
+    reverted_at: null,
+    revertible: false,
+    diff: [
+      'diff --git a/scripts/env b/scripts/env',
+      '--- a/scripts/env',
+      '+++ b/scripts/env',
+      '@@ -8,2 +8,3 @@',
+      '-OLD_ENV=remote',
+      '+OLD_ENV=local',
+      '+BACKEND_URL=127.0.0.1',
+    ].join('\n'),
+  },
 }
 
 describe('ToolBlocksDisplay', () => {
@@ -28,6 +109,116 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+  })
+
+  test('renders completed web search tools as a Codex-style web search activity', () => {
+    render(<ToolBlocksDisplay blocks={completedWebSearchBlocks} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '已搜索网页' }))
+
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'Beijing weather today June 17 2026 temperature rain'
+    )
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'https://www.weather.com/weather/today/l/Beijing+China'
+    )
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'weather today Beijing China | weather.com'
+    )
+    expect(
+      screen.queryByText('Beijing China current weather forecast today AccuWeather')
+    ).toBeNull()
+    expect(screen.getAllByText('Beijing weather today June 17 2026 temperature rain')).toHaveLength(
+      1
+    )
+    expect(screen.getByTestId('web-search-activity-results').parentElement).not.toHaveClass(
+      'border-l'
+    )
+    expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('renders file changes inside completed processing details', () => {
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
+    expect(screen.queryByText('已编辑 env')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
+
+    expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+    expect(screen.getByText('+2')).toBeInTheDocument()
+    expect(screen.getByText('-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
+
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
+      'BACKEND_URL=127.0.0.1'
+    )
+  })
+
+  test('only persists the top-level processing expansion state', () => {
+    const { unmount } = render(
+      <ToolBlocksDisplay
+        blocks={[completedFileChangesBlock]}
+        isStreaming={false}
+        stateKey="file-changes-local-expansion"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
+    expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+
+    unmount()
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedFileChangesBlock]}
+        isStreaming={false}
+        stateKey="file-changes-local-expansion"
+      />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
+    expect(screen.queryByText('已编辑 env')).toBeNull()
+  })
+
+  test('opens completed processing details with a short content transition', () => {
+    render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
+
+    const toggle = screen.getByRole('button', { name: /已处理/ })
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(toggle).toHaveClass('inline-flex')
+    expect(toggle).not.toHaveClass('w-full')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(collapseContent).toHaveClass(
+      'transition-[max-height,opacity]',
+      'duration-[260ms]',
+      'opacity-0',
+      'pointer-events-none'
+    )
+    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
+    expect(toggle.querySelector('svg')).toHaveClass('-rotate-90')
+
+    fireEvent.click(toggle.parentElement as HTMLElement)
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.click(toggle)
+
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(collapseContent).toHaveClass('opacity-100')
+    expect(toggle.querySelector('svg')).not.toHaveClass('-rotate-90')
   })
 
   test('keeps live duration when the run finishes', async () => {
@@ -114,12 +305,12 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps completed tools expanded until the assistant turn finishes', () => {
+  test('keeps completed tools collapsed while the assistant turn is still running', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     expect(screen.queryByText('已运行 1 条命令')).not.toBeInTheDocument()
     expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
-    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {
@@ -164,7 +355,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'thinking',
       content: 'Reading files',
       status: 'streaming',
@@ -180,7 +371,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'streaming',

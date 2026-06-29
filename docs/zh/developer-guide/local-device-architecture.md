@@ -55,7 +55,7 @@ flowchart LR
     EX --> FS
 ```
 
-Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。executor 使用 `~/.wegent-executor/app-ipc.lock` 保证同一用户目录下最多只有一个本地执行器进程。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
@@ -122,6 +122,22 @@ sequenceDiagram
 | `task:execute`     | 后端 → 设备 | 下发任务 |
 | `task:progress`    | 设备 → 后端 | 任务进度 |
 | `task:complete`    | 设备 → 后端 | 任务完成 |
+
+### Rust executor 本地事件覆盖
+
+Rust executor 的本地 Backend 通道需要与旧 Python 本地设备 runner 保持事件级兼容。除任务执行和心跳外，当前本地设备还注册并处理：
+
+- `task:cancel`、`task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`、`device:start_code_server_session`
+- `terminal:input`、`terminal:resize`、`terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+迁移覆盖关系记录在 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`。新增本地设备事件时，应先补 `executor/tests/local_backend_device_migration_contract.rs`，再更新该迁移矩阵。
 
 ### 消息格式
 
@@ -239,6 +255,8 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 `replace` 模式只会清理由 Wegent manifest 标记为 `managed` 且不在期望状态中的能力。用户直接在本机安装的 plugin 不会因为一次 Wegent 同步被删除。
 
+能力包下载被限制在当前配置的 Backend 同源地址内。executor 会将相对下载路径解析到 `connection.backend_url`，拒绝其它 origin 的包地址，并且只对同源 Backend 请求附加设备 bearer token。Skill 下载 URL 使用编码后的 query 参数构造，包解压会先写入单次同步唯一的 staging 目录，再替换 Wegent 管理的 skill 目录。
+
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
@@ -319,11 +337,13 @@ flowchart LR
 | **用户隔离**     | 设备只能执行其所有者的任务   |
 | **硬件绑定**     | 设备 ID 基于硬件标识生成     |
 
+后端触发的 terminal 与 code-server session 会把相对路径解析到配置中的本地 workspace root 下。后端触发的升级必须在重启 executor 前停止运行中的本地任务：未设置 `force_stop_tasks` 时升级会以 busy 状态拒绝；如果强制停止任一任务失败，升级会立即中止并上报 error 状态，不会继续进入重启流程。
+
 ### 本地执行器连接配置
 
-本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。没有远端地址时，`wegent-executor` 无参数启动会监听 `~/.wegent-executor/app-ipc.sock` 且不会连接 Backend；设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后，executor 继续保留本机 socket，同时以本地设备模式连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。同一用户目录下通过 `~/.wegent-executor/app-ipc.lock` 限制为一个 executor 进程，避免网页版出现同一设备的重复连接。
+本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。`EXECUTOR_STARTUP_MODE` 控制监听入口，默认值为 `http`，无参数启动会按 `HOST`/`PORT` 启动 HTTP server；需要本机 App IPC 时设置 `EXECUTOR_STARTUP_MODE=socket`，executor 会监听 `~/.wegent-executor/app-ipc.sock`。在 socket 启动模式下，设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后，executor 继续保留本机 socket，同时以本地设备模式连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。Wework App 只管理自己启动的 executor；如果用户在 App 外手动启动 executor，App 会优先连接已有 socket，不会在退出时终止该外部进程。不要让多个手动启动的 executor 复用同一个 `WEGENT_EXECUTOR_HOME` 或 socket 路径，否则后启动的进程可能替换 socket 路径并造成连接归属不清。
 
-`EXECUTOR_MODE` 覆盖 `mode`，`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入这些环境变量；只要设备配置文件中已有有效模式和连接信息，executor 就可以直接启动。
+`EXECUTOR_MODE` 覆盖 `mode`，`EXECUTOR_STARTUP_MODE` 覆盖启动入口，`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入连接环境变量；只要设备配置文件中已有有效模式和连接信息，并且启动入口符合场景，executor 就可以直接启动。
 
 ### 云设备启动身份变量
 

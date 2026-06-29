@@ -71,23 +71,9 @@ The installation script will:
 - Download the appropriate binary for your platform
 - Add the binary to your PATH
 
-#### Linux AMD64 Without Bundled Claude
+#### Linux AMD64 Claude CLI Requirement
 
-GitHub Releases also provide `wegent-executor-linux-amd64-no-claude`. This binary does not bundle the Claude CLI into the executor and is intended for these cases:
-
-- Cloud device or local device Docker images already install the `claude` command through npm, the base image, or another provisioning path
-- You want a smaller executor binary
-- The image or host environment should manage the Claude Code version centrally
-
-When using this variant, make sure the runtime environment already has an executable `claude` command that meets Wegent's minimum Claude Code version requirement. The standard `wegent-executor-linux-amd64` still bundles the Claude CLI and is better for direct installation on regular Linux hosts.
-
-Manual download example:
-
-```bash
-curl -fL -o wegent-executor \
-  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
-chmod +x wegent-executor
-```
+The Rust executor binary does not bundle the Claude CLI. The runtime environment must provide an executable `claude` command that meets Wegent's minimum Claude Code version requirement. The installation script and device images install or upgrade Claude Code separately from the executor binary.
 
 #### Use Personal Codex CLI Configuration
 
@@ -122,7 +108,7 @@ docker buildx build --platform linux/amd64 \
   --load .
 ```
 
-If the image already installs Claude Code, use `wegent-executor-linux-amd64-no-claude` as the input for `executor/dist/wegent-executor` to avoid carrying the Claude CLI in both the executor binary and the image.
+The executor binary does not include Claude Code, so `executor/dist/wegent-executor` can be reused in images that install Claude Code through npm, the base image, or another provisioning path.
 
 Pass executor connection settings as runtime environment variables when running the device image. Do not bake the token into the image:
 
@@ -220,10 +206,11 @@ wegent-executor
 # Or temporarily override the connection settings with environment variables
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
+export EXECUTOR_STARTUP_MODE=socket
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. With no arguments and no remote address, the executor listens on `~/.wegent-executor/app-ipc.sock` and does not connect to Backend. After `WEGENT_BACKEND_URL` or `connection.backend_url` is set, the executor keeps the local socket available and also connects to the remote Backend as a local device. `~/.wegent-executor/app-ipc.lock` limits each user home to one executor process so the web app does not see duplicate device connections. Logs are written to `~/.wegent-executor/logs/executor.log`.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. `EXECUTOR_STARTUP_MODE` defaults to `http`, so running with no arguments starts the HTTP server. Set `EXECUTOR_STARTUP_MODE=socket` when the local socket or local device connection is needed; the executor then listens on `~/.wegent-executor/app-ipc.sock`. After `WEGENT_BACKEND_URL` or `connection.backend_url` is set, the executor keeps the local socket available and also connects to the remote Backend as a local device. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same `WEGENT_EXECUTOR_HOME` or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
 
 ### Getting JWT Token
 

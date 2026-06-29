@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PanelLeft } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -17,6 +18,13 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { useTranslation } from '@/hooks/useTranslation'
+
+const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -30,10 +38,19 @@ function useCurrentPath() {
   return path
 }
 
-function AppRoutes() {
+interface AppRoutesProps {
+  onWorkbenchStartupReadyChange?: (ready: boolean) => void
+}
+
+function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+
+  useEffect(() => {
+    if (isLoading || !user || isNativeApp || !activeTab?.url) return
+    onWorkbenchStartupReadyChange?.(true)
+  }, [activeTab?.url, isLoading, isNativeApp, onWorkbenchStartupReadyChange, user])
 
   if (path === '/login') {
     return <LoginPage />
@@ -54,7 +71,7 @@ function AppRoutes() {
 
   // native WeWork routes
   return (
-    <WorkbenchProvider user={user}>
+    <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {path === '/plugins/manage' ? (
         <PluginManagementPage />
       ) : path === '/plugins' ? (
@@ -72,9 +89,11 @@ export default function App() {
   return (
     <AppearanceProvider>
       <AppUpdateProvider>
-        <AuthProvider>
-          <AppShell />
-        </AuthProvider>
+        <CloudConnectionProvider>
+          <AuthProvider>
+            <AppShell />
+          </AuthProvider>
+        </CloudConnectionProvider>
       </AppUpdateProvider>
     </AppearanceProvider>
   )
@@ -82,30 +101,89 @@ export default function App() {
 
 function AppShell() {
   const path = useCurrentPath()
-  const { user } = useAuth()
+  const { user, isLoading } = useAuth()
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
+  const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
+  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+
+  useEffect(() => {
+    if (
+      path === '/login' ||
+      path === '/login/oidc' ||
+      isLoading ||
+      !user ||
+      workbenchStartupReady
+    ) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      console.warn(
+        `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
+      )
+      setWorkbenchStartupRevealTimedOut(true)
+    }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [activeAppKey, isLoading, path, user, workbenchStartupReady])
 
   // No chrome on login/setup pages
-  if (path === '/login' || path === '/login/oidc' || !user) {
+  if (path === '/login' || path === '/login/oidc') {
+    return <AppRoutes />
+  }
+
+  if (isLoading) {
+    return (
+      <LocalRuntimeInitializer startupReady={false}>
+        <div />
+      </LocalRuntimeInitializer>
+    )
+  }
+
+  if (!user) {
     return <AppRoutes />
   }
 
   return (
-    <LocalRuntimeInitializer>
+    <LocalRuntimeInitializer startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}>
+      <LocalExecutorCloudBridge />
       <div className="flex h-screen flex-col overflow-hidden bg-surface">
         {isTauri && (
           <ChromeTitlebar
             tabs={tabs}
             activeKey={activeAppKey}
             onNavigate={navigateToApp}
+            beforeTabs={activeAppKey === 'wework' ? <TitlebarSidebarToggle /> : undefined}
             afterTabs={<AppUpdateTitlebarButton />}
           />
         )}
         <div className="min-h-0 flex-1 overflow-hidden">
-          <AppRoutes />
+          <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
         </div>
       </div>
     </LocalRuntimeInitializer>
+  )
+}
+
+function TitlebarSidebarToggle() {
+  const { t } = useTranslation('common')
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const label = sidebarCollapsed
+    ? t('workbench.expand_sidebar', '展开侧边栏')
+    : t('workbench.collapse_sidebar', '收起侧边栏')
+
+  return (
+    <button
+      type="button"
+      data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
+      onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      title={label}
+      aria-label={label}
+      aria-pressed={sidebarCollapsed}
+    >
+      <PanelLeft />
+    </button>
   )
 }

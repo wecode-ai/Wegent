@@ -788,21 +788,19 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -833,26 +831,21 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license || true
           fi
 
-      - name: Set up Python (x86_64 via Rosetta)
-        run: |
-          # Download and install Python for x86_64
-          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
-          sudo installer -pkg python-installer.pkg -target /
-          rm python-installer.pkg
-
-      - name: Install uv (x86_64)
-        run: |
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-apple-darwin
 
       - name: Install dependencies and build (x86_64)
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          # Use x86_64 Python and uv to install dependencies and build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -882,21 +875,22 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -907,44 +901,6 @@ jobs:
         with:
           name: wegent-executor-linux-amd64
           path: executor/dist/wegent-executor-linux-amd64
-          retention-days: 1
-
-  build-executor-local-linux-amd64-no-claude:
-    needs: prepare-release
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.GIT_REF }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install dependencies and build without bundled Claude CLI
-        working-directory: executor
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-        run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }} --no-bundle-claude
-
-      - name: Rename binary with platform suffix
-        run: |
-          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-amd64-no-claude
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wegent-executor-linux-amd64-no-claude
-          path: executor/dist/wegent-executor-linux-amd64-no-claude
           retention-days: 1
 
   build-executor-local-linux-arm64:
@@ -958,21 +914,22 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -1000,22 +957,20 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install dependencies and build
         working-directory: executor
         shell: pwsh
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/wegent-executor.exe dist/wegent-executor.exe
+          $env:WEGENT_EXECUTOR_VERSION = "$env:APP_VERSION"
+          & "dist/wegent-executor.exe" --version
 
       - name: Rename binary with platform suffix
         shell: pwsh
@@ -1113,7 +1068,6 @@ jobs:
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
       - build-executor-local-linux-amd64
-      - build-executor-local-linux-amd64-no-claude
       - build-executor-local-linux-arm64
       - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
@@ -1191,7 +1145,6 @@ jobs:
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
             ./executor-binaries/wegent-executor-linux-amd64
-            ./executor-binaries/wegent-executor-linux-amd64-no-claude
             ./executor-binaries/wegent-executor-linux-arm64
             ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh

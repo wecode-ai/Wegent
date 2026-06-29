@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import {
+  AdminPasswordSetupForm,
+  PasswordLoginForm,
+  OUTLINED_LOGIN_BUTTON_CLASS,
+} from '@/components/auth/LoginForms'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isAdminPasswordSetupRequiredError } from '@/features/auth/adminPasswordSetup'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-
-const OUTLINED_LOGIN_BUTTON_CLASS =
-  'h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted'
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -49,9 +50,6 @@ export function LoginPage() {
     password: '',
     confirmPassword: '',
   })
-  const [showPassword, setShowPassword] = useState(false)
-  const [showAdminPassword, setShowAdminPassword] = useState(false)
-  const [showAdminPasswordConfirm, setShowAdminPasswordConfirm] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isAdminPasswordSubmitting, setIsAdminPasswordSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -143,188 +141,23 @@ export function LoginPage() {
             </div>
           )}
           {showPasswordLogin && !isResolvingInitialUserState && adminPasswordSetupRequired && (
-            <form
-              data-testid="admin-password-setup-form"
-              className="space-y-5"
+            <AdminPasswordSetupForm
+              adminUsername={adminUsername}
+              value={adminPasswordFormData}
+              error={adminPasswordError}
+              submitting={isAdminPasswordSubmitting}
+              onChange={setAdminPasswordFormData}
               onSubmit={handleAdminPasswordSubmit}
-            >
-              <div>
-                <h2 className="text-lg font-semibold text-text-primary">
-                  {t('workbench.admin_password_setup_title')}
-                </h2>
-                <p className="mt-2 text-sm text-text-muted">
-                  {t('workbench.admin_password_setup_description')}
-                </p>
-              </div>
-              <div
-                className="rounded-lg border border-border bg-background px-4 py-3"
-                data-testid="admin-username-summary"
-              >
-                <div className="text-xs font-medium text-text-muted">
-                  {t('workbench.admin_username_label')}
-                </div>
-                <div
-                  className="mt-1 font-mono text-sm font-semibold text-text-primary"
-                  data-testid="admin-username-value"
-                >
-                  {adminUsername}
-                </div>
-                <p className="mt-1 text-xs text-text-muted">
-                  {t('workbench.admin_username_description')}
-                </p>
-              </div>
-              <div>
-                <label htmlFor="admin-password" className="text-sm font-medium text-text-secondary">
-                  {t('workbench.admin_password')}
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="admin-password"
-                    name="admin-password"
-                    data-testid="admin-password-input"
-                    type={showAdminPassword ? 'text' : 'password'}
-                    className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
-                    value={adminPasswordFormData.password}
-                    minLength={6}
-                    required
-                    autoComplete="new-password"
-                    placeholder={t('workbench.admin_password_placeholder')}
-                    onChange={event =>
-                      setAdminPasswordFormData(current => ({
-                        ...current,
-                        password: event.target.value,
-                      }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    data-testid="admin-password-visibility-button"
-                    className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
-                    onClick={() => setShowAdminPassword(current => !current)}
-                    aria-label={t('workbench.toggle_admin_password_visibility')}
-                  >
-                    {showAdminPassword ? (
-                      <EyeOff className="h-5 w-5" />
-                    ) : (
-                      <Eye className="h-5 w-5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label
-                  htmlFor="admin-password-confirm"
-                  className="text-sm font-medium text-text-secondary"
-                >
-                  {t('workbench.admin_password_confirm')}
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="admin-password-confirm"
-                    name="admin-password-confirm"
-                    data-testid="admin-password-confirm-input"
-                    type={showAdminPasswordConfirm ? 'text' : 'password'}
-                    className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
-                    value={adminPasswordFormData.confirmPassword}
-                    minLength={6}
-                    required
-                    autoComplete="new-password"
-                    placeholder={t('workbench.admin_password_confirm_placeholder')}
-                    onChange={event =>
-                      setAdminPasswordFormData(current => ({
-                        ...current,
-                        confirmPassword: event.target.value,
-                      }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    data-testid="admin-password-confirm-visibility-button"
-                    className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
-                    onClick={() => setShowAdminPasswordConfirm(current => !current)}
-                    aria-label={t('workbench.toggle_admin_password_visibility')}
-                  >
-                    {showAdminPasswordConfirm ? (
-                      <EyeOff className="h-5 w-5" />
-                    ) : (
-                      <Eye className="h-5 w-5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-              {adminPasswordError && (
-                <div className="text-sm text-red-600" data-testid="admin-password-error">
-                  {adminPasswordError}
-                </div>
-              )}
-              <button
-                type="submit"
-                data-testid="admin-password-submit-button"
-                className={`${OUTLINED_LOGIN_BUTTON_CLASS} disabled:opacity-60`}
-                disabled={isAdminPasswordSubmitting}
-              >
-                {isAdminPasswordSubmitting
-                  ? t('workbench.admin_password_setting')
-                  : t('workbench.admin_password_submit')}
-              </button>
-            </form>
+            />
           )}
           {showPasswordLogin && !isResolvingInitialUserState && !adminPasswordSetupRequired && (
-            <form data-testid="login-form" className="space-y-5" onSubmit={handleSubmit}>
-              <div>
-                <label htmlFor="user_name" className="text-sm font-medium text-text-secondary">
-                  {t('workbench.login_username')}
-                </label>
-                <input
-                  id="user_name"
-                  name="user_name"
-                  data-testid="login-username-input"
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
-                  value={formData.user_name}
-                  autoComplete="username"
-                  onChange={event =>
-                    setFormData(current => ({ ...current, user_name: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label htmlFor="password" className="text-sm font-medium text-text-secondary">
-                  {t('workbench.login_password')}
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="password"
-                    name="password"
-                    data-testid="login-password-input"
-                    type={showPassword ? 'text' : 'password'}
-                    className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
-                    value={formData.password}
-                    autoComplete="current-password"
-                    onChange={event =>
-                      setFormData(current => ({ ...current, password: event.target.value }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    data-testid="toggle-password-visibility-button"
-                    className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
-                    onClick={() => setShowPassword(current => !current)}
-                    aria-label={t('workbench.toggle_password_visibility')}
-                  >
-                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                  </button>
-                </div>
-              </div>
-              {error && <div className="text-sm text-red-600">{error}</div>}
-              <button
-                type="submit"
-                data-testid="login-submit-button"
-                className={`${OUTLINED_LOGIN_BUTTON_CLASS} disabled:opacity-60`}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? t('workbench.logging_in') : t('workbench.login_action')}
-              </button>
-            </form>
+            <PasswordLoginForm
+              value={formData}
+              error={error}
+              submitting={isSubmitting}
+              onChange={setFormData}
+              onSubmit={handleSubmit}
+            />
           )}
           {showPasswordLogin &&
             !isResolvingInitialUserState &&

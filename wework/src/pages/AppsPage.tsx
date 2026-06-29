@@ -273,7 +273,7 @@ function HeroSection() {
         让 WeWork 成为所有 AI 工具的统一入口
       </div>
       <p className="relative mt-3 max-w-3xl text-sm leading-7 text-text-secondary">
-        使用公司的模型服务代理 Claude 和 Codex，执行器负责本地/云端运行时，小程序负责办公流程。
+        使用公司的模型服务代理 Claude 和 Codex，任务服务负责本地/云端运行，小程序负责办公流程。
         用户不用理解底层差异，只需要打开应用、授权、开始工作。
       </p>
       <div className="relative mt-5 flex flex-wrap gap-2">
@@ -346,7 +346,7 @@ function AppsPageHeader({ collapseProgress }: { collapseProgress: number }) {
           }}
           aria-hidden={collapseProgress >= 0.98}
         >
-          集中查看 executor 运行状态，配置 Claude / Codex 代理，安装内部应用和第三方小程序。
+          集中查看任务服务状态，配置 Claude / Codex 代理，安装内部应用和第三方小程序。
         </p>
       </div>
       <label className="relative min-w-0 lg:w-80">
@@ -443,7 +443,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
     },
     {
       title: 'Codex',
-      description: '管理 Codex auth.json、代理开关与默认 GPT 模型，可从在线执行器导入认证。',
+      description: '管理 Codex auth.json、代理开关与默认 GPT 模型，可从在线设备导入认证。',
       icon: Cpu,
       iconClassName: 'bg-gradient-to-br from-slate-900 to-slate-500 text-white',
       status: codexConfigured ? '已认证' : '需认证',
@@ -595,7 +595,7 @@ export function AppsPage() {
               <section className="mt-6">
                 <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">运行概览</h2>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <SummaryCard value={`${onlineCount}`} label="在线执行器" />
+                  <SummaryCard value={`${onlineCount}`} label="在线设备" />
                   <SummaryCard value={`${recommendedApps.length}`} label="内置应用" />
                   <SummaryCard value={`${slotUsage.total || 0}`} label="可用任务槽位" />
                   <SummaryCard
@@ -608,7 +608,7 @@ export function AppsPage() {
               <section className="mt-6">
                 <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">快速入口</h2>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <QuickAction icon={Server} title="执行器管理" detail="查看设备、任务槽位和版本" />
+                  <QuickAction icon={Server} title="设备管理" detail="查看设备、任务槽位和版本" />
                   <QuickAction icon={Network} title="模型代理" detail="配置公司代理服务" />
                   <QuickAction icon={Cpu} title="内置应用" detail="打开 Codex 等工作入口" />
                   <QuickAction

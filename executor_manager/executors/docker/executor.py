@@ -178,11 +178,14 @@ class DockerExecutor(Executor):
             "error_msg": "",
             "callback_status": TaskStatus.RUNNING.value,
             "executor_name": executor_name,
+            "executor_namespace": get_metadata_field(task_dict, "executor_namespace")
+            or "",
         }
 
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
+                self._attach_executor_info(task_dict, execution_status)
                 # Check if container needs to be recreated (not running or doesn't exist)
                 if self._should_recreate_container(executor_name, task_id):
                     execution_status["executor_name"] = executor_name
@@ -196,6 +199,7 @@ class DockerExecutor(Executor):
                 execution_status["executor_name"] = generate_executor_name(
                     task_id, subtask_id, user_name
                 )
+                self._attach_executor_info(task_dict, execution_status)
 
                 self._create_new_container(task_dict, task_info, execution_status)
         except Exception as e:
@@ -240,6 +244,23 @@ class DockerExecutor(Executor):
             "user_name": user_name,
             "executor_name": executor_name,
         }
+
+    @staticmethod
+    def _attach_executor_info(task: Dict[str, Any], status: Dict[str, Any]) -> None:
+        """Attach resolved executor info to the payload sent to the container."""
+        executor_name = status.get("executor_name")
+        if not executor_name:
+            return
+
+        executor_namespace = status.get("executor_namespace") or ""
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["executor_name"] = executor_name
+            metadata["executor_namespace"] = executor_namespace
+            return
+
+        task["executor_name"] = executor_name
+        task["executor_namespace"] = executor_namespace
 
     def _should_recreate_container(self, executor_name: str, task_id: int) -> bool:
         """Check if container should be recreated due to stale or non-running state.
@@ -1175,7 +1196,11 @@ class DockerExecutor(Executor):
 
     def _create_result_response(self, status: Dict[str, Any]) -> Dict[str, Any]:
         """Create unified return result structure"""
-        result = {"status": status["status"], "executor_name": status["executor_name"]}
+        result = {
+            "status": status["status"],
+            "executor_name": status["executor_name"],
+            "executor_namespace": status.get("executor_namespace", ""),
+        }
 
         if status["status"] != "success":
             result["error_msg"] = status["error_msg"]

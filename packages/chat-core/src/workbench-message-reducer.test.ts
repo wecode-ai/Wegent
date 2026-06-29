@@ -21,12 +21,12 @@ describe('reduceWorkbenchMessages', () => {
     const withStart = reduceWorkbenchMessages(withUser, {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
       shellType: 'ClaudeCode',
     })
     const withChunk = reduceWorkbenchMessages(withStart, {
       type: 'assistant_chunk',
-      subtaskId: 9,
+      turnId: 9,
       content: 'hi',
     })
 
@@ -45,7 +45,7 @@ describe('reduceWorkbenchMessages', () => {
       {
         id: 'user-9',
         role: 'user',
-        subtaskId: 9,
+        turnId: 9,
         content: 'hello',
         status: 'done',
         createdAt: '2026-05-25T00:00:00.000Z',
@@ -54,10 +54,10 @@ describe('reduceWorkbenchMessages', () => {
 
     const withTool = reduceWorkbenchMessages(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         status: 'pending',
@@ -66,12 +66,12 @@ describe('reduceWorkbenchMessages', () => {
     })
     const withChunk = reduceWorkbenchMessages(withTool, {
       type: 'assistant_chunk',
-      subtaskId: 9,
+      turnId: 9,
       content: 'Hi',
     })
     const done = reduceWorkbenchMessages(withChunk, {
       type: 'assistant_done',
-      subtaskId: 9,
+      turnId: 9,
       content: 'Hi',
     })
 
@@ -94,11 +94,11 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_chunk',
-        subtaskId: 9,
+        turnId: 9,
         content: '',
         reasoningChunk: 'Running a command',
       }
@@ -106,10 +106,10 @@ describe('reduceWorkbenchMessages', () => {
 
     const withTool = reduceWorkbenchMessages(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         toolInput: { command: 'pwd' },
@@ -129,21 +129,21 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_chunk',
-        subtaskId: 9,
+        turnId: 9,
         content: 'Let me inspect the repository first.',
       }
     )
 
     const withTool = reduceWorkbenchMessages(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         toolInput: { command: 'ls' },
@@ -167,17 +167,17 @@ describe('reduceWorkbenchMessages', () => {
     const state = reduceWorkbenchMessages([], {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
     })
 
     const done = reduceWorkbenchMessages(state, {
       type: 'assistant_done',
-      subtaskId: 9,
+      turnId: 9,
       content: 'Final',
       blocks: [
         {
           id: 'thinking-real',
-          subtaskId: 9,
+          turnId: 9,
           type: 'thinking',
           content: 'Drafting',
           status: 'streaming',
@@ -185,7 +185,7 @@ describe('reduceWorkbenchMessages', () => {
         },
         {
           id: 'call_1',
-          subtaskId: 9,
+          turnId: 9,
           type: 'tool',
           toolName: 'bash',
           status: 'pending',
@@ -193,7 +193,7 @@ describe('reduceWorkbenchMessages', () => {
         },
         {
           id: 'text-real',
-          subtaskId: 9,
+          turnId: 9,
           type: 'text',
           content: 'Final text',
           status: 'streaming',
@@ -214,11 +214,11 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_error',
-        subtaskId: 9,
+        turnId: 9,
         error: 'Device disconnected',
         errorType: 'container_error',
       }
@@ -226,10 +226,10 @@ describe('reduceWorkbenchMessages', () => {
 
     const withTool = reduceWorkbenchMessages(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         status: 'pending',
@@ -238,7 +238,7 @@ describe('reduceWorkbenchMessages', () => {
     })
     const resumed = reduceWorkbenchMessages(withTool, {
       type: 'block_updated',
-      subtaskId: 9,
+      turnId: 9,
       blockId: 'call_1',
       updates: {
         status: 'streaming',
@@ -259,11 +259,11 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_error',
-        subtaskId: 9,
+        turnId: 9,
         error: 'Codex CLI failed to resume thread: session not found',
         errorType: 'execution_error',
       }
@@ -271,7 +271,7 @@ describe('reduceWorkbenchMessages', () => {
 
     const next = reduceWorkbenchMessages(state, {
       type: 'assistant_error',
-      subtaskId: 9,
+      turnId: 9,
       error: 'Task failed with status: FAILED',
       errorType: 'execution_error',
     })

@@ -1086,7 +1086,6 @@ DOCKER_COMPOSE_CMD=""
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
-AUTO_PORT_SEARCH_LIMIT=100
 
 normalize_service_name() {
     case "$1" in
@@ -1140,58 +1139,6 @@ get_configured_service_port() {
             ;;
         wework)
             echo "$WEWORK_PORT"
-            ;;
-    esac
-}
-
-set_configured_service_port() {
-    local service=$1
-    local port=$2
-
-    case "$service" in
-        backend)
-            BACKEND_PORT="$port"
-            ;;
-        frontend)
-            WEGENT_FRONTEND_PORT="$port"
-            ;;
-        chat_shell)
-            CHAT_SHELL_PORT="$port"
-            ;;
-        executor_manager)
-            EXECUTOR_MANAGER_PORT="$port"
-            ;;
-        knowledge_runtime)
-            KNOWLEDGE_RUNTIME_PORT="$port"
-            ;;
-        wework)
-            WEWORK_PORT="$port"
-            ;;
-    esac
-}
-
-service_port_set_by_cli() {
-    case "$1" in
-        backend)
-            [ -n "$CLI_BACKEND_PORT" ]
-            ;;
-        frontend)
-            [ -n "$CLI_WEGENT_FRONTEND_PORT" ]
-            ;;
-        chat_shell)
-            [ -n "$CLI_CHAT_SHELL_PORT" ]
-            ;;
-        executor_manager)
-            [ -n "$CLI_EXECUTOR_MANAGER_PORT" ]
-            ;;
-        knowledge_runtime)
-            [ -n "$CLI_KNOWLEDGE_RUNTIME_PORT" ]
-            ;;
-        wework)
-            [ -n "$CLI_WEWORK_PORT" ]
-            ;;
-        *)
-            return 1
             ;;
     esac
 }
@@ -1567,32 +1514,14 @@ check_port() {
     return 0
 }
 
-RESOLVED_START_PORTS=()
+SELECTED_START_PORTS=()
 
-is_reserved_start_port() {
+is_selected_start_port() {
     local candidate=$1
-    local current_service="${2:-}"
-    local ignore_configured_ports="${3:-false}"
-    local reserved_port
-    local reserved_service
+    local selected_port
 
-    for reserved_port in "${RESOLVED_START_PORTS[@]}"; do
-        if [ "$candidate" = "$reserved_port" ]; then
-            return 0
-        fi
-    done
-
-    if [ "$ignore_configured_ports" = true ]; then
-        return 1
-    fi
-
-    for reserved_service in backend frontend chat_shell executor_manager knowledge_runtime wework; do
-        if [ "$reserved_service" = "$current_service" ]; then
-            continue
-        fi
-
-        reserved_port=$(get_configured_service_port "$reserved_service")
-        if [ "$candidate" = "$reserved_port" ]; then
+    for selected_port in "${SELECTED_START_PORTS[@]}"; do
+        if [ "$candidate" = "$selected_port" ]; then
             return 0
         fi
     done
@@ -1600,57 +1529,38 @@ is_reserved_start_port() {
     return 1
 }
 
-find_available_port() {
-    local start_port=$1
-    local service=$2
-    local ignore_configured_ports="${3:-false}"
-    local port=$start_port
-    local attempts=0
+print_port_listeners() {
+    local port=$1
 
-    while [ "$attempts" -le "$AUTO_PORT_SEARCH_LIMIT" ]; do
-        if check_port "$port" "$service" && ! is_reserved_start_port "$port" "$service" "$ignore_configured_ports"; then
-            echo "$port"
-            return 0
-        fi
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 {printf "      PID %-8s %-18s %s\n", $2, $1, $9}'
+        return 0
+    fi
 
-        port=$((port + 1))
-        attempts=$((attempts + 1))
-    done
-
-    return 1
+    if command -v ss >/dev/null 2>&1; then
+        ss -H -lntp "sport = :$port" 2>/dev/null | sed 's/^/      /'
+    fi
 }
 
 resolve_start_service_port() {
     local service=$1
     local label=$2
     local current_port
-    local ignore_configured_ports=false
-    local new_port
 
     current_port=$(get_configured_service_port "$service")
 
-    if service_port_set_by_cli "$service"; then
-        ignore_configured_ports=true
-    fi
-
-    if check_port "$current_port" "$service" && ! is_reserved_start_port "$current_port" "$service" "$ignore_configured_ports"; then
-        RESOLVED_START_PORTS+=("$current_port")
-        return 0
-    fi
-
-    if ! new_port=$(find_available_port "$((current_port + 1))" "$service" "$ignore_configured_ports"); then
-        echo -e "  ${RED}●${NC} Unable to find an available port for $label after $current_port"
+    if ! check_port "$current_port" "$service"; then
+        echo -e "  ${RED}●${NC} Port $current_port ($label) is already in use"
+        print_port_listeners "$current_port"
         return 1
     fi
 
-    if ! check_port "$current_port" "$service"; then
-        echo -e "  ${YELLOW}●${NC} Port $current_port ($label) is already in use; using $new_port"
-    else
-        echo -e "  ${YELLOW}●${NC} Port $current_port ($label) conflicts with another selected service; using $new_port"
+    if is_selected_start_port "$current_port"; then
+        echo -e "  ${RED}●${NC} Port $current_port ($label) conflicts with another selected service"
+        return 1
     fi
 
-    set_configured_service_port "$service" "$new_port"
-    RESOLVED_START_PORTS+=("$new_port")
+    SELECTED_START_PORTS+=("$current_port")
     return 0
 }
 
@@ -2179,7 +2089,7 @@ start_services() {
     local previous_executor_manager_port="$EXECUTOR_MANAGER_PORT"
     local previous_knowledge_runtime_port="$KNOWLEDGE_RUNTIME_PORT"
     local port_resolution_failed=false
-    RESOLVED_START_PORTS=()
+    SELECTED_START_PORTS=()
 
     if [ "$start_backend" = true ]; then
         resolve_start_service_port "backend" "Backend" || port_resolution_failed=true
@@ -2205,7 +2115,7 @@ start_services() {
     fi
 
     compute_derived_urls "$previous_backend_port" "$previous_executor_manager_port" "$previous_knowledge_runtime_port"
-    echo -e "${GREEN}✓ Required ports resolved${NC}"
+    echo -e "${GREEN}✓ Required ports available${NC}"
     echo ""
 
     echo -e "${GREEN}Configuration:${NC}"

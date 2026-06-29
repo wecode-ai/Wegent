@@ -217,6 +217,7 @@ def _register_device(
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
     runtime_transfer_host: Optional[str] = None,
+    app_device_id: Optional[str] = None,
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -226,9 +227,10 @@ def _register_device(
         device_id: Device unique identifier (stored in Kind.name)
         name: Device display name
         client_ip: Device's client IP address
-        device_type: Device type ('local', 'cloud', or 'remote')
+        device_type: Device type ('local', 'app', 'cloud', or 'remote')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         runtime_transfer_host: Host peers should use for direct transfers
+        app_device_id: Desktop app IPC device ID for app registrations
 
     Returns (success, persisted_display_name, error_message).
     """
@@ -243,6 +245,7 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
                 runtime_transfer_host=runtime_transfer_host,
+                app_device_id=app_device_id,
             )
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
@@ -1072,6 +1075,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     payload.device_type.value,
                     payload.bind_shell.value,
                     runtime_transfer_host,
+                    payload.app_device_id,
                 )
                 if not success:
                     return {"error": f"Registration failed: {error}"}

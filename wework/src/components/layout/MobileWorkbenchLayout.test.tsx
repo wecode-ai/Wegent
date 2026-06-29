@@ -2,9 +2,24 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type {
+  WorkbenchContextValue,
+  WorkbenchPaneContextValue,
+} from '@/features/workbench/workbenchContextTypes'
 import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
-import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { MobileWorkbenchLayout as ActualMobileWorkbenchLayout } from './MobileWorkbenchLayout'
 import '@/i18n'
+
+const paneSessionMockRef = vi.hoisted(() => ({
+  current: undefined as unknown,
+}))
+
+vi.mock('./useWorkbenchPaneSession', () => ({
+  useWorkbenchPaneSession: () => paneSessionMockRef.current,
+}))
 
 const originalInnerWidth = window.innerWidth
 
@@ -52,6 +67,231 @@ const baseProjectChat = {
   toggleSkill: vi.fn(),
   handleFileSelect: vi.fn().mockResolvedValue(undefined),
   removeAttachment: vi.fn().mockResolvedValue(undefined),
+}
+
+function createDefaultImNotificationSettings() {
+  return {
+    global: {
+      enabled: false,
+      sessionKey: null,
+      session: null,
+    },
+    runtimeTaskSubscriptions: [],
+  }
+}
+
+type LegacyMobileWorkbenchLayoutProps = {
+  state?: Record<string, unknown>
+  messages?: WorkbenchMessage[]
+  queuedMessages?: unknown[]
+  guidanceMessages?: unknown[]
+  codeCommentContexts?: unknown[]
+  projectChat?: Partial<ProjectChatControls>
+  projectWork?: Record<string, unknown>
+  onSelectProject?: (projectId: number | null) => void
+  onInputChange?: (input: string) => void
+  onSend?: () => void | Promise<void>
+  onStartStandaloneChat?: () => void
+  onOpenRuntimeLocalTask?: (...args: unknown[]) => Promise<void> | void
+  onListImPrivateSessions?: () => Promise<unknown>
+  onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
+  onUpdateProjectName?: (...args: unknown[]) => Promise<void> | void
+  onRemoveProject?: (...args: unknown[]) => Promise<void> | void
+  onCreateProject?: (...args: unknown[]) => Promise<unknown>
+  onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
+  onPrepareDeviceWorkspace?: (...args: unknown[]) => Promise<unknown>
+  onDeleteDeviceWorkspace?: (...args: unknown[]) => Promise<void>
+  onListGitRepositories?: () => Promise<unknown[]>
+  onListGitBranches?: (...args: unknown[]) => Promise<unknown[]>
+  onGetDeviceHomeDirectory?: (...args: unknown[]) => Promise<string>
+  onGetProjectWorkspaceRoot?: (...args: unknown[]) => Promise<string>
+  onListDeviceDirectories?: (...args: unknown[]) => Promise<string[]>
+  onCreateDeviceDirectory?: (...args: unknown[]) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
+  onLoadEnvironmentInfo?: (...args: unknown[]) => Promise<unknown>
+  onLoadEnvironmentDiff?: (...args: unknown[]) => Promise<string>
+  onCommitEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+  onListEnvironmentBranches?: (...args: unknown[]) => Promise<string[]>
+  onCheckoutEnvironmentBranch?: (...args: unknown[]) => Promise<void>
+  onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
+  onUpgradeDevice?: (...args: unknown[]) => Promise<void>
+}
+
+function MobileWorkbenchLayout(props: LegacyMobileWorkbenchLayoutProps) {
+  const { workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
+  // eslint-disable-next-line react-hooks/immutability -- Vitest hoisted mocks need the latest pane session before rendering the layout.
+  paneSessionMockRef.current = paneSession
+
+  return (
+    <WorkbenchContext.Provider value={workbenchValue}>
+      <WorkbenchPaneContext.Provider value={paneValue}>
+        <ActualMobileWorkbenchLayout />
+      </WorkbenchPaneContext.Provider>
+    </WorkbenchContext.Provider>
+  )
+}
+
+function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
+  const projectWork = props.projectWork ?? {}
+  const state = {
+    ...baseState,
+    selectedDeviceWorkspaceId: null,
+    pendingProjectWorkspaceProjectId: null,
+    standaloneWorkspacePath: null,
+    ...props.state,
+    projects: projectWork.projects ?? props.state?.projects ?? baseState.projects,
+    devices: projectWork.devices ?? props.state?.devices ?? baseState.devices,
+    runtimeWork: projectWork.runtimeWork ?? props.state?.runtimeWork ?? baseState.runtimeWork,
+    standaloneDeviceId:
+      props.state?.standaloneDeviceId ?? projectWork.currentStandaloneDeviceId ?? null,
+    selectedDeviceWorkspaceId:
+      props.state?.selectedDeviceWorkspaceId ?? projectWork.selectedDeviceWorkspaceId ?? null,
+    pendingProjectWorkspaceProjectId:
+      props.state?.pendingProjectWorkspaceProjectId ??
+      projectWork.pendingProjectWorkspaceProjectId ??
+      null,
+  }
+  const projectChat = {
+    ...baseProjectChat,
+    isModelSelectionReady: true,
+    isAttachmentReadyToSend: true,
+    onBlockedModelSelect: vi.fn(),
+    setSelectedSkills: vi.fn(),
+    addExistingAttachment: vi.fn(),
+    resetAttachments: vi.fn(),
+    listLocalSkills: vi.fn().mockResolvedValue([]),
+    ...props.projectChat,
+  }
+  const workbenchValue = {
+    state,
+    isStartupReady: true,
+    workspaceFileApi: {
+      listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
+      readWorkspaceTextFile: vi.fn(),
+    },
+    currentRuntimeTaskRunning: Boolean(state.currentRuntimeTask),
+    cloudWorkStatus: {
+      availability: 'available',
+      checks: { teams: 'available', devices: 'available', runtimeWork: 'available' },
+      error: null,
+      updatedAt: null,
+    },
+    projectChat,
+    upgradingDevices: {},
+    projectExecutionMode: projectWork.executionMode ?? 'current_workspace',
+    setProjectExecutionMode: projectWork.onExecutionModeChange ?? vi.fn(),
+    projectWorktreeBranch: projectWork.worktreeBranch ?? null,
+    setProjectWorktreeBranch: projectWork.onWorktreeBranchChange ?? vi.fn(),
+    selectProject: props.onSelectProject ?? projectWork.onSelectProject ?? vi.fn(),
+    selectProjectWorkspace: projectWork.onSelectProjectWorkspace ?? vi.fn(),
+    selectStandaloneDevice: projectWork.onSelectStandaloneDevice ?? vi.fn(),
+    openStandaloneWorkspace: vi.fn().mockResolvedValue(undefined),
+    startNewChat: vi.fn(),
+    startStandaloneChat: props.onStartStandaloneChat ?? vi.fn(),
+    startNewProjectChat: vi.fn(),
+    openRuntimeLocalTask: props.onOpenRuntimeLocalTask ?? vi.fn().mockResolvedValue(undefined),
+    searchRuntimeWork: vi.fn().mockResolvedValue({ items: [] }),
+    loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
+    subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
+    renameRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+    archiveRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+    archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
+    archiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
+    archiveChatConversations: vi.fn().mockResolvedValue(undefined),
+    forkCurrentRuntimeTask: vi.fn().mockResolvedValue(undefined),
+    listImPrivateSessions:
+      props.onListImPrivateSessions ?? vi.fn().mockResolvedValue({ total: 0, items: [] }),
+    bindRuntimeTaskToImSessions:
+      props.onBindRuntimeTaskToImSessions ??
+      vi.fn().mockRejectedValue(new Error('Missing bind handler')),
+    getImNotificationSettings: vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
+    updateGlobalImNotification: vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
+    subscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({ subscribed: true }),
+    unsubscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({ subscribed: false }),
+    rememberExecutionDevice: vi.fn(),
+    refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
+    refreshDevices: vi.fn().mockResolvedValue(undefined),
+    getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
+    upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
+    createProject:
+      props.onCreateProject ?? vi.fn().mockResolvedValue({ id: 1, name: '', tasks: [] }),
+    createGitWorkspaceProject:
+      props.onCreateGitWorkspaceProject ??
+      vi.fn().mockResolvedValue({ id: 1, name: '', tasks: [] }),
+    prepareDeviceWorkspace:
+      props.onPrepareDeviceWorkspace ?? vi.fn().mockResolvedValue({ workspaceId: 1 }),
+    deleteDeviceWorkspace: props.onDeleteDeviceWorkspace ?? vi.fn().mockResolvedValue(undefined),
+    listGitRepositories: props.onListGitRepositories ?? vi.fn().mockResolvedValue([]),
+    listGitBranches: props.onListGitBranches ?? vi.fn().mockResolvedValue([]),
+    updateProjectName: props.onUpdateProjectName ?? vi.fn().mockResolvedValue(undefined),
+    removeProject: props.onRemoveProject ?? vi.fn().mockResolvedValue(undefined),
+    getDeviceHomeDirectory:
+      props.onGetDeviceHomeDirectory ?? vi.fn().mockResolvedValue('/home/user'),
+    getProjectWorkspaceRoot:
+      props.onGetProjectWorkspaceRoot ?? vi.fn().mockResolvedValue('/workspace/projects'),
+    listDeviceDirectories: props.onListDeviceDirectories ?? vi.fn().mockResolvedValue([]),
+    createDeviceDirectory: props.onCreateDeviceDirectory ?? vi.fn().mockResolvedValue(undefined),
+    loadEnvironmentInfo: vi.fn().mockResolvedValue({
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+    }),
+    loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? vi.fn().mockResolvedValue(''),
+    commitEnvironmentChanges:
+      props.onCommitEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
+    listEnvironmentBranches: props.onListEnvironmentBranches ?? vi.fn().mockResolvedValue([]),
+    checkoutEnvironmentBranch:
+      props.onCheckoutEnvironmentBranch ?? vi.fn().mockResolvedValue(undefined),
+    createEnvironmentBranch:
+      props.onCreateEnvironmentBranch ?? vi.fn().mockResolvedValue(undefined),
+    sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
+    cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
+    sendCurrentInput: props.onSend ?? vi.fn().mockResolvedValue(true),
+    retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+    pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
+    loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
+    revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
+  } as unknown as WorkbenchContextValue
+  const paneValue = {
+    ...workbenchValue,
+    state: {
+      isBootstrapping: state.isBootstrapping,
+      projects: state.projects,
+      devices: state.devices,
+      runtimeWork: state.runtimeWork,
+      standaloneDeviceId: state.standaloneDeviceId,
+      selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
+      pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
+      user: state.user,
+      error: state.error,
+    },
+  } as unknown as WorkbenchPaneContextValue
+  const paneSession = {
+    messages: props.messages ?? [],
+    queuedMessages: props.queuedMessages ?? [],
+    guidanceMessages: props.guidanceMessages ?? [],
+    codeCommentContexts: props.codeCommentContexts ?? [],
+    input: String(state.input ?? ''),
+    setInput: props.onInputChange ?? vi.fn(),
+    sending: Boolean(state.isSending),
+    waitingForAssistant: false,
+    transcriptLoading: false,
+    transcriptHasMoreBefore: false,
+    transcriptLoadingMoreBefore: false,
+    turnNavigation: [],
+    loadMoreTranscriptBefore: vi.fn().mockResolvedValue(undefined),
+    loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
+    loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
+    send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
+    addCodeComment: vi.fn(),
+    clearCodeComments: vi.fn(),
+    cancelQueuedMessage: vi.fn(),
+    sendQueuedAsGuidance: vi.fn().mockResolvedValue(undefined),
+    editQueuedMessage: vi.fn(),
+    cancelGuidanceMessage: vi.fn(),
+  }
+
+  return { workbenchValue, paneValue, paneSession }
 }
 
 function runtimeWork(
@@ -913,6 +1153,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
   })
@@ -1017,11 +1258,12 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
+      workspacePath: chatPath,
       localTaskId: 'chat-1',
     })
   })
 
-  test('limits mobile project runtime tasks to five rows and toggles the rest by updated time', async () => {
+  test('limits mobile project runtime tasks to five rows and preserves append order', async () => {
     render(
       <MobileWorkbenchLayout
         state={{
@@ -1104,13 +1346,13 @@ describe('MobileWorkbenchLayout', () => {
     const collapsedRows = screen.getAllByTestId('mobile-runtime-task-button')
     expect(collapsedRows).toHaveLength(5)
     expect(collapsedRows.map(row => row.textContent)).toEqual([
-      expect.stringContaining('Newest task'),
-      expect.stringContaining('Second task'),
+      expect.stringContaining('Oldest hidden task'),
       expect.stringContaining('Third task'),
-      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Newest task'),
       expect.stringContaining('Fifth task'),
+      expect.stringContaining('Second task'),
     ])
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
       '展开显示'
     )
@@ -1118,7 +1360,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(6)
-    expect(screen.getByText('Oldest hidden task')).toBeInTheDocument()
+    expect(screen.getByText('Fourth task')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
       '折叠显示'
     )
@@ -1126,7 +1368,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
-    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
   })
 
   test('opens project actions on long press without expanding the project', async () => {

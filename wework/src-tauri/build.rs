@@ -229,7 +229,7 @@ fn main() {
         let line = line.unwrap_or_default();
         let id = json_escape(&extract_id(&line));
         println!(
-            r#"{{"type":"response","id":"{}","ok":false,"error":{{"code":"SIDECAR_NOT_BUILT","message":"Local executor sidecar is not built. Run executor/scripts/build_local.py or set WEWORK_EXECUTOR_SIDECAR before launching WeWork local-first."}}}}"#,
+            r#"{{"type":"response","id":"{}","ok":false,"error":{{"code":"SIDECAR_NOT_BUILT","message":"Local executor sidecar is not built. Run executor/local.sh build or set WEWORK_EXECUTOR_SIDECAR before launching WeWork local-first."}}}}"#,
             id
         );
         let _ = io::stdout().flush();

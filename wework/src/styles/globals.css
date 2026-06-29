@@ -143,6 +143,165 @@ button:disabled {
     animation: waiting-thinking-text 1.4s ease-in-out infinite;
   }
 
+  @keyframes local-runtime-card-settle {
+    0%,
+    100% {
+      opacity: 0.72;
+      transform: translate3d(var(--local-runtime-card-from-x), var(--local-runtime-card-from-y), 0)
+        rotate(var(--local-runtime-card-from-rotate));
+    }
+
+    36%,
+    64% {
+      opacity: 1;
+      transform: translate3d(var(--local-runtime-card-to-x), var(--local-runtime-card-to-y), 0)
+        rotate(var(--local-runtime-card-to-rotate));
+    }
+  }
+
+  @keyframes local-runtime-cursor-sweep {
+    0%,
+    14% {
+      opacity: 0;
+      transform: translate3d(-132px, 58px, 0) rotate(-16deg);
+    }
+
+    22%,
+    54% {
+      opacity: 1;
+    }
+
+    42% {
+      transform: translate3d(92px, -24px, 0) rotate(-16deg);
+    }
+
+    72% {
+      opacity: 1;
+      transform: translate3d(36px, 46px, 0) rotate(-16deg);
+    }
+
+    100% {
+      opacity: 0;
+      transform: translate3d(-132px, 58px, 0) rotate(-16deg);
+    }
+  }
+
+  @keyframes local-runtime-progress-track {
+    0%,
+    100% {
+      transform: translateX(-78%) scaleX(0.45);
+    }
+
+    50% {
+      transform: translateX(155%) scaleX(0.82);
+    }
+  }
+
+  @keyframes local-runtime-sparkle {
+    0%,
+    100% {
+      opacity: 0.48;
+      transform: translateY(4px) scale(0.82) rotate(-8deg);
+    }
+
+    50% {
+      opacity: 1;
+      transform: translateY(-3px) scale(1) rotate(8deg);
+    }
+  }
+
+  @keyframes local-runtime-step-dot {
+    0%,
+    100% {
+      opacity: 0.42;
+      transform: scale(0.72);
+    }
+
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .local-runtime-setup-card {
+    animation: local-runtime-card-settle 4.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    transform-origin: center;
+    will-change: opacity, transform;
+  }
+
+  .local-runtime-card-project {
+    --local-runtime-card-from-x: calc(-50% - 128px);
+    --local-runtime-card-from-y: 44px;
+    --local-runtime-card-from-rotate: -7deg;
+    --local-runtime-card-to-x: calc(-50% - 104px);
+    --local-runtime-card-to-y: 62px;
+    --local-runtime-card-to-rotate: -2deg;
+  }
+
+  .local-runtime-card-files {
+    --local-runtime-card-from-x: calc(-50% - 16px);
+    --local-runtime-card-from-y: -22px;
+    --local-runtime-card-from-rotate: 4deg;
+    --local-runtime-card-to-x: -50%;
+    --local-runtime-card-to-y: 38px;
+    --local-runtime-card-to-rotate: 1deg;
+    animation-delay: 0.18s;
+  }
+
+  .local-runtime-card-chat {
+    --local-runtime-card-from-x: calc(-50% + 118px);
+    --local-runtime-card-from-y: 34px;
+    --local-runtime-card-from-rotate: 7deg;
+    --local-runtime-card-to-x: calc(-50% + 104px);
+    --local-runtime-card-to-y: 64px;
+    --local-runtime-card-to-rotate: 2deg;
+    animation-delay: 0.34s;
+  }
+
+  .local-runtime-cursor {
+    left: 50%;
+    top: 50%;
+    animation: local-runtime-cursor-sweep 4.8s ease-in-out infinite;
+    transform-origin: 30% 20%;
+    will-change: opacity, transform;
+  }
+
+  .local-runtime-progress-track {
+    animation: local-runtime-progress-track 1.6s ease-in-out infinite;
+    transform-origin: left center;
+    will-change: transform;
+  }
+
+  .local-runtime-sparkle {
+    animation: local-runtime-sparkle 1.8s ease-in-out infinite;
+    transform-origin: center;
+    will-change: opacity, transform;
+  }
+
+  .local-runtime-step-dot {
+    animation: local-runtime-step-dot 1.15s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .local-runtime-setup-card,
+    .local-runtime-cursor,
+    .local-runtime-progress-track,
+    .local-runtime-sparkle,
+    .local-runtime-step-dot {
+      animation: none;
+    }
+
+    .local-runtime-setup-card {
+      opacity: 1;
+      transform: translate3d(var(--local-runtime-card-to-x), var(--local-runtime-card-to-y), 0)
+        rotate(var(--local-runtime-card-to-rotate));
+    }
+
+    .local-runtime-cursor {
+      opacity: 0;
+    }
+  }
+
   .z-chrome {
     z-index: var(--z-chrome);
   }
@@ -181,22 +340,32 @@ button:disabled {
   }
 
   .scrollbar-soft {
-    scrollbar-color: rgb(210 210 210 / 0.45) transparent;
+    scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);
     scrollbar-width: thin;
   }
 
   .scrollbar-soft::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 7px;
+    height: 7px;
+    background-color: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgb(210 210 210 / 0.8);
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-track-piece {
+    background: rgb(210 210 210 / 0.8);
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-corner {
+    background: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background-color: rgb(210 210 210 / 0.38);
+    border-radius: 0;
+    border: 0;
+    background-color: rgb(210 210 210 / 0.8);
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb:hover {

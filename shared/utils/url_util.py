@@ -50,7 +50,7 @@ def domains_match(domain1: str, domain2: str) -> bool:
         True
         >>> domains_match("http://github.com", "https://github.com")
         True
-        >>> domains_match("https://gitlab.weibo.cn/", "gitlab.weibo.cn")
+        >>> domains_match("https://gitlab.example.cn/", "gitlab.example.cn")
         True
         >>> domains_match("github.com", "gitlab.com")
         False

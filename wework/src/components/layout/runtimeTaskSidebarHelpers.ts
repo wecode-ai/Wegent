@@ -30,9 +30,7 @@ export function getRuntimeTaskRuntimeLabel(runtime: string) {
 export function getRuntimeSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
-  return sortRuntimeTaskItems(
-    workspaces.flatMap(workspace => workspace.localTasks.map(task => ({ workspace, task })))
-  )
+  return workspaces.flatMap(workspace => workspace.localTasks.map(task => ({ workspace, task })))
 }
 
 export function getRuntimeChatSidebarTaskItems(
@@ -68,18 +66,36 @@ export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) 
   return `${deviceLabel} ${workspace.workspacePath}`
 }
 
+function isRuntimeWorktreeWorkspace(workspace: RuntimeDeviceWorkspace) {
+  return (
+    workspace.workspaceKind === 'worktree' ||
+    Boolean(workspace.worktreeId) ||
+    Boolean(getWorktreeIdFromPath(workspace.workspacePath))
+  )
+}
+
+export function getRuntimeTaskWorkspacePath(
+  workspace: RuntimeDeviceWorkspace,
+  task: LocalTaskSummary
+) {
+  if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
+  return task.workspacePath || workspace.workspacePath
+}
+
 export function getRuntimeTaskAddress(
   workspace: RuntimeDeviceWorkspace,
   task: LocalTaskSummary
 ): RuntimeTaskAddress {
   return {
     deviceId: workspace.deviceId,
+    workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     localTaskId: task.localTaskId,
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
 
 export function isRuntimeWorktreeTask(task: LocalTaskSummary) {
-  return task.workspaceKind === 'worktree' || Boolean(getWorktreeIdFromPath(task.workspacePath))
+  return task.workspaceKind === 'worktree' || Boolean(task.worktreeId)
 }
 
 export function isRuntimeChatWorkspace(workspace: RuntimeDeviceWorkspace) {
@@ -114,8 +130,11 @@ export function isRuntimeTaskSelected(
   task: LocalTaskSummary
 ) {
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const currentPath = currentRuntimeTask?.workspacePath?.trim()
+  const taskPath = taskAddress.workspacePath?.trim()
   return (
     currentRuntimeTask?.deviceId === taskAddress.deviceId &&
-    currentRuntimeTask.localTaskId === taskAddress.localTaskId
+    currentRuntimeTask.localTaskId === taskAddress.localTaskId &&
+    (!currentPath || !taskPath || currentPath === taskPath)
   )
 }

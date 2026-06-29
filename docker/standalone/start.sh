@@ -29,6 +29,7 @@ export DATABASE_URL="sqlite:////app/data/wegent.db"
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-3002}
 STANDALONE_EXECUTOR_ENABLED="${STANDALONE_EXECUTOR_ENABLED:-true}"
+STANDALONE_EXECUTOR_DEVICE_ID="${STANDALONE_EXECUTOR_DEVICE_ID:-standalone-admin-device}"
 
 # Set Redis URL to localhost (embedded Redis).
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -261,7 +262,7 @@ start_executor() {
     echo "[4/8] Starting Standalone Executor..."
 
     export DEVICE_TYPE=cloud
-    export DEVICE_ID=standalone-admin-device
+    export DEVICE_ID="$STANDALONE_EXECUTOR_DEVICE_ID"
     export DEVICE_NAME="${STANDALONE_DEVICE_NAME:-Standalone Device}"
     export WEGENT_BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}
     export WORKSPACE_ROOT=/workspace
@@ -269,12 +270,12 @@ start_executor() {
     export WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects
     export WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats
     export WEGENT_EXECUTOR_HOME=/app/data/standalone-executor
+    export EXECUTOR_STARTUP_MODE=socket
     export DEVICE_SESSION_GATEWAY_ENABLED=false
 
     mkdir -p "$WEGENT_EXECUTOR_PROJECTS_DIR" "$WEGENT_EXECUTOR_CHATS_DIR" "$WEGENT_EXECUTOR_HOME"
 
-    cd /app
-    python -m executor.main &
+    /app/wegent-executor &
     EXECUTOR_PID=$!
     echo "      Standalone Executor started (PID: ${EXECUTOR_PID})"
 }

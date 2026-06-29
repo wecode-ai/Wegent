@@ -12,7 +12,7 @@ from app.services.execution.dispatcher import (
     InvalidToolCallEventError,
     ResponsesAPIEventParser,
 )
-from app.services.execution.inprocess_executor import EmitterBridgeTransport
+from app.services.execution.response_bridge import EmitterBridgeTransport
 from shared.models import EventType
 from shared.models.responses_api import ResponsesAPIStreamEvents
 
