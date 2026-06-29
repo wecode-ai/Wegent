@@ -620,8 +620,9 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
+    let mut envs = vec![("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string())];
     let Some(connection) = &inner.backend_connection else {
-        return Vec::new();
+        return envs;
     };
     let app_ipc_device_id = inner
         .device_id
@@ -631,7 +632,7 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         .unwrap_or(LOCAL_EXECUTOR_DEVICE_ID)
         .to_string();
 
-    vec![
+    envs.extend([
         (
             "WEGENT_BACKEND_URL".to_string(),
             connection.backend_url.clone(),
@@ -648,7 +649,8 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         ("DEVICE_TYPE".to_string(), "app".to_string()),
         ("BIND_SHELL".to_string(), "claudecode".to_string()),
         ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
-    ]
+    ]);
+    envs
 }
 
 fn response_error(response: ExecutorResponse) -> String {
@@ -1541,6 +1543,10 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
 
+        assert_eq!(
+            envs.get("EXECUTOR_STARTUP_MODE").map(String::as_str),
+            Some("socket")
+        );
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")
