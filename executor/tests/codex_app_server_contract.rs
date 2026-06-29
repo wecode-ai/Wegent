@@ -479,6 +479,33 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_does_not_timeout_running_turn() {
+    let _lock = env_lock().await;
+    let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
+    let fake_codex = write_fake_codex_slow_turn();
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_reports_nested_turn_error_details() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_nested_turn_error();
@@ -637,6 +664,46 @@ fn write_fake_codex_hang() -> PathBuf {
         r#"#!/bin/sh
 while IFS= read -r _line; do
   sleep 30
+done
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_slow_turn() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-slow-turn-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{"protocolVersion":1}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
+      sleep 2
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"done","phase":"finalAnswer"}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"completed"}}}'
+      exit 0
+      ;;
+  esac
 done
 "#,
     )

@@ -362,12 +362,9 @@ pub async fn run_codex_app_server_turn(
             ),
         )
         .await?;
-        let outcome = with_rpc_timeout(
-            "turn",
-            timeout_seconds,
-            rpc.read_turn(turn_request_id, &mut state, notifications),
-        )
-        .await?;
+        let outcome = rpc
+            .read_turn(turn_request_id, &mut state, notifications)
+            .await?;
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
