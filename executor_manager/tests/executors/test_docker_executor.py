@@ -241,8 +241,9 @@ class TestDockerExecutor:
         }
 
         with (
-            patch(
-                "executor_manager.executors.docker.executor.generate_executor_name",
+            patch.object(
+                docker_executor_module,
+                "generate_executor_name",
                 return_value="generated-executor",
             ),
             patch.object(executor, "_create_new_container") as mock_create,
@@ -286,7 +287,7 @@ class TestDockerExecutor:
 
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch("executor_manager.executors.docker.executor.find_available_port")
-    @patch("executor_manager.utils.executor_name.generate_executor_name")
+    @patch.object(docker_executor_module, "generate_executor_name")
     def test_submit_executor_docker_error(
         self,
         mock_name,
