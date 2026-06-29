@@ -1,6 +1,7 @@
 mod in_app_browser;
 mod local_executor;
 mod local_terminal;
+mod process_environment;
 
 use tauri::Manager;
 

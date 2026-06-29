@@ -266,6 +266,44 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 }
 
 #[tokio::test]
+async fn codex_app_server_receives_normalized_developer_path() {
+    let _lock = env_lock().await;
+    let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
+    let _extra_paths = EnvGuard::set("WEGENT_EXTRA_PATHS", "/custom/bin:/opt/homebrew/bin");
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-path-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(&log_path, &["PATH"]);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("check path"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
+    let messages = read_json_lines(&log_path);
+    let args = messages[0]["args"].as_array().unwrap();
+    assert_config_arg(
+        args,
+        "shell_environment_policy.set.PATH=\"/usr/bin:/bin:/custom/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/Library/Apple/usr/bin\"",
+    );
+    let path = messages[0]["env"]["PATH"].as_str().unwrap();
+    assert!(path.starts_with("/usr/bin:/bin:/custom/bin:/opt/homebrew/bin"));
+    assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);
+    assert!(path.contains("/opt/homebrew/sbin"));
+    assert!(path.contains("/usr/local/bin"));
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_does_not_override_user_runtime_home() {
     let _lock = env_lock().await;
     let home = unique_dir("codex-user-home");
@@ -481,7 +519,7 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
 #[tokio::test]
 async fn codex_app_server_engine_does_not_timeout_running_turn() {
     let _lock = env_lock().await;
-    let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
+    let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "3");
     let fake_codex = write_fake_codex_slow_turn();
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
@@ -698,7 +736,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
-      sleep 2
+      sleep 4
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"done","phase":"finalAnswer"}}'
       printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"completed"}}}'
       exit 0
