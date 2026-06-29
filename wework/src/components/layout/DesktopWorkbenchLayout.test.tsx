@@ -969,7 +969,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-[52px]')
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-x-hidden',
@@ -1012,6 +1012,29 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'workspace',
+                localTasks: [
+                  {
+                    localTaskId: 'runtime-empty',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Fix pane title',
+                    runtime: 'codex',
+                    createdAt: '2026-06-20T00:00:00.000Z',
+                    updatedAt: '2026-06-20T00:00:00.000Z',
+                    running: true,
+                  },
+                ],
+              },
+            ],
+            totalLocalTasks: 1,
+          },
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
@@ -1024,6 +1047,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+    const paneTitle = screen.getByTestId('workbench-pane-task-title')
+    expect(paneTitle).toHaveTextContent('Fix pane title')
+    expect(paneTitle).toHaveClass('truncate', 'text-[13px]', 'text-text-primary')
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass(
+      'h-11',
+      'border-b',
+      'border-border/50',
+      'bg-background/95'
+    )
   })
 
   test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
@@ -1546,7 +1578,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
     )
-    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-[52px]')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mb-1.5', 'mr-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
   })
