@@ -954,9 +954,9 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       '-translate-y-12'
     )
   })
@@ -987,9 +987,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       'px-0'
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
@@ -1500,7 +1500,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
-    expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-6px]', 'w-3')
+    expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
@@ -1543,6 +1543,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
   })
 
   test('slides out a sidebar preview from the left edge without resizing the workspace', async () => {
@@ -3140,9 +3144,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]'
+      'max-w-[calc(100%_-_2rem)]'
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))

@@ -204,7 +204,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
-  const useDockedChatContentWidth = !sidebarCollapsed || rightPanelOpen
+  const contentDockedChatContentWidth = rightPanelOpen
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
   const workspaceTargetDevice = workspaceTarget?.deviceId
@@ -808,7 +808,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
               messageListClassName={
-                useDockedChatContentWidth
+                contentDockedChatContentWidth
                   ? cn(DESKTOP_DOCKED_MESSAGE_LIST_CLASS, chatContentResizing && 'transition-none')
                   : cn(
                       DESKTOP_CENTERED_MESSAGE_LIST_CLASS,
@@ -849,7 +849,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             />
             <div
               className={
-                useDockedChatContentWidth
+                contentDockedChatContentWidth
                   ? cn(
                       DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS,
                       chatContentResizing && 'transition-none'
@@ -914,7 +914,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <div className="flex flex-1 items-center justify-center px-10">
             <div
               className={
-                useDockedChatContentWidth
+                contentDockedChatContentWidth
                   ? cn(
                       DESKTOP_DOCKED_COMPOSER_FRAME_CLASS,
                       chatContentResizing && 'transition-none'
