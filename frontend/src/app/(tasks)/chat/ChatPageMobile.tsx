@@ -29,6 +29,7 @@ import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 
 const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
   ssr: false,
@@ -94,14 +95,13 @@ export function ChatPageMobile() {
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
-  const _hasShareId = !!searchParams.get('share_id')
+  const _hasShareId = !!getSearchParam(searchParams, 'share_id')
   const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
-  const isCodeAgentMode = searchParams.get('agent') === 'code'
+  const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
   const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
-  const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
 
   const taskType: TaskType =

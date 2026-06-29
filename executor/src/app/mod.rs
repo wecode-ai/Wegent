@@ -118,13 +118,13 @@ enum StartupMode {
 }
 
 impl StartupMode {
-    fn from_env() -> Result<Self, AppError> {
+    fn from_config(config: &crate::config::device::DeviceConfig) -> Result<Self, AppError> {
         let Some(value) = env::var("EXECUTOR_STARTUP_MODE")
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
         else {
-            return Ok(Self::Http);
+            return Ok(Self::inferred_from_config(config));
         };
 
         if value.eq_ignore_ascii_case("http") {
@@ -133,6 +133,14 @@ impl StartupMode {
             Ok(Self::Socket)
         } else {
             Err(AppError::StartupMode(value))
+        }
+    }
+
+    fn inferred_from_config(config: &crate::config::device::DeviceConfig) -> Self {
+        if config.mode.trim().eq_ignore_ascii_case("remote") {
+            Self::Socket
+        } else {
+            Self::Http
         }
     }
 }
@@ -212,7 +220,7 @@ pub fn startup_plan(args: CliArgs) -> Result<StartupPlan, AppError> {
 fn startup_plan_for_config(
     config: &crate::config::device::DeviceConfig,
 ) -> Result<StartupPlan, AppError> {
-    match StartupMode::from_env()? {
+    match StartupMode::from_config(config)? {
         StartupMode::Http => {
             let server = ServerConfig::from_env()?;
             Ok(StartupPlan::HttpServer {

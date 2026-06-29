@@ -720,6 +720,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
+        "git_worktree_remove" => Some(command_definition(
+            "sh -c 'git -C \"$1\" worktree remove --force \"$2\"' --",
+            &[
+                "sh",
+                "-c",
+                "git -C \"$1\" worktree remove --force \"$2\"",
+                "--",
+            ],
+            None,
+        )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
         "ls_skills" => Some(command_definition(

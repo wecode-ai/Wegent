@@ -18,6 +18,7 @@ import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 
 // Dynamic imports for mobile and desktop page components with code splitting
 const ChatPageDesktop = dynamic(
@@ -58,11 +59,10 @@ export default function ChatPage() {
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
-  const hasShareId = !!searchParams.get('share_id')
+  const hasShareId = !!getSearchParam(searchParams, 'share_id')
 
   // Check if a task is currently open
-  const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
 
   // Redirect device tasks to /devices/chat page for proper layout
   useEffect(() => {

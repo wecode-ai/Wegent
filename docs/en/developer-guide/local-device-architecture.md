@@ -267,6 +267,25 @@ When a project task runs through the local executor, its task-level `CLAUDE_CONF
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
 
+### Chat Task Device Resolution And Claude Code Launch Context
+
+When a regular chat Task runs through the local executor, Backend resolves the actual dispatch device before creating or continuing the task. Resolution order is:
+
+1. The `device_id` explicitly provided by the current request.
+2. The current Project local execution config, such as `config.execution.targetType = local` and `config.execution.deviceId`.
+3. The `deviceId` already stored in the existing Task spec.
+
+The `appDeviceId` used by frontend App IPC is only the local process identity. Backend maps it to the executor Socket.IO `name` stored on the Device CRD before dispatching. If the resolved local device is stale or offline and the current user has exactly one online local executor, Backend switches the task to that online device so a stale id does not block local execution. Unknown device ids are not silently rewritten.
+
+Before launching a Claude Code child process, the executor prepares the task context:
+
+- It downloads turn attachments into the task directory. Project workspaces use `.wegent/attachments/<taskId>/<subtaskId>/`; non-Project tasks use an attachment subdirectory under the executor task directory.
+- It restores plugin packages from `~/.claude/plugins/cache` when they are still enabled in `enabledPlugins` but their install directory is missing, and it repairs plugin hook permissions.
+- It deploys task-selected Skills into `SKILLS_DIR`. Regular Project tasks use global `~/.claude/skills`; standalone local work with `project_id = 0` and task Skills uses task-level `.claude/skills` so the global directory is not polluted.
+- If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts.
+
+The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
+
 ---
 
 ## 🔄 Task Execution Flow
@@ -347,9 +366,9 @@ Backend-triggered terminal and code-server sessions resolve relative paths under
 
 ### Local Executor Connection Configuration
 
-On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. `EXECUTOR_STARTUP_MODE` controls the listening entrypoint and defaults to `http`, so running `wegent-executor` with no arguments starts the HTTP server using `HOST`/`PORT`. Set `EXECUTOR_STARTUP_MODE=socket` when the local App IPC socket is needed; the executor then listens on `~/.wegent-executor/app-ipc.sock`. In socket startup mode, after `connection.backend_url` or `WEGENT_BACKEND_URL` is set, the executor keeps the local socket available and also connects to Backend as a local device, using `connection.auth_token` or `WEGENT_AUTH_TOKEN` for authentication. Wework App only manages executors it starts itself; if a user starts an executor outside the App, the App attaches to the existing socket and does not terminate that external process on exit. Do not run multiple manual executors with the same `WEGENT_EXECUTOR_HOME` or socket path, because a later process can replace the socket path and make ownership ambiguous.
+On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. `EXECUTOR_MODE=remote` starts the local App IPC socket and, after `connection.backend_url` or `WEGENT_BACKEND_URL` is set, also connects to Backend, using `connection.auth_token` or `WEGENT_AUTH_TOKEN` for authentication. `EXECUTOR_STARTUP_MODE=socket` remains compatible for old scripts, but new startup commands no longer need it. Wework App only manages executors it starts itself; if a user starts an executor outside the App, the App attaches to the existing socket and does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path, because a later process can replace the socket path and make ownership ambiguous.
 
-`EXECUTOR_MODE` overrides `mode`, `EXECUTOR_STARTUP_MODE` overrides the listening entrypoint, `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require connection environment variables; if the device config already contains valid mode and connection settings, and the startup entrypoint matches the scenario, the executor can start directly.
+`EXECUTOR_MODE` overrides `mode`. `remote` selects socket startup mode, `docker` selects HTTP mode, and other values keep the local default. `EXECUTOR_STARTUP_MODE` is kept only as a legacy script compatibility entrypoint. `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require executor home; if the device config already contains valid mode and connection settings, the executor can start directly.
 
 ### Cloud Device Bootstrap Identity Variables
 
