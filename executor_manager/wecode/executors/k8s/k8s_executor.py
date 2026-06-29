@@ -1236,17 +1236,20 @@ class K8sExecutor(Executor):
             return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
 
     def get_old_task_ids(self, older_than_hours: int = 48) -> Dict[str, Any]:
-        """Get task IDs for executor pods older than the given age threshold.
+        """Get old executor pods with task_id and pod_name for orphan cleanup.
 
-        Used for orphan pod cleanup — finds pods that may no longer have
-        corresponding DB subtask records.
+        Scans all pods in the namespace by name pattern (wegent-task or sandbox)
+        rather than by label to catch pods where labels were not set correctly.
 
         Args:
             older_than_hours: Minimum pod age in hours.
 
         Returns:
-            Dict with status and task_ids list.
+            Dict with status and pods list of {task_id, pod_name} dicts.
+            task_id is None when the label is missing.
         """
+        import re
+
         start_time = time.time()
         try:
             core_v1 = self._get_core_v1_api()
@@ -1254,26 +1257,24 @@ class K8sExecutor(Executor):
                 return {
                     "status": "failed",
                     "error_msg": "Failed to get Kubernetes API client",
-                    "task_ids": [],
+                    "pods": [],
                 }
 
             cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
-            label_selector = "aigc.weibo.com/executor=wegent"
+            name_pattern = re.compile(r"^(wegent-task|sandbox)")
 
             response = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE,
-                label_selector=label_selector,
                 _preload_content=False,
             )
             data = json.loads(response.data.decode("utf-8"))
             items = data.get("items", [])
 
-            old_task_ids: List[str] = []
+            old_pods: List[Dict[str, Any]] = []
             for pod in items:
                 metadata = pod.get("metadata", {})
-                labels = metadata.get("labels", {})
-                task_id = labels.get("aigc.weibo.com/executor-task-id")
-                if not task_id:
+                pod_name = metadata.get("name", "")
+                if not name_pattern.match(pod_name):
                     continue
                 creation_ts = metadata.get("creationTimestamp")
                 if not creation_ts:
@@ -1282,31 +1283,34 @@ class K8sExecutor(Executor):
                     creation_time = datetime.fromisoformat(
                         creation_ts.replace("Z", "+00:00")
                     )
-                    if creation_time < cutoff:
-                        old_task_ids.append(task_id)
+                    if creation_time >= cutoff:
+                        continue
                 except (ValueError, TypeError):
                     continue
+                labels = metadata.get("labels", {})
+                task_id = labels.get("aigc.weibo.com/executor-task-id")
+                old_pods.append({"task_id": task_id, "pod_name": pod_name})
 
             elapsed = time.time() - start_time
             logger.info(
-                "Found %d old task IDs (older_than=%dh) in namespace %s (took %.2fs)",
-                len(old_task_ids),
+                "Found %d old pods (older_than=%dh) in namespace %s (took %.2fs)",
+                len(old_pods),
                 older_than_hours,
                 K8S_NAMESPACE,
                 elapsed,
             )
-            return {"status": "success", "task_ids": old_task_ids}
+            return {"status": "success", "pods": old_pods}
 
         except ApiException as e:
             logger.error("Kubernetes API error listing old pods: %s", e)
             return {
                 "status": "failed",
                 "error_msg": f"Kubernetes API error: {e}",
-                "task_ids": [],
+                "pods": [],
             }
         except Exception as e:
             logger.error("Error listing old Kubernetes pods: %s", e)
-            return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
+            return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
 
     def get_executor_count(
         self, label_selector: Optional[str] = None

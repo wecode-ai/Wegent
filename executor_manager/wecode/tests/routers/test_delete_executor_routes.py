@@ -34,9 +34,21 @@ class NoDeleteByTaskIdExecutor:
         return {"status": "success"}
 
 
+class DeletePodByNameExecutor:
+    def delete_executor(self, pod_name, executor_namespace=None):
+        return {"status": "success"}
+
+
 class OldTaskIdsExecutor:
     def get_old_task_ids(self, older_than_hours: int = 48):
-        return {"status": "success", "task_ids": ["100", "200", "300"]}
+        return {
+            "status": "success",
+            "pods": [
+                {"task_id": "100", "pod_name": "wegent-task-100-aaa"},
+                {"task_id": "200", "pod_name": "wegent-task-200-bbb"},
+                {"task_id": None, "pod_name": "sandbox-unlabeled-ccc"},
+            ],
+        }
 
 
 class NoOldTaskIdsExecutor:
@@ -98,7 +110,54 @@ async def test_delete_executor_by_task_id_unsupported_executor(mocker):
 
 
 @pytest.mark.asyncio
-async def test_get_old_task_ids_returns_task_ids(mocker):
+async def test_delete_pod_by_name_success(mocker):
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    mocker.patch.object(
+        wecode_routers.ExecutorDispatcher,
+        "get_executor",
+        return_value=DeletePodByNameExecutor(),
+    )
+
+    result = await wecode_routers.delete_pod_by_name(
+        request=wecode_routers.DeletePodByNameRequest(pod_name="wegent-task-999-xyz"),
+        http_request=http_request,
+    )
+
+    assert result["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_delete_pod_by_name_with_namespace(mocker):
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    calls = []
+
+    class TrackingExecutor:
+        def delete_executor(self, pod_name, executor_namespace=None):
+            calls.append(
+                {"pod_name": pod_name, "executor_namespace": executor_namespace}
+            )
+            return {"status": "success"}
+
+    mocker.patch.object(
+        wecode_routers.ExecutorDispatcher,
+        "get_executor",
+        return_value=TrackingExecutor(),
+    )
+
+    await wecode_routers.delete_pod_by_name(
+        request=wecode_routers.DeletePodByNameRequest(
+            pod_name="sandbox-abc",
+            executor_namespace="wb-plat-ide",
+        ),
+        http_request=http_request,
+    )
+
+    assert calls[0]["pod_name"] == "sandbox-abc"
+    assert calls[0]["executor_namespace"] == "wb-plat-ide"
+
+
+@pytest.mark.asyncio
+async def test_get_old_task_ids_returns_pods(mocker):
     http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
     mocker.patch.object(
         wecode_routers.ExecutorDispatcher,
@@ -111,7 +170,10 @@ async def test_get_old_task_ids_returns_task_ids(mocker):
     )
 
     assert result["status"] == "success"
-    assert result["task_ids"] == ["100", "200", "300"]
+    assert len(result["pods"]) == 3
+    assert result["pods"][0]["task_id"] == "100"
+    assert result["pods"][0]["pod_name"] == "wegent-task-100-aaa"
+    assert result["pods"][2]["task_id"] is None
 
 
 @pytest.mark.asyncio
@@ -127,4 +189,4 @@ async def test_get_old_task_ids_unsupported_executor_returns_empty(mocker):
         older_than_hours=48, http_request=http_request
     )
 
-    assert result == {"status": "success", "task_ids": []}
+    assert result == {"status": "success", "pods": []}

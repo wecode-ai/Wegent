@@ -20,14 +20,15 @@ class DeleteExecutorByTaskIdRequest(BaseModel):
     task_id: int
 
 
+class DeletePodByNameRequest(BaseModel):
+    pod_name: str
+    executor_namespace: Optional[str] = None
+
+
 async def delete_executor_by_task_id(
     request: DeleteExecutorByTaskIdRequest, http_request: Request
 ):
-    """Delete executor pod(s) by task_id label for orphan pod cleanup.
-
-    Used when no DB subtask records exist for a task but K8s pods remain.
-    Searches pods by the aigc.weibo.com/executor-task-id label and deletes them.
-    """
+    """Delete executor pod(s) by task_id label for orphan pod cleanup."""
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
@@ -50,14 +51,46 @@ async def delete_executor_by_task_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def delete_pod_by_name(request: DeletePodByNameRequest, http_request: Request):
+    """Delete a specific executor pod by its name (kubectl fallback path).
+
+    Used as fallback when cleanup_stale_task_executor returns executor_not_found
+    for orphan pods that have no corresponding DB subtask records.
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            "Received request to delete pod by name: %s namespace: %s from %s",
+            request.pod_name,
+            request.executor_namespace,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "delete_executor"):
+            raise HTTPException(
+                status_code=501,
+                detail="delete_executor is not supported by this executor",
+            )
+        result = executor.delete_executor(
+            request.pod_name, executor_namespace=request.executor_namespace
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting pod by name '%s': %s", request.pod_name, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def get_old_task_ids(
     older_than_hours: int = 48,
     http_request: Optional[Request] = None,
 ):
-    """List task IDs for executor pods older than the given age threshold.
+    """List old executor pods with task_id and pod_name for orphan cleanup.
 
-    Used by the backend orphan pod cleanup job to identify pods that have
-    no corresponding DB subtask records.
+    Scans pods by name pattern (wegent-task or sandbox) and returns those
+    older than the given threshold, including both task_id (may be None)
+    and pod_name for direct deletion fallback.
     """
     try:
         client_ip = (
@@ -72,7 +105,7 @@ async def get_old_task_ids(
         )
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         if not hasattr(executor, "get_old_task_ids"):
-            return {"status": "success", "task_ids": []}
+            return {"status": "success", "pods": []}
         result = executor.get_old_task_ids(older_than_hours)
         return result
     except Exception as e:
@@ -85,6 +118,11 @@ def register(api_router: APIRouter) -> None:
     api_router.add_api_route(
         "/executor/delete-by-task-id",
         delete_executor_by_task_id,
+        methods=["POST"],
+    )
+    api_router.add_api_route(
+        "/executor/delete-pod-by-name",
+        delete_pod_by_name,
         methods=["POST"],
     )
     api_router.add_api_route(

@@ -5,13 +5,14 @@
 """Add orphan pod cleanup methods to executor_kinds_service (K8s-specific)."""
 
 import logging
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
 
 from wecode.config.orphan_pod_config import (
     EXECUTOR_DELETE_BY_TASK_ID_URL,
+    EXECUTOR_DELETE_POD_BY_NAME_URL,
     EXECUTOR_OLD_TASK_IDS_URL,
 )
 
@@ -25,11 +26,14 @@ except Exception:
     executor_kinds_service = None  # type: ignore
 
 
-async def get_old_task_ids_async(self, older_than_hours: int = 48) -> List[str]:
-    """Fetch task IDs for executor pods older than the given age threshold."""
+async def get_old_pods_async(self, older_than_hours: int = 48) -> List[Dict[str, Any]]:
+    """Fetch old executor pods with task_id and pod_name for orphan cleanup.
+
+    Returns a list of dicts with keys 'task_id' (str or None) and 'pod_name' (str).
+    """
     try:
         logger.info(
-            "executor.get_old_task_ids async request url=%s older_than_hours=%d",
+            "executor.get_old_pods async request url=%s older_than_hours=%d",
             EXECUTOR_OLD_TASK_IDS_URL,
             older_than_hours,
         )
@@ -39,9 +43,9 @@ async def get_old_task_ids_async(self, older_than_hours: int = 48) -> List[str]:
                 params={"older_than_hours": older_than_hours},
             )
             response.raise_for_status()
-            return response.json().get("task_ids", [])
+            return response.json().get("pods", [])
     except httpx.HTTPError as e:
-        logger.warning("Failed to fetch old task IDs from executor_manager: %s", e)
+        logger.warning("Failed to fetch old pods from executor_manager: %s", e)
         return []
 
 
@@ -79,6 +83,48 @@ async def delete_executor_by_task_id_async(self, task_id: int) -> Dict:
         )
 
 
+async def delete_pod_by_name_async(
+    self,
+    pod_name: str,
+    executor_namespace: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a K8s pod directly by its name (kubectl fallback for orphan pods).
+
+    Called when cleanup_stale_task_executor returns executor_not_found for pods
+    that have no DB subtask records at all.
+    """
+    if not pod_name:
+        raise HTTPException(status_code=400, detail="pod_name is required")
+    try:
+        payload: Dict[str, Any] = {"pod_name": pod_name}
+        if executor_namespace:
+            payload["executor_namespace"] = executor_namespace
+        logger.info(
+            "executor.delete_pod_by_name async request url=%s pod_name=%s",
+            EXECUTOR_DELETE_POD_BY_NAME_URL,
+            pod_name,
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                EXECUTOR_DELETE_POD_BY_NAME_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Invalid delete-pod-by-name response: {data!r}",
+                )
+            return data
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deleting pod by name: {str(e)}",
+        )
+
+
 def apply_patch():
     """Attach orphan pod cleanup methods to executor_kinds_service."""
     global _patch_applied
@@ -92,11 +138,14 @@ def apply_patch():
         )
         return
 
-    executor_kinds_service.get_old_task_ids_async = get_old_task_ids_async.__get__(
+    executor_kinds_service.get_old_pods_async = get_old_pods_async.__get__(
         executor_kinds_service
     )
     executor_kinds_service.delete_executor_by_task_id_async = (
         delete_executor_by_task_id_async.__get__(executor_kinds_service)
+    )
+    executor_kinds_service.delete_pod_by_name_async = delete_pod_by_name_async.__get__(
+        executor_kinds_service
     )
 
     _patch_applied = True
