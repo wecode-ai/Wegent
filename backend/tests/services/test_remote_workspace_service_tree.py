@@ -101,6 +101,43 @@ def test_list_tree_allows_executor_runtime_fallback():
     assert result.entries[0].name == "src"
 
 
+def test_list_tree_normalizes_numeric_modified_at_from_executor_runtime():
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    task_detail = {
+        "subtasks": [
+            {"executor_name": "executor-1", "executor_namespace": ""},
+        ]
+    }
+    list_dir_payload = [
+        {
+            "name": ".claude",
+            "path": "/workspace/1/.claude",
+            "is_directory": True,
+            "size": 0,
+            "modified_at": 1782725199,
+        }
+    ]
+
+    with (
+        patch.object(service, "_get_task_detail", return_value=task_detail),
+        patch.object(service, "_get_sandbox_payload", return_value=None),
+        patch.object(
+            service,
+            "_get_executor_payload",
+            return_value={"status": "success", "base_url": "http://executor-runtime"},
+        ),
+        patch.object(service, "_list_directory", return_value=list_dir_payload),
+    ):
+        result = service.list_tree(
+            db=Mock(),
+            task_id=1,
+            user_id=100,
+            path="/workspace",
+        )
+
+    assert result.entries[0].modified_at == "2026-06-29T09:26:39Z"
+
+
 def test_list_tree_allows_sandbox_runtime_without_executor_binding():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
     task_detail = {

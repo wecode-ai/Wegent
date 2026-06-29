@@ -149,6 +149,60 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_clones_git_workspace_before_running_claude() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("claude-git-workspace-root");
+    let bin_dir = unique_dir("claude-git-bin");
+    let marker = unique_dir("claude-git-marker").join("git-args.txt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_fake_git(&bin_dir, &marker);
+    let fake_claude = write_fake_executable(
+        "fake-claude-git-cwd",
+        r#"#!/bin/sh
+if [ ! -d ".git" ]; then exit 30; fi
+if [ ! -f "source.txt" ]; then exit 31; fi
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
+"#,
+    );
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let path_value = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let _path = EnvGuard::set("PATH", &path_value);
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 85,
+        prompt: json!("run in cloned repo"),
+        bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        extra: serde_json::Map::from_iter([
+            (
+                "git_url".to_owned(),
+                json!("https://github.com/wecode-ai/Wegent.git"),
+            ),
+            ("branch_name".to_owned(), json!("feature/test")),
+        ]),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let expected_cwd = fs::canonicalize(workspace_root.join("85/Wegent")).unwrap();
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: expected_cwd.display().to_string()
+        }
+    );
+    let git_args = fs::read_to_string(marker).unwrap();
+    assert!(git_args.contains("clone --branch feature/test --single-branch"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_runs_pre_execute_hook_before_claude() {
     let _lock = env_lock().lock().await;
     let workspace_root = unique_dir("claude-hook-workspace-root");
@@ -187,6 +241,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 83,
+        skip_git_clone: true,
         prompt: json!("run with hook"),
         bot: json!([{"id": 323, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -259,6 +314,41 @@ fn write_fake_executable(name: &str, content: &str) -> PathBuf {
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+#[cfg(unix)]
+fn write_fake_git(bin_dir: &std::path::Path, marker: &std::path::Path) {
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let path = bin_dir.join("git");
+    let content = format!(
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+if [ "$1" = "clone" ]; then
+  shift
+  BRANCH=""
+  if [ "$1" = "--branch" ]; then
+    BRANCH="$2"
+    shift 3
+  fi
+  URL="$1"
+  DEST="$2"
+  mkdir -p "$DEST/.git"
+  printf '%s\n%s\n' "$URL" "$BRANCH" > "$DEST/source.txt"
+  exit 0
+fi
+if [ "$1" = "-C" ] && [ "$3" = "config" ]; then
+  exit 0
+fi
+exit 21
+"#,
+        marker.display()
+    );
+    fs::write(&path, content).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
 }
 
 fn unique_dir(name: &str) -> PathBuf {

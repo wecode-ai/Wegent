@@ -219,9 +219,42 @@ class TestDockerExecutor:
 
         assert result["status"] == "success"
         assert result["executor_name"] == "existing-executor"
+        assert task["executor_name"] == "existing-executor"
+        assert task["executor_namespace"] == ""
         mock_wait_ready.assert_called_once_with("existing-executor")
         mock_dispatch.assert_called_once_with(task, "existing-executor", {"port": 8080})
         mock_register.assert_called_once()
+
+    def test_submit_executor_injects_generated_executor_name_into_openai_metadata(
+        self, executor
+    ):
+        """Generated executor names should reach the container callback payload."""
+        task = {
+            "model": "claude-code",
+            "input": "hello",
+            "metadata": {
+                "task_id": 123,
+                "subtask_id": 456,
+                "user": {"name": "test_user"},
+                "type": "online",
+            },
+        }
+
+        with (
+            patch(
+                "executor_manager.executors.docker.executor.generate_executor_name",
+                return_value="generated-executor",
+            ),
+            patch.object(executor, "_create_new_container") as mock_create,
+        ):
+            result = executor.submit_executor(task)
+
+        assert result["status"] == "success"
+        assert result["executor_name"] == "generated-executor"
+        assert result["executor_namespace"] == ""
+        assert task["metadata"]["executor_name"] == "generated-executor"
+        assert task["metadata"]["executor_namespace"] == ""
+        mock_create.assert_called_once()
 
     def test_submit_executor_existing_container_no_ports(self, executor):
         """Test submitting executor to existing container with no ports"""

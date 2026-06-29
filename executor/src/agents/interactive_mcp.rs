@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde_json::{json, Map, Value};
+use std::{collections::BTreeMap, env, time::Duration};
 
 const INVALID_FORM_MESSAGE: &str = "模型给出的表单格式不对";
 const FORM_GENERATION_FAILED_MESSAGE: &str = "交互式表单生成失败";
@@ -40,6 +41,7 @@ pub struct DeferredMcpProxyResult {
     pub server_name: String,
     pub tool_result: Value,
     pub output_text: String,
+    pub is_error: bool,
     pub is_deferred_user_input: bool,
 }
 
@@ -132,6 +134,10 @@ pub fn parse_mcp_tool_name(name: &str) -> Option<ParsedMcpToolName> {
     })
 }
 
+pub fn is_interactive_form_tool(name: &str) -> bool {
+    name.contains("interactive_form_question")
+}
+
 pub fn build_pre_tool_use_defer_response() -> Value {
     json!({
         "hookSpecificOutput": {
@@ -159,11 +165,7 @@ pub fn build_deferred_mcp_proxy_request(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(InteractiveMcpError::MissingServerUrl)?;
-    let headers = server
-        .get("headers")
-        .filter(|value| value.as_object().is_some())
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let headers = headers_from_server_config(server);
 
     Ok(DeferredMcpProxyRequest {
         tool_use_id: deferred_tool_use.id.clone(),
@@ -185,7 +187,15 @@ pub fn normalize_mcp_tool_result(
         .get("content")
         .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new()));
-    let tool_result = json!({ "content": content });
+    let is_error = raw_result
+        .get("isError")
+        .or_else(|| raw_result.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut tool_result = json!({ "content": content });
+    if is_error {
+        tool_result["isError"] = json!(true);
+    }
     let output_text = collect_text_content(&tool_result).join("\n");
     let is_deferred_user_input = is_deferred_user_input_result(&tool_result);
 
@@ -195,8 +205,19 @@ pub fn normalize_mcp_tool_result(
         server_name: request.server_name.clone(),
         tool_result,
         output_text,
+        is_error,
         is_deferred_user_input,
     }
+}
+
+pub async fn proxy_deferred_mcp_tool(
+    deferred_tool_use: &DeferredToolUse,
+    mcp_servers: &Value,
+) -> Result<DeferredMcpProxyResult, String> {
+    let request = build_deferred_mcp_proxy_request(deferred_tool_use, mcp_servers)
+        .map_err(|error| format!("invalid deferred MCP proxy request: {error:?}"))?;
+    let raw_result = call_streamable_http_mcp(&request).await?;
+    Ok(normalize_mcp_tool_result(&request, raw_result))
 }
 
 pub fn deferred_proxy_response_decision(
@@ -390,6 +411,147 @@ fn build_tool_result_query(tool_use_id: &str, payload: Value, is_error: bool) ->
         },
         "parent_tool_use_id": Value::Null
     })
+}
+
+fn headers_from_server_config(server: &Value) -> Value {
+    let mut headers = Map::new();
+    for key in ["headers", "auth"] {
+        if let Some(object) = server.get(key).and_then(Value::as_object) {
+            for (header_key, header_value) in object {
+                if let Some(header_value) = header_value.as_str() {
+                    headers.insert(header_key.clone(), json!(header_value));
+                } else if !header_value.is_null() {
+                    headers.insert(header_key.clone(), json!(header_value.to_string()));
+                }
+            }
+        }
+    }
+    if let Some(env_var) = server
+        .get("bearer_token_env_var")
+        .or_else(|| server.get("bearerTokenEnvVar"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(token) = env::var(env_var) {
+            if !token.trim().is_empty() && !headers.contains_key("Authorization") {
+                headers.insert("Authorization".to_owned(), json!(format!("Bearer {token}")));
+            }
+        }
+    }
+    Value::Object(headers)
+}
+
+async fn call_streamable_http_mcp(request: &DeferredMcpProxyRequest) -> Result<Value, String> {
+    let timeout = Duration::from_secs(request.timeout_seconds.unwrap_or(300));
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|error| format!("failed to build MCP HTTP client: {error}"))?;
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "wegent-executor", "version": env!("CARGO_PKG_VERSION")}
+        }
+    });
+    let (_initialize_result, session_id) =
+        send_mcp_json_rpc(&client, request, initialize, None).await?;
+    let initialized = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+        "params": {}
+    });
+    let _ = send_mcp_json_rpc(&client, request, initialized, session_id.as_deref()).await;
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": request.tool_name,
+            "arguments": request.arguments
+        }
+    });
+    let (result, _) = send_mcp_json_rpc(&client, request, call, session_id.as_deref()).await?;
+    Ok(result)
+}
+
+async fn send_mcp_json_rpc(
+    client: &reqwest::Client,
+    request: &DeferredMcpProxyRequest,
+    payload: Value,
+    session_id: Option<&str>,
+) -> Result<(Value, Option<String>), String> {
+    let mut builder = client
+        .post(&request.server_url)
+        .header("Accept", "application/json, text/event-stream")
+        .header("Content-Type", "application/json");
+    for (key, value) in header_map(&request.headers) {
+        builder = builder.header(&key, value);
+    }
+    if let Some(session_id) = session_id {
+        builder = builder.header("Mcp-Session-Id", session_id);
+    }
+    let response = builder
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| format!("MCP HTTP request failed: {error}"))?;
+    let session_id = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read MCP HTTP response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "MCP HTTP request failed with HTTP {status}: {body}"
+        ));
+    }
+    let value = parse_mcp_response_body(&body)
+        .ok_or_else(|| "MCP response did not contain a JSON-RPC payload".to_owned())?;
+    if let Some(error) = value.get("error") {
+        return Err(format!("MCP JSON-RPC error: {error}"));
+    }
+    let result = value.get("result").cloned().unwrap_or(Value::Null);
+    Ok((result, session_id))
+}
+
+fn header_map(headers: &Value) -> BTreeMap<String, String> {
+    headers
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(key, value)| {
+                    let value = value
+                        .as_str()
+                        .map(ToOwned::to_owned)
+                        .or_else(|| (!value.is_null()).then(|| value.to_string()))?;
+                    Some((key.clone(), value))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_mcp_response_body(body: &str) -> Option<Value> {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        return Some(value);
+    }
+    body.lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+        .filter(|line| !line.is_empty() && *line != "[DONE]")
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .last()
 }
 
 fn build_prompt_follow_up(prompt: &str, cwd: Option<&str>) -> String {
