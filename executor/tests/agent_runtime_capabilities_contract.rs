@@ -279,7 +279,11 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
         let (mut stream, _) = listener.accept().await.unwrap();
         let request = read_http_request_headers(&mut stream).await;
         assert!(request.starts_with("GET /api/attachments/55/executor-download "));
-        assert!(request.contains("Authorization: Bearer task-token"));
+        assert!(request_has_header(
+            &request,
+            "authorization",
+            "Bearer task-token"
+        ));
         let body = b"hello attachment";
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -790,6 +794,15 @@ async fn read_http_request_headers(stream: &mut tokio::net::TcpStream) -> String
         }
     }
     String::from_utf8_lossy(&request).into_owned()
+}
+
+fn request_has_header(request: &str, expected_name: &str, expected_value: &str) -> bool {
+    request.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case(expected_name) && value.trim() == expected_value
+    })
 }
 
 fn make_executable(path: &Path) {
