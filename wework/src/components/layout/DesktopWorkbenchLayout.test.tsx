@@ -1460,7 +1460,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
-    expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-6px]', 'w-10')
+    expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-6px]', 'w-3')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )

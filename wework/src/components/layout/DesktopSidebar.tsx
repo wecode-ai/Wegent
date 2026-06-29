@@ -2240,7 +2240,7 @@ export function DesktopSidebar({
             type="button"
             data-testid="sidebar-resize-handle"
             onPointerDown={handleResizeStart}
-            className="absolute right-[-6px] top-0 z-[60] h-full w-10 cursor-col-resize touch-none bg-transparent after:absolute after:right-1.5 after:top-0 after:h-full after:w-px after:bg-transparent after:transition-colors after:duration-150 hover:after:bg-primary/35"
+            className="absolute right-[-6px] top-0 z-[60] h-full w-3 cursor-col-resize touch-none bg-transparent after:absolute after:right-1.5 after:top-0 after:h-full after:w-px after:bg-transparent after:transition-colors after:duration-150 hover:after:bg-primary/35"
             aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
           />
         )}
