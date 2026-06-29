@@ -36,6 +36,7 @@ export interface UnifiedMessage {
   attachments?: unknown[]
   contexts?: unknown[]
   timestamp: number
+  subtaskId?: number
   turnId?: number
   messageId?: number
   error?: string
