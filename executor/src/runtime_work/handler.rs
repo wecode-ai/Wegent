@@ -57,6 +57,7 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+const UNMAPPED_PENDING_TASK_STALE_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
@@ -1018,6 +1019,7 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
+        let mut discovered_codex_task_signatures = HashSet::new();
 
         for thread in self.codex_threads(archived).await {
             if let Some(mut link) = self.link_from_thread(&thread) {
@@ -1032,6 +1034,9 @@ impl RuntimeWorkRpcHandler {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
+                if let Some(signature) = codex_task_signature(&link) {
+                    discovered_codex_task_signatures.insert(signature);
+                }
                 links.push(link);
             }
         }
@@ -1052,6 +1057,12 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
             {
+                continue;
+            }
+            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
+                continue;
+            }
+            if is_stale_unmapped_pending_codex_task(&link, now_ms()) {
                 continue;
             }
             link.list_order = Some(links.len());
@@ -1361,6 +1372,43 @@ impl RuntimeWorkRpcHandler {
         }
         self.thread_list_cache.invalidate();
     }
+}
+
+fn is_unmapped_pending_codex_shadow(
+    link: &RuntimeTaskLink,
+    discovered_codex_task_signatures: &HashSet<String>,
+) -> bool {
+    is_unmapped_pending_codex_task(link)
+        && codex_task_signature(link)
+            .as_ref()
+            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
+}
+
+fn is_stale_unmapped_pending_codex_task(link: &RuntimeTaskLink, now_ms: i64) -> bool {
+    is_unmapped_pending_codex_task(link)
+        && now_ms.saturating_sub(link.updated_at) > UNMAPPED_PENDING_TASK_STALE_MS
+}
+
+fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
+    link.thread_id.is_none()
+        && link.running
+        && link.status == "running"
+        && is_codex_runtime(&link.runtime)
+}
+
+fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
+    if !is_codex_runtime(&link.runtime) {
+        return None;
+    }
+    let title = link.title.trim().to_ascii_lowercase();
+    if title.is_empty() || link.workspace_path.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}\0{}",
+        workspace_group_path(&link.workspace_path),
+        title
+    ))
 }
 
 fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)> {
