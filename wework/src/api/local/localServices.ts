@@ -261,6 +261,7 @@ function normalizeRuntimeTaskSummary(
   const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
   const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
+  const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
 
   const normalized = {
     ...taskRecord,
@@ -273,6 +274,7 @@ function normalizeRuntimeTaskSummary(
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
+    ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
   }
 
   return normalized as LocalTaskSummary
