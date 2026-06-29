@@ -7,7 +7,7 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
   id: 'call-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
@@ -19,7 +19,7 @@ const completedCommandBlock: ProcessingBlock = {
 const completedWebSearchBlocks: ProcessingBlock[] = [
   {
     id: 'web-search-1',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -35,7 +35,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-search-2',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -47,7 +47,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-open-1',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -61,7 +61,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
 
 const completedFileChangesBlock: ProcessingBlock = {
   id: 'file-changes-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'file_changes',
   status: 'done',
   createdAt: 1770000003000,
@@ -159,7 +159,9 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
 
     expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
-    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('BACKEND_URL=127.0.0.1')
+    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
+      'BACKEND_URL=127.0.0.1'
+    )
   })
 
   test('only persists the top-level processing expansion state', () => {
@@ -303,12 +305,12 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps completed tools expanded until the assistant turn finishes', () => {
+  test('keeps completed tools collapsed while the assistant turn is still running', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     expect(screen.queryByText('已运行 1 条命令')).not.toBeInTheDocument()
     expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
-    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {
@@ -353,7 +355,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'thinking',
       content: 'Reading files',
       status: 'streaming',
@@ -369,7 +371,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'streaming',

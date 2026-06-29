@@ -12,8 +12,9 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::{broadcast, Mutex, MutexGuard};
 use wegent_executor::{
     local::app_ipc::{AppIpcServer, RuntimeWorkHandler},
     runtime_work::RuntimeWorkRpcHandler,
@@ -52,6 +53,12 @@ fn set_temp_codex_home(prefix: &str) -> EnvGuard {
         "CODEX_HOME",
         &temp_path(prefix, "dir").display().to_string(),
     )
+}
+
+fn set_temp_codex_sqlite_home(prefix: &str) -> (EnvGuard, PathBuf) {
+    let sqlite_home = temp_path(prefix, "dir");
+    let guard = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    (guard, sqlite_home)
 }
 
 #[tokio::test]
@@ -100,10 +107,49 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
     );
 
     let calls = read_json_lines(&log_path);
-    assert_eq!(calls[0]["method"], "initialize");
-    assert_eq!(calls[1]["method"], "initialized");
-    assert_eq!(calls[2]["method"], "thread/list");
-    assert_eq!(calls[2]["params"]["useStateDbOnly"], true);
+    assert!(calls.iter().any(|call| call["method"] == "thread/list"));
+}
+
+#[tokio::test]
+async fn app_runtime_caches_consecutive_codex_thread_lists() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-list-cache-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-cache-codex-home");
+    let log_path = temp_path("wegent-app-runtime-list-cache-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    for _ in 0..2 {
+        let listed = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.list",
+                "payload": {}
+            }))
+            .await
+            .expect("runtime task list should succeed");
+        assert_eq!(listed["success"], true);
+    }
+
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "initialize")
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/list")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -171,6 +217,207 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
 }
 
 #[tokio::test]
+async fn app_runtime_pages_codex_thread_transcript_from_cache() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-transcript-page-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-page-codex-home");
+    let log_path = temp_path("wegent-app-runtime-transcript-page-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let latest = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "limit": 1
+            }
+        }))
+        .await
+        .expect("latest transcript page should succeed");
+    let older = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "limit": 1,
+                "beforeCursor": "offset:1"
+            }
+        }))
+        .await
+        .expect("older transcript page should succeed");
+
+    assert_eq!(latest["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(latest["messages"][0]["role"], "assistant");
+    assert_eq!(latest["hasMoreBefore"], true);
+    assert_eq!(latest["beforeCursor"], "offset:1");
+    assert_eq!(older["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(older["messages"][0]["role"], "user");
+    assert_eq!(older["hasMoreBefore"], false);
+    assert_eq!(older["beforeCursor"], Value::Null);
+
+    let read_count = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|line| line["method"] == "thread/read")
+        .count();
+    assert_eq!(read_count, 1);
+}
+
+#[tokio::test]
+async fn app_runtime_reads_transcript_from_cached_thread_list_rollout_path() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-list-transcript-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-transcript-codex-home");
+    let log_path = temp_path("wegent-app-runtime-list-transcript-log", "jsonl");
+    let rollout_path = temp_path("wegent-app-runtime-list-transcript-rollout", "jsonl");
+    write_rollout_messages(&rollout_path, &["from cached list"]);
+    let fake_codex = write_fake_codex_list_with_rollout_path(&log_path, &rollout_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("list should succeed");
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-fast",
+                "workspacePath": "/tmp/project",
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("transcript should use cached list path");
+
+    assert_eq!(transcript["messages"][0]["content"], "from cached list");
+    assert_eq!(count_thread_reads(&log_path), 0);
+}
+
+#[tokio::test]
+async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-transcript-signature-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-signature-codex-home");
+    let log_path = temp_path("wegent-app-runtime-transcript-signature-log", "jsonl");
+    let rollout_path = temp_path("wegent-app-runtime-transcript-signature-rollout", "jsonl");
+    write_rollout_messages(&rollout_path, &["first message"]);
+    let fake_codex = write_fake_codex_thread_with_rollout_path(&log_path, &rollout_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let first = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-signature",
+                "workspacePath": "/tmp/project",
+                "limit": 50,
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("first transcript should succeed");
+    let cached = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-signature",
+                "workspacePath": "/tmp/project",
+                "limit": 50,
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("cached transcript should succeed");
+
+    assert_eq!(first["messages"][0]["content"], "first message");
+    assert_eq!(cached["messages"][0]["content"], "first message");
+    assert_eq!(count_thread_reads(&log_path), 1);
+
+    write_rollout_messages(&rollout_path, &["first message", "second message"]);
+    let refreshed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-signature",
+                "workspacePath": "/tmp/project",
+                "limit": 50,
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("refreshed transcript should succeed");
+
+    assert_eq!(refreshed["messages"][2]["content"], "second message");
+    assert_eq!(count_thread_reads(&log_path), 2);
+}
+
+#[tokio::test]
+async fn app_runtime_rebuilds_transcript_from_rollout_when_thread_read_has_no_turns() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-rollout-transcript-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-rollout-transcript-codex-home");
+    let fake_codex = write_fake_codex_empty_thread_with_rollout(&temp_path(
+        "wegent-app-runtime-rollout-transcript-log",
+        "jsonl",
+    ));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "thread-rollout",
+                "workspacePath": "/tmp/project",
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("runtime transcript should succeed");
+
+    let blocks = response["messages"][1]["blocks"]
+        .as_array()
+        .expect("assistant blocks should exist");
+
+    assert_eq!(response["success"], true);
+    assert_eq!(response["messages"][0]["role"], "user");
+    assert_eq!(response["messages"][0]["content"], "inspect files");
+    assert_eq!(response["messages"][1]["role"], "assistant");
+    assert_eq!(response["messages"][1]["content"], "done");
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["content"], "inspect context");
+    assert_eq!(blocks[1]["type"], "tool");
+    assert_eq!(blocks[1]["tool_name"], "exec_command");
+    assert_eq!(blocks[1]["tool_input"]["cmd"], "sed -n '1,20p' src/main.rs");
+    assert_eq!(blocks[1]["tool_output"], "line 1\n");
+}
+
+#[tokio::test]
 async fn app_runtime_persists_local_task_thread_mapping() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -180,6 +427,9 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-store-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-store-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -223,6 +473,90 @@ async fn app_runtime_persists_local_task_thread_mapping() {
 }
 
 #[tokio::test]
+async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mapping() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-running-tool-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-running-tool-codex-home");
+    let fake_codex =
+        write_fake_codex_running_tool(&temp_path("wegent-app-runtime-running-tool-log", "jsonl"));
+    let (event_tx, mut event_rx) = broadcast::channel(16);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "running-tool-task",
+                "workspacePath": "/tmp/project",
+                "title": "Running tool task",
+                "executionRequest": {
+                    "task_id": 91,
+                    "subtask_id": 92,
+                    "prompt": "run tests",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5",
+                        "api_format": "responses",
+                        "protocol": "openai-responses"
+                    },
+                    "project_workspace_path": "/tmp/project"
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+
+    assert_eq!(created["accepted"], true);
+
+    wait_for_running_tool_transcript_events(&mut event_rx).await;
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "localTaskId": "running-tool-task",
+                "workspacePath": "/tmp/project",
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("runtime transcript should succeed");
+    let blocks = transcript["messages"][1]["blocks"]
+        .as_array()
+        .expect("assistant blocks should exist");
+    let tool_block = blocks
+        .iter()
+        .find(|block| block["status"] == "done" && block["tool_output"] == "ok\n")
+        .expect("running task transcript should include cached tool block");
+
+    assert_eq!(transcript["messages"][1]["role"], "assistant");
+    assert_eq!(transcript["messages"][1]["subtaskId"], 92);
+    assert_eq!(transcript["messages"][1]["status"], "streaming");
+    assert_eq!(transcript["messages"][1]["content"], "done");
+    assert!(transcript["messages"][1].get("completedAt").is_none());
+    assert!(transcript["messages"][1].get("fileChanges").is_none());
+    assert_eq!(blocks[0]["type"], "thinking");
+    assert_eq!(blocks[0]["content"], "checking context");
+    assert_eq!(blocks[0]["status"], "done");
+    assert_eq!(blocks[1]["type"], "text");
+    assert_eq!(blocks[1]["content"], "running tests");
+    assert_eq!(blocks[1]["status"], "done");
+    assert_eq!(tool_block["type"], "tool");
+    assert_eq!(tool_block["tool_name"], "bash");
+    assert_eq!(tool_block["tool_input"]["command"], "cargo test");
+}
+
+#[tokio::test]
 async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -232,6 +566,9 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-archive-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-archive-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-archive-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -287,7 +624,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
         .any(|call| call["method"] == "thread/unarchive"));
     assert!(calls
         .iter()
-        .any(|call| call["method"] == "thread/list" && call["params"]["archived"] == true));
+        .any(|call| { call["method"] == "thread/list" && call["params"]["archived"] == true }));
 }
 
 #[tokio::test]
@@ -345,6 +682,9 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-rename-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-rename-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let log_path = temp_path("wegent-app-runtime-rename-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -394,6 +734,9 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-search-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-search-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -442,6 +785,9 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
             .to_string(),
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-search-archive-codex-home");
+    let (_sqlite_home_guard, sqlite_home) =
+        set_temp_codex_sqlite_home("wegent-app-runtime-search-archive-sqlite");
+    write_default_codex_state_db_thread(&sqlite_home, false);
     let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-search-archive-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -487,44 +833,238 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*'"archived":true'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"archived","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
+      exit 0
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/archive"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unarchive"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/delete"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","name":"New Codex Title"}}}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_empty_thread_with_rollout(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-rollout-transcript", "sh");
+    let rollout_path = temp_path("fake-codex-app-runtime-rollout", "jsonl");
+    let _ = fs::remove_file(log_path);
+    fs::write(
+        &rollout_path,
+        [
+            json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+            json!({"type":"response_item","payload":{"id":"user-1","type":"message","role":"user","content":[{"type":"input_text","text":"inspect files"}]}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"inspect files"}}).to_string(),
+            json!({"type":"response_item","payload":{"id":"reason-1","type":"reasoning","summary":["inspect context"]}}).to_string(),
+            json!({"type":"response_item","payload":{"id":"call-1","type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"sed -n '1,20p' src/main.rs\",\"workdir\":\"/tmp/project\"}"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"line 1\n"}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"agent_message","phase":"final_answer","message":"done"}}).to_string(),
+            json!({"type":"response_item","payload":{"id":"assistant-1","type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"done"}]}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
   case "$line" in
     *'"method":"initialize"'*)
       printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
-    *'"method":"thread/list"'*'"archived":true'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"archived","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
-      ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
+      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-rollout","cwd":"/tmp/project","name":"Rollout transcript","preview":"rollout","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
       exit 0
       ;;
+  esac
+done
+"#,
+        log_path.display(),
+        rollout_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_list_with_rollout_path(log_path: &Path, rollout_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-list-rollout", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-fast","cwd":"/tmp/project","name":"Fast transcript","preview":"fast","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32000,"message":"thread/read should not be called"}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        rollout_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_thread_with_rollout_path(log_path: &Path, rollout_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-signature-rollout", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-signature","cwd":"/tmp/project","name":"Signature transcript","preview":"signature","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        rollout_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_rollout_messages(path: &Path, messages: &[&str]) {
+    let mut lines = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        lines.push(json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string());
+        lines.push(
+            json!({"type":"response_item","payload":{"id":format!("user-{index}"),"type":"message","role":"user","content":[{"type":"input_text","text":message}]}})
+                .to_string(),
+        );
+        lines.push(
+            json!({"type":"response_item","payload":{"id":format!("assistant-{index}"),"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":format!("ack {message}")}]}})
+                .to_string(),
+        );
+        lines.push(json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string());
+    }
+    fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+fn count_thread_reads(log_path: &Path) -> usize {
+    read_json_lines(log_path)
+        .into_iter()
+        .filter(|line| line["method"] == "thread/read")
+        .count()
+}
+
+fn write_fake_codex_running_tool(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-running-tool", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
     *'"method":"thread/start"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
       ;;
-    *'"method":"thread/resume"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
-    *'"method":"thread/archive"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
-    *'"method":"thread/unarchive"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
-    *'"method":"thread/delete"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
-      ;;
-    *'"method":"thread/name/set"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1","name":"New Codex Title"}}}}}}'
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      exit 0
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/reasoning/delta","params":{{"delta":"checking context"}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"running tests","phase":"commentary"}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"ok\n","exitCode":0}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      sleep 3
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-running-tool","status":"completed"}}}}}}'
       exit 0
       ;;
   esac
@@ -553,6 +1093,98 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
     ))
 }
 
+struct CodexStateDbThread<'a> {
+    id: &'a str,
+    cwd: &'a str,
+    title: &'a str,
+    preview: &'a str,
+    rollout_path: &'a str,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    archived: bool,
+}
+
+fn write_codex_state_db_thread(sqlite_home: &Path, thread: CodexStateDbThread<'_>) {
+    fs::create_dir_all(sqlite_home).unwrap();
+    let connection = Connection::open(sqlite_home.join("state_5.sqlite")).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (?1, ?2, ?3, ?4, 'vscode', 'openai', ?5, ?6, ?7, 'test', ?8, ?9, ?10)
+            "#,
+            (
+                thread.id,
+                thread.rollout_path,
+                thread.created_at_ms / 1000,
+                thread.updated_at_ms / 1000,
+                thread.cwd,
+                thread.title,
+                if thread.archived { 1_i64 } else { 0_i64 },
+                thread.created_at_ms,
+                thread.updated_at_ms,
+                thread.preview,
+            ),
+        )
+        .unwrap();
+}
+
+fn write_default_codex_state_db_thread(sqlite_home: &Path, archived: bool) {
+    write_codex_state_db_thread(
+        sqlite_home,
+        CodexStateDbThread {
+            id: "thread-1",
+            cwd: "/tmp/project",
+            title: "Fix CI",
+            preview: "fix ci",
+            rollout_path: "/tmp/codex/thread-1.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived,
+        },
+    );
+}
+
 fn read_json_lines(path: &Path) -> Vec<Value> {
     fs::read_to_string(path)
         .unwrap()
@@ -578,4 +1210,32 @@ async fn wait_for_persisted_mapping(handler: &RuntimeWorkRpcHandler) -> Value {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("persisted local task mapping was not restored");
+}
+
+async fn wait_for_running_tool_transcript_events(receiver: &mut broadcast::Receiver<Value>) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut saw_tool_update = false;
+        let mut saw_final_delta = false;
+        loop {
+            let event = receiver
+                .recv()
+                .await
+                .expect("runtime event channel should stay open");
+            if event["event"] == "response.block.updated"
+                && event["payload"]["data"]["updates"]["tool_output"] == "ok\n"
+            {
+                saw_tool_update = true;
+            }
+            if event["event"] == "response.output_text.delta"
+                && event["payload"]["data"]["delta"] == "done"
+            {
+                saw_final_delta = true;
+            }
+            if saw_tool_update && saw_final_delta {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for running transcript events");
 }

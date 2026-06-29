@@ -7,6 +7,7 @@ pub mod app;
 pub mod attachments;
 pub mod callback;
 mod claude_session;
+mod codex_phase;
 pub mod config;
 pub mod emitter;
 pub mod envd;

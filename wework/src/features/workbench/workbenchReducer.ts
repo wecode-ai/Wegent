@@ -27,9 +27,7 @@ export const initialWorkbenchState: WorkbenchState = {
   pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
   standaloneWorkspacePath: null,
-  input: '',
   isBootstrapping: true,
-  isSending: false,
   error: null,
 }
 
@@ -92,9 +90,6 @@ export type WorkbenchAction =
       project: ProjectWithTasks | null
     }
   | { type: 'current_task_cleared' }
-  | { type: 'input_changed'; input: string }
-  | { type: 'sending_started' }
-  | { type: 'sending_finished' }
   | { type: 'error_set'; error: string | null }
 
 function keepDevicesOnTransientEmpty(
@@ -130,6 +125,112 @@ function updateRuntimeWorkDeviceStatus(
     })),
     chats: runtimeWork.chats.map(updateWorkspace),
   }
+}
+
+function mergeRuntimeWorkPreservingTaskOrder(
+  current: RuntimeWorkListResponse | null | undefined,
+  next: RuntimeWorkListResponse | null
+): RuntimeWorkListResponse | null {
+  if (!current || !next) return next
+
+  const mergeProjectWorkspace = (
+    projectWork: RuntimeProjectWork,
+    workspace: RuntimeDeviceWorkspace
+  ): RuntimeDeviceWorkspace => {
+    const currentWorkspace = findMatchingProjectRuntimeWorkspace(current, projectWork, workspace)
+    if (!currentWorkspace) return workspace
+    return {
+      ...workspace,
+      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+    }
+  }
+
+  const mergeChatWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    const currentWorkspace = findMatchingChatRuntimeWorkspace(current, workspace)
+    if (!currentWorkspace) return workspace
+    return {
+      ...workspace,
+      localTasks: mergeRuntimeLocalTasks(currentWorkspace.localTasks, workspace.localTasks),
+    }
+  }
+
+  return {
+    ...next,
+    projects: next.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
+        mergeProjectWorkspace(project, workspace)
+      ),
+    })),
+    chats: next.chats.map(mergeChatWorkspace),
+  }
+}
+
+function findMatchingProjectRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse,
+  projectWork: RuntimeProjectWork,
+  target: RuntimeDeviceWorkspace
+): RuntimeDeviceWorkspace | null {
+  const projectKey = runtimeProjectUiId(projectWork.project)
+  const currentProject = runtimeWork.projects.find(
+    project => runtimeProjectUiId(project.project) === projectKey
+  )
+  return (
+    currentProject?.deviceWorkspaces.find(workspace =>
+      runtimeWorkspaceMatches(workspace, target)
+    ) ?? null
+  )
+}
+
+function findMatchingChatRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse,
+  target: RuntimeDeviceWorkspace
+): RuntimeDeviceWorkspace | null {
+  return runtimeWork.chats.find(workspace => runtimeWorkspaceMatches(workspace, target)) ?? null
+}
+
+function runtimeWorkspaceMatches(
+  current: RuntimeDeviceWorkspace,
+  target: RuntimeDeviceWorkspace
+): boolean {
+  if (current.deviceId !== target.deviceId || current.workspacePath !== target.workspacePath) {
+    return false
+  }
+  if (
+    current.workspaceKind &&
+    target.workspaceKind &&
+    current.workspaceKind !== target.workspaceKind
+  ) {
+    return false
+  }
+  if (
+    current.projectId != null &&
+    target.projectId != null &&
+    current.projectId !== target.projectId
+  ) {
+    return false
+  }
+  if (current.worktreeId && target.worktreeId && current.worktreeId !== target.worktreeId) {
+    return false
+  }
+  return true
+}
+
+function mergeRuntimeLocalTasks(
+  currentTasks: RuntimeDeviceWorkspace['localTasks'],
+  nextTasks: RuntimeDeviceWorkspace['localTasks']
+) {
+  const nextById = new Map(nextTasks.map(task => [task.localTaskId, task]))
+  const merged = currentTasks
+    .map(task => nextById.get(task.localTaskId))
+    .filter((task): task is RuntimeDeviceWorkspace['localTasks'][number] => Boolean(task))
+  const mergedIds = new Set(merged.map(task => task.localTaskId))
+  nextTasks.forEach(task => {
+    if (!mergedIds.has(task.localTaskId)) {
+      merged.push(task)
+    }
+  })
+  return merged
 }
 
 function findRuntimeTaskAddressByLocalTaskId(
@@ -310,7 +411,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
     case 'lists_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
+      const runtimeWork =
+        action.runtimeWork === undefined
+          ? state.runtimeWork
+          : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       const refreshedState = {
         ...state,
         projects: action.projects,
@@ -357,21 +461,23 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             : action.standaloneWorkspacePath,
       }
     }
-    case 'runtime_work_refreshed':
+    case 'runtime_work_refreshed': {
+      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
       return {
         ...state,
-        runtimeWork: action.runtimeWork,
+        runtimeWork,
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           state.projects,
-          action.runtimeWork
+          runtimeWork
         ),
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           state.devices,
-          action.runtimeWork
+          runtimeWork
         ),
       }
+    }
     case 'device_status_changed':
       return {
         ...state,
@@ -479,12 +585,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     case 'current_task_cleared':
       return { ...state, currentRuntimeTask: null }
-    case 'input_changed':
-      return { ...state, input: action.input }
-    case 'sending_started':
-      return { ...state, isSending: true, error: null }
-    case 'sending_finished':
-      return { ...state, isSending: false }
     case 'error_set':
       return { ...state, error: action.error }
   }

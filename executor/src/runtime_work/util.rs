@@ -79,6 +79,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(message_id) = integer_field(payload, "message_id") {
+        request.message_id = Some(message_id);
+    }
+    if let Some(turn_id) = integer_field(payload, "turn_id") {
+        request.subtask_id = turn_id;
+    }
 }
 
 pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
@@ -142,7 +148,15 @@ pub(crate) fn integer_field(value: &Value, key: &str) -> Option<i64> {
 }
 
 pub(crate) fn timestamp_ms_field(value: &Value, key: &str) -> Option<i64> {
-    integer_field(value, key).map(timestamp_ms)
+    value.get(key).and_then(timestamp_ms_value)
+}
+
+fn timestamp_ms_value(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+        .map(timestamp_ms)
+        .or_else(|| value.as_str().and_then(parse_utc_timestamp_ms))
 }
 
 pub(crate) fn timestamp_ms(value: i64) -> i64 {
@@ -151,6 +165,87 @@ pub(crate) fn timestamp_ms(value: i64) -> i64 {
     } else {
         value
     }
+}
+
+fn parse_utc_timestamp_ms(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if let Ok(number) = value.parse::<i64>() {
+        return Some(timestamp_ms(number));
+    }
+    if !value.ends_with('Z') {
+        return None;
+    }
+
+    let (date, time) = value[..value.len().saturating_sub(1)].split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let (time, millis) = match time.split_once('.') {
+        Some((time, fraction)) => (time, parse_millis_fraction(fraction)?),
+        None => (time, 0),
+    };
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.parse::<i64>().ok()?;
+    if time_parts.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    let days = days_from_civil(year, month, day)?;
+    Some((((days * 24 + hour) * 60 + minute) * 60 + second) * 1000 + millis)
+}
+
+fn parse_millis_fraction(fraction: &str) -> Option<i64> {
+    if fraction.is_empty() || !fraction.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let mut millis = 0_i64;
+    for (index, ch) in fraction.chars().take(3).enumerate() {
+        let digit = ch.to_digit(10)? as i64;
+        millis += digit * 10_i64.pow(2 - index as u32);
+    }
+    Some(millis)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let month_days = days_in_month(year, month)?;
+    if day > month_days {
+        return None;
+    }
+
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
+fn days_in_month(year: i64, month: i64) -> Option<i64> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => return None,
+    })
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 pub(crate) fn bool_field(value: &Value, key: &str) -> Option<bool> {
@@ -175,6 +270,59 @@ pub(crate) fn item_type(item: &Value) -> String {
         .unwrap_or("")
         .replace('_', "")
         .to_ascii_lowercase()
+}
+
+pub(crate) fn codex_wrapped_item_payload(item: &Value) -> Option<&Value> {
+    if matches!(item_type(item).as_str(), "responseitem" | "eventmsg") {
+        return item.get("payload").filter(|payload| payload.is_object());
+    }
+    None
+}
+
+pub(crate) fn is_codex_tool_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "commandexecution"
+            | "shellcall"
+            | "localshellcall"
+            | "functioncall"
+            | "customtoolcall"
+            | "dynamictoolcall"
+            | "mcptoolcall"
+            | "mcpcall"
+            | "toolsearchcall"
+            | "websearchcall"
+            | "websearch"
+            | "imagegeneration"
+            | "imageview"
+            | "sleep"
+    )
+}
+
+pub(crate) fn is_codex_tool_output_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "functioncalloutput" | "customtoolcalloutput" | "toolsearchoutput" | "execcommandend"
+    )
+}
+
+pub(crate) fn is_likely_codex_tool_item_type(item_type: &str) -> bool {
+    is_codex_tool_item_type(item_type)
+        || is_codex_tool_output_item_type(item_type)
+        || item_type.contains("tool")
+        || item_type.contains("command")
+        || item_type.contains("exec")
+        || item_type.contains("mcp")
+        || item_type.contains("function")
+}
+
+pub(crate) fn is_likely_codex_tool_output_item_type(item_type: &str) -> bool {
+    is_codex_tool_output_item_type(item_type)
+        || (is_likely_codex_tool_item_type(item_type)
+            && (item_type.ends_with("end")
+                || item_type.ends_with("output")
+                || item_type.ends_with("result")
+                || item_type.contains("complete")))
 }
 
 pub(crate) fn item_id(item: &Value, prefix: &str) -> String {

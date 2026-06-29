@@ -1,8 +1,9 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
@@ -16,31 +17,8 @@ import {
   isCloudDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
-import type {
-  DeleteDeviceWorkspaceRequest,
-  DeviceInfo,
-  DeviceWorkspacePrepareRequest,
-  DeviceWorkspacePrepareResponse,
-  ProjectWithTasks,
-  RuntimeTaskAddress,
-  RuntimeTaskForkTarget,
-  RuntimeWorkListResponse,
-  TurnFileChangesSummary,
-} from '@/types/api'
-import type { DeviceUpgradeState } from '@/types/device-events'
-import type { EnvironmentInfo } from '@/types/environment'
 import type { EnvironmentDiffMode } from '@/api/environment'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-  WorkbenchMessage,
-} from '@/types/workbench'
-import type {
-  CodeCommentContext,
-  WorkspaceFileApi,
-  WorkspaceFileOpenRequest,
-  WorkspaceTarget,
-} from '@/types/workspace-files'
+import type { WorkspaceFileOpenRequest } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -54,8 +32,29 @@ import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBann
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
+import { DesktopWindowControls } from './DesktopWindowControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { TaskForkDialog } from './TaskForkDialog'
+import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  CachedWorkbenchPaneStack,
+  getWorkbenchPaneKey,
+  WorkbenchPaneActiveOnly,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneStack'
+import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
+import {
+  formatEnvironmentReviewErrorMessage,
+  type BottomPanelRenderContext,
+  type DesktopReviewMetadata,
+  type DesktopReviewState,
+} from './desktopWorkbenchPaneTypes'
+import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
+import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
+import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
+import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
+import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -70,219 +69,80 @@ const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 
-function workbenchSessionKey({
-  currentRuntimeTask,
-  currentProject,
-}: {
-  currentRuntimeTask: RuntimeTaskAddress | null
-  currentProject: ProjectWithTasks | null
-}): string {
-  if (currentRuntimeTask) {
-    return [
-      'runtime',
-      currentRuntimeTask.deviceId,
-      currentRuntimeTask.localTaskId,
-      currentRuntimeTask.workspacePath ?? '',
-    ].join(':')
-  }
-  if (currentProject) {
-    return `project:${currentProject.id}`
-  }
-  return 'standalone'
+interface DesktopWorkbenchMainProps {
+  activePane: WorkbenchPaneIdentity
 }
 
-function isEnvironmentReviewDeviceConnectionError(message: string): boolean {
-  const normalizedMessage = message.toLowerCase()
-
+export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   return (
-    /device\s+'[^']+'\s+is\s+offline/i.test(message) ||
-    (normalizedMessage.includes('device') && normalizedMessage.includes('offline')) ||
-    (normalizedMessage.includes('command rpc timed out') && normalizedMessage.includes('device')) ||
-    (normalizedMessage.includes('device:execute_command') &&
-      normalizedMessage.includes('timed out'))
+    <CachedWorkbenchPaneStack
+      activePane={props.activePane}
+      maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
+      activeTestId="desktop-workbench-main"
+      renderPane={renderDesktopWorkbenchPane}
+    />
   )
 }
 
-function formatEnvironmentReviewErrorMessage({
-  error,
-  fallbackMessage,
-  deviceUnavailableMessage,
+function renderDesktopWorkbenchPane(pane: WorkbenchPaneIdentity) {
+  return <DesktopWorkbenchPane pane={pane} />
+}
+
+const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
+  pane,
 }: {
-  error: unknown
-  fallbackMessage: string
-  deviceUnavailableMessage: string
-}): string {
-  const message = error instanceof Error ? error.message : ''
-
-  if (!message) {
-    return fallbackMessage
-  }
-
-  if (isEnvironmentReviewDeviceConnectionError(message)) {
-    return deviceUnavailableMessage
-  }
-
-  return message
-}
-
-interface DesktopReviewState {
-  loading: boolean
-  diff: string
-  error?: string
-  reviewTitle?: string
-  reviewMode?: DesktopReviewMode
-  defaultFileTreeVisible?: boolean
-  branchName?: string
-  targetBranchName?: string
-  focusFilePath?: string
-  reloadDiff?: () => Promise<string>
-}
-
-interface DesktopReviewMetadata {
-  reviewTitle?: string
-  reviewMode?: DesktopReviewMode
-  defaultFileTreeVisible?: boolean
-  branchName?: string
-  targetBranchName?: string
-  focusFilePath?: string
-}
-
-type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
-
-interface BottomPanelRenderContext {
-  key: string
-  currentProject: ProjectWithTasks | null
-  devices: DeviceInfo[]
-  workspaceTarget: WorkspaceTarget | null
-  preferLocalTerminal: boolean
-}
-
-interface DesktopWorkbenchMainProps {
-  sidebarCollapsed: boolean
-  isBootstrapping: boolean
-  currentRuntimeTask: RuntimeTaskAddress | null
-  runtimeWork: RuntimeWorkListResponse | null
-  currentProject: ProjectWithTasks | null
-  workspaceProject: ProjectWithTasks | null
-  workspaceTarget: WorkspaceTarget | null
-  workspaceFileApi: WorkspaceFileApi
-  workspaceTargetError?: string | null
-  devices: DeviceInfo[]
-  upgradingDevices: Record<string, DeviceUpgradeState>
-  messages: WorkbenchMessage[]
-  isRuntimeTranscriptLoading?: boolean
-  runtimeTranscriptHasMoreBefore?: boolean
-  isRuntimeTranscriptLoadingMore?: boolean
-  queuedMessages: QueuedWorkbenchMessage[]
-  guidanceMessages: GuidanceWorkbenchMessage[]
-  codeCommentContexts?: CodeCommentContext[]
-  currentRuntimeTaskRunning?: boolean
-  projectChat: ProjectChatControls
-  projectWork: ProjectWorkControls
-  input: string
-  isSending: boolean
-  isWaitingForAssistant?: boolean
-  error?: string | null
-  environmentInfo: EnvironmentInfo
-  onRefreshEnvironmentInfo: () => Promise<void>
-  onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onLoadEnvironmentDiff?: (
-    workspaceTarget: WorkspaceTarget,
-    mode?: EnvironmentDiffMode
-  ) => Promise<string>
-  onListEnvironmentBranches: () => Promise<string[]>
-  onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
-  onCreateEnvironmentBranch: (branchName: string) => Promise<void>
-  onOpenCloudDeviceSettings: () => void
-  onUpgradeDevice: (deviceId: string) => Promise<void>
-  onInputChange: (value: string) => void
-  onSend: () => void
-  onRetryFailedMessage?: (messageId: string) => void
-  onLoadOlderRuntimeTranscript?: () => Promise<void>
-  isResponseStreaming: boolean
-  onPauseResponse: () => void
-  onCancelQueuedMessage: (id: string) => void
-  onSendQueuedAsGuidance: (id: string) => void
-  onEditQueuedMessage: (id: string) => void
-  onCancelGuidanceMessage: (id: string) => void
-  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  onAddCodeComment?: (context: CodeCommentContext) => void
-  onClearCodeComments?: () => void
-  topBarLeftActions?: ReactNode
-  onContinueInIm?: () => void
-  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
-  onPrepareDeviceWorkspace?: (
-    data: DeviceWorkspacePrepareRequest
-  ) => Promise<DeviceWorkspacePrepareResponse>
-  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
-  onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
-  onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
-  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
-  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
-}
-
-export function DesktopWorkbenchMain({
-  sidebarCollapsed,
-  isBootstrapping,
-  currentRuntimeTask,
-  runtimeWork,
-  currentProject,
-  workspaceProject,
-  workspaceTarget,
-  workspaceFileApi,
-  workspaceTargetError,
-  devices,
-  upgradingDevices,
-  messages,
-  isRuntimeTranscriptLoading = false,
-  runtimeTranscriptHasMoreBefore = false,
-  isRuntimeTranscriptLoadingMore = false,
-  queuedMessages,
-  guidanceMessages,
-  codeCommentContexts = [],
-  projectChat,
-  projectWork,
-  input,
-  isSending,
-  isWaitingForAssistant = isSending,
-  error,
-  environmentInfo,
-  onRefreshEnvironmentInfo,
-  onCommitEnvironmentChanges,
-  onLoadEnvironmentDiff,
-  onListEnvironmentBranches,
-  onCheckoutEnvironmentBranch,
-  onCreateEnvironmentBranch,
-  onOpenCloudDeviceSettings,
-  onUpgradeDevice,
-  onInputChange,
-  onSend,
-  onRetryFailedMessage,
-  onLoadOlderRuntimeTranscript,
-  isResponseStreaming,
-  onPauseResponse,
-  onCancelQueuedMessage,
-  onSendQueuedAsGuidance,
-  onEditQueuedMessage,
-  onCancelGuidanceMessage,
-  onLoadFileChangesDiff,
-  onRevertFileChanges,
-  onAddCodeComment = () => {},
-  onClearCodeComments,
-  topBarLeftActions,
-  onContinueInIm,
-  onForkCurrentRuntimeTask,
-  onPrepareDeviceWorkspace,
-  onDeleteDeviceWorkspace,
-  onGetDeviceHomeDirectory,
-  onGetProjectWorkspaceRoot,
-  onListDeviceDirectories,
-  onCreateDeviceDirectory,
-}: DesktopWorkbenchMainProps) {
+  pane: WorkbenchPaneIdentity
+}) {
+  const {
+    state,
+    workspaceFileApi,
+    upgradingDevices,
+    projectChat,
+    upgradeDevice,
+    retryFailedMessage,
+    pauseCurrentResponse,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
+    forkCurrentRuntimeTask,
+    prepareDeviceWorkspace,
+    deleteDeviceWorkspace,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
+    listDeviceDirectories,
+    createDeviceDirectory,
+    startNewChat,
+  } = useWorkbenchPaneContext()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
+  const currentRuntimeTask = pane.currentRuntimeTask
+  const currentProject = pane.currentProject
+  const paneKey = getWorkbenchPaneKey(pane)
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const projectWork = useWorkbenchProjectWorkControls({
+    pane,
+    enableShellProjectActions: true,
+  })
+  const paneEnvironment = useWorkbenchPaneEnvironment({ pane, projectWork })
+  const {
+    workspaceProject,
+    workspaceTarget,
+    workspaceTargetError,
+    environmentInfo,
+    projectWork: paneProjectWork,
+    refreshEnvironmentInfo,
+    commitEnvironmentChanges,
+    loadEnvironmentDiff,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
+  } = paneEnvironment
+  const isBootstrapping = state.isBootstrapping
+  const runtimeWork = state.runtimeWork
+  const devices = state.devices
+  const errorMessage = state.error
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
@@ -292,6 +152,7 @@ export function DesktopWorkbenchMain({
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
@@ -324,7 +185,7 @@ export function DesktopWorkbenchMain({
   )
   const workspaceTargetUsesRemoteSource = workspaceTarget?.workspaceSource === 'remote'
   const preferLocalWorkspaceTerminal =
-    projectWork.executionMode === 'current_workspace' &&
+    paneProjectWork.executionMode === 'current_workspace' &&
     workspaceTarget?.source !== 'runtime' &&
     !workspaceTargetUsesRemoteDevice &&
     !workspaceTargetUsesRemoteSource
@@ -337,7 +198,7 @@ export function DesktopWorkbenchMain({
     workspaceProject?.id ?? 'projectless',
     workspaceTarget?.deviceId ?? '',
     workspaceTarget?.path ?? '',
-    preferLocalWorkspaceTerminal ? 'local' : projectWork.executionMode,
+    preferLocalWorkspaceTerminal ? 'local' : paneProjectWork.executionMode,
   ].join(':')
   const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
   const activeBottomPanelContext = useMemo<BottomPanelRenderContext>(
@@ -393,30 +254,33 @@ export function DesktopWorkbenchMain({
     loadDiff: () => Promise<string>
     defaultFileTreeVisible?: boolean
   } | null>(null)
-  const latestPreviousTurnSubtaskId = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
-      if (message.fileChanges && typeof message.subtaskId === 'number') {
-        return message.subtaskId
+  const paneMessages = paneSession.messages
+  const paneQueuedMessages = paneSession.queuedMessages
+  const paneGuidanceMessages = paneSession.guidanceMessages
+  const paneIsResponseStreaming = paneMessages.some(
+    message => message.role === 'assistant' && message.status === 'streaming'
+  )
+  const latestPreviousTurnTurnId = useMemo(() => {
+    for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
+      const message = paneMessages[index]
+      if (message.fileChanges && typeof message.turnId === 'number') {
+        return message.turnId
       }
     }
 
     return null
-  }, [messages])
-  const rightPanelSessionKey = workbenchSessionKey({
-    currentRuntimeTask,
-    currentProject,
-  })
+  }, [paneMessages])
+  const rightPanelSessionKey = paneKey
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
-  const hasConversation = messages.length > 0 || currentRuntimeTask
-  const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
+  const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasQueuedComposerRows = paneQueuedMessages.length > 0 || paneGuidanceMessages.length > 0
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
     getActiveWorkbenchDeviceId({
       currentProject,
-      standaloneDeviceId: projectWork.currentStandaloneDeviceId,
+      standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
     })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
@@ -431,7 +295,7 @@ export function DesktopWorkbenchMain({
     !activeDeviceId &&
     !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    isSending ||
+    paneSession.sending ||
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
@@ -465,7 +329,6 @@ export function DesktopWorkbenchMain({
     setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
     setRightPanelView(tab)
   }, [])
-
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelTabs(current => {
@@ -545,10 +408,10 @@ export function DesktopWorkbenchMain({
     async (mode: EnvironmentDiffMode = 'branch') => {
       await openReviewFromDiffLoader(
         async () => {
-          if (!onLoadEnvironmentDiff || !workspaceTarget) {
+          if (!loadEnvironmentDiff || !workspaceTarget) {
             throw new Error(t('workbench.environment_review_unavailable'))
           }
-          return onLoadEnvironmentDiff(workspaceTarget, mode)
+          return loadEnvironmentDiff(workspaceTarget, mode)
         },
         {
           reviewTitle: tChat(`file_changes.${mode}_label`),
@@ -559,7 +422,7 @@ export function DesktopWorkbenchMain({
     },
     [
       environmentInfo.branchName,
-      onLoadEnvironmentDiff,
+      loadEnvironmentDiff,
       openReviewFromDiffLoader,
       t,
       tChat,
@@ -600,9 +463,7 @@ export function DesktopWorkbenchMain({
   )
 
   const refreshReview = useCallback(() => {
-    if (!reviewState.reloadDiff) {
-      return
-    }
+    if (!reviewState.reloadDiff) return
 
     void openReviewFromDiffLoader(reviewState.reloadDiff, {
       reviewTitle: reviewState.reviewTitle,
@@ -629,28 +490,28 @@ export function DesktopWorkbenchMain({
         id: 'unstaged',
         label: tChat('file_changes.unstaged_label'),
         active: reviewState.reviewMode === 'unstaged',
-        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        disabled: !loadEnvironmentDiff || !workspaceTarget,
         onSelect: () => void openEnvironmentChangesReview('unstaged'),
       },
       {
         id: 'staged',
         label: tChat('file_changes.staged_label'),
         active: reviewState.reviewMode === 'staged',
-        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        disabled: !loadEnvironmentDiff || !workspaceTarget,
         onSelect: () => void openEnvironmentChangesReview('staged'),
       },
       {
         id: 'commit',
         label: tChat('file_changes.commit_label'),
         active: reviewState.reviewMode === 'commit',
-        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        disabled: !loadEnvironmentDiff || !workspaceTarget,
         onSelect: () => void openEnvironmentChangesReview('commit'),
       },
       {
         id: 'branch',
         label: tChat('file_changes.branch_label'),
         active: reviewState.reviewMode === 'branch',
-        disabled: !onLoadEnvironmentDiff || !workspaceTarget,
+        disabled: !loadEnvironmentDiff || !workspaceTarget,
         onSelect: () => void openEnvironmentChangesReview('branch'),
       },
       {
@@ -658,13 +519,12 @@ export function DesktopWorkbenchMain({
         label: tChat('file_changes.previous_turn_label'),
         active: reviewState.reviewMode === 'previous-turn',
         disabled:
-          (!onLoadFileChangesDiff || latestPreviousTurnSubtaskId === null) &&
-          !hasPreviousTurnReview,
+          (!loadTurnFileChangesDiff || latestPreviousTurnTurnId === null) && !hasPreviousTurnReview,
         onSelect: () => {
           const previousTurn =
-            onLoadFileChangesDiff && latestPreviousTurnSubtaskId !== null
+            loadTurnFileChangesDiff && latestPreviousTurnTurnId !== null
               ? {
-                  loadDiff: () => onLoadFileChangesDiff(latestPreviousTurnSubtaskId),
+                  loadDiff: () => loadTurnFileChangesDiff(latestPreviousTurnTurnId, paneMessages),
                   defaultFileTreeVisible: false,
                 }
               : previousTurnReviewRef.current
@@ -679,11 +539,12 @@ export function DesktopWorkbenchMain({
     ],
     [
       hasPreviousTurnReview,
-      latestPreviousTurnSubtaskId,
-      onLoadEnvironmentDiff,
-      onLoadFileChangesDiff,
+      latestPreviousTurnTurnId,
+      loadEnvironmentDiff,
+      loadTurnFileChangesDiff,
       openEnvironmentChangesReview,
       openReviewFromDiffLoader,
+      paneMessages,
       reviewState.reviewMode,
       tChat,
       workspaceTarget,
@@ -712,11 +573,11 @@ export function DesktopWorkbenchMain({
       devices={devices}
       workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
-      onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
-      onCommitEnvironmentChanges={onCommitEnvironmentChanges}
-      onListEnvironmentBranches={onListEnvironmentBranches}
-      onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-      onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+      onRefreshEnvironmentInfo={refreshEnvironmentInfo}
+      onCommitEnvironmentChanges={commitEnvironmentChanges}
+      onListEnvironmentBranches={listEnvironmentBranches}
+      onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
+      onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={() => {
         void openEnvironmentChangesReview()
       }}
@@ -727,8 +588,22 @@ export function DesktopWorkbenchMain({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
+  const topBarLeftActions = !isTauri ? (
+    sidebarCollapsed ? (
+      <DesktopWindowControls
+        sidebarCollapsed
+        onToggleSidebar={() => setSidebarCollapsed(false)}
+        onNewChat={startNewChat}
+      />
+    ) : (
+      <DesktopWindowControls
+        sidebarCollapsed={false}
+        onToggleSidebar={() => setSidebarCollapsed(true)}
+      />
+    )
+  ) : undefined
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
-  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && onForkCurrentRuntimeTask)
+  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
       type="button"
@@ -742,19 +617,18 @@ export function DesktopWorkbenchMain({
     </button>
   ) : undefined
   const canContinueInIm = Boolean(currentRuntimeTask)
-  const continueInImButton =
-    canContinueInIm && onContinueInIm ? (
-      <button
-        type="button"
-        data-testid="continue-in-im-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.continue_im_title')}
-        title={t('workbench.continue_im_title')}
-        onClick={onContinueInIm}
-      >
-        <MessageCircle />
-      </button>
-    ) : undefined
+  const continueInImButton = canContinueInIm ? (
+    <button
+      type="button"
+      data-testid="continue-in-im-button"
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.continue_im_title')}
+      title={t('workbench.continue_im_title')}
+      onClick={continueInIm.openDialog}
+    >
+      <MessageCircle />
+    </button>
+  ) : undefined
   const topRightActions = (
     <>
       {forkTaskButton}
@@ -762,7 +636,6 @@ export function DesktopWorkbenchMain({
       {workspacePanelActions}
     </>
   )
-
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -790,33 +663,34 @@ export function DesktopWorkbenchMain({
   return (
     <main
       ref={workbenchMainRef}
-      data-testid="desktop-workbench-main"
       className={cn(
-        'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)] transition-[margin] duration-[220ms] ease-out motion-reduce:transition-none',
+        'absolute inset-0 mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         !isTauri && 'mt-1.5',
         sidebarCollapsed && 'ml-1.5'
       )}
     >
-      {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
-      {!isTauri && (
-        <div
-          data-testid="workspace-panel-floating-actions"
-          className="pointer-events-auto absolute right-7 top-1.5 z-popover flex shrink-0 items-center gap-2"
-        >
-          {topRightActions}
-        </div>
-      )}
-      {showPageTopBar && (
-        <DesktopTopBar
-          testId="workbench-topbar"
-          className={cn(
-            'absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7',
-            rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out'
-          )}
-          style={{ width: chatColumnWidth }}
-          left={topBarLeftActions}
-        />
-      )}
+      <WorkbenchPaneActiveOnly>
+        {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
+        {!isTauri && (
+          <div
+            data-testid="workspace-panel-floating-actions"
+            className="pointer-events-auto absolute right-7 top-1.5 z-popover flex shrink-0 items-center gap-2"
+          >
+            {topRightActions}
+          </div>
+        )}
+        {showPageTopBar && (
+          <DesktopTopBar
+            testId="workbench-topbar"
+            className={cn(
+              'absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7',
+              rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out'
+            )}
+            style={{ width: chatColumnWidth }}
+            left={topBarLeftActions}
+          />
+        )}
+      </WorkbenchPaneActiveOnly>
       <div
         data-testid="desktop-workbench-content"
         className={cn(
@@ -832,11 +706,15 @@ export function DesktopWorkbenchMain({
         ) : hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <ScrollableMessageArea
-              messages={messages}
-              loading={isRuntimeTranscriptLoading}
-              isWaitingForAssistant={isWaitingForAssistant}
-              hasMoreBefore={runtimeTranscriptHasMoreBefore}
-              loadingMoreBefore={isRuntimeTranscriptLoadingMore}
+              messages={paneMessages}
+              loading={paneSession.transcriptLoading}
+              isWaitingForAssistant={paneSession.waitingForAssistant}
+              hasMoreBefore={paneSession.transcriptHasMoreBefore}
+              loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
+              turnNavigation={paneSession.turnNavigation}
+              onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+              onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
+              onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
                 currentRuntimeTask
                   ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
@@ -851,11 +729,12 @@ export function DesktopWorkbenchMain({
                   : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
               }
               devices={devices}
-              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
-              onLoadMoreBefore={onLoadOlderRuntimeTranscript}
+              onRetryFailedMessage={message => {
+                void retryFailedMessage(message.id, paneMessages)
+              }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={onLoadFileChangesDiff}
-              onRevertFileChanges={onRevertFileChanges}
+              onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
+              onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
               onOpenFileChangesReview={({
                 loadDiff,
                 reviewTitle,
@@ -899,8 +778,8 @@ export function DesktopWorkbenchMain({
                   <DeviceStatusPrompt
                     devices={devices}
                     upgradingDevices={upgradingDevices}
-                    onUpgradeDevice={onUpgradeDevice}
-                    onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                    onUpgradeDevice={upgradeDevice}
+                    onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
                     activeDeviceId={activeDeviceId}
                     requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                     hideAvailableUpdates
@@ -908,27 +787,27 @@ export function DesktopWorkbenchMain({
                   />
                 )}
                 <ChatInput
-                  value={input}
-                  onChange={onInputChange}
-                  onSubmit={onSend}
+                  value={paneSession.input}
+                  onChange={paneSession.setInput}
+                  onSubmit={paneSession.send}
                   disabled={composerDisabled}
-                  error={error}
+                  error={errorMessage}
                   disabledReason={inlineComposerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
-                  projectWork={projectWork}
+                  projectWork={paneProjectWork}
                   showProjectWorkBar={false}
-                  queuedMessages={queuedMessages}
-                  guidanceMessages={guidanceMessages}
-                  codeComments={codeCommentContexts}
-                  isStreaming={isResponseStreaming}
-                  onPause={onPauseResponse}
-                  onCancelQueuedMessage={onCancelQueuedMessage}
-                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-                  onEditQueuedMessage={onEditQueuedMessage}
-                  onCancelGuidanceMessage={onCancelGuidanceMessage}
-                  onClearCodeComments={onClearCodeComments}
+                  queuedMessages={paneQueuedMessages}
+                  guidanceMessages={paneGuidanceMessages}
+                  codeComments={paneSession.codeCommentContexts}
+                  isStreaming={paneIsResponseStreaming}
+                  onPause={() => void pauseCurrentResponse(paneMessages)}
+                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                  onEditQueuedMessage={paneSession.editQueuedMessage}
+                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                  onClearCodeComments={paneSession.clearCodeComments}
                 />
               </div>
             </div>
@@ -947,34 +826,34 @@ export function DesktopWorkbenchMain({
               <DeviceStatusPrompt
                 devices={devices}
                 upgradingDevices={upgradingDevices}
-                onUpgradeDevice={onUpgradeDevice}
-                onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                onUpgradeDevice={upgradeDevice}
+                onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
                 activeDeviceId={activeDeviceId}
                 requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                 hideAvailableUpdates
                 className="mb-3"
               />
               <ChatInput
-                value={input}
-                onChange={onInputChange}
-                onSubmit={onSend}
+                value={paneSession.input}
+                onChange={paneSession.setInput}
+                onSubmit={paneSession.send}
                 disabled={composerDisabled}
-                error={error}
+                error={errorMessage}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}
-                projectWork={projectWork}
-                queuedMessages={queuedMessages}
-                guidanceMessages={guidanceMessages}
-                codeComments={codeCommentContexts}
-                isStreaming={isResponseStreaming}
-                onPause={onPauseResponse}
-                onCancelQueuedMessage={onCancelQueuedMessage}
-                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-                onEditQueuedMessage={onEditQueuedMessage}
-                onCancelGuidanceMessage={onCancelGuidanceMessage}
-                onClearCodeComments={onClearCodeComments}
+                projectWork={paneProjectWork}
+                queuedMessages={paneQueuedMessages}
+                guidanceMessages={paneGuidanceMessages}
+                codeComments={paneSession.codeCommentContexts}
+                isStreaming={paneIsResponseStreaming}
+                onPause={() => void pauseCurrentResponse(paneMessages)}
+                onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                onEditQueuedMessage={paneSession.editQueuedMessage}
+                onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                onClearCodeComments={paneSession.clearCodeComments}
               />
             </div>
           </div>
@@ -1038,8 +917,8 @@ export function DesktopWorkbenchMain({
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
             reviewViewOptions={reviewViewOptions}
-            canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
-            onAddCodeComment={onAddCodeComment}
+            canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
+            onAddCodeComment={paneSession.addCodeComment}
             onSelectReview={selectReviewView}
             onSelectTerminal={selectTerminalView}
             onSelectBrowser={selectBrowserView}
@@ -1049,27 +928,37 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
-      <TaskForkDialog
-        key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
-        open={forkDialogOpen}
-        source={currentRuntimeTask}
-        runtimeWork={runtimeWork}
-        currentProject={currentProject}
-        devices={devices}
-        requiresStop={isResponseStreaming}
-        onOpenChange={setForkDialogOpen}
-        onStopCurrentResponse={onPauseResponse}
-        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-        onListDeviceDirectories={onListDeviceDirectories}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onFork={async target => {
-          if (!onForkCurrentRuntimeTask) return
-          await onForkCurrentRuntimeTask(target)
-        }}
-      />
+      <WorkbenchPaneActiveOnly>
+        <TaskForkDialog
+          key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+          open={forkDialogOpen}
+          source={currentRuntimeTask}
+          runtimeWork={runtimeWork}
+          currentProject={currentProject}
+          devices={devices}
+          requiresStop={paneIsResponseStreaming}
+          onOpenChange={setForkDialogOpen}
+          onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
+          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
+          onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+          onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
+          onListDeviceDirectories={listDeviceDirectories}
+          onCreateDeviceDirectory={createDeviceDirectory}
+          onFork={async target => {
+            await forkCurrentRuntimeTask(target)
+          }}
+        />
+        <ContinueInImDialog
+          key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
+          {...continueInIm.dialog}
+        />
+        <TransientNotice
+          message={continueInIm.notice?.message ?? null}
+          tone={continueInIm.notice?.tone}
+          onClear={continueInIm.clearNotice}
+        />
+      </WorkbenchPaneActiveOnly>
     </main>
   )
-}
+})

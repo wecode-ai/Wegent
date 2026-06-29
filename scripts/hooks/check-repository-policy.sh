@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+POLICY_ROOT="${REPOSITORY_POLICY_ROOT:-$PROJECT_ROOT}"
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git is required to scan repository references." >&2
@@ -56,7 +57,12 @@ if [ ! -s "$PATTERN_FILE" ]; then
     exit 2
 fi
 
-cd "$PROJECT_ROOT"
+if [ ! -d "$POLICY_ROOT" ]; then
+    echo "Repository policy root does not exist: $POLICY_ROOT" >&2
+    exit 2
+fi
+
+cd "$POLICY_ROOT"
 
 set +e
 git grep --full-name -n -E --untracked --exclude-standard -f "$PATTERN_FILE" -- . \

@@ -73,22 +73,20 @@ export function summarizeToolBlocks(blocks: ToolBlock[]): string {
 
   const stats = getActivityStats(blocks)
   const parts: string[] = []
-  const exploreParts: string[] = []
 
-  if (stats.files > 0) exploreParts.push(formatCount(stats.files, '个文件'))
-  if (stats.searches > 0) exploreParts.push(formatCount(stats.searches, '次搜索'))
-  if (exploreParts.length > 0) parts.push(`已探索 ${exploreParts.join(' ')}`)
+  if (stats.files > 0) parts.push(`已读取 ${formatCount(stats.files, '个文件')}`)
+  if (stats.searches > 0) parts.push('已搜索代码')
   if (stats.creates > 0) parts.push(`已新增 ${formatCount(stats.creates, '个文件')}`)
   if (stats.edits > 0) parts.push(`已编辑 ${formatCount(stats.edits, '个文件')}`)
   if (stats.guidance > 0) parts.push('已引导对话')
   if (stats.commands > 0) parts.push(`已运行 ${formatCount(stats.commands, '条命令')}`)
-  if (stats.tools > 0) parts.push(`已运行 ${formatCount(stats.tools, '个工具')}`)
+  if (stats.tools > 0) parts.push(`已执行 ${formatCount(stats.tools, '个工具')}`)
   if (stats.failedCommands > 0) {
     parts.push(`运行失败 ${formatCount(stats.failedCommands, '条命令')}`)
   }
   if (stats.failedTools > 0) parts.push(`执行失败 ${formatCount(stats.failedTools, '个工具')}`)
 
-  return parts.length > 0 ? parts.join(' ') : `已运行 ${formatCount(blocks.length, '个工具')}`
+  return parts.length > 0 ? parts.join(' ') : `已执行 ${formatCount(blocks.length, '个工具')}`
 }
 
 function getActivityStats(blocks: ToolBlock[]): ActivityStats {

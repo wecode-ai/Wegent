@@ -659,6 +659,7 @@ jobs:
       - name: Start Local ClaudeCode Executor
         env:
           EXECUTOR_MODE: local
+          EXECUTOR_STARTUP_MODE: socket
           WEGENT_BACKEND_URL: http://localhost:8000
           DEVICE_ID: e2e-claudecode-device
           DEVICE_NAME: E2E ClaudeCode Device

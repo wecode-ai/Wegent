@@ -28,7 +28,6 @@ export function ToolBlockItem({
 }: ToolBlockItemProps) {
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -42,44 +41,61 @@ export function ToolBlockItem({
 
   const { icon, label } = getBlockLabel(block)
   const workspaceFilePath = getWorkspaceFilePath(block)
+  const hasDetail = hasBlockDetail(block)
+  const expanded = hasDetail && (forceExpanded || userExpanded)
+  const labelContent = (
+    <>
+      {icon}
+      <span className="min-w-0 truncate">{label}</span>
+      {isRunning && <span className="animate-pulse text-xs">...</span>}
+    </>
+  )
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
       <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
-        <button
-          type="button"
-          onClick={() => {
-            if (workspaceFilePath && onOpenWorkspaceFile) {
-              onOpenWorkspaceFile(workspaceFilePath)
-              return
-            }
-            setUserExpanded(value => !value)
-          }}
-          className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
-        >
-          {icon}
-          <span className="min-w-0 truncate">{label}</span>
-          {isRunning && <span className="animate-pulse text-xs">...</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => setUserExpanded(value => !value)}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
-          aria-label={expanded ? '收起工具详情' : '展开工具详情'}
-          aria-expanded={expanded}
-        >
-          <svg
-            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
+        {workspaceFilePath && onOpenWorkspaceFile ? (
+          <button
+            type="button"
+            onClick={() => onOpenWorkspaceFile(workspaceFilePath)}
+            className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+            {labelContent}
+          </button>
+        ) : hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setUserExpanded(value => !value)}
+            className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
+          >
+            {labelContent}
+          </button>
+        ) : (
+          <span className="flex min-w-0 items-center gap-1.5">{labelContent}</span>
+        )}
+        {hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setUserExpanded(value => !value)}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
+            aria-label={expanded ? '收起工具详情' : '展开工具详情'}
+            aria-expanded={expanded}
+          >
+            <svg
+              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        ) : null}
       </div>
-      {expanded && <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>}
+      {expanded ? (
+        <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>
+      ) : null}
     </div>
   )
 }
@@ -534,7 +550,7 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
   if (isGuidanceToolName(name)) {
     return { icon: <ToolIcon />, label: prefix.guidance }
   }
-  return { icon: <ToolIcon />, label: `${prefix.generic} ${block.toolName}` }
+  return { icon: <ToolIcon />, label: prefix.generic }
 }
 
 function getToolStatusPrefix(block: ToolBlock) {
@@ -558,7 +574,7 @@ function getToolStatusPrefix(block: ToolBlock) {
       read: '已读取',
       webSearch: '已搜索网页',
       guidance: '已引导对话',
-      generic: '已运行',
+      generic: '已执行',
     }
   }
 
@@ -569,7 +585,7 @@ function getToolStatusPrefix(block: ToolBlock) {
     read: '正在读取',
     webSearch: '正在搜索网页',
     guidance: '正在引导对话',
-    generic: '正在运行',
+    generic: '正在执行',
   }
 }
 
@@ -664,12 +680,20 @@ function renderBlockDetail(block: ToolBlock) {
     return null
   }
 
-  const input = block.toolInput
-  if (!input) return null
+  return null
+}
+
+function hasBlockDetail(block: ToolBlock): boolean {
+  const name = block.toolName.toLowerCase()
   return (
-    <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs text-text-secondary">
-      {JSON.stringify(input, null, 2)}
-    </pre>
+    isCommandToolName(name) ||
+    name === 'write' ||
+    name === 'create_file' ||
+    name === 'write_file' ||
+    name === 'edit' ||
+    name === 'str_replace_editor' ||
+    name === 'edit_file' ||
+    isWebSearchToolName(name)
   )
 }
 
@@ -704,6 +728,7 @@ function getWorkspaceFilePath(block: ToolBlock): string | undefined {
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
+  const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
   const outputText =
     typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
@@ -757,6 +782,11 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">
           <span className="text-text-muted">$ </span>
           {command}
+        </div>
+      )}
+      {cwd && (
+        <div className="mt-1 min-w-0 truncate font-mono text-xs text-text-muted" title={cwd}>
+          cwd: {cwd}
         </div>
       )}
       {outputText && (

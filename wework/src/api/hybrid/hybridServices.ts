@@ -57,23 +57,6 @@ function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknow
   }
 }
 
-function transcriptResponseDebug(response: unknown): Record<string, unknown> {
-  const record = recordValue(response)
-  const messages = record.messages
-  return {
-    responseType: Array.isArray(response) ? 'array' : typeof response,
-    keys: Object.keys(record).slice(0, 20),
-    success: record.success,
-    error: record.error,
-    runtime: record.runtime,
-    hasMessages: 'messages' in record,
-    messagesType: Array.isArray(messages) ? 'array' : typeof messages,
-    messageCount: Array.isArray(messages) ? messages.length : null,
-    hasMoreBefore: record.hasMoreBefore,
-    beforeCursor: record.beforeCursor,
-  }
-}
-
 function isRuntimeCodexModel(model: UnifiedModel): boolean {
   return model.type === 'runtime' && model.name === CODEX_RUNTIME_MODEL_NAME
 }
@@ -161,8 +144,7 @@ function removeCurrentAppCloudRuntimeWork(
   const projects = cloudWork.projects
     .map(projectWork => {
       const deviceWorkspaces = projectWork.deviceWorkspaces.filter(
-        workspace =>
-          !isCurrentAppDeviceId(workspace.deviceId, localDeviceIds)
+        workspace => !isCurrentAppDeviceId(workspace.deviceId, localDeviceIds)
       )
       return {
         ...projectWork,
@@ -351,19 +333,8 @@ export function createHybridWorkbenchServices(
     },
     async getRuntimeTranscript(data: RuntimeTranscriptRequest) {
       const route = isLocalDeviceId(data.deviceId) ? 'local' : 'cloud'
-      console.info('[Wework] Hybrid runtime transcript request', {
-        route,
-        address: runtimeAddressDebug(data),
-        knownLocalDeviceIds: Array.from(localDeviceIds),
-      })
       try {
-        const response = await routeByAddress(data).getRuntimeTranscript(data)
-        console.info('[Wework] Hybrid runtime transcript response', {
-          route,
-          address: runtimeAddressDebug(data),
-          response: transcriptResponseDebug(response),
-        })
-        return response
+        return await routeByAddress(data).getRuntimeTranscript(data)
       } catch (error) {
         console.error('[Wework] Hybrid runtime transcript failed', {
           route,

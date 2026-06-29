@@ -157,6 +157,9 @@ jobs:
           ./scripts/hooks/check-settings-config.sh
 
       - name: Run repository policy check
+        # Fork PRs run this in repository-policy.yml using pull_request_target
+        # with the trusted base-branch script and the PR merge tree as data.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           REPOSITORY_POLICY_PATTERN_B64: ${{ vars.RESTRICTED_DOMAIN_PATTERN_B64 }}
           REPOSITORY_POLICY_APPROVED_B64: ${{ vars.APPROVED_DOMAIN_REFERENCES_B64 }}

@@ -65,6 +65,11 @@ function numberField(record: Record<string, unknown>, key: string): number {
   return typeof value === 'number' ? value : 0
 }
 
+function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key]
+  return typeof value === 'number' ? value : undefined
+}
+
 function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> {
   return asRecord(record[key])
 }
@@ -73,6 +78,7 @@ function eventBase(payload: Record<string, unknown>) {
   return {
     task_id: numberField(payload, 'task_id'),
     subtask_id: numberField(payload, 'subtask_id'),
+    message_id: optionalNumberField(payload, 'message_id'),
     device_id: stringField(payload, 'device_id'),
     local_task_id: stringField(payload, 'local_task_id'),
   }
