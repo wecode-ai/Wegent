@@ -328,8 +328,8 @@ export interface LocalTaskSummary {
   gitInfo?: Record<string, unknown> | null
   title: string
   runtime: RuntimeName
-  createdAt?: string | null
-  updatedAt?: string | null
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
   running?: boolean
   status?: string | null
   runtimeHandle?: Record<string, unknown> | null
