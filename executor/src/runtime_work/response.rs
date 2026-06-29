@@ -8,11 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    infer_workspace_kind, infer_worktree_id, now_ms, path_is_within, string_field,
-    timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
+    codex_wrapped_item_payload, infer_workspace_kind, infer_worktree_id, now_ms, path_is_within,
+    string_field, timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
 };
-
-const DEFAULT_CODEX_SESSION_LIMIT: u64 = 100;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -84,7 +82,8 @@ impl RuntimeTaskLink {
         } else {
             thread_status(thread)
         };
-        let running = !local_archived && thread_running(thread);
+        let local_running = local_link.as_ref().is_some_and(|link| link.running);
+        let running = !local_archived && (local_running || thread_running(thread));
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -152,24 +151,19 @@ impl Default for RuntimeWorkspaceLink {
     }
 }
 
-pub(crate) fn thread_list_params(archived: bool) -> Value {
-    json!({
-        "limit": DEFAULT_CODEX_SESSION_LIMIT,
-        "archived": archived,
-        "sortDirection": "desc",
-        "sortKey": "updated_at",
-        "useStateDbOnly": true,
-    })
-}
-
 pub(crate) fn workspace_response(
     links: Vec<RuntimeTaskLink>,
     workspaces: Vec<RuntimeWorkspaceLink>,
 ) -> Vec<Value> {
     let mut groups: HashMap<String, (Option<RuntimeWorkspaceLink>, Vec<RuntimeTaskLink>)> =
         HashMap::new();
-    for mut workspace in workspaces {
+    let mut workspace_order = HashMap::<String, usize>::new();
+    for (index, mut workspace) in workspaces.into_iter().enumerate() {
         let group_path = workspace_group_path(&workspace.workspace_path);
+        workspace_order
+            .entry(group_path.clone())
+            .and_modify(|order| *order = (*order).min(index))
+            .or_insert(index);
         workspace.workspace_path = group_path.clone();
         groups
             .entry(group_path)
@@ -215,20 +209,34 @@ pub(crate) fn workspace_response(
                 .map(|workspace| workspace.title.clone())
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| workspace_label(&workspace_path));
-            json!({
-                "workspacePath": workspace_path,
-                "workspaceKind": infer_workspace_kind(&workspace_path),
-                "label": label,
-                "workspaceSource": "local",
-                "localTasks": local_tasks
-                    .into_iter()
-                    .map(local_task_json)
-                    .collect::<Vec<_>>(),
-                "updatedAt": updated_at,
-            })
+            (
+                json!({
+                    "workspacePath": workspace_path,
+                    "workspaceKind": infer_workspace_kind(&workspace_path),
+                    "label": label,
+                    "workspaceSource": "local",
+                    "localTasks": local_tasks
+                        .into_iter()
+                        .map(local_task_json)
+                        .collect::<Vec<_>>(),
+                    "updatedAt": updated_at,
+                }),
+                workspace_order.get(&workspace_path).copied(),
+                updated_at,
+                workspace_path,
+            )
         })
         .collect::<Vec<_>>();
-    workspaces.sort_by(|left, right| right["updatedAt"].as_i64().cmp(&left["updatedAt"].as_i64()));
+    workspaces.sort_by(|left, right| match (left.1, right.1) {
+        (Some(left_order), Some(right_order)) => left_order.cmp(&right_order),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => right.2.cmp(&left.2).then_with(|| left.3.cmp(&right.3)),
+    });
+    let workspaces = workspaces
+        .into_iter()
+        .map(|(workspace, _, _, _)| workspace)
+        .collect::<Vec<_>>();
     workspaces
 }
 
@@ -409,6 +417,7 @@ fn turn_or_item_running(value: &Value) -> bool {
     string_field(value, "status")
         .map(|status| normalized_running_status(&status))
         .unwrap_or(false)
+        || codex_wrapped_item_payload(value).is_some_and(turn_or_item_running)
         || value
             .get("items")
             .and_then(Value::as_array)

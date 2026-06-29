@@ -12,6 +12,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use rusqlite::Connection;
 use serde_json::json;
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
@@ -59,6 +60,47 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
             .display()
             .to_string(),
     );
+    let sqlite_home = temp_path("runtime-native-status-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    let active_rollout = temp_path("runtime-native-active-rollout", "jsonl");
+    fs::write(
+        &active_rollout,
+        [
+            json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"continue"}})
+                .to_string(),
+            json!({"type":"event_msg","payload":{"type":"agent_message","phase":"commentary","message":"working"}})
+                .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    write_codex_state_db_thread(
+        &sqlite_home,
+        CodexStateDbThread {
+            id: "thread-running-rollout",
+            cwd: "/tmp/project",
+            title: "Running rollout",
+            preview: "run",
+            rollout_path: &active_rollout.display().to_string(),
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000062000,
+            archived: false,
+        },
+    );
+    write_codex_state_db_thread(
+        &sqlite_home,
+        CodexStateDbThread {
+            id: "thread-idle",
+            cwd: "/tmp/project",
+            title: "Idle",
+            preview: "idle",
+            rollout_path: "/tmp/codex/idle.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived: false,
+        },
+    );
     let fake_codex = write_fake_codex(&temp_path("runtime-native-status-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -71,48 +113,130 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
         .expect("task list should succeed");
 
     let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
-    let running_by_status = tasks
+    let running_by_rollout = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "thread-running-status")
-        .unwrap();
-    let running_by_turn = tasks
-        .iter()
-        .find(|task| task["localTaskId"] == "thread-running-turn")
+        .find(|task| task["localTaskId"] == "thread-running-rollout")
         .unwrap();
     let idle = tasks
         .iter()
         .find(|task| task["localTaskId"] == "thread-idle")
         .unwrap();
 
-    assert_eq!(running_by_status["status"], "active");
-    assert_eq!(running_by_status["running"], true);
-    assert_eq!(running_by_turn["status"], "active");
-    assert_eq!(running_by_turn["running"], true);
+    assert_eq!(running_by_rollout["status"], "active");
+    assert_eq!(running_by_rollout["running"], true);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
 }
 
+#[tokio::test]
+async fn runtime_task_list_preserves_local_running_state_when_native_thread_is_idle() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-local-running-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-local-running-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let sqlite_home = temp_path("runtime-local-running-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    write_codex_state_db_thread(
+        &sqlite_home,
+        CodexStateDbThread {
+            id: "thread-idle",
+            cwd: "/tmp/project",
+            title: "Idle",
+            preview: "idle",
+            rollout_path: "/tmp/codex/idle.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived: false,
+        },
+    );
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                "local-running-idle": {
+                    "local_task_id": "local-running-idle",
+                    "thread_id": "thread-idle",
+                    "workspace_path": "/tmp/project",
+                    "title": "Locally running idle",
+                    "runtime": "codex",
+                    "status": "running",
+                    "running": true,
+                    "created_at": 1780000000000_i64,
+                    "updated_at": 1780000070000_i64,
+                    "runtime_handle": {"threadId": "thread-idle"},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let fake_codex = write_fake_codex(&temp_path("runtime-local-running-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let locally_running = tasks
+        .iter()
+        .find(|task| task["localTaskId"] == "local-running-idle")
+        .unwrap();
+
+    assert_eq!(locally_running["title"], "Locally running idle");
+    assert_eq!(locally_running["running"], true);
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-native-status", "sh");
+    let active_rollout = temp_path("runtime-native-active-rollout", "jsonl");
     let _ = fs::remove_file(log_path);
+    fs::write(
+        &active_rollout,
+        [
+            json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"continue"}})
+                .to_string(),
+            json!({"type":"event_msg","payload":{"type":"agent_message","phase":"commentary","message":"working"}})
+                .to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000062,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000064,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000063,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-running-rollout","cwd":"/tmp/project","name":"Running rollout","preview":"run","path":"{}","createdAt":1780000000,"updatedAt":1780000062,"status":"idle","turns":[]}},{{"id":"thread-running-wrapped-item","cwd":"/tmp/project","name":"Running wrapped item","preview":"run","path":"/tmp/codex/running-wrapped-item.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[{{"type":"response_item","payload":{{"id":"call-1","type":"function_call","status":"inProgress","call_id":"call-1","name":"exec_command"}}}}]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        active_rollout.display()
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
@@ -122,6 +246,82 @@ done
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+struct CodexStateDbThread<'a> {
+    id: &'a str,
+    cwd: &'a str,
+    title: &'a str,
+    preview: &'a str,
+    rollout_path: &'a str,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    archived: bool,
+}
+
+fn write_codex_state_db_thread(sqlite_home: &Path, thread: CodexStateDbThread<'_>) {
+    fs::create_dir_all(sqlite_home).unwrap();
+    let connection = Connection::open(sqlite_home.join("state_5.sqlite")).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (?1, ?2, ?3, ?4, 'vscode', 'openai', ?5, ?6, ?7, 'test', ?8, ?9, ?10)
+            "#,
+            (
+                thread.id,
+                thread.rollout_path,
+                thread.created_at_ms / 1000,
+                thread.updated_at_ms / 1000,
+                thread.cwd,
+                thread.title,
+                if thread.archived { 1_i64 } else { 0_i64 },
+                thread.created_at_ms,
+                thread.updated_at_ms,
+                thread.preview,
+            ),
+        )
+        .unwrap();
 }
 
 fn temp_path(prefix: &str, extension: &str) -> PathBuf {

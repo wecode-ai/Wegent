@@ -8,7 +8,7 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const streamingThinkingBlock: ProcessingBlock = {
   id: 'thinking-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'thinking',
   content: 'First step. Latest visible thought',
   status: 'streaming',
@@ -17,7 +17,7 @@ const streamingThinkingBlock: ProcessingBlock = {
 
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'text',
   content: 'Let me explore the repository structure.',
   status: 'streaming',
@@ -93,7 +93,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'web-search-1',
-          subtaskId: 1,
+          turnId: 1,
           type: 'tool',
           toolName: 'web_search',
           toolInput: {
@@ -117,6 +117,56 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByText(/"query"/)).not.toBeInTheDocument()
   })
 
+  test('renders shell command working directory in expanded details', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-1',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: {
+            cmd: 'pwd',
+            cwd: '/Users/crystal/project',
+          },
+          toolOutput: '/Users/crystal/project\n',
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByText('cwd: /Users/crystal/project')).toBeInTheDocument()
+  })
+
+  test('renders unknown tool as a non-expandable activity row', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'tool-unknown',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'custom_agent_tool',
+          toolInput: {
+            action: 'inspect',
+            payload: 'raw details should stay hidden',
+          },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('已执行')).toBeInTheDocument()
+    expect(screen.queryByText('custom_agent_tool')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
+    expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
+  })
+
   test('uses Codex filePath aliases for file tool labels and open actions', async () => {
     const user = userEvent.setup()
     const onOpenWorkspaceFile = vi.fn()
@@ -125,7 +175,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'read-1',
-          subtaskId: 1,
+          turnId: 1,
           type: 'tool',
           toolName: 'Read',
           toolInput: { filePath: '/Users/crystal/package.json' },

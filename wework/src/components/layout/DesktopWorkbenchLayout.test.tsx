@@ -2992,7 +2992,7 @@ describe('DesktopWorkbenchLayout', () => {
             blocks: [
               {
                 id: 'edit-file-1',
-                subtaskId: 101,
+                turnId: 101,
                 type: 'tool',
                 toolName: 'edit_file',
                 toolInput: {

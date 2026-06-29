@@ -248,7 +248,9 @@ export interface NormalizedRuntimeMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | string
   content: string
-  subtaskId?: number | null
+  messageIndex?: number | null
+  message_index?: number | null
+  turnId?: number | null
   subtask_id?: number | null
   status?: string | null
   createdAt?: string | null
@@ -268,6 +270,15 @@ export interface NormalizedRuntimeMessage {
   memory_citation?: CodexMemoryCitation | null
   contextEvents?: CodexContextEvent[] | null
   context_events?: CodexContextEvent[] | null
+}
+
+export interface RuntimeTurnNavigationItem {
+  id: string
+  turnIndex: number
+  messageIndex: number
+  cursor?: string | null
+  promptPreview: string
+  responsePreview?: string | null
 }
 
 export interface CodexReference {
@@ -442,19 +453,27 @@ export interface RuntimeTranscriptResponse {
   runtime: RuntimeName
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
+  rangeStart?: number | null
+  rangeEnd?: number | null
   hasMoreBefore?: boolean
   beforeCursor?: string | null
+  hasMoreAfter?: boolean
+  afterCursor?: string | null
   parseError?: string | null
 }
 
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number
   beforeCursor?: string | null
+  afterCursor?: string | null
+  refresh?: boolean
 }
 
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  message_id?: number
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: ModelOptions
@@ -638,6 +657,7 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
+  message_id?: number
   title?: string
   modelId?: string
   modelType?: ModelType | null
@@ -1012,6 +1032,7 @@ export type ChatResultPayload = Record<string, unknown> & {
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   content: string
   offset: number
   result?: ChatResultPayload
@@ -1427,6 +1448,7 @@ export interface ChatBlock {
 export interface ChatBlockCreatedPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   block: ChatBlock
   device_id?: string
   local_task_id?: string
@@ -1435,6 +1457,7 @@ export interface ChatBlockCreatedPayload {
 export interface ChatBlockUpdatedPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   block_id: string
   content?: string
   tool_output?: unknown

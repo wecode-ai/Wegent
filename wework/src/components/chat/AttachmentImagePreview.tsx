@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -37,6 +37,8 @@ interface AttachmentImagePreviewProps {
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4
 const ZOOM_STEP = 0.25
+const failedAttachmentPreviewUrls = new Set<string>()
+const resolvedLocalAttachmentPreviewUrls = new Map<string, string>()
 
 function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value))
@@ -51,10 +53,37 @@ async function loadAttachmentImageUrl(
   attachment: Attachment
 ): Promise<{ url: string; objectUrl: string | null }> {
   if (attachment.local_preview_url) {
+    const cachedLocalPreviewUrl = resolvedLocalAttachmentPreviewUrls.get(
+      attachment.local_preview_url
+    )
+    if (cachedLocalPreviewUrl) {
+      return { url: cachedLocalPreviewUrl, objectUrl: null }
+    }
+
+    if (failedAttachmentPreviewUrls.has(attachment.local_preview_url)) {
+      throw new Error('Local attachment preview already failed')
+    }
+
+    const localPath = getDownloadableLocalPath(attachment.local_preview_url)
+    if (localPath && isTauriRuntime()) {
+      try {
+        const exists = await invoke<boolean>('local_path_exists', { path: localPath })
+        if (!exists) {
+          failedAttachmentPreviewUrls.add(attachment.local_preview_url)
+          throw new Error('Local attachment preview no longer exists')
+        }
+      } catch (error) {
+        if (failedAttachmentPreviewUrls.has(attachment.local_preview_url)) {
+          throw error
+        }
+      }
+    }
+
     const resolvedLocalPreviewUrl = resolveDirectMarkdownImageSrc(attachment.local_preview_url)
     if (!resolvedLocalPreviewUrl) {
       throw new Error('Failed to resolve local attachment preview')
     }
+    resolvedLocalAttachmentPreviewUrls.set(attachment.local_preview_url, resolvedLocalPreviewUrl)
     return { url: resolvedLocalPreviewUrl, objectUrl: null }
   }
 
@@ -74,6 +103,12 @@ async function loadAttachmentImageUrl(
 
   const objectUrl = URL.createObjectURL(blob)
   return { url: objectUrl, objectUrl }
+}
+
+function rememberFailedAttachmentPreview(attachment: Attachment) {
+  if (attachment.local_preview_url) {
+    failedAttachmentPreviewUrls.add(attachment.local_preview_url)
+  }
 }
 
 function triggerDownload(url: string, filename: string) {
@@ -149,6 +184,12 @@ export function AttachmentImagePreview({
   const [isLightboxLoading, setIsLightboxLoading] = useState(false)
   const [hasLightboxError, setHasLightboxError] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
+  const previewContainerRef = useRef<HTMLElement | null>(null)
+  const previewIdentity = `${attachment.id}:${attachment.local_preview_url ?? ''}`
+  const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
+    previewContainerRef.current = element
+  }, [])
   const gallery = useMemo(
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
     [attachment, galleryAttachments]
@@ -157,6 +198,39 @@ export function AttachmentImagePreview({
   const canNavigateLightbox = gallery.length > 1
 
   useEffect(() => {
+    setShouldLoadPreview(false)
+    setPreviewUrl(null)
+    setHasError(false)
+    setIsLightboxOpen(false)
+    setLightboxUrl(null)
+    setZoom(1)
+  }, [previewIdentity])
+
+  useEffect(() => {
+    if (shouldLoadPreview) return undefined
+
+    const element = previewContainerRef.current
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setShouldLoadPreview(true)
+      return undefined
+    }
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) {
+          setShouldLoadPreview(true)
+          observer.disconnect()
+        }
+      },
+      { root: null, rootMargin: '320px 0px' }
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [previewIdentity, shouldLoadPreview])
+
+  useEffect(() => {
+    if (!shouldLoadPreview) return undefined
+
     let isMounted = true
     let objectUrl: string | null = null
 
@@ -175,8 +249,9 @@ export function AttachmentImagePreview({
         } else if (objectUrl) {
           URL.revokeObjectURL(objectUrl)
         }
-      } catch {
+      } catch (error) {
         if (isMounted) {
+          rememberFailedAttachmentPreview(attachment)
           setHasError(true)
         }
       }
@@ -190,7 +265,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment])
+  }, [attachment, shouldLoadPreview])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
@@ -229,6 +304,7 @@ export function AttachmentImagePreview({
         }
       } catch {
         if (isMounted) {
+          rememberFailedAttachmentPreview(selectedAttachment)
           setIsLightboxLoading(false)
           setHasLightboxError(true)
         }
@@ -428,6 +504,7 @@ export function AttachmentImagePreview({
     if (disableLightbox) {
       return (
         <div
+          ref={setPreviewContainerRef}
           data-testid={buttonTestId}
           className={buttonClassName}
           aria-label={attachment.filename}
@@ -436,8 +513,10 @@ export function AttachmentImagePreview({
             data-testid={imageTestId}
             src={previewUrl}
             alt={attachment.filename}
+            loading="lazy"
             className={imageClassName}
             onError={() => {
+              rememberFailedAttachmentPreview(attachment)
               setPreviewUrl(null)
               setHasError(true)
             }}
@@ -449,6 +528,7 @@ export function AttachmentImagePreview({
     return (
       <>
         <button
+          ref={setPreviewContainerRef}
           type="button"
           data-testid={buttonTestId}
           className={buttonClassName}
@@ -459,8 +539,10 @@ export function AttachmentImagePreview({
             data-testid={imageTestId}
             src={previewUrl}
             alt={attachment.filename}
+            loading="lazy"
             className={imageClassName}
             onError={() => {
+              rememberFailedAttachmentPreview(attachment)
               setPreviewUrl(null)
               setHasError(true)
             }}
@@ -477,6 +559,7 @@ export function AttachmentImagePreview({
 
   return (
     <div
+      ref={setPreviewContainerRef}
       data-testid={hasError ? errorTestId : loadingTestId}
       className={placeholderClassName}
       aria-label={attachment.filename}

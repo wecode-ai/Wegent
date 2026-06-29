@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   MouseEvent as ReactMouseEvent,
   ReactNode,
@@ -35,19 +35,24 @@ interface MessageListProps {
   messages: WorkbenchMessage[]
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
+  disableContentVisibility?: boolean
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (turnId: number) => Promise<string>
+  onRevertFileChanges?: (turnId: number) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
-    subtaskId: number
+    turnId: number
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  renderGapAfterMessage?: (
+    message: WorkbenchMessage,
+    nextMessage: WorkbenchMessage | undefined
+  ) => ReactNode
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
@@ -56,6 +61,8 @@ const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
+const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
+  /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
   '.apng': 'image/apng',
   '.avif': 'image/avif',
@@ -68,10 +75,11 @@ const LOCAL_IMAGE_MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
 }
 
-export function MessageList({
+export const MessageList = memo(function MessageList({
   messages,
   conversationKey,
   isWaitingForAssistant = false,
+  disableContentVisibility = false,
   devices = [],
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -79,6 +87,7 @@ export function MessageList({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  renderGapAfterMessage,
 }: MessageListProps) {
   const visibleMessages = messages.filter(shouldRenderMessage)
   const shouldShowWaitingIndicator =
@@ -91,33 +100,41 @@ export function MessageList({
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11">
-      {visibleMessages.map(message => (
-        <article
-          key={message.id}
-          className={[
-            'min-w-0 overflow-x-hidden',
-            message.role === 'user' ? 'flex justify-end' : '',
-          ].join(' ')}
-          data-message-id={message.id}
-          data-testid={`message-${message.role}`}
-        >
-          {message.role === 'user' ? (
-            <UserMessage message={message} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          ) : (
-            <AssistantMessage
-              message={message}
-              conversationKey={conversationKey}
-              devices={devices}
-              onRetryFailedMessage={onRetryFailedMessage}
-              onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-              onLoadFileChangesDiff={onLoadFileChangesDiff}
-              onRevertFileChanges={onRevertFileChanges}
-              onOpenFileChangesReview={onOpenFileChangesReview}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
-          )}
-        </article>
-      ))}
+      {visibleMessages.map((message, index) => {
+        const nextMessage = visibleMessages[index + 1]
+        return (
+          <Fragment key={message.id}>
+            <article
+              className={[
+                'min-w-0 overflow-x-hidden',
+                disableContentVisibility
+                  ? ''
+                  : '[content-visibility:auto] [contain-intrinsic-size:0_220px]',
+                message.role === 'user' ? 'flex justify-end' : '',
+              ].join(' ')}
+              data-message-id={message.id}
+              data-testid={`message-${message.role}`}
+            >
+              {message.role === 'user' ? (
+                <UserMessage message={message} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+              ) : (
+                <AssistantMessage
+                  message={message}
+                  conversationKey={conversationKey}
+                  devices={devices}
+                  onRetryFailedMessage={onRetryFailedMessage}
+                  onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+                  onLoadFileChangesDiff={onLoadFileChangesDiff}
+                  onRevertFileChanges={onRevertFileChanges}
+                  onOpenFileChangesReview={onOpenFileChangesReview}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                />
+              )}
+            </article>
+            {renderGapAfterMessage?.(message, nextMessage)}
+          </Fragment>
+        )
+      })}
       {shouldShowWaitingIndicator && (
         <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
           <WaitingAssistantIndicator />
@@ -125,6 +142,31 @@ export function MessageList({
       )}
     </div>
   )
+}, areMessageListPropsEqual)
+
+function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {
+  const changed = [
+    previous.messages !== next.messages ? 'messages' : null,
+    previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
+    previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
+    previous.disableContentVisibility !== next.disableContentVisibility
+      ? 'disableContentVisibility'
+      : null,
+    previous.devices !== next.devices ? 'devices' : null,
+    previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
+    previous.onSwitchModelForFailedMessage !== next.onSwitchModelForFailedMessage
+      ? 'onSwitchModelForFailedMessage'
+      : null,
+    previous.onLoadFileChangesDiff !== next.onLoadFileChangesDiff ? 'onLoadFileChangesDiff' : null,
+    previous.onRevertFileChanges !== next.onRevertFileChanges ? 'onRevertFileChanges' : null,
+    previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
+      ? 'onOpenFileChangesReview'
+      : null,
+    previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
+  ].filter((key): key is string => key !== null)
+
+  return changed.length === 0
 }
 
 function shouldRenderMessage(message: WorkbenchMessage): boolean {
@@ -447,6 +489,7 @@ function parseCodexLocalFileMentions(content: string): {
     const filename = match[1]?.trim()
     const path = match[2]?.trim()
     if (!filename || !path) continue
+    if (isTransientCodexClipboardImage(path)) continue
     const target = { filename, path }
     if (isLocalImageMention(filename, path)) {
       if (!images.some(image => image.path === path || image.filename === filename)) {
@@ -466,6 +509,10 @@ function parseCodexLocalFileMentions(content: string): {
 
 function isLocalImageMention(filename: string, path: string): boolean {
   return LOCAL_IMAGE_EXTENSION_PATTERN.test(filename) || LOCAL_IMAGE_EXTENSION_PATTERN.test(path)
+}
+
+function isTransientCodexClipboardImage(path: string): boolean {
+  return CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN.test(path)
 }
 
 function getLocalImageExtension(filename: string, path: string): string {
@@ -819,10 +866,10 @@ function AssistantMessage({
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (turnId: number) => Promise<string>
+  onRevertFileChanges?: (turnId: number) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
-    subtaskId: number
+    turnId: number
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
@@ -854,12 +901,12 @@ function AssistantMessage({
   // A file referenced in the response usually belongs to this turn's changes, so
   // route the link into the previous-turn diff review focused on that file. When
   // the turn has no recorded changes, fall back to the workspace file panel.
-  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
+  const fileChangesTurnId = message.fileChanges ? message.turnId : undefined
   const openFileFromLink = (path: string) => {
-    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
+    if (fileChangesTurnId && onLoadFileChangesDiff && onOpenFileChangesReview) {
       onOpenFileChangesReview({
-        subtaskId: fileChangesSubtaskId,
-        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
+        turnId: fileChangesTurnId,
+        loadDiff: () => onLoadFileChangesDiff(fileChangesTurnId),
         reviewTitle: t('file_changes.previous_turn_label'),
         defaultFileTreeVisible: false,
         focusFilePath: path,
@@ -925,11 +972,11 @@ function AssistantMessage({
             />
           )}
           {message.fileChanges &&
-          message.subtaskId &&
+          message.turnId &&
           onLoadFileChangesDiff &&
           onRevertFileChanges ? (
             <FileChangesCard
-              subtaskId={message.subtaskId}
+              turnId={message.turnId}
               summary={message.fileChanges}
               deviceOnline={devices.some(
                 device =>

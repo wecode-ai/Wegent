@@ -310,6 +310,57 @@ describe('ScrollableMessageArea', () => {
     expect(Number.parseFloat(markerRows[0].style.height)).toBeCloseTo(10.222)
   })
 
+  test('calculates turn navigation anchors with a single message-anchor query', () => {
+    const messages = Array.from({ length: 12 }).flatMap((_, index) => [
+      {
+        id: `bulk-user-${index}`,
+        role: 'user' as const,
+        content: `bulk user ${index}`,
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: `bulk-assistant-${index}`,
+        role: 'assistant' as const,
+        content: `bulk assistant ${index}`,
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+    ])
+    const querySelectorAllSpy = vi.spyOn(HTMLElement.prototype, 'querySelectorAll')
+
+    render(<ScrollableMessageArea messages={messages} />)
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 300,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 4000,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    for (let index = 0; index < 12; index += 1) {
+      mockRect(screen.getByText(`bulk user ${index}`).closest('[data-message-id]')!, 120, 180)
+    }
+
+    querySelectorAllSpy.mockClear()
+    fireEvent.resize(window)
+
+    const messageAnchorQueries = querySelectorAllSpy.mock.calls.filter(([selector]) =>
+      String(selector).includes('[data-message-id]')
+    )
+    expect(messageAnchorQueries).toHaveLength(1)
+
+    querySelectorAllSpy.mockRestore()
+  })
+
   test('clicks a message navigation marker to jump to that user message', () => {
     render(
       <ScrollableMessageArea
@@ -457,6 +508,70 @@ describe('ScrollableMessageArea', () => {
       top: 180.5,
       behavior: 'auto',
     })
+  })
+
+  test('keeps previously selected conversation DOM mounted when switching back', () => {
+    const messageA = {
+      id: 'cached-message-a',
+      role: 'assistant' as const,
+      content: 'cached conversation a',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'cached-message-b',
+      role: 'assistant' as const,
+      content: 'cached conversation b',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="cached-a" messages={[messageA]} />
+    )
+    const messageElementA = screen.getByText('cached conversation a').closest('[data-message-id]')
+
+    rerender(<ScrollableMessageArea conversationKey="cached-b" messages={[messageB]} />)
+
+    expect(messageElementA?.isConnected).toBe(true)
+    expect(screen.getByText('cached conversation b')).toBeInTheDocument()
+
+    rerender(<ScrollableMessageArea conversationKey="cached-a" messages={[messageA]} />)
+
+    expect(screen.getByText('cached conversation a').closest('[data-message-id]')).toBe(
+      messageElementA
+    )
+  })
+
+  test('does not re-render a cached inactive conversation when switching away', () => {
+    let messageAContentReads = 0
+    const messageA = {
+      id: 'cached-render-message-a',
+      role: 'assistant' as const,
+      get content() {
+        messageAContentReads += 1
+        return 'cached render conversation a'
+      },
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'cached-render-message-b',
+      role: 'assistant' as const,
+      content: 'cached render conversation b',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="cached-render-a" messages={[messageA]} />
+    )
+
+    expect(screen.getByText('cached render conversation a')).toBeInTheDocument()
+    messageAContentReads = 0
+
+    rerender(<ScrollableMessageArea conversationKey="cached-render-b" messages={[messageB]} />)
+
+    expect(screen.getByText('cached render conversation b')).toBeInTheDocument()
+    expect(messageAContentReads).toBe(0)
   })
 
   test('does not overwrite a saved position while a reopened conversation is loading', () => {

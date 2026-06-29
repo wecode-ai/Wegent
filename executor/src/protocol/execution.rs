@@ -28,6 +28,7 @@ pub struct KnowledgeBaseScope {
 #[serde(default)]
 pub struct ExecutionRequest {
     pub task_id: i64,
+    #[serde(alias = "turn_id")]
     pub subtask_id: i64,
     pub team_namespace: Option<String>,
     pub bot: Value,

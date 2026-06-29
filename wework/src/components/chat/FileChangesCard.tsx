@@ -18,13 +18,13 @@ const DIFF_PREVIEW_VIEWPORT_GUTTER = 32
 const DIFF_PREVIEW_VERTICAL_GAP = 8
 
 interface FileChangesCardProps {
-  subtaskId: number
+  turnId: number
   summary: TurnFileChangesSummary
   deviceOnline: boolean
-  onLoadDiff: (subtaskId: number) => Promise<string>
-  onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onLoadDiff: (turnId: number) => Promise<string>
+  onRevert: (turnId: number) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
-    subtaskId: number
+    turnId: number
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
@@ -550,7 +550,7 @@ function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
 }
 
 export function FileChangesCard({
-  subtaskId,
+  turnId,
   summary,
   deviceOnline,
   onLoadDiff,
@@ -573,8 +573,8 @@ export function FileChangesCard({
 
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
-      subtaskId,
-      loadDiff: () => onLoadDiff(subtaskId),
+      turnId,
+      loadDiff: () => onLoadDiff(turnId),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,
@@ -585,7 +585,7 @@ export function FileChangesCard({
     setReverting(true)
     setActionError(undefined)
     try {
-      await onRevert(subtaskId)
+      await onRevert(turnId)
       setConfirmOpen(false)
     } catch (error) {
       setActionError(getErrorMessage(error, t('file_changes.revert_failed')))

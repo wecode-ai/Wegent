@@ -18,7 +18,7 @@ export interface MessageSource {
 
 export interface BaseWorkbenchProcessingBlock {
   id: string
-  subtaskId: number
+  turnId: number
   status: WorkbenchToolBlockStatus
   createdAt: number
 }
@@ -55,7 +55,7 @@ export type WorkbenchProcessingBlock<TFileChanges = unknown> =
 export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown> {
   id: string
   taskId?: number
-  subtaskId?: number
+  turnId?: number
   shellType?: string
   role: WorkbenchMessageRole
   content: string
@@ -79,36 +79,50 @@ type ProcessingBlockUpdate = {
 export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown> =
   | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
   | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
-  | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
+  | { type: 'assistant_started'; messageId?: string; taskId?: number; turnId?: number; shellType?: string }
   | {
       type: 'assistant_cached'
+      messageId?: string
       taskId?: number
-      subtaskId: number
+      turnId?: number
       content: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
   | {
       type: 'assistant_chunk'
-      subtaskId: number
+      messageId?: string
+      turnId?: number
       content: string
       reasoningChunk?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
   | {
       type: 'assistant_done'
-      subtaskId: number
+      messageId?: string
+      turnId?: number
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
     }
   | {
       type: 'file_changes_updated'
-      subtaskId: number
+      turnId: number
       fileChanges: TFileChanges
     }
-  | { type: 'assistant_error'; subtaskId: number; error: string; errorType?: string }
-  | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock<TFileChanges> }
-  | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
+  | { type: 'assistant_error'; messageId?: string; turnId?: number; error: string; errorType?: string }
+  | {
+      type: 'block_created'
+      messageId?: string
+      turnId?: number
+      block: WorkbenchProcessingBlock<TFileChanges>
+    }
+  | {
+      type: 'block_updated'
+      messageId?: string
+      turnId?: number
+      blockId: string
+      updates: ProcessingBlockUpdate
+    }
 
 export function isGenericTaskStatusError(error?: string): boolean {
   return /^Task failed with status:\s*\w+$/i.test(String(error ?? '').trim())
@@ -124,9 +138,9 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
     case 'user_added':
       return [...state, action.message]
     case 'assistant_started':
-      if (state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (state.some(message => isAssistantMessageForAction(message, action))) {
         return state.map(message =>
-          isAssistantMessageForSubtask(message, action.subtaskId)
+          isAssistantMessageForAction(message, action)
             ? {
                 ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
@@ -139,15 +153,16 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       return [
         ...state,
         createAssistantMessage<TAttachment, TFileChanges>({
+          messageId: action.messageId,
           taskId: action.taskId,
-          subtaskId: action.subtaskId,
+          turnId: action.turnId,
           shellType: action.shellType,
         }),
       ]
     case 'assistant_cached':
-      if (state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (state.some(message => isAssistantMessageForAction(message, action))) {
         return state.map(message =>
-          isAssistantMessageForSubtask(message, action.subtaskId)
+          isAssistantMessageForAction(message, action)
             ? {
                 ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
@@ -161,16 +176,18 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       return [
         ...state,
         createAssistantMessage<TAttachment, TFileChanges>({
+          messageId: action.messageId,
           taskId: action.taskId,
-          subtaskId: action.subtaskId,
+          turnId: action.turnId,
           content: action.content,
           blocks: action.blocks ?? [],
         }),
       ]
     case 'assistant_chunk':
-      if (!state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (!state.some(message => isAssistantMessageForAction(message, action))) {
         const message = createAssistantMessage<TAttachment, TFileChanges>({
-          subtaskId: action.subtaskId,
+          messageId: action.messageId,
+          turnId: action.turnId,
           content: action.content,
         })
         return [
@@ -182,7 +199,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         ]
       }
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForAction(message, action)
           ? {
               ...clearMessageError(message),
               content: message.content + action.content,
@@ -192,11 +209,12 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           : message
       )
     case 'assistant_done':
-      if (!state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (!state.some(message => isAssistantMessageForAction(message, action))) {
         return [
           ...state,
           createAssistantMessage<TAttachment, TFileChanges>({
-            subtaskId: action.subtaskId,
+            messageId: action.messageId,
+            turnId: action.turnId,
             content: action.content ?? '',
             status: 'done',
             blocks: finalizeProcessingBlocks(action.blocks, 'done'),
@@ -205,7 +223,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         ]
       }
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForAction(message, action)
           ? {
               ...clearMessageError(message),
               content: action.content ?? message.content,
@@ -217,16 +235,17 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       )
     case 'file_changes_updated':
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForTurn(message, action.turnId)
           ? { ...message, fileChanges: action.fileChanges }
           : message
       )
     case 'assistant_error':
-      if (!state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (!state.some(message => isAssistantMessageForAction(message, action))) {
         return [
           ...state,
           createAssistantMessage<TAttachment, TFileChanges>({
-            subtaskId: action.subtaskId,
+            messageId: action.messageId,
+            turnId: action.turnId,
             status: 'failed',
             error: action.error,
             errorType: action.errorType,
@@ -235,7 +254,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         ]
       }
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForAction(message, action)
           ? {
               ...message,
               status: 'failed' as const,
@@ -252,20 +271,21 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           : message
       )
     case 'block_created':
-      if (!state.some(message => isAssistantMessageForSubtask(message, action.subtaskId))) {
+      if (!state.some(message => isAssistantMessageForAction(message, action))) {
         const message = createAssistantMessage<TAttachment, TFileChanges>({
-          subtaskId: action.subtaskId,
+          messageId: action.messageId,
+          turnId: action.turnId,
         })
         return [...state, createBlockCreatedMessage(message, action)]
       }
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForAction(message, action)
           ? createBlockCreatedMessage(message, action)
           : message
       )
     case 'block_updated':
       return state.map(message =>
-        isAssistantMessageForSubtask(message, action.subtaskId)
+        isAssistantMessageForAction(message, action)
           ? {
               ...withActiveStreamState(message, isActiveBlockStatus(action.updates.status)),
               blocks: (message.blocks ?? []).map(block =>
@@ -281,16 +301,26 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
   }
 }
 
-function isAssistantMessageForSubtask<TAttachment, TFileChanges>(
+function isAssistantMessageForAction<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
-  subtaskId: number
+  action: { messageId?: string; turnId?: number }
 ): boolean {
-  return message.role === 'assistant' && message.subtaskId === subtaskId
+  if (message.role !== 'assistant') return false
+  if (action.messageId) return message.id === action.messageId
+  return typeof action.turnId === 'number' && message.turnId === action.turnId
+}
+
+function isAssistantMessageForTurn<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  turnId: number
+): boolean {
+  return message.role === 'assistant' && message.turnId === turnId
 }
 
 function createAssistantMessage<TAttachment, TFileChanges>({
+  messageId,
   taskId,
-  subtaskId,
+  turnId,
   shellType,
   content = '',
   status = 'streaming',
@@ -299,8 +329,9 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   error,
   errorType,
 }: {
+  messageId?: string
   taskId?: number
-  subtaskId: number
+  turnId?: number
   shellType?: string
   content?: string
   status?: WorkbenchMessageStatus
@@ -310,9 +341,9 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   errorType?: string
 }): WorkbenchMessage<TAttachment, TFileChanges> {
   return {
-    id: `assistant-${subtaskId}`,
+    id: messageId ?? `assistant-${turnId ?? Date.now()}`,
     taskId,
-    subtaskId,
+    turnId,
     shellType,
     role: 'assistant',
     content,
@@ -358,6 +389,7 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
   action: Extract<WorkbenchMessageAction<TAttachment, TFileChanges>, { type: 'block_created' }>
 ): WorkbenchMessage<TAttachment, TFileChanges> {
+  const turnId = action.turnId ?? message.turnId ?? 0
   const activeMessage = withActiveStreamState(message, isActiveBlockStatus(action.block.status))
   return {
     ...activeMessage,
@@ -365,7 +397,7 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
       ? ''
       : message.content,
     blocks: mergeProcessingBlock(
-      getBlocksBeforeIncomingBlock(message, action.subtaskId, action.block),
+      getBlocksBeforeIncomingBlock(message, turnId, action.block),
       action.block
     ),
   }
@@ -403,7 +435,7 @@ function getChunkBlocks<TAttachment, TFileChanges>(
 ) {
   const withReasoning = appendThinkingChunk(
     message.blocks,
-    action.subtaskId,
+    action.turnId ?? message.turnId ?? 0,
     action.reasoningChunk
   )
 
@@ -413,7 +445,7 @@ function getChunkBlocks<TAttachment, TFileChanges>(
 
 function appendThinkingChunk<TFileChanges>(
   blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
-  subtaskId: number,
+  turnId: number,
   chunk?: string
 ): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
   if (!chunk) return blocks
@@ -432,8 +464,8 @@ function appendThinkingChunk<TFileChanges>(
   return [
     ...nextBlocks,
     {
-      id: `thinking-${subtaskId}-${thinkingCount + 1}`,
-      subtaskId,
+      id: `thinking-${turnId}-${thinkingCount + 1}`,
+      turnId,
       type: 'thinking',
       content: chunk,
       status: 'streaming',
@@ -444,7 +476,7 @@ function appendThinkingChunk<TFileChanges>(
 
 function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
-  subtaskId: number,
+  turnId: number,
   incomingBlock: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
@@ -453,8 +485,8 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   return [
     ...finalizedBlocks,
     {
-      id: `text-${subtaskId}-${getTextBlockCount(finalizedBlocks) + 1}`,
-      subtaskId,
+      id: `text-${turnId}-${getTextBlockCount(finalizedBlocks) + 1}`,
+      turnId,
       type: 'text',
       content: message.content,
       status: 'done',

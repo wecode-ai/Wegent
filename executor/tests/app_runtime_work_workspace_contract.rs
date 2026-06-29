@@ -12,6 +12,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
@@ -117,6 +118,21 @@ async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
         &temp_path("runtime-workspace-group-codex-home", "dir")
             .display()
             .to_string(),
+    );
+    let sqlite_home = temp_path("runtime-workspace-group-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    write_codex_state_db_thread(
+        &sqlite_home,
+        CodexStateDbThread {
+            id: "thread-1",
+            cwd: "/tmp/project",
+            title: "Fix UI",
+            preview: "fix ui",
+            rollout_path: "/tmp/codex/thread-1.jsonl",
+            created_at_ms: 1780000000000,
+            updated_at_ms: 1780000060000,
+            archived: false,
+        },
     );
     let fake_codex = write_fake_codex(&temp_path("runtime-workspace-group-log", "jsonl"));
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -240,27 +256,31 @@ async fn runtime_task_list_coalesces_codex_git_worktrees_under_common_repo_root(
     )
     .unwrap();
 
-    let threads = serde_json::to_string(&json!([
-        {
-            "id": "thread-a",
-            "cwd": codex_worktree_a.join("frontend").display().to_string(),
-            "name": "Fix conflict",
-            "createdAt": 1780000000000_i64,
-            "updatedAt": 1780000060000_i64,
-            "status": "idle",
-            "turns": []
-        },
+    let threads = json!([
         {
             "id": "thread-b",
             "cwd": codex_worktree_b.join("executor").display().to_string(),
             "name": "Resolve conflict",
+            "preview": "resolve conflict",
+            "path": "/tmp/codex/thread-b.jsonl",
             "createdAt": 1780000100000_i64,
             "updatedAt": 1780000120000_i64,
             "status": "idle",
             "turns": []
+        },
+        {
+            "id": "thread-a",
+            "cwd": codex_worktree_a.join("frontend").display().to_string(),
+            "name": "Fix conflict",
+            "preview": "fix conflict",
+            "path": "/tmp/codex/thread-a.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
         }
-    ]))
-    .unwrap();
+    ])
+    .to_string();
     let fake_codex =
         write_fake_codex_with_threads(&temp_path("runtime-worktree-log", "jsonl"), &threads);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -315,27 +335,31 @@ async fn runtime_task_list_filters_threads_to_codex_global_projects() {
             "electron-workspace-root-labels": {"/repo/Wegent": "Wegent"}
         }),
     );
-    let threads = serde_json::to_string(&json!([
-        {
-            "id": "thread-in-project",
-            "cwd": "/repo/Wegent/frontend",
-            "name": "Visible",
-            "createdAt": 1780000000000_i64,
-            "updatedAt": 1780000060000_i64,
-            "status": "idle",
-            "turns": []
-        },
+    let threads = json!([
         {
             "id": "thread-outside-project",
             "cwd": "/repo/Other",
             "name": "Hidden",
+            "preview": "hidden",
+            "path": "/tmp/codex/thread-outside-project.jsonl",
             "createdAt": 1780000000000_i64,
             "updatedAt": 1780000070000_i64,
             "status": "idle",
             "turns": []
+        },
+        {
+            "id": "thread-in-project",
+            "cwd": "/repo/Wegent/frontend",
+            "name": "Visible",
+            "preview": "visible",
+            "path": "/tmp/codex/thread-in-project.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
         }
-    ]))
-    .unwrap();
+    ])
+    .to_string();
     let fake_codex =
         write_fake_codex_with_threads(&temp_path("runtime-global-filter-log", "jsonl"), &threads);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -358,6 +382,71 @@ async fn runtime_task_list_filters_threads_to_codex_global_projects() {
         workspace["localTasks"][0]["localTaskId"],
         "thread-in-project"
     );
+}
+
+#[tokio::test]
+async fn runtime_task_list_preserves_codex_global_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-global-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-global-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Older", "/repo/Newer"],
+            "project-order": ["/repo/Older", "/repo/Newer"],
+            "electron-workspace-root-labels": {
+                "/repo/Older": "Older",
+                "/repo/Newer": "Newer"
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-newer",
+            "cwd": "/repo/Newer",
+            "name": "Newer task",
+            "preview": "newer task",
+            "path": "/tmp/codex/thread-newer.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-older",
+            "cwd": "/repo/Older",
+            "name": "Older task",
+            "preview": "older task",
+            "path": "/tmp/codex/thread-older.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-global-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(listed["success"], true);
+    assert_eq!(listed["workspaces"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["workspaces"][0]["workspacePath"], "/repo/Older");
+    assert_eq!(listed["workspaces"][1]["workspacePath"], "/repo/Newer");
 }
 
 #[tokio::test]
@@ -508,14 +597,15 @@ fn write_fake_codex_with_threads(log_path: &Path, threads: &str) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":{},"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":{},"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done
@@ -542,6 +632,82 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+struct CodexStateDbThread<'a> {
+    id: &'a str,
+    cwd: &'a str,
+    title: &'a str,
+    preview: &'a str,
+    rollout_path: &'a str,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    archived: bool,
+}
+
+fn write_codex_state_db_thread(sqlite_home: &Path, thread: CodexStateDbThread<'_>) {
+    fs::create_dir_all(sqlite_home).unwrap();
+    let connection = Connection::open(sqlite_home.join("state_5.sqlite")).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                model_provider TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                sandbox_policy TEXT NOT NULL DEFAULT '',
+                approval_mode TEXT NOT NULL DEFAULT '',
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                has_user_event INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                git_sha TEXT,
+                git_branch TEXT,
+                git_origin_url TEXT,
+                cli_version TEXT NOT NULL DEFAULT '',
+                first_user_message TEXT NOT NULL DEFAULT '',
+                agent_nickname TEXT,
+                agent_role TEXT,
+                memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                model TEXT,
+                reasoning_effort TEXT,
+                agent_path TEXT,
+                created_at_ms INTEGER,
+                updated_at_ms INTEGER,
+                thread_source TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            );
+            "#,
+        )
+        .unwrap();
+    connection
+        .execute(
+            r#"
+            INSERT INTO threads (
+                id, rollout_path, created_at, updated_at, source, model_provider,
+                cwd, title, archived, cli_version, created_at_ms, updated_at_ms, preview
+            )
+            VALUES (?1, ?2, ?3, ?4, 'vscode', 'openai', ?5, ?6, ?7, 'test', ?8, ?9, ?10)
+            "#,
+            (
+                thread.id,
+                thread.rollout_path,
+                thread.created_at_ms / 1000,
+                thread.updated_at_ms / 1000,
+                thread.cwd,
+                thread.title,
+                if thread.archived { 1_i64 } else { 0_i64 },
+                thread.created_at_ms,
+                thread.updated_at_ms,
+                thread.preview,
+            ),
+        )
+        .unwrap();
 }
 
 fn read_json_lines(path: &Path) -> Vec<Value> {

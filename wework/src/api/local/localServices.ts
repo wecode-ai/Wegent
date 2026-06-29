@@ -58,6 +58,10 @@ import { createLocalChatStream } from './localChatStream'
 import { LOCAL_USER } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
 const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
@@ -201,23 +205,6 @@ function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unk
   }
 }
 
-function transcriptResponseDebug(response: unknown): Record<string, unknown> {
-  const record = recordValue(response)
-  const messages = record.messages
-  return {
-    responseType: Array.isArray(response) ? 'array' : typeof response,
-    keys: Object.keys(record).slice(0, 20),
-    success: record.success,
-    error: record.error,
-    runtime: record.runtime,
-    hasMessages: 'messages' in record,
-    messagesType: Array.isArray(messages) ? 'array' : typeof messages,
-    messageCount: Array.isArray(messages) ? messages.length : null,
-    hasMoreBefore: record.hasMoreBefore,
-    beforeCursor: record.beforeCursor,
-  }
-}
-
 function workspaceLabel(workspacePath: string, label: unknown): string {
   const explicitLabel = stringValue(label)
   if (explicitLabel) return explicitLabel
@@ -279,6 +266,10 @@ function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [number, num
   return [taskId, taskId + 1]
 }
 
+function createRuntimeMessageId(): number {
+  return Math.floor(Date.now() * 1000 + Math.floor(Math.random() * 1000))
+}
+
 function runtimeTaskTitle(data: RuntimeTaskCreateRequest): string {
   const title = data.title?.trim()
   if (title) return title
@@ -324,10 +315,10 @@ function codexModelId(modelId?: string): string {
 }
 
 function normalizeLocalRuntimeSendRequest(data: RuntimeSendRequest): RuntimeSendRequest {
-  if (!data.modelId) return data
   return {
     ...data,
-    modelId: codexModelId(data.modelId),
+    message_id: data.message_id ?? createRuntimeMessageId(),
+    ...(data.modelId ? { modelId: codexModelId(data.modelId) } : {}),
   }
 }
 
@@ -519,7 +510,7 @@ function createLocalExecutionRequest(
   runtimeWorkspace: LocalRuntimeWorkspace
 ): Record<string, unknown> {
   const { workspacePath, workspaceSource, branch } = runtimeWorkspace
-  const [taskId, subtaskId] = createRuntimeExecutionIds(data)
+  const [taskId, turnId] = createRuntimeExecutionIds(data)
   const title = runtimeTaskTitle(data)
   const modelConfig: Record<string, unknown> = {
     model: 'openai',
@@ -542,7 +533,8 @@ function createLocalExecutionRequest(
 
   return {
     task_id: taskId,
-    subtask_id: subtaskId,
+    subtask_id: turnId,
+    message_id: data.message_id ?? createRuntimeMessageId(),
     team_id: data.teamId,
     team_name: LOCAL_WORKBENCH_TEAM.name,
     team_namespace: 'default',
@@ -875,24 +867,14 @@ function createRuntimeWorkApi(
     data: TRequest
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
-    if (method === 'runtime.tasks.transcript') {
-      console.info('[Wework] Local runtime IPC transcript request', {
-        address: runtimeAddressDebug(normalizedData),
-      })
-    }
+    const startedAt = nowMs()
     try {
-      const response = await request<TResponse>(method, normalizedData)
-      if (method === 'runtime.tasks.transcript') {
-        console.info('[Wework] Local runtime IPC transcript response', {
-          address: runtimeAddressDebug(normalizedData),
-          response: transcriptResponseDebug(response),
-        })
-      }
-      return response
+      return await request<TResponse>(method, normalizedData)
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
         console.error('[Wework] Local runtime IPC transcript failed', {
           address: runtimeAddressDebug(normalizedData),
+          elapsedMs: Math.round(nowMs() - startedAt),
           error,
         })
       }
@@ -903,7 +885,18 @@ function createRuntimeWorkApi(
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getLocalDeviceId()
-      return adaptRuntimeWorkListResponse(await request('runtime.tasks.list', {}), localDeviceId)
+      const startedAt = nowMs()
+      try {
+        const response = await request('runtime.tasks.list', {})
+        const runtimeWork = adaptRuntimeWorkListResponse(response, localDeviceId)
+        return runtimeWork
+      } catch (error) {
+        console.error('[Wework] Local runtime IPC list failed', {
+          elapsedMs: Math.round(nowMs() - startedAt),
+          error,
+        })
+        throw error
+      }
     },
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')

@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
+    sync::Arc,
     time::Duration,
 };
 
@@ -17,13 +18,14 @@ use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{ChildStdin, ChildStdout, Command},
-    sync::mpsc,
+    process::{Child, ChildStdin, ChildStdout, Command},
+    sync::{mpsc, Mutex},
     time::timeout,
 };
 
 use crate::{
     attachments::{process_prompt, AttachmentRecord},
+    codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
@@ -144,15 +146,83 @@ impl AgentEngine for CodexAppServerEngine {
     }
 }
 
-pub async fn request_codex_app_server(
-    binary: &str,
-    method: &str,
-    params: Value,
-) -> Result<Value, String> {
+#[derive(Clone)]
+pub struct CodexAppServerClient {
+    binary: String,
+    server: Arc<Mutex<Option<CodexAppServerProcess>>>,
+}
+
+impl CodexAppServerClient {
+    pub fn new(binary: impl Into<String>) -> Self {
+        Self {
+            binary: resolve_codex_binary(&binary.into()),
+            server: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        let result = self.request_once(method, params.clone()).await;
+        if result.is_err() && codex_app_server_request_is_retryable(method) {
+            return self.request_once(method, params).await;
+        }
+        result
+    }
+
+    async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let mut server = self.server.lock().await;
+        if server.is_none() {
+            *server = Some(start_persistent_codex_app_server(&self.binary).await?);
+        }
+
+        let result = {
+            let server = server
+                .as_mut()
+                .expect("persistent Codex app-server was initialized");
+            with_rpc_timeout(
+                method,
+                timeout_seconds,
+                server.rpc.request_ignoring_notifications(method, params),
+            )
+            .await
+        };
+
+        if result.is_err() {
+            if let Some(server) = server.take() {
+                server.shutdown().await;
+            }
+        }
+
+        result
+    }
+}
+
+fn codex_app_server_request_is_retryable(method: &str) -> bool {
+    matches!(method, "thread/list" | "thread/read")
+}
+
+struct CodexAppServerProcess {
+    child: Child,
+    rpc: JsonRpcConnection,
+}
+
+impl CodexAppServerProcess {
+    async fn shutdown(mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+    }
+}
+
+impl Drop for CodexAppServerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServerProcess, String> {
     let launch_config = CodexLaunchConfig::default();
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
-
-    let result: Result<Value, String> = async {
+    let result: Result<JsonRpcConnection, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
             .stdin
@@ -163,7 +233,6 @@ pub async fn request_codex_app_server(
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
         let mut rpc = JsonRpcConnection::new(stdin, stdout);
-
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -176,18 +245,18 @@ pub async fn request_codex_app_server(
             rpc.notify("initialized", json!({})),
         )
         .await?;
-        with_rpc_timeout(
-            method,
-            timeout_seconds,
-            rpc.request_ignoring_notifications(method, params),
-        )
-        .await
+        Ok(rpc)
     }
     .await;
 
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    result
+    match result {
+        Ok(rpc) => Ok(CodexAppServerProcess { child, rpc }),
+        Err(error) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            Err(error)
+        }
+    }
 }
 
 pub async fn run_codex_app_server_turn(
@@ -458,6 +527,7 @@ impl JsonRpcConnection {
         let mut saw_turn_response = false;
         loop {
             let message = self.read_message().await?;
+            log_codex_raw_turn_message(&message);
             if response_id(&message) == Some(turn_request_id) {
                 response_result(message)?;
                 saw_turn_response = true;
@@ -508,49 +578,82 @@ impl JsonRpcConnection {
 struct CodexRunState {
     final_text: String,
     saw_delta: bool,
+    agent_message_phases: CodexAgentMessagePhaseTracker,
 }
 
 impl CodexRunState {
     fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
         match message.get("method").and_then(Value::as_str) {
+            Some("item/started") => {
+                self.agent_message_phases
+                    .observe_item(message_params(message));
+                None
+            }
             Some("item/agentMessage/delta") => {
                 self.append_delta(message_params(message));
                 None
             }
             Some("item/completed") => {
-                self.append_completed_message(message_params(message));
+                let params = message_params(message);
+                self.append_completed_message(params);
+                self.agent_message_phases.forget_item(params);
                 None
             }
             Some("turn/completed") => Some(self.completed(message_params(message))),
-            Some("error") => Some(ExecutionOutcome::Failed {
-                message: message_params(message)
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("codex app-server error")
-                    .to_owned(),
-            }),
+            Some("error") => {
+                let params = message_params(message);
+                log_codex_run_state_error(params);
+                Some(ExecutionOutcome::Failed {
+                    message: params
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("codex app-server error")
+                        .to_owned(),
+                })
+            }
             _ => None,
         }
     }
 
     fn append_delta(&mut self, params: &Value) {
-        let phase = params
-            .get("phase")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .replace('_', "")
-            .to_ascii_lowercase();
-        if !phase.is_empty() && phase != "finalanswer" {
+        let text = params.get("delta").and_then(Value::as_str).unwrap_or("");
+        let phase = self.agent_message_phases.phase_for_delta(params);
+        if codex_phase_is_process(phase.as_deref()) {
+            log_codex_run_state_text(
+                "delta",
+                "skip_process",
+                phase.as_deref(),
+                params,
+                params,
+                text,
+            );
             return;
         }
         if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+            log_codex_run_state_text(
+                "delta",
+                "append_final",
+                phase.as_deref(),
+                params,
+                params,
+                delta,
+            );
             self.final_text.push_str(delta);
             self.saw_delta = true;
         }
     }
 
     fn append_completed_message(&mut self, params: &Value) {
+        let phase = self.agent_message_phases.phase_for_item(params);
         if self.saw_delta {
+            log_codex_run_state_text(
+                "completed",
+                "skip_after_delta",
+                phase.as_deref(),
+                params,
+                params,
+                "",
+            );
             return;
         }
         let item = params.get("item").unwrap_or(params);
@@ -561,6 +664,19 @@ impl CodexRunState {
             .replace('_', "")
             .to_ascii_lowercase();
         if !matches!(item_type.as_str(), "agentmessage" | "message") {
+            log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
+            return;
+        }
+        if codex_phase_is_process(phase.as_deref()) {
+            let text = extract_text(item).unwrap_or_default();
+            log_codex_run_state_text(
+                "completed",
+                "skip_process",
+                phase.as_deref(),
+                params,
+                item,
+                &text,
+            );
             return;
         }
         if item
@@ -568,9 +684,25 @@ impl CodexRunState {
             .and_then(Value::as_str)
             .is_some_and(|role| role != "assistant")
         {
+            log_codex_run_state_text(
+                "completed",
+                "skip_non_assistant",
+                phase.as_deref(),
+                params,
+                item,
+                "",
+            );
             return;
         }
         if let Some(text) = extract_text(item) {
+            log_codex_run_state_text(
+                "completed",
+                "set_final",
+                phase.as_deref(),
+                params,
+                item,
+                &text,
+            );
             self.final_text = text;
             self.saw_delta = true;
         }
@@ -596,6 +728,167 @@ impl CodexRunState {
             },
         }
     }
+}
+
+fn log_codex_run_state_text(
+    source: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    item: &Value,
+    text: &str,
+) {
+    log_executor_event(
+        "codex run state text classification",
+        &[
+            ("source", source.to_owned()),
+            ("action", action.to_owned()),
+            (
+                "resolved_phase",
+                resolved_phase.unwrap_or("<none>").to_owned(),
+            ),
+            ("item_id", json_string_field(params, "itemId")),
+            ("params_type", json_string_field(params, "type")),
+            ("params_phase", json_string_field(params, "phase")),
+            ("params_channel", json_string_field(params, "channel")),
+            ("item_type", json_string_field(item, "type")),
+            ("item_phase", json_string_field(item, "phase")),
+            ("item_channel", json_string_field(item, "channel")),
+            (
+                "payload_type",
+                nested_json_string_field(item, "payload", "type"),
+            ),
+            (
+                "payload_phase",
+                nested_json_string_field(item, "payload", "phase"),
+            ),
+            (
+                "payload_channel",
+                nested_json_string_field(item, "payload", "channel"),
+            ),
+            ("text_len", text.len().to_string()),
+            ("text_preview", truncate_log_text(text, 160)),
+        ],
+    );
+}
+
+fn log_codex_run_state_error(params: &Value) {
+    let params_json = serde_json::to_string(params)
+        .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
+    log_executor_event(
+        "codex run state error",
+        &[
+            ("message", json_string_field(params, "message")),
+            ("code", json_string_field(params, "code")),
+            ("params_len", params_json.len().to_string()),
+            ("params_preview", truncate_log_text(&params_json, 500)),
+        ],
+    );
+}
+
+fn log_codex_raw_turn_message(message: &Value) {
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if !matches!(
+        method,
+        "item/agentMessage/delta"
+            | "item/reasoning/delta"
+            | "item/reasoningSummary/delta"
+            | "item/started"
+            | "item/completed"
+            | "turn/completed"
+            | "error"
+    ) {
+        return;
+    }
+
+    let params = message_params(message);
+    let item = params.get("item").unwrap_or(params);
+    let raw = serde_json::to_string(message)
+        .unwrap_or_else(|error| format!("failed to serialize codex raw message: {error}"));
+    log_executor_event(
+        "codex raw turn message",
+        &[
+            ("method", method.to_owned()),
+            ("message_id", json_string_field(message, "id")),
+            ("params_keys", json_object_keys(params)),
+            ("params_type", json_string_field(params, "type")),
+            ("params_phase", json_string_field(params, "phase")),
+            ("params_channel", json_string_field(params, "channel")),
+            ("params_item_id", json_string_field(params, "item_id")),
+            ("params_message_id", json_string_field(params, "message_id")),
+            (
+                "params_output_index",
+                json_scalar_field(params, "output_index"),
+            ),
+            (
+                "params_content_index",
+                json_scalar_field(params, "content_index"),
+            ),
+            ("item_keys", json_object_keys(item)),
+            ("item_type", json_string_field(item, "type")),
+            ("item_id", json_string_field(item, "id")),
+            ("item_phase", json_string_field(item, "phase")),
+            ("item_channel", json_string_field(item, "channel")),
+            (
+                "item_turn_id",
+                nested_json_string_field(
+                    item,
+                    "internal_chat_message_metadata_passthrough",
+                    "turn_id",
+                ),
+            ),
+            ("raw_len", raw.len().to_string()),
+            ("raw_preview", truncate_log_text(&raw, 1200)),
+        ],
+    );
+}
+
+fn json_string_field(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn json_scalar_field(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn json_object_keys(value: &Value) -> String {
+    value
+        .as_object()
+        .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
+        .unwrap_or_default()
+}
+
+fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
+    value
+        .get(object_key)
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn truncate_log_text(text: &str, max_chars: usize) -> String {
+    let mut result = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index >= max_chars {
+            result.push('…');
+            return result;
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn initialize_params() -> Value {
@@ -1701,5 +1994,178 @@ fn extract_text(item: &Value) -> Option<String> {
         None
     } else {
         Some(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "phase": "commentary",
+                    "delta": "I will inspect."
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "channel": "commentary",
+                    "delta": "I will inspect."
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_routes_item_id_deltas_by_started_phase() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-commentary",
+                    "delta": "I will inspect."
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "Done.".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "delta": "Current directory: /tmp/project"
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "Current directory: /tmp/project".to_owned()
+            }
+        );
     }
 }
