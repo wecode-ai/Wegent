@@ -220,8 +220,7 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buffer = [0_u8; 2048];
-        let _ = stream.read(&mut buffer).await.unwrap();
+        let _ = read_http_request_headers(&mut stream).await;
         let archive = skill_zip("example-skill/SKILL.md", "# Example Skill\n");
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -278,9 +277,7 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buffer = [0_u8; 2048];
-        let read = stream.read(&mut buffer).await.unwrap();
-        let request = String::from_utf8_lossy(&buffer[..read]);
+        let request = read_http_request_headers(&mut stream).await;
         assert!(request.starts_with("GET /api/attachments/55/executor-download "));
         assert!(request.contains("Authorization: Bearer task-token"));
         let body = b"hello attachment";
@@ -761,8 +758,7 @@ async fn spawn_mcp_server(responses: Vec<Value>) -> String {
     tokio::spawn(async move {
         for (index, response_value) in responses.into_iter().enumerate() {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = [0_u8; 4096];
-            let _ = stream.read(&mut buffer).await.unwrap();
+            let _ = read_http_request_headers(&mut stream).await;
             let body = response_value.to_string();
             let session_header = if index == 0 {
                 "Mcp-Session-Id: test-session\r\n"
@@ -778,6 +774,22 @@ async fn spawn_mcp_server(responses: Vec<Value>) -> String {
         }
     });
     url
+}
+
+async fn read_http_request_headers(stream: &mut tokio::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream.read(&mut buffer).await.unwrap();
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&request).into_owned()
 }
 
 fn make_executable(path: &Path) {
