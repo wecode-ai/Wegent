@@ -168,6 +168,7 @@ async def cleanup_orphan_pods(
     db,
     *,
     older_than_hours: int = 48,
+    stale_hours: int = 24,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Scan K8s for old pods with no DB subtask records and clean them up.
@@ -175,9 +176,13 @@ async def cleanup_orphan_pods(
     Mirrors the pod_delete/ pipeline:
     1. get_old_pods_async: list old pods by name pattern (wegent-task|sandbox)
     2. For each pod with a valid task_id and no DB records:
-       - call cleanup_stale_task_executor (soft cleanup)
+       - call cleanup_stale_task_executor with stale_hours (matches script INACTIVE_HOURS=24)
        - if executor_not_found, delete K8s pod by name directly
     3. For pods with no task_id label: delete directly by pod_name
+
+    Args:
+        older_than_hours: minimum pod age to scan (default 48h = 2 days)
+        stale_hours: inactive_hours passed to cleanup_stale_task_executor (default 24h)
     """
     result: Dict[str, Any] = {
         "target": "orphan_pods",
@@ -243,7 +248,7 @@ async def cleanup_orphan_pods(
         cleanup_result = await self._cleanup_orphan_pod(
             task_id=task_id,
             pod_name=pod_name,
-            inactive_hours=older_than_hours,
+            inactive_hours=stale_hours,
             db=db,
         )
         _append_pod_result(result, cleanup_result, task_id=task_id)
@@ -307,7 +312,7 @@ async def _cleanup_stale_task_executor_wecode(
                 exc,
             )
             return result
-        k8s_status = result.get("status")
+        k8s_status = k8s_result.get("status")
         deleted_pods = k8s_result.get("deleted_pods", [])
         if k8s_result.get("status") == "success" and deleted_pods:
             logger.info(

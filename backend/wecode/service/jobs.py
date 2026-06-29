@@ -268,6 +268,7 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
     from app.services.distributed_lock import distributed_lock
     from wecode.config.orphan_pod_config import (
         ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
+        ORPHAN_POD_CLEANUP_STALE_HOURS,
         ORPHAN_POD_MIN_AGE_HOURS,
     )
 
@@ -287,6 +288,7 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                         await job_service.cleanup_orphan_pods(
                             db,
                             older_than_hours=ORPHAN_POD_MIN_AGE_HOURS,
+                            stale_hours=ORPHAN_POD_CLEANUP_STALE_HOURS,
                             dry_run=False,
                         )
         except Exception as e:
@@ -370,12 +372,17 @@ def apply_patch():
                     "[job] evaluation grading monitor disabled by configuration"
                 )
 
-            # Start orphan pod cleanup async task
-            app.state.orphan_pod_cleanup_stop_event = asyncio.Event()
-            app.state.orphan_pod_cleanup_task = asyncio.create_task(
-                _orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
-            )
-            logger.info("[job] orphan pod cleanup worker started (async)")
+            # Start orphan pod cleanup async task (if enabled)
+            from wecode.config.orphan_pod_config import ORPHAN_POD_CLEANUP_ENABLED
+
+            if ORPHAN_POD_CLEANUP_ENABLED:
+                app.state.orphan_pod_cleanup_stop_event = asyncio.Event()
+                app.state.orphan_pod_cleanup_task = asyncio.create_task(
+                    _orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
+                )
+                logger.info("[job] orphan pod cleanup worker started (async)")
+            else:
+                logger.info("[job] orphan pod cleanup worker disabled by configuration")
 
         async def patched_stop(app):
             # Stop hourly notification thread gracefully

@@ -559,7 +559,7 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
     call_kwargs = mock_cleanup.call_args.kwargs
     assert call_kwargs["task_id"] == 500
     assert call_kwargs["pod_name"] == "wegent-task-500-xyz"
-    assert call_kwargs["inactive_hours"] == 48
+    assert call_kwargs["inactive_hours"] == 24  # stale_hours default
 
 
 @pytest.mark.unit
