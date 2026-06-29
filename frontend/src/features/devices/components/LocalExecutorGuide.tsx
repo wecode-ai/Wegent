@@ -257,9 +257,9 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   // Step 2: Run with environment variables (different for Unix vs Windows)
   const runCommand = useMemo(() => {
     if (isWindows) {
-      return `$env:EXECUTOR_MODE="local"\n$env:WEGENT_BACKEND_URL="${backendUrl}"\n$env:WEGENT_AUTH_TOKEN="${authTokenValue}"\n& "$env:USERPROFILE\\.wegent-executor\\bin\\wegent-executor.exe"`
+      return `$env:EXECUTOR_STARTUP_MODE="socket"\n$env:EXECUTOR_MODE="local"\n$env:WEGENT_BACKEND_URL="${backendUrl}"\n$env:WEGENT_AUTH_TOKEN="${authTokenValue}"\n& "$env:USERPROFILE\\.wegent-executor\\bin\\wegent-executor.exe"`
     }
-    return `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authTokenValue} \\\n~/.wegent-executor/bin/wegent-executor`
+    return `EXECUTOR_STARTUP_MODE=socket \\\nEXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authTokenValue} \\\n~/.wegent-executor/bin/wegent-executor`
   }, [backendUrl, authTokenValue, isWindows])
 
   // Get description text based on OS

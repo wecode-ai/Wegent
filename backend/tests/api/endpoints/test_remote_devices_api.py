@@ -58,11 +58,13 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert device is None
     assert response.env["WEGENT_AUTH_TOKEN"].startswith("wg-")
     assert response.env["DEVICE_TYPE"] == "remote"
+    assert response.env["EXECUTOR_STARTUP_MODE"] == "socket"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
     assert "--add-host host.docker.internal:host-gateway" not in response.command
     assert "DEVICE_TYPE=remote" in response.command
     assert f"WEGENT_AUTH_TOKEN={response.env['WEGENT_AUTH_TOKEN']}" in response.command
+    assert "EXECUTOR_STARTUP_MODE=socket" in response.command
     assert "<host-ip>" not in response.command
     assert [command.kind for command in response.commands] == ["docker", "process"]
     assert response.commands[0].command == response.command
@@ -73,6 +75,7 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert (
         "DEVICE_PUBLIC_BASE_URL=http://localhost:17888" in response.commands[1].command
     )
+    assert "export EXECUTOR_STARTUP_MODE=socket" in response.commands[1].command
 
     api_key = (
         test_db.query(APIKey)
@@ -115,5 +118,6 @@ async def test_create_docker_start_command_uses_current_system_urls(
     )
 
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
+    assert response.env["EXECUTOR_STARTUP_MODE"] == "socket"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://app.example.com:17888"
     assert "--add-host host.docker.internal:host-gateway" not in response.command

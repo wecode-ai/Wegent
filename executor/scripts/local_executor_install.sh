@@ -593,6 +593,7 @@ print_usage_instructions() {
     echo ""
     echo "To run wegent-executor, use the following command:"
     echo ""
+    echo -e "${YELLOW}EXECUTOR_STARTUP_MODE=socket \\\\${NC}"
     echo -e "${YELLOW}WEGENT_BACKEND_URL=<your-backend-url> \\\\${NC}"
     echo -e "${YELLOW}WEGENT_AUTH_TOKEN=<your-auth-token> \\\\${NC}"
     echo -e "${YELLOW}${INSTALL_DIR}/${BINARY_NAME}${NC}"
