@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
-import { BranchSelector } from '@/components/common/BranchSelector'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice, isOnlineDevice, sortStandaloneDevices } from '@/lib/device-selection'
@@ -235,10 +234,7 @@ export function ProjectWorkBar({
   onCreateProjectMode,
   branchName,
   branchLoading,
-  onRefreshBranch,
   onListBranches,
-  onCheckoutBranch,
-  onCreateBranch,
   worktreeBranch,
   onWorktreeBranchChange,
   className,
@@ -284,8 +280,6 @@ export function ProjectWorkBar({
         : runtimeProjectChoices.find(project => project.id === currentProjectId),
     [currentProjectId, currentProjectProp, runtimeProjectChoices]
   )
-  const hasGitBranch = Boolean(branchName?.trim())
-  const canShowBranchSelector = Boolean(currentProject && (hasGitBranch || onListBranches))
   const getDeviceForProject = useCallback(
     (project: ProjectWithTasks): DeviceInfo | undefined => {
       const deviceId = getProjectDeviceId(project)
@@ -1012,23 +1006,6 @@ export function ProjectWorkBar({
           </button>
         </div>
       )}
-      {currentProject &&
-        projectExecutionUi.displayedMode === 'current_workspace' &&
-        !executionModeLocked &&
-        canShowBranchSelector &&
-        onListBranches &&
-        onCheckoutBranch && (
-          <BranchSelector
-            variant="workbar"
-            mobileSheet
-            currentBranch={branchName}
-            loading={branchLoading}
-            onRefresh={onRefreshBranch}
-            onListBranches={onListBranches}
-            onCheckoutBranch={onCheckoutBranch}
-            onCreateBranch={onCreateBranch}
-          />
-        )}
       {currentProject &&
         projectExecutionUi.displayedMode === 'git_worktree' &&
         !executionModeLocked &&

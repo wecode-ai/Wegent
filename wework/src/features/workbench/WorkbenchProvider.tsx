@@ -13,6 +13,7 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   UnifiedModel,
+  UserPreferences,
 } from '@/types/api'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
@@ -50,6 +51,54 @@ import {
 export type { WorkbenchServices } from './workbenchServices'
 
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
+
+type ProjectWorkPreferencePatch = {
+  executionMode?: ProjectExecutionMode
+  worktreeBranch?: string | null
+}
+
+function getProjectWorkPreferenceKey(project: { id: number } | null | undefined): string | null {
+  return project ? `project:${project.id}` : null
+}
+
+function normalizeProjectWorkPreference(value?: {
+  executionMode?: ProjectExecutionMode | null
+  worktreeBranch?: string | null
+}): Required<ProjectWorkPreferencePatch> {
+  const executionMode =
+    value?.executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+  const worktreeBranch = value?.worktreeBranch?.trim() || null
+
+  return { executionMode, worktreeBranch }
+}
+
+function readProjectWorkPreference(
+  preferences: UserPreferences | null | undefined,
+  project: { id: number } | null | undefined
+): Required<ProjectWorkPreferencePatch> {
+  const key = getProjectWorkPreferenceKey(project)
+  if (!key) return normalizeProjectWorkPreference()
+
+  return normalizeProjectWorkPreference(preferences?.wework_project_work_preferences?.[key])
+}
+
+function mergeProjectWorkPreference(
+  preferences: UserPreferences | null | undefined,
+  project: { id: number },
+  patch: ProjectWorkPreferencePatch
+): UserPreferences {
+  const key = getProjectWorkPreferenceKey(project)
+  const current = readProjectWorkPreference(preferences, project)
+  const next = normalizeProjectWorkPreference({ ...current, ...patch })
+
+  return {
+    ...(preferences ?? {}),
+    wework_project_work_preferences: {
+      ...(preferences?.wework_project_work_preferences ?? {}),
+      [key ?? `project:${project.id}`]: next,
+    },
+  }
+}
 
 export function WorkbenchProvider({
   children,
@@ -153,49 +202,66 @@ export function WorkbenchProvider({
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
-      setProjectExecutionMode(mode)
+      const nextMode: ProjectExecutionMode =
+        mode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+      setProjectExecutionMode(nextMode)
       if (!state.currentProject || !supportsGitWorktreeExecution(state.currentProject)) {
         return
       }
-      const preferences = {
-        ...(currentUser.preferences ?? {}),
-        wework_project_execution_mode: mode,
-      }
+      const preferences = mergeProjectWorkPreference(
+        currentUser.preferences,
+        state.currentProject,
+        {
+          executionMode: nextMode,
+          worktreeBranch: projectWorktreeBranch,
+        }
+      )
       dispatch({ type: 'user_preferences_updated', preferences })
       void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
         dispatch({ type: 'error_set', error: '启动模式保存失败' })
       })
     },
-    [currentUser.preferences, resolvedServices.userApi, state.currentProject]
+    [currentUser.preferences, projectWorktreeBranch, resolvedServices.userApi, state.currentProject]
   )
 
   useEffect(() => {
-    const nextMode =
-      !state.currentProject || !supportsGitWorktreeExecution(state.currentProject)
-        ? 'current_workspace'
-        : (currentUser.preferences?.wework_project_execution_mode ?? 'current_workspace')
+    const project = state.currentProject
+    const preferences = currentUser.preferences
     const timer = window.setTimeout(() => {
-      setProjectExecutionMode(nextMode)
+      if (!project || !supportsGitWorktreeExecution(project)) {
+        setProjectExecutionMode('current_workspace')
+        setProjectWorktreeBranchState(null)
+        return
+      }
+
+      const preference = readProjectWorkPreference(preferences, project)
+      setProjectExecutionMode(preference.executionMode)
+      setProjectWorktreeBranchState(preference.worktreeBranch)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [currentUser.preferences?.wework_project_execution_mode, state.currentProject])
-  const setProjectWorktreeBranch = useCallback((branchName: string | null) => {
-    const normalizedBranch = branchName?.trim() || null
-    setProjectWorktreeBranchState(normalizedBranch)
-  }, [])
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setProjectWorktreeBranchState(null)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [state.currentProject?.id])
-  useEffect(() => {
-    if (projectExecutionMode === 'git_worktree') return
-    const timer = window.setTimeout(() => {
-      setProjectWorktreeBranchState(null)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [projectExecutionMode])
+  }, [currentUser.preferences, state.currentProject])
+  const setProjectWorktreeBranch = useCallback(
+    (branchName: string | null) => {
+      const normalizedBranch = branchName?.trim() || null
+      setProjectWorktreeBranchState(normalizedBranch)
+      if (!state.currentProject || !supportsGitWorktreeExecution(state.currentProject)) {
+        return
+      }
+      const preferences = mergeProjectWorkPreference(
+        currentUser.preferences,
+        state.currentProject,
+        {
+          executionMode: projectExecutionMode,
+          worktreeBranch: normalizedBranch,
+        }
+      )
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
+        dispatch({ type: 'error_set', error: '启动分支保存失败' })
+      })
+    },
+    [currentUser.preferences, projectExecutionMode, resolvedServices.userApi, state.currentProject]
+  )
   const modelSelectionConfig = useMemo(() => {
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser])

@@ -680,7 +680,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
-  test('shows and switches branches in the mobile empty project controls', async () => {
+  test('shows worktree branch selection in the mobile empty project controls', async () => {
     const currentProject = {
       ...baseState.projects[0],
       config: {
@@ -700,8 +700,9 @@ describe('MobileWorkbenchLayout', () => {
     })
     const onListEnvironmentBranches = vi.fn().mockResolvedValue(['feature/mobile', 'main'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+    const onWorktreeBranchChange = vi.fn()
 
-    renderAtMobileWidth(
+    const renderLayout = (executionMode: 'current_workspace' | 'git_worktree') => (
       <MobileWorkbenchLayout
         state={{
           ...baseState,
@@ -724,12 +725,14 @@ describe('MobileWorkbenchLayout', () => {
           currentProjectId: currentProject.id,
           currentStandaloneDeviceId: null,
           selectedDeviceWorkspaceId: 10,
-          executionMode: 'current_workspace',
+          executionMode,
           executionModeLocked: false,
           onSelectProject: vi.fn(),
           onSelectProjectWorkspace: vi.fn(),
           onSelectStandaloneDevice: vi.fn(),
           onExecutionModeChange: vi.fn(),
+          worktreeBranch: null,
+          onWorktreeBranchChange,
         }}
         onSelectProject={vi.fn()}
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
@@ -740,11 +743,13 @@ describe('MobileWorkbenchLayout', () => {
         onSend={vi.fn()}
       />
     )
+    const { rerender } = renderAtMobileWidth(renderLayout('current_workspace'))
 
     await new Promise(resolve => window.setTimeout(resolve, 0))
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
     expect(onListEnvironmentBranches).not.toHaveBeenCalled()
-    expect(screen.getByTestId('project-branch-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
     const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
     expect(controls).toHaveClass('flex-col')
     expect(screen.getByTestId('execution-mode-button')).toBeInTheDocument()
@@ -755,19 +760,21 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-search-input')).not.toHaveFocus()
     await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
 
-    await userEvent.click(screen.getByTestId('project-branch-button'))
-    expect(await screen.findByTestId('project-branch-menu')).toHaveAttribute('data-mobile', 'true')
+    rerender(renderLayout('git_worktree'))
+
+    await userEvent.click(screen.getByTestId('project-worktree-branch-button'))
+    expect(await screen.findByTestId('project-worktree-branch-menu')).toHaveAttribute(
+      'data-mobile',
+      'true'
+    )
     expect(onListEnvironmentBranches).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('project-branch-menu')).toHaveClass('fixed', 'max-h-[56dvh]')
-    expect(screen.getByTestId('project-branch-search-input')).not.toHaveFocus()
-    const options = await screen.findAllByTestId('project-branch-option')
+    expect(screen.getByTestId('project-worktree-branch-menu')).toHaveClass('fixed', 'max-h-[45dvh]')
+    expect(screen.getByTestId('project-worktree-branch-search-input')).not.toHaveFocus()
+    const options = await screen.findAllByTestId('project-worktree-branch-option')
     await userEvent.click(options[0])
 
-    expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(currentProject, 'feature/mobile', {
-      deviceId: 'device-1',
-      path: '/workspace/github_wegent',
-      source: 'project',
-    })
+    expect(onWorktreeBranchChange).toHaveBeenCalledWith('feature/mobile')
+    expect(onCheckoutEnvironmentBranch).not.toHaveBeenCalled()
   })
 
   test('keeps the conversation chrome fixed while only messages scroll', () => {

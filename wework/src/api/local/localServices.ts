@@ -381,25 +381,27 @@ function localRuntimeAttachments(
   subtaskId: number
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
-  return attachments
-    .map((attachment): LocalRuntimeAttachmentPayload | null => {
-      const localPath = stringValue(attachment.local_path)
-      if (!localPath) return null
+  const runtimeAttachments: LocalRuntimeAttachmentPayload[] = []
 
-      return {
-        id: attachment.id,
-        filename: attachment.filename,
-        original_filename: attachment.filename,
-        file_size: attachment.file_size,
-        mime_type: attachment.mime_type,
-        subtask_id: attachment.subtask_id ?? subtaskId,
-        file_extension: attachment.file_extension,
-        local_path: localPath,
-        local_preview_url: attachment.local_preview_url ?? localPath,
-        ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
-      }
+  attachments.forEach(attachment => {
+    const localPath = stringValue(attachment.local_path)
+    if (!localPath) return
+
+    runtimeAttachments.push({
+      id: attachment.id,
+      filename: attachment.filename,
+      original_filename: attachment.filename,
+      file_size: attachment.file_size,
+      mime_type: attachment.mime_type,
+      subtask_id: attachment.subtask_id ?? subtaskId,
+      file_extension: attachment.file_extension,
+      local_path: localPath,
+      local_preview_url: attachment.local_preview_url ?? localPath,
+      ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
     })
-    .filter((attachment): attachment is LocalRuntimeAttachmentPayload => attachment !== null)
+  })
+
+  return runtimeAttachments
 }
 
 function skillName(skill: unknown): string | null {

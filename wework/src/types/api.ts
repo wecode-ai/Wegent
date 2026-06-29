@@ -19,6 +19,7 @@ export interface UserPreferences {
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
   wework_project_execution_mode?: ProjectExecutionMode | null
+  wework_project_work_preferences?: Record<string, ProjectWorkPreference> | null
   runtime_configs?: Record<
     string,
     {
@@ -26,6 +27,11 @@ export interface UserPreferences {
       use_proxy?: boolean
     }
   > | null
+}
+
+export interface ProjectWorkPreference {
+  executionMode?: ProjectExecutionMode | null
+  worktreeBranch?: string | null
 }
 
 export interface Team {
