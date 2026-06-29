@@ -29,7 +29,6 @@ use crate::{
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
-    process::CommandSpec,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -146,10 +145,6 @@ impl AgentEngine for CodexAppServerEngine {
             }
         })
     }
-}
-
-pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
-    CommandSpec::new(binary).arg("app-server").arg("--stdio")
 }
 
 #[derive(Clone)]
@@ -411,14 +406,12 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
-    let mut env_values = launch_config.env.clone();
-    prepare_codex_runtime_environment(&mut env_values)?;
     let mut command = Command::new(&resolved_binary);
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
     command.arg("app-server").arg("--stdio");
-    for (key, value) in &env_values {
+    for (key, value) in &launch_config.env {
         command.env(key, value);
     }
     command
@@ -427,96 +420,6 @@ fn spawn_codex_app_server(
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
-}
-
-fn prepare_codex_runtime_environment(
-    env_values: &mut BTreeMap<String, String>,
-) -> Result<(), String> {
-    let runtime_home = codex_runtime_home();
-    prepare_codex_runtime_home(&runtime_home)?;
-    env_values.insert("CODEX_HOME".to_owned(), runtime_home.display().to_string());
-    Ok(())
-}
-
-fn prepare_codex_runtime_home(runtime_home: &Path) -> Result<(), String> {
-    fs::create_dir_all(runtime_home).map_err(|error| {
-        format!(
-            "failed to create isolated Codex home {}: {error}",
-            runtime_home.display()
-        )
-    })?;
-    remove_runtime_capability_dir(runtime_home, "skills")?;
-    remove_runtime_capability_dir(runtime_home, "plugins")?;
-    let source_home = user_codex_home(runtime_home);
-    sync_codex_runtime_file(&source_home, runtime_home, "auth.json")?;
-    sync_codex_runtime_file(&source_home, runtime_home, "config.toml")?;
-    Ok(())
-}
-
-fn codex_runtime_home() -> PathBuf {
-    env::var_os("WEGENT_CODEX_RUNTIME_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("codex-runtime"))
-}
-
-fn user_codex_home(runtime_home: &Path) -> PathBuf {
-    env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path != runtime_home)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-        .unwrap_or_else(|| PathBuf::from(".codex"))
-}
-
-fn remove_runtime_capability_dir(runtime_home: &Path, name: &str) -> Result<(), String> {
-    let path = runtime_home.join(name);
-    let Ok(metadata) = fs::symlink_metadata(&path) else {
-        return Ok(());
-    };
-    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(&path)
-    } else {
-        fs::remove_file(&path)
-    };
-    if let Err(error) = result {
-        return Err(format!(
-            "failed to remove isolated Codex {} path {}: {error}",
-            name,
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
-fn sync_codex_runtime_file(
-    source_home: &Path,
-    runtime_home: &Path,
-    filename: &str,
-) -> Result<(), String> {
-    let source = source_home.join(filename);
-    let target = runtime_home.join(filename);
-    if source == target {
-        return Ok(());
-    }
-    if !source.is_file() {
-        if target.exists() {
-            fs::remove_file(&target).map_err(|error| {
-                format!(
-                    "failed to remove stale isolated Codex file {}: {error}",
-                    target.display()
-                )
-            })?;
-        }
-        return Ok(());
-    }
-    fs::copy(&source, &target).map_err(|error| {
-        format!(
-            "failed to copy Codex {} from {} to {}: {error}",
-            filename,
-            source.display(),
-            target.display()
-        )
-    })?;
-    Ok(())
 }
 
 async fn with_rpc_timeout<T>(

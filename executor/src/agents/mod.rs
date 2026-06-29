@@ -32,9 +32,8 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    build_codex_app_server_command, run_codex_app_server_turn, CodexAppServerClient,
-    CodexAppServerEngine, CodexAppServerTurn, CodexCancellationState, CodexNotificationSender,
-    CodexTurnInterrupter,
+    run_codex_app_server_turn, CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn,
+    CodexCancellationState, CodexNotificationSender, CodexTurnInterrupter,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
@@ -68,6 +67,10 @@ impl AgentCommandPlanner {
 
 pub fn resolve_codex_binary() -> String {
     read_binary("CODEX_BINARY_PATH", "CODEX_BIN", "codex")
+}
+
+pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
+    CommandSpec::new(binary).arg("app-server").arg("--stdio")
 }
 
 fn resolve_claude_binary() -> String {
