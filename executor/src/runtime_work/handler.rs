@@ -1019,6 +1019,7 @@ impl RuntimeWorkRpcHandler {
                 } else if link.status == "archived" {
                     continue;
                 }
+                link.list_order = Some(links.len());
                 if let Some(thread_id) = &link.thread_id {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
@@ -1027,7 +1028,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        for link in self.local_task_links(true) {
+        for mut link in self.local_task_links(true) {
             let link_archived = link.status == "archived";
             if link_archived != archived {
                 continue;
@@ -1045,10 +1046,10 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
+            link.list_order = Some(links.len());
             links.push(link);
         }
 
-        links.sort_by_key(|link| std::cmp::Reverse(link.updated_at));
         links
     }
 
