@@ -139,6 +139,15 @@ describe('DesktopSidebar', () => {
     )
   })
 
+  test('keeps the resize handle hit area on the sidebar edge', () => {
+    renderSidebar()
+
+    const handle = screen.getByTestId('sidebar-resize-handle')
+
+    expect(handle).toHaveClass('right-[-6px]', 'w-3')
+    expect(handle).not.toHaveClass('w-10')
+  })
+
   test('does not render non-chat runtime workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 
