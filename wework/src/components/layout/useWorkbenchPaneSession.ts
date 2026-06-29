@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   findActiveAssistantMessage,
@@ -42,6 +42,7 @@ interface LoadedTranscriptRange {
 }
 
 const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
+const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
@@ -54,10 +55,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendCurrentInput,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
-  const [messages, dispatchMessages] = useReducer(
-    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
-    [] as WorkbenchMessage[]
-  )
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
@@ -83,6 +80,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       address: currentRuntimeTask,
     }
   }, [currentRuntimeTask])
+  const [messages, setMessages] = useState<WorkbenchMessage[]>([])
+  const dispatchMessages = useCallback(
+    (action: RuntimePaneMessageAction) => {
+      setMessages(currentMessages => {
+        const nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
+          currentMessages,
+          action
+        )
+        if (currentRuntimeTask) {
+          snapshotRuntimePaneMessages(currentRuntimeTask, nextMessages)
+          debugRuntimePaneMessageFlow('message-action', {
+            address: runtimeAddressDebug(currentRuntimeTask),
+            actionType: action.type,
+            previousCount: currentMessages.length,
+            nextCount: nextMessages.length,
+            nextMessages: summarizeWorkbenchMessages(nextMessages),
+          })
+        }
+        return nextMessages
+      })
+    },
+    [currentRuntimeTask]
+  )
   const activeAssistantMessage = useMemo(() => findActiveAssistantMessage(messages), [messages])
   const hasActiveAssistant = Boolean(activeAssistantMessage)
   const busy = sending || waitingForAssistant || hasActiveAssistant
@@ -111,6 +131,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       loadedRuntimeTranscriptKeyRef.current = null
+      // This clears pane-local transcript state when there is no runtime target.
       setTranscriptLoading(false)
       setTranscriptHasMoreBefore(false)
       setTranscriptBeforeCursor(null)
@@ -126,7 +147,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     let cancelled = false
-    const seededMessages = consumeRuntimePaneMessageSeed(address)
+    const seededMessages = getRuntimePaneMessageSeed(address)
+    debugRuntimePaneMessageFlow('transcript-load-start', {
+      address: runtimeAddressDebug(address),
+      key: loadKey,
+      seededCount: seededMessages.length,
+      seededMessages: summarizeWorkbenchMessages(seededMessages),
+    })
     dispatchMessages({ type: 'reset', messages: seededMessages })
     setTranscriptLoading(true)
     setTranscriptHasMoreBefore(false)
@@ -138,15 +165,25 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       .current(address, { limit: RUNTIME_TRANSCRIPT_PAGE_SIZE })
       .then(transcript => {
         if (!cancelled) {
+          const nextMessages = transcript.messages.length > 0 ? transcript.messages : seededMessages
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
           setTurnNavigation(transcript.turnNavigation ?? [])
+          debugRuntimePaneMessageFlow('transcript-load-resolved', {
+            address: runtimeAddressDebug(address),
+            key: loadKey,
+            transcriptCount: transcript.messages.length,
+            seededCount: seededMessages.length,
+            resetSource: transcript.messages.length > 0 ? 'transcript' : 'seed',
+            nextMessages: summarizeWorkbenchMessages(nextMessages),
+          })
           dispatchMessages({
             type: 'reset',
-            messages: transcript.messages.length > 0 ? transcript.messages : seededMessages,
+            messages: nextMessages,
           })
+          clearRuntimePaneMessageSeed(address)
         }
       })
       .catch(error => {
@@ -172,7 +209,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [runtimeTaskLoadTarget])
+  }, [dispatchMessages, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
@@ -191,7 +228,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
     })
     return unsubscribe
-  }, [runtimeTaskLoadTarget])
+  }, [dispatchMessages, runtimeTaskLoadTarget])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (!runtimeTaskLoadTarget || !transcriptBeforeCursor || transcriptLoadingMoreBefore) return
@@ -228,7 +265,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     } finally {
       setTranscriptLoadingMoreBefore(false)
     }
-  }, [runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptLoadingMoreBefore])
+  }, [dispatchMessages, runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptLoadingMoreBefore])
 
   const loadTranscriptTurnNavigationItem = useCallback(
     async (item: RuntimeTurnNavigationItem) => {
@@ -265,7 +302,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptHasMoreBefore]
+    [dispatchMessages, runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptHasMoreBefore]
   )
 
   const loadTranscriptGap = useCallback(
@@ -292,7 +329,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [runtimeTaskLoadTarget]
+    [dispatchMessages, runtimeTaskLoadTarget]
   )
 
   const getRuntimeModelFields = useCallback(() => {
@@ -300,12 +337,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return selectedModelExecutionFields(selectedModel, projectChat.selectedModelOptions)
   }, [projectChat.models, projectChat.selectedModel, projectChat.selectedModelOptions])
 
-  const appendLocalUserMessage = useCallback((content: string, attachments?: Attachment[]) => {
-    dispatchMessages({
-      type: 'user_added',
-      message: createLocalUserMessage(content, attachments),
-    })
-  }, [])
+  const appendLocalUserMessage = useCallback(
+    (content: string, attachments?: Attachment[]) => {
+      dispatchMessages({
+        type: 'user_added',
+        message: createLocalUserMessage(content, attachments),
+      })
+    },
+    [dispatchMessages]
+  )
 
   const sendRuntimeMessage = useCallback(
     async (message: RuntimePaneQueuedMessage): Promise<boolean> => {
@@ -341,6 +381,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
 
+    // This advances the next queued message once the pane becomes idle.
     setQueuedMessages(messages =>
       messages.map(message =>
         message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
@@ -378,8 +419,22 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments)
         const sent = await sendCurrentInput(submittedInput, {
           codeCommentContexts,
-          onRuntimeTaskOptimisticOpen: address => {
-            seedRuntimePaneMessage(address, optimisticMessage)
+          onRuntimeTaskOptimisticOpen: (address, context) => {
+            const previousMessages = context?.previousAddress
+              ? getRuntimePaneMessageSnapshot(context.previousAddress)
+              : []
+            const seededMessages =
+              previousMessages.length > 0 ? previousMessages : [optimisticMessage]
+            debugRuntimePaneMessageFlow('seed-optimistic-open', {
+              address: runtimeAddressDebug(address),
+              previousAddress: context?.previousAddress
+                ? runtimeAddressDebug(context.previousAddress)
+                : null,
+              previousCount: previousMessages.length,
+              seededCount: seededMessages.length,
+              seededMessages: summarizeWorkbenchMessages(seededMessages),
+            })
+            seedRuntimePaneMessages(address, seededMessages)
           },
         })
         if (sent) {
@@ -525,6 +580,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       activeAssistantMessage,
       cancelRuntimePaneTask,
       currentRuntimeTask,
+      dispatchMessages,
       queuedMessages,
       sendRuntimeMessage,
     ]
@@ -564,6 +620,38 @@ function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.localTaskId}:${address.workspacePath ?? ''}`
 }
 
+function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
+  return {
+    deviceId: address.deviceId,
+    localTaskId: address.localTaskId,
+    workspacePath: address.workspacePath ?? null,
+    hasRuntimeHandle: Boolean(address.runtimeHandle),
+    runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
+  }
+}
+
+function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string, unknown>[] {
+  return messages.map(message => ({
+    id: message.id,
+    role: message.role,
+    status: message.status,
+    contentLength: message.content.length,
+    turnId: message.turnId ?? null,
+  }))
+}
+
+function debugRuntimePaneMessageFlow(event: string, details: Record<string, unknown>) {
+  if (!isRuntimeDebugEnabled()) return
+  console.debug('[Wework] Runtime pane message flow', {
+    event,
+    ...details,
+  })
+}
+
+function isRuntimeDebugEnabled(): boolean {
+  return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
+}
+
 function createLocalUserMessage(content: string, attachments?: Attachment[]): WorkbenchMessage {
   return {
     id: `runtime-local-pane-${Date.now()}`,
@@ -575,16 +663,32 @@ function createLocalUserMessage(content: string, attachments?: Attachment[]): Wo
   }
 }
 
-function seedRuntimePaneMessage(address: RuntimeTaskAddress, message: WorkbenchMessage) {
+function seedRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
   const key = runtimeTranscriptPaneKey(address)
-  runtimePaneMessageSeeds.set(key, [...(runtimePaneMessageSeeds.get(key) ?? []), message])
+  runtimePaneMessageSeeds.set(key, [...messages])
 }
 
-function consumeRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessage[] {
+function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
   const key = runtimeTranscriptPaneKey(address)
-  const seededMessages = runtimePaneMessageSeeds.get(key) ?? []
-  runtimePaneMessageSeeds.delete(key)
-  return seededMessages
+  if (messages.length === 0) {
+    runtimePaneMessageSnapshots.delete(key)
+    return
+  }
+  runtimePaneMessageSnapshots.set(key, [...messages])
+}
+
+function getRuntimePaneMessageSnapshot(address: RuntimeTaskAddress): WorkbenchMessage[] {
+  const key = runtimeTranscriptPaneKey(address)
+  return [...(runtimePaneMessageSnapshots.get(key) ?? [])]
+}
+
+function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessage[] {
+  const key = runtimeTranscriptPaneKey(address)
+  return [...(runtimePaneMessageSeeds.get(key) ?? [])]
+}
+
+function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
+  runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
 }
 
 function mergeRuntimeTranscriptMessages(

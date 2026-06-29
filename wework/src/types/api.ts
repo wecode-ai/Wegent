@@ -231,6 +231,7 @@ export interface RuntimeTaskAddress {
   deviceId: string
   workspacePath?: string | null
   localTaskId: string
+  runtimeHandle?: Record<string, unknown> | null
 }
 
 export interface RuntimeMessageSource {
@@ -325,6 +326,7 @@ export interface LocalTaskSummary {
   updatedAt?: string | null
   running?: boolean
   status?: string | null
+  runtimeHandle?: Record<string, unknown> | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
 }

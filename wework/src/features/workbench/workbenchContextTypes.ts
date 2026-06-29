@@ -49,7 +49,10 @@ export type ProjectMutationOptions = {
 
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
-  onRuntimeTaskOptimisticOpen?: (address: RuntimeTaskAddress) => void
+  onRuntimeTaskOptimisticOpen?: (
+    address: RuntimeTaskAddress,
+    context?: { previousAddress?: RuntimeTaskAddress }
+  ) => void
 }
 
 export interface WorkbenchContextValue {
