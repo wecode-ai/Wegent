@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { removeGitWorktree, workspaceHasUncommittedChanges } from '@/api/environment'
+import { useTranslation } from '@/hooks/useTranslation'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
+  LocalTaskSummary,
   ProjectWithTasks,
+  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeTranscriptRequest,
@@ -32,6 +36,10 @@ import {
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
+import type {
+  ArchiveRuntimeLocalTaskOptions,
+  ArchiveRuntimeLocalTaskResult,
+} from './workbenchContextTypes'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -52,6 +60,7 @@ export function useWorkbenchRuntimeTasks({
   services,
   refreshWorkLists,
 }: UseWorkbenchRuntimeTasksOptions) {
+  const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
   const currentRuntimeTaskRef = useRef<RuntimeTaskAddress | null>(null)
 
@@ -194,16 +203,63 @@ export function useWorkbenchRuntimeTasks({
   )
 
   const archiveRuntimeLocalTask = useCallback(
-    async (address: RuntimeTaskAddress) => {
+    async (
+      address: RuntimeTaskAddress,
+      options: ArchiveRuntimeLocalTaskOptions = {}
+    ): Promise<ArchiveRuntimeLocalTaskResult> => {
+      const worktreeTarget = findRuntimeTaskWorktree(state.runtimeWork, address)
+      if (worktreeTarget && !options.force) {
+        let hasUncommittedChanges: boolean
+        try {
+          hasUncommittedChanges = await workspaceHasUncommittedChanges(
+            executorClient.commands,
+            worktreeTarget.workspace.deviceId,
+            worktreeTarget.workspace.workspacePath
+          )
+        } catch (error) {
+          dispatch({
+            type: 'error_set',
+            error:
+              error instanceof Error
+                ? error.message
+                : t('workbench.archive_runtime_task_check_failed'),
+          })
+          return { status: 'failed' }
+        }
+        if (hasUncommittedChanges) {
+          return { status: 'dirty_worktree' }
+        }
+      }
+
       const response = await executorClient.runtime.archiveConversation(address)
       if (!response.accepted) {
         dispatch({ type: 'error_set', error: response.error || 'Failed to archive runtime task' })
-        return
+        return { status: 'failed' }
+      }
+      if (worktreeTarget) {
+        try {
+          await removeGitWorktree(
+            executorClient.commands,
+            worktreeTarget.workspace.deviceId,
+            worktreeTarget.workspace.workspacePath
+          )
+        } catch (error) {
+          dispatch({
+            type: 'error_set',
+            error:
+              error instanceof Error
+                ? t('workbench.archive_runtime_task_remove_failed_detail', {
+                    message: error.message,
+                  })
+                : t('workbench.archive_runtime_task_remove_failed'),
+          })
+        }
       }
       if (isSameRuntimeTaskAddress(state.currentRuntimeTask, address)) {
         clearCurrentRuntimeTaskView()
       }
       await refreshWorkLists()
+      return { status: 'archived' }
     },
     [
       clearCurrentRuntimeTaskView,
@@ -211,6 +267,8 @@ export function useWorkbenchRuntimeTasks({
       executorClient,
       refreshWorkLists,
       state.currentRuntimeTask,
+      state.runtimeWork,
+      t,
     ]
   )
 
@@ -345,6 +403,38 @@ export function useWorkbenchRuntimeTasks({
     searchRuntimeWork,
     forkCurrentRuntimeTask,
   }
+}
+
+function findRuntimeTaskWorktree(
+  runtimeWork: WorkbenchState['runtimeWork'],
+  address: RuntimeTaskAddress
+): { workspace: RuntimeDeviceWorkspace; task: LocalTaskSummary } | null {
+  if (!runtimeWork) return null
+  const workspaces = [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+
+  for (const workspace of workspaces) {
+    if (workspace.deviceId !== address.deviceId) continue
+    if (address.workspacePath?.trim() && workspace.workspacePath !== address.workspacePath.trim()) {
+      continue
+    }
+    const task = workspace.localTasks.find(item => item.localTaskId === address.localTaskId)
+    if (!task || !isRuntimeTaskWorktree(workspace, task)) continue
+    return { workspace, task }
+  }
+
+  return null
+}
+
+function isRuntimeTaskWorktree(workspace: RuntimeDeviceWorkspace, task: LocalTaskSummary): boolean {
+  return (
+    workspace.workspaceKind === 'worktree' ||
+    Boolean(workspace.worktreeId) ||
+    task.workspaceKind === 'worktree' ||
+    Boolean(task.worktreeId)
+  )
 }
 
 function runtimeTranscriptRequestKey(

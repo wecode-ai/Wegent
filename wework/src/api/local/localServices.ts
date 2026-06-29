@@ -363,13 +363,26 @@ function runtimeServiceTier(modelOptions?: Record<string, string>): string | nul
   return modelOptions?.speed || modelOptions?.service_tier || null
 }
 
+type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
+  id: number
+  filename: string
+  original_filename: string
+  file_size: number
+  mime_type: string
+  subtask_id: number
+  file_extension: string
+  local_path: string
+  local_preview_url: string
+  text_length?: number
+}
+
 function localRuntimeAttachments(
   attachments: RuntimeTaskCreateRequest['attachments'],
   subtaskId: number
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
   return attachments
-    .map(attachment => {
+    .map((attachment): LocalRuntimeAttachmentPayload | null => {
       const localPath = stringValue(attachment.local_path)
       if (!localPath) return null
 
@@ -386,7 +399,7 @@ function localRuntimeAttachments(
         ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
       }
     })
-    .filter((attachment): attachment is Record<string, unknown> => attachment !== null)
+    .filter((attachment): attachment is LocalRuntimeAttachmentPayload => attachment !== null)
 }
 
 function skillName(skill: unknown): string | null {

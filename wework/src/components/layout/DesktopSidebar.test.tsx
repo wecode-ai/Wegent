@@ -873,6 +873,113 @@ describe('DesktopSidebar', () => {
     }
   })
 
+  test('offers force archive when a worktree task has uncommitted changes', async () => {
+    const user = userEvent.setup()
+    const onArchiveRuntimeLocalTask = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'dirty_worktree' })
+      .mockResolvedValueOnce({ status: 'archived' })
+    const originalSetTimeout = window.setTimeout
+    const originalClearTimeout = window.clearTimeout
+    const archiveTimerId = 2200
+    let archiveTimerCallback: (() => void) | null = null
+    const setTimeoutSpy = vi
+      .spyOn(window, 'setTimeout')
+      .mockImplementation((handler: TimerHandler, timeout?: number) => {
+        if (timeout === archiveTimerId && typeof handler === 'function') {
+          archiveTimerCallback = handler
+          return archiveTimerId
+        }
+        return originalSetTimeout(handler, timeout)
+      })
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation((id?: number) => {
+      if (id === archiveTimerId) {
+        archiveTimerCallback = null
+        return
+      }
+      originalClearTimeout(id)
+    })
+
+    try {
+      renderSidebar({
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              totalLocalTasks: 1,
+              deviceWorkspaces: [
+                {
+                  id: 91,
+                  deviceId: 'local-device',
+                  deviceName: 'Local Mac',
+                  deviceStatus: 'online',
+                  available: true,
+                  workspacePath: '/repo/worktrees/9/Wegent',
+                  workspaceKind: 'worktree',
+                  worktreeId: '9',
+                  localTasks: [
+                    {
+                      localTaskId: 'codex-1',
+                      workspacePath: '/repo/worktrees/9/Wegent',
+                      workspaceKind: 'worktree',
+                      worktreeId: '9',
+                      title: 'Fix reconnect',
+                      runtime: 'codex',
+                      updatedAt: '2026-06-20T02:00:00Z',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalLocalTasks: 1,
+        },
+        onArchiveRuntimeLocalTask,
+      })
+
+      await user.click(screen.getByTestId('project-item-button'))
+      await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+      const runArchiveTimer = archiveTimerCallback
+
+      await act(async () => {
+        runArchiveTimer?.()
+        await Promise.resolve()
+      })
+
+      const dialog = await screen.findByTestId('runtime-local-task-force-archive-dialog-codex-1')
+      expect(dialog).toHaveTextContent('工作树有未提交代码')
+      expect(dialog).toHaveTextContent('强制归档会删除这个工作树目录')
+      expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(1)
+      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(1, {
+        deviceId: 'local-device',
+        workspacePath: '/repo/worktrees/9/Wegent',
+        localTaskId: 'codex-1',
+      })
+
+      await user.click(
+        screen.getByTestId('runtime-local-task-force-archive-dialog-codex-1-confirm-button')
+      )
+
+      await waitFor(() => expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(2))
+      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(
+        2,
+        {
+          deviceId: 'local-device',
+          workspacePath: '/repo/worktrees/9/Wegent',
+          localTaskId: 'codex-1',
+        },
+        { force: true }
+      )
+      expect(
+        screen.queryByTestId('runtime-local-task-force-archive-dialog-codex-1')
+      ).not.toBeInTheDocument()
+    } finally {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
+    }
+  })
+
   test('marks and unmarks runtime tasks without opening the task', async () => {
     const user = userEvent.setup()
     const onOpenRuntimeLocalTask = vi.fn()

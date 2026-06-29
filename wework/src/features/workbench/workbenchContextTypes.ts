@@ -47,6 +47,14 @@ export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
 }
 
+export type ArchiveRuntimeLocalTaskOptions = {
+  force?: boolean
+}
+
+export type ArchiveRuntimeLocalTaskResult = {
+  status: 'archived' | 'dirty_worktree' | 'failed'
+}
+
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
   onRuntimeTaskOptimisticOpen?: (
@@ -108,7 +116,10 @@ export interface WorkbenchContextValue {
     handlers: RuntimeTaskStreamHandlers
   ) => () => void
   renameRuntimeLocalTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
-  archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  archiveRuntimeLocalTask: (
+    address: RuntimeTaskAddress,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeLocalTaskResult>
   archiveProjectConversations: (runtimeProjectKey: string) => Promise<void>
   archiveProjectsConversations: (runtimeProjectKeys: string[]) => Promise<void>
   archiveChatConversations: (addresses: RuntimeTaskAddress[]) => Promise<void>
