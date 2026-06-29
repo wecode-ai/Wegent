@@ -178,7 +178,7 @@ export function MessageTurnNavigation({
   return (
     <nav
       aria-label={t('message_navigation.label', '历史发言导航')}
-      className="pointer-events-none absolute top-1/2 z-20 hidden -translate-y-1/2 lg:block"
+      className="pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block"
       data-testid="message-turn-navigation"
       style={{
         left: '8px',

@@ -1102,12 +1102,12 @@ function RuntimeLocalTaskRow({
               : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
         )}
       >
-        <span title={task.title} className="min-w-0 flex-1 truncate group-hover/task:pr-20">
+        <span title={task.title} className="min-w-0 flex-1 truncate">
           {task.title}
         </span>
         <span
           data-testid={`runtime-local-task-trailing-${task.localTaskId}`}
-          className="relative ml-1 flex h-7 shrink-0 items-center justify-end"
+          className="relative ml-1 flex h-7 min-w-[28px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[78px]"
         >
           <span
             data-testid={`runtime-local-task-time-${task.localTaskId}`}
