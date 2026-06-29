@@ -99,6 +99,18 @@ fn env_mode_overrides_config_file_mode() {
 }
 
 #[test]
+fn remote_mode_is_not_treated_as_local_runtime_mode() {
+    let _lock = lock_env();
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "remote");
+    let path = temp_path("remote-device-config.json");
+    fs::write(&path, r#"{"mode":"local"}"#).unwrap();
+
+    let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+
+    assert_eq!(config.runtime_mode(), RuntimeMode::Remote);
+}
+
+#[test]
 fn environment_overrides_connection_and_device_fields() {
     let _lock = lock_env();
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");

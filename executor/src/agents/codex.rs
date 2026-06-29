@@ -29,6 +29,7 @@ use crate::{
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
+    process::CommandSpec,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -145,6 +146,10 @@ impl AgentEngine for CodexAppServerEngine {
             }
         })
     }
+}
+
+pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
+    CommandSpec::new(binary).arg("app-server").arg("--stdio")
 }
 
 #[derive(Clone)]

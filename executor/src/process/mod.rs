@@ -686,19 +686,15 @@ async fn emit_claude_tool_use<S>(
 ) where
     S: EventSink,
 {
-    for event in [
-        builder.response_function_call_added(&tool_use.id, &tool_use.name, &tool_use.input),
-        builder.response_function_call_arguments_done(&tool_use.id, &tool_use.input),
-    ] {
-        if let Err(message) = sink.send(event).await {
-            let fields = vec![
-                ("task_id", task_id.to_string()),
-                ("subtask_id", subtask_id.to_string()),
-                ("tool_use_id", tool_use.id.clone()),
-                ("error_len", message.len().to_string()),
-            ];
-            log_executor_event("streaming tool use callback failed", &fields);
-        }
+    let event = builder.response_tool_block_created(&tool_use.id, &tool_use.name, &tool_use.input);
+    if let Err(message) = sink.send(event).await {
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            ("tool_use_id", tool_use.id.clone()),
+            ("error_len", message.len().to_string()),
+        ];
+        log_executor_event("streaming tool use callback failed", &fields);
     }
 }
 
@@ -713,13 +709,8 @@ async fn emit_claude_tool_result<S>(
 ) where
     S: EventSink,
 {
-    let event = builder.response_function_call_done(
-        &tool_use.id,
-        &tool_use.name,
-        &tool_use.input,
-        output,
-        is_error,
-    );
+    let event =
+        builder.response_tool_block_updated(&tool_use.id, &tool_use.input, output, is_error);
     if let Err(message) = sink.send(event).await {
         let fields = vec![
             ("task_id", task_id.to_string()),

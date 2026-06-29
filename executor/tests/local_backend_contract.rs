@@ -350,28 +350,28 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     .await;
     assert_eq!(ack, None);
 
-    let emits = transport.wait_for_emits(6).await;
+    let emits = transport.wait_for_emits(5).await;
     assert_eq!(emits[0].event, "response.created");
-    assert_eq!(emits[1].event, "response.output_item.added");
-    assert_eq!(emits[1].payload["data"]["item"]["type"], "function_call");
-    assert_eq!(emits[1].payload["data"]["item"]["call_id"], "Read_0");
-    assert_eq!(emits[1].payload["data"]["item"]["name"], "Read");
+    assert_eq!(emits[1].event, "response.block.created");
+    assert_eq!(emits[1].payload["data"]["block"]["type"], "tool");
+    assert_eq!(emits[1].payload["data"]["block"]["id"], "Read_0");
+    assert_eq!(emits[1].payload["data"]["block"]["tool_use_id"], "Read_0");
+    assert_eq!(emits[1].payload["data"]["block"]["tool_name"], "Read");
     assert_eq!(
-        emits[1].payload["data"]["arguments_summary"],
+        emits[1].payload["data"]["block"]["tool_input"],
         json!({"file_path": "README.md"})
     );
-    assert_eq!(emits[2].event, "response.function_call_arguments.done");
-    assert_eq!(emits[2].payload["data"]["call_id"], "Read_0");
+    assert_eq!(emits[1].payload["data"]["block"]["status"], "pending");
+    assert_eq!(emits[2].event, "response.block.updated");
+    assert_eq!(emits[2].payload["data"]["block_id"], "Read_0");
     assert_eq!(
-        emits[2].payload["data"]["arguments_summary"],
-        json!({"file_path": "README.md"})
+        emits[2].payload["data"]["updates"]["tool_output"],
+        "# Project"
     );
-    assert_eq!(emits[3].event, "response.output_item.done");
-    assert_eq!(emits[3].payload["data"]["item"]["call_id"], "Read_0");
-    assert_eq!(emits[3].payload["data"]["item"]["output"], "# Project");
-    assert_eq!(emits[4].event, "response.output_text.delta");
-    assert_eq!(emits[4].payload["data"]["delta"], "read done");
-    assert_eq!(emits[5].event, "response.completed");
+    assert_eq!(emits[2].payload["data"]["updates"]["status"], "done");
+    assert_eq!(emits[3].event, "response.output_text.delta");
+    assert_eq!(emits[3].payload["data"]["delta"], "read done");
+    assert_eq!(emits[4].event, "response.completed");
 }
 
 #[cfg(unix)]

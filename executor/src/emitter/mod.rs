@@ -201,6 +201,50 @@ impl ResponsesEventBuilder {
         )
     }
 
+    pub fn response_tool_block_created(
+        &self,
+        tool_use_id: &str,
+        name: &str,
+        input: &Value,
+    ) -> EventEnvelope {
+        self.envelope(
+            "response.block.created",
+            json!({
+                "type": "response.block.created",
+                "block": {
+                    "id": tool_use_id,
+                    "type": "tool",
+                    "tool_use_id": tool_use_id,
+                    "tool_name": name,
+                    "tool_input": input,
+                    "status": "pending",
+                    "timestamp": current_epoch_millis()
+                }
+            }),
+        )
+    }
+
+    pub fn response_tool_block_updated(
+        &self,
+        tool_use_id: &str,
+        input: &Value,
+        output: Option<&str>,
+        is_error: bool,
+    ) -> EventEnvelope {
+        self.envelope(
+            "response.block.updated",
+            json!({
+                "type": "response.block.updated",
+                "block_id": tool_use_id,
+                "updates": {
+                    "tool_input": input,
+                    "tool_output": output,
+                    "status": if is_error { "error" } else { "done" }
+                }
+            }),
+        )
+    }
+
     pub fn response_waiting_for_user_input(&self, stop_reason: &str) -> EventEnvelope {
         let stop_reason = stop_reason.trim();
         let mut response = self.response_payload("completed", json!([]));
@@ -261,6 +305,13 @@ fn current_epoch_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+fn current_epoch_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
 }
 
