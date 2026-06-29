@@ -266,6 +266,66 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_isolates_user_runtime_home_from_global_skills() {
+    let _lock = env_lock().await;
+    let home = unique_dir("codex-user-home");
+    let executor_home = unique_dir("codex-isolated-home");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::remove("CODEX_HOME");
+    let user_codex_home = home.join(".codex");
+    fs::create_dir_all(user_codex_home.join("skills/global-skill")).unwrap();
+    fs::write(user_codex_home.join("auth.json"), "{}").unwrap();
+    fs::write(user_codex_home.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    fs::write(
+        user_codex_home.join("skills/global-skill/SKILL.md"),
+        "# global skill\n",
+    )
+    .unwrap();
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-isolated-home-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(&log_path, &["CODEX_HOME", "HOME"]);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("list skills"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": true,
+                    "configured": true
+                }
+            },
+            "model_provider": "openai"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    let isolated_home = PathBuf::from(messages[0]["env"]["CODEX_HOME"].as_str().unwrap());
+    assert_eq!(isolated_home, executor_home.join("codex-runtime"));
+    assert_ne!(isolated_home, user_codex_home);
+    assert_eq!(messages[0]["env"]["HOME"], home.display().to_string());
+    assert!(isolated_home.join("auth.json").is_file());
+    assert!(isolated_home.join("config.toml").is_file());
+    assert!(!isolated_home.join("skills/global-skill/SKILL.md").exists());
+    assert!(!isolated_home.join("plugins").exists());
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     let _lock = env_lock().await;
     let executor_home = unique_dir("codex-mcp-home");
@@ -569,6 +629,12 @@ impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }

@@ -102,8 +102,19 @@ fn workspace_roots() -> Vec<PathBuf> {
     if let Some(root) = env_path("LOCAL_WORKSPACE_ROOT") {
         roots.push(root);
     }
+    roots.push(default_local_workspace_root());
 
     dedup_paths(roots)
+}
+
+fn default_local_workspace_root() -> PathBuf {
+    env_path("WEGENT_EXECUTOR_HOME")
+        .unwrap_or_else(|| {
+            home_dir()
+                .unwrap_or_else(|| env::temp_dir().join("wegent-executor"))
+                .join(".wegent-executor")
+        })
+        .join("workspace")
 }
 
 fn executor_home_session_root() -> PathBuf {

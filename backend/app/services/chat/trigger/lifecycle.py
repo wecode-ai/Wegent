@@ -30,6 +30,7 @@ from app.services.chat.storage.task_manager import (
     get_bot_ids_from_team,
     get_task_with_access_check,
 )
+from app.services.chat.task_device_resolution import ensure_task_device_id
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
@@ -237,6 +238,8 @@ def prepare_execution_session(
             )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
+        if ensure_task_device_id(task, device_id=resolved_task_params.device_id):
+            task_stores.task_store.update_json(db, task=task, payload=task.json)
         if should_trigger_ai:
             task_stores.task_store.update_json(
                 db,

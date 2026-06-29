@@ -15,6 +15,18 @@ pub trait AgentEngine: Clone + Send + Sync + 'static {
     type RunFuture: Future<Output = ExecutionOutcome> + Send + 'static;
 
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture;
+
+    fn run_with_events<S>(
+        &self,
+        request: ExecutionRequest,
+        _sink: S,
+        _builder: ResponsesEventBuilder,
+    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+    where
+        S: EventSink,
+    {
+        Box::pin(self.run(request))
+    }
 }
 
 pub trait EventSink: Clone + Send + Sync + 'static {
@@ -89,7 +101,9 @@ async fn run_in_background<E, S>(
 {
     let fields = task_fields(request.task_id, request.subtask_id);
     log_executor_event("background task started", &fields);
-    let outcome = engine.run(request).await;
+    let outcome = engine
+        .run_with_events(request, sink.clone(), builder.clone())
+        .await;
     let mut outcome_fields = fields.clone();
     outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
     log_executor_event("background task finished", &outcome_fields);

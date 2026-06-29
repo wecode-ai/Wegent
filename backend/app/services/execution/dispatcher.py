@@ -225,6 +225,19 @@ class ResponsesAPIEventParser:
             Parsed ExecutionEvent or None if event should be skipped
         """
         # Map OpenAI Responses API events to internal EventType
+        if event_type == ResponsesAPIStreamEvents.RESPONSE_CREATED.value:
+            start_data = {}
+            for key in ("shell_type", "bot_name"):
+                if data.get(key) is not None:
+                    start_data[key] = data.get(key)
+            return ExecutionEvent(
+                type=EventType.START,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=start_data,
+                message_id=message_id,
+            )
+
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
             # response.output_text.delta -> CHUNK
             # Wegent extension: offset field tracks cumulative text position
@@ -662,7 +675,6 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type in (
-            ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,

@@ -72,6 +72,7 @@ import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
+import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -426,13 +427,13 @@ function ChatAreaContent({
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
-  const searchParamsString = searchParams.toString()
-  const taskIdFromUrl =
-    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const searchParamsString = stringifySearchParams(searchParams)
+  const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
   // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
-  const teamIdFromUrl = searchParams.get('teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
+  const teamIdFromUrl =
+    getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
   // Get project info when in project context
-  const projectIdFromUrl = searchParams.get('projectId')
+  const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
   const { projects } = useProjectContext()
   const activeProject = useMemo(() => {
     if (!projectIdFromUrl) return null

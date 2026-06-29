@@ -267,6 +267,25 @@ When a project task runs through the local executor, its task-level `CLAUDE_CONF
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
 
+### Chat Task Device Resolution And Claude Code Launch Context
+
+When a regular chat Task runs through the local executor, Backend resolves the actual dispatch device before creating or continuing the task. Resolution order is:
+
+1. The `device_id` explicitly provided by the current request.
+2. The current Project local execution config, such as `config.execution.targetType = local` and `config.execution.deviceId`.
+3. The `deviceId` already stored in the existing Task spec.
+
+The `appDeviceId` used by frontend App IPC is only the local process identity. Backend maps it to the executor Socket.IO `name` stored on the Device CRD before dispatching. If the resolved local device is stale or offline and the current user has exactly one online local executor, Backend switches the task to that online device so a stale id does not block local execution. Unknown device ids are not silently rewritten.
+
+Before launching a Claude Code child process, the executor prepares the task context:
+
+- It downloads turn attachments into the task directory. Project workspaces use `.wegent/attachments/<taskId>/<subtaskId>/`; non-Project tasks use an attachment subdirectory under the executor task directory.
+- It restores plugin packages from `~/.claude/plugins/cache` when they are still enabled in `enabledPlugins` but their install directory is missing, and it repairs plugin hook permissions.
+- It deploys task-selected Skills into `SKILLS_DIR`. Regular Project tasks use global `~/.claude/skills`; standalone local work with `project_id = 0` and task Skills uses task-level `.claude/skills` so the global directory is not polluted.
+- If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts.
+
+The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
+
 ---
 
 ## 🔄 Task Execution Flow

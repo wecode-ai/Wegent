@@ -18,6 +18,24 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
 class TestResponsesAPIEventParserToolIds:
+    def test_response_created_event_emits_start_event_with_shell_type(self):
+        parser = ResponsesAPIEventParser()
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
+            data={"shell_type": "ClaudeCode"},
+        )
+
+        assert result is not None
+        assert result.type == EventType.START
+        assert result.task_id == 1
+        assert result.subtask_id == 2
+        assert result.message_id == 3
+        assert result.data == {"shell_type": "ClaudeCode"}
+
     def test_reasoning_summary_text_delta_emits_thinking_event(self):
         parser = ResponsesAPIEventParser()
 

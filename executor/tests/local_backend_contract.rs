@@ -26,6 +26,8 @@ use wegent_executor::{
     runner::EventSink,
 };
 
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn local_backend_registers_device_with_python_compatible_payload() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
@@ -135,6 +137,7 @@ async fn local_backend_disconnects_when_registration_is_rejected() {
 #[cfg(unix)]
 #[tokio::test]
 async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
+    let _lock = ENV_LOCK.lock().await;
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
@@ -162,13 +165,164 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     .await;
     assert_eq!(ack, None);
 
-    let emits = transport.wait_for_emits(2).await;
+    let emits = transport.wait_for_emits(3).await;
     assert_eq!(emits[0].event, "response.created");
-    assert_eq!(emits[1].event, "response.completed");
+    assert_eq!(emits[1].event, "response.output_text.delta");
+    assert_eq!(emits[1].payload["data"]["delta"], "local done");
+    assert_eq!(emits[2].event, "response.completed");
     assert_eq!(
-        emits[1].payload["data"]["response"]["output"][0]["content"][0]["text"],
+        emits[2].payload["data"]["response"]["output"][0]["content"][0]["text"],
         "local done"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
+    let _lock = ENV_LOCK.lock().await;
+    let fake_claude = write_fake_executable(
+        "fake-local-backend-streaming-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
+sleep 0.1
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
+"#,
+    );
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    runner.register_handlers();
+
+    let handler = transport.handler("task:execute").unwrap();
+    let ack = handler(json!({
+        "task_id": 110,
+        "subtask_id": 111,
+        "prompt": "run",
+        "bot": [{"shell_type": "ClaudeCode"}],
+        "model_config": {
+            "env": {
+                "model": "anthropic",
+                "model_id": "claude-3-5-sonnet-20241022"
+            }
+        }
+    }))
+    .await;
+    assert_eq!(ack, None);
+
+    let emits = transport.wait_for_emits(4).await;
+    assert_eq!(emits[0].event, "response.created");
+    assert_eq!(emits[1].event, "response.output_text.delta");
+    assert_eq!(emits[1].payload["data"]["delta"], "hello");
+    assert_eq!(emits[1].payload["data"]["offset"], 0);
+    assert_eq!(emits[2].event, "response.output_text.delta");
+    assert_eq!(emits[2].payload["data"]["delta"], " world");
+    assert_eq!(emits[2].payload["data"]["offset"], 5);
+    assert_eq!(emits[3].event, "response.completed");
+    assert_eq!(
+        emits[3].payload["data"]["response"]["output"][0]["content"][0]["text"],
+        "hello world"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text() {
+    let _lock = ENV_LOCK.lock().await;
+    let fake_claude = write_fake_executable(
+        "fake-local-backend-thinking-claude",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
+sleep 0.1
+printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
+"#,
+    );
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    runner.register_handlers();
+
+    let handler = transport.handler("task:execute").unwrap();
+    let ack = handler(json!({
+        "task_id": 112,
+        "subtask_id": 113,
+        "prompt": "run",
+        "bot": [{"shell_type": "ClaudeCode"}],
+        "model_config": {
+            "env": {
+                "model": "anthropic",
+                "model_id": "claude-3-5-sonnet-20241022"
+            }
+        }
+    }))
+    .await;
+    assert_eq!(ack, None);
+
+    let emits = transport.wait_for_emits(4).await;
+    assert_eq!(emits[0].event, "response.created");
+    assert_eq!(emits[1].event, "response.reasoning_summary_text.delta");
+    assert_eq!(emits[1].payload["data"]["delta"], "checking image");
+    assert_eq!(emits[2].event, "response.output_text.delta");
+    assert_eq!(emits[2].payload["data"]["delta"], "visible answer");
+    assert_eq!(emits[3].event, "response.completed");
+    assert_eq!(
+        emits[3].payload["data"]["response"]["output"][0]["content"][0]["text"],
+        "visible answer"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_backend_task_execute_splits_large_claude_assistant_message_into_deltas() {
+    let _lock = ENV_LOCK.lock().await;
+    let long_text = "abcdefghijklmnopqrstuvwxyz".repeat(7);
+    let claude_event = json!({
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "text", "text": long_text}]
+        }
+    })
+    .to_string();
+    let fake_claude = write_fake_executable(
+        "fake-local-backend-large-assistant-claude",
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' '{}'
+"#,
+            claude_event
+        ),
+    );
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let transport = RecordingTransport::default();
+    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    runner.register_handlers();
+
+    let handler = transport.handler("task:execute").unwrap();
+    let ack = handler(json!({
+        "task_id": 120,
+        "subtask_id": 121,
+        "prompt": "run",
+        "bot": [{"shell_type": "ClaudeCode"}],
+        "model_config": {
+            "env": {
+                "model": "anthropic",
+                "model_id": "claude-3-5-sonnet-20241022"
+            }
+        }
+    }))
+    .await;
+    assert_eq!(ack, None);
+
+    let emits = transport.wait_for_emits(5).await;
+    assert_eq!(emits[0].event, "response.created");
+    assert_eq!(emits[1].event, "response.output_text.delta");
+    assert_eq!(emits[2].event, "response.output_text.delta");
+    assert_eq!(emits[3].event, "response.output_text.delta");
+    assert_eq!(emits[4].event, "response.completed");
+    let streamed = emits[1..4]
+        .iter()
+        .map(|event| event.payload["data"]["delta"].as_str().unwrap())
+        .collect::<String>();
+    assert_eq!(streamed, long_text);
 }
 
 #[cfg(unix)]

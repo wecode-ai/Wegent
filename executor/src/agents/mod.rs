@@ -2,9 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 mod agno;
 mod claude_options;
@@ -15,13 +21,25 @@ pub mod interactive_mcp;
 
 use crate::{
     agents::interactive_mcp::build_interactive_form_answer_query,
+    attachments::{AttachmentPromptProcessor, AttachmentRecord},
     claude_session,
+    emitter::ResponsesEventBuilder,
     hooks::pre_execute::{PreExecuteContext, PreExecuteHook},
+    local::{
+        backend::HttpPackageProvider,
+        capabilities::{
+            restore_enabled_claude_plugin_cache, CapabilityPackageProvider, SkillSyncSpec,
+        },
+    },
     logging::{log_executor_event, task_fields},
     process::{CommandSpec, StreamProcessEngine},
     protocol::{AgentKind, ExecutionRequest},
-    runner::{AgentEngine, ExecutionOutcome},
+    runner::{AgentEngine, EventSink, ExecutionOutcome},
+    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions},
 };
+
+const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
+const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
 
 pub use agno::build_agno_options;
 pub use claude_options::{extract_claude_options, ClaudeOptions};
@@ -106,30 +124,455 @@ impl AgentEngine for AgentProcessEngine {
                 }
                 AgentKind::Dify => DifyEngine::new().run(request).await,
                 AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
-                _ => match planner.command_for(&request) {
-                    Ok(spec) => {
-                        let mut command_fields = fields.clone();
-                        command_fields.push(("program", spec.program().to_owned()));
-                        command_fields.push(("arg_count", spec.args().len().to_string()));
-                        if let Some(cwd) = spec.current_dir() {
-                            command_fields.push(("cwd", cwd.display().to_string()));
-                        }
-                        log_executor_event("command planned", &command_fields);
-                        if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                            run_pre_execute_hook(&request, &spec).await;
-                        }
-                        StreamProcessEngine::new(spec).run(request).await
+                _ => {
+                    let mut request = request;
+                    if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                        prepare_claude_attachments(&mut request).await;
                     }
-                    Err(message) => {
-                        let mut failed_fields = fields;
-                        failed_fields.push(("error_len", message.len().to_string()));
-                        log_executor_event("command planning failed", &failed_fields);
-                        ExecutionOutcome::Failed { message }
+                    match planner.command_for(&request) {
+                        Ok(spec) => {
+                            let mut command_fields = fields.clone();
+                            command_fields.push(("program", spec.program().to_owned()));
+                            command_fields.push(("arg_count", spec.args().len().to_string()));
+                            if let Some(cwd) = spec.current_dir() {
+                                command_fields.push(("cwd", cwd.display().to_string()));
+                            }
+                            log_executor_event("command planned", &command_fields);
+                            if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                restore_claude_plugin_cache(&request, &spec);
+                                deploy_claude_task_skills(&request, &spec).await;
+                                configure_claude_file_edit_hooks(&request, &spec);
+                                run_pre_execute_hook(&request, &spec).await;
+                            }
+                            StreamProcessEngine::new(spec).run(request).await
+                        }
+                        Err(message) => {
+                            let mut failed_fields = fields;
+                            failed_fields.push(("error_len", message.len().to_string()));
+                            log_executor_event("command planning failed", &failed_fields);
+                            ExecutionOutcome::Failed { message }
+                        }
                     }
-                },
+                }
             }
         })
     }
+
+    fn run_with_events<S>(
+        &self,
+        request: ExecutionRequest,
+        sink: S,
+        builder: ResponsesEventBuilder,
+    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+    where
+        S: EventSink,
+    {
+        let planner = self.planner.clone();
+        Box::pin(async move {
+            let agent_kind = request.resolved_agent_kind();
+            let mut fields = task_fields(request.task_id, request.subtask_id);
+            fields.push(("agent", format!("{agent_kind:?}")));
+            log_executor_event("agent dispatch", &fields);
+
+            match agent_kind {
+                AgentKind::CodeX => {
+                    CodexAppServerEngine::new(planner.codex_binary)
+                        .run(request)
+                        .await
+                }
+                AgentKind::Dify => DifyEngine::new().run(request).await,
+                AgentKind::ImageValidator => ImageValidatorEngine.run(request).await,
+                _ => {
+                    let mut request = request;
+                    if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                        prepare_claude_attachments(&mut request).await;
+                    }
+                    match planner.command_for(&request) {
+                        Ok(spec) => {
+                            let mut command_fields = fields.clone();
+                            command_fields.push(("program", spec.program().to_owned()));
+                            command_fields.push(("arg_count", spec.args().len().to_string()));
+                            if let Some(cwd) = spec.current_dir() {
+                                command_fields.push(("cwd", cwd.display().to_string()));
+                            }
+                            log_executor_event("command planned", &command_fields);
+                            if request.resolved_agent_kind() == AgentKind::ClaudeCode {
+                                restore_claude_plugin_cache(&request, &spec);
+                                deploy_claude_task_skills(&request, &spec).await;
+                                configure_claude_file_edit_hooks(&request, &spec);
+                                run_pre_execute_hook(&request, &spec).await;
+                            }
+                            StreamProcessEngine::new(spec)
+                                .run_with_events(request, sink, builder)
+                                .await
+                        }
+                        Err(message) => {
+                            let mut failed_fields = fields;
+                            failed_fields.push(("error_len", message.len().to_string()));
+                            log_executor_event("command planning failed", &failed_fields);
+                            ExecutionOutcome::Failed { message }
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+async fn prepare_claude_attachments(request: &mut ExecutionRequest) {
+    let attachments = attachment_records(request.extra.get("attachments"));
+    if attachments.is_empty() {
+        return;
+    }
+    let Some(backend_url) = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(auth_token) = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(task_dir) = claude_task_dir(request) else {
+        return;
+    };
+    let _ = fs::create_dir_all(&task_dir);
+
+    let client = reqwest::Client::new();
+    let mut success = Vec::new();
+    let mut failed = Vec::new();
+    for attachment in attachments {
+        match download_claude_attachment(
+            &client,
+            backend_url,
+            auth_token,
+            request,
+            &task_dir,
+            &attachment,
+        )
+        .await
+        {
+            Ok(local_path) => {
+                let mut downloaded = attachment;
+                downloaded.local_path = Some(local_path.display().to_string());
+                success.push(downloaded);
+            }
+            Err(error) => {
+                let mut unavailable = attachment;
+                unavailable.error = Some(error);
+                failed.push(unavailable);
+            }
+        }
+    }
+
+    if success.is_empty() && failed.is_empty() {
+        return;
+    }
+    let attachment_subtask_id = success
+        .iter()
+        .chain(failed.iter())
+        .find_map(|attachment| attachment.subtask_id)
+        .unwrap_or(request.subtask_id);
+    request.prompt = AttachmentPromptProcessor::process_prompt(
+        &request.prompt,
+        &success,
+        &failed,
+        Some(request.task_id),
+        Some(attachment_subtask_id),
+    );
+
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("success_count", success.len().to_string()));
+    fields.push(("failed_count", failed.len().to_string()));
+    log_executor_event("claude attachments prepared", &fields);
+}
+
+async fn download_claude_attachment(
+    client: &reqwest::Client,
+    backend_url: &str,
+    auth_token: &str,
+    request: &ExecutionRequest,
+    task_dir: &Path,
+    attachment: &AttachmentRecord,
+) -> Result<PathBuf, String> {
+    let local_path = claude_attachment_path(request, task_dir, attachment);
+    if let Some(parent) = local_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let url = format!(
+        "{}/api/attachments/{}/executor-download",
+        backend_url.trim_end_matches('/'),
+        attachment.id
+    );
+    let response = client
+        .get(url)
+        .bearer_auth(auth_token)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("download failed with HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+    fs::write(&local_path, &bytes).map_err(|error| error.to_string())?;
+    Ok(local_path)
+}
+
+fn claude_attachment_path(
+    request: &ExecutionRequest,
+    task_dir: &Path,
+    attachment: &AttachmentRecord,
+) -> PathBuf {
+    let subtask_id = attachment.subtask_id.unwrap_or(request.subtask_id);
+    if let Some(project_workspace) = request
+        .project_workspace_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| resolve_workspace_path(task_dir, value))
+    {
+        return project_workspace
+            .join(".wegent/attachments")
+            .join(request.task_id.to_string())
+            .join(subtask_id.to_string())
+            .join(sanitize_attachment_filename(&attachment.original_filename));
+    }
+
+    task_dir
+        .join(attachment_task_subdir(request.task_id))
+        .join(subtask_id.to_string())
+        .join(sanitize_attachment_filename(&attachment.original_filename))
+}
+
+fn resolve_workspace_path(task_dir: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        return path;
+    }
+    task_dir
+        .parent()
+        .map(|workspace_root| workspace_root.join(path))
+        .unwrap_or_else(|| PathBuf::from(value))
+}
+
+fn attachment_task_subdir(task_id: i64) -> String {
+    let raw = format!("{task_id}:executor:attachments");
+    if cfg!(windows) {
+        raw.replace(':', "_")
+    } else {
+        raw
+    }
+}
+
+fn sanitize_attachment_filename(filename: &str) -> String {
+    let basename = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(filename)
+        .replace(['\n', '\r'], "")
+        .replace(['/', '\\'], "_");
+    if basename.is_empty() {
+        "document".to_owned()
+    } else {
+        basename
+    }
+}
+
+fn attachment_records(value: Option<&Value>) -> Vec<AttachmentRecord> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(attachment_record)
+        .collect()
+}
+
+fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
+    Some(AttachmentRecord {
+        id: value.get("id").and_then(value_i64)?,
+        original_filename: value
+            .get("original_filename")
+            .or_else(|| value.get("originalFilename"))
+            .or_else(|| value.get("filename"))
+            .or_else(|| value.get("name"))
+            .and_then(value_string)
+            .unwrap_or_else(|| "attachment".to_owned()),
+        local_path: value
+            .get("local_path")
+            .or_else(|| value.get("localPath"))
+            .and_then(value_string),
+        file_size: value
+            .get("file_size")
+            .or_else(|| value.get("fileSize"))
+            .and_then(value_u64),
+        mime_type: value
+            .get("mime_type")
+            .or_else(|| value.get("mimeType"))
+            .and_then(value_string),
+        subtask_id: value
+            .get("subtask_id")
+            .or_else(|| value.get("subtaskId"))
+            .and_then(value_i64),
+        error: value.get("error").and_then(value_string),
+    })
+}
+
+fn value_string(value: &Value) -> Option<String> {
+    value.as_str().map(ToOwned::to_owned)
+}
+
+fn value_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+}
+
+fn value_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+}
+
+fn restore_claude_plugin_cache(request: &ExecutionRequest, spec: &CommandSpec) {
+    let Some(config_dir) = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return;
+    };
+
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("config_dir", config_dir.display().to_string()));
+    match restore_enabled_claude_plugin_cache(&config_dir) {
+        Ok(restored) if !restored.is_empty() => {
+            fields.push(("restored_count", restored.len().to_string()));
+            log_executor_event("claude plugin cache restored", &fields);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            fields.push(("error_len", error.to_string().len().to_string()));
+            log_executor_event("claude plugin cache restore failed", &fields);
+        }
+    }
+}
+
+fn configure_claude_file_edit_hooks(request: &ExecutionRequest, spec: &CommandSpec) {
+    let Some(command) = env::var(FILE_EDIT_HOOK_COMMAND_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(config_dir) = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    let settings_path = PathBuf::from(config_dir).join("settings.json");
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("settings", settings_path.display().to_string()));
+
+    match write_claude_file_edit_hook_settings(&settings_path, &command) {
+        Ok(()) => log_executor_event("claude file edit hooks configured", &fields),
+        Err(error) => {
+            fields.push(("error_len", error.len().to_string()));
+            log_executor_event("claude file edit hooks failed", &fields);
+        }
+    }
+}
+
+fn write_claude_file_edit_hook_settings(
+    settings_path: &PathBuf,
+    command: &str,
+) -> Result<(), String> {
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let mut settings = read_claude_settings(settings_path);
+    let hooks = object_field(&mut settings, "hooks");
+    ensure_file_edit_hook(hooks, "PreToolUse", command);
+    ensure_file_edit_hook(hooks, "PostToolUse", command);
+
+    let content = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    fs::write(settings_path, format!("{content}\n")).map_err(|error| error.to_string())
+}
+
+fn read_claude_settings(settings_path: &PathBuf) -> Value {
+    fs::read_to_string(settings_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| Value::Object(Map::new()))
+}
+
+fn object_field<'a>(parent: &'a mut Value, key: &str) -> &'a mut Map<String, Value> {
+    if !parent.is_object() {
+        *parent = Value::Object(Map::new());
+    }
+    let object = parent.as_object_mut().expect("parent object initialized");
+    let value = object
+        .entry(key.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value.as_object_mut().expect("child object initialized")
+}
+
+fn ensure_file_edit_hook(hooks: &mut Map<String, Value>, event: &str, command: &str) {
+    let value = hooks
+        .entry(event.to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !value.is_array() {
+        *value = Value::Array(Vec::new());
+    }
+    let groups = value.as_array_mut().expect("event hooks initialized");
+    groups.retain(|group| !file_edit_hook_group_matches(group));
+    groups.push(json!({
+        "matcher": CLAUDE_FILE_EDIT_HOOK_MATCHER,
+        "hooks": [
+            {
+                "type": "command",
+                "command": command
+            }
+        ]
+    }));
+}
+
+fn file_edit_hook_group_matches(group: &Value) -> bool {
+    group
+        .get("matcher")
+        .and_then(Value::as_str)
+        .is_some_and(|matcher| matcher == CLAUDE_FILE_EDIT_HOOK_MATCHER)
+        || group
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| hooks.iter().any(is_wegent_file_edit_hook))
+}
+
+fn is_wegent_file_edit_hook(hook: &Value) -> bool {
+    hook.get("type").and_then(Value::as_str) == Some("command")
+        && hook
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| command.contains("/api/file-edit-log"))
 }
 
 async fn run_pre_execute_hook(request: &ExecutionRequest, spec: &CommandSpec) {
@@ -380,10 +823,8 @@ fn apply_claude_workspace_environment(
         spec = spec.env("CLAUDE_CONFIG_DIR", config_dir.display().to_string());
     }
     if !spec.envs().contains_key("SKILLS_DIR") {
-        spec = spec.env(
-            "SKILLS_DIR",
-            config_dir.join("skills").display().to_string(),
-        );
+        let skills_dir = claude_skills_dir(request, &config_dir, task_dir);
+        spec = spec.env("SKILLS_DIR", skills_dir.display().to_string());
     }
 
     spec
@@ -396,11 +837,103 @@ fn claude_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
         .or_else(|| claude_session::preferred_task_dir(request))
 }
 
-fn claude_config_dir(request: &ExecutionRequest, task_dir: Option<&PathBuf>) -> Option<PathBuf> {
-    if project_id(request).is_some() {
-        return Some(home_claude_dir());
+fn claude_config_dir(_request: &ExecutionRequest, _task_dir: Option<&PathBuf>) -> Option<PathBuf> {
+    Some(home_claude_dir())
+}
+
+fn claude_skills_dir(
+    request: &ExecutionRequest,
+    config_dir: &Path,
+    task_dir: Option<&PathBuf>,
+) -> PathBuf {
+    if is_standalone_project_zero(request) && has_task_skill_names(request) {
+        if let Some(task_dir) = task_dir {
+            return task_dir.join(".claude/skills");
+        }
     }
-    task_dir.map(|task_dir| task_dir.join(".claude"))
+    config_dir.join("skills")
+}
+
+fn is_standalone_project_zero(request: &ExecutionRequest) -> bool {
+    let standalone = request
+        .extra
+        .get("standalone_chat_workspace")
+        .or_else(|| request.extra.get("standaloneChatWorkspace"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    standalone && project_id(request).as_deref() == Some("0")
+}
+
+fn has_task_skill_names(request: &ExecutionRequest) -> bool {
+    primary_bot(request).is_some_and(|bot| {
+        !crate::services::skill_deployer::collect_skill_names_for_deployment(bot, request)
+            .is_empty()
+    })
+}
+
+async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: &CommandSpec) {
+    if !has_task_skill_names(request) {
+        return;
+    }
+    let Some(skills_dir) = spec.envs().get("SKILLS_DIR").map(PathBuf::from) else {
+        return;
+    };
+    let Some(bot_config) = primary_bot(request) else {
+        return;
+    };
+    let Some(plan) = build_skill_deployment_plan(
+        bot_config,
+        request,
+        SkillDeploymentOptions {
+            skills_dir,
+            clear_cache: false,
+            skip_existing: true,
+        },
+    ) else {
+        return;
+    };
+    let Some(backend_url) = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            env::var("WEGENT_BACKEND_URL")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+    else {
+        return;
+    };
+
+    let provider = HttpPackageProvider::new(backend_url, plan.auth_token.clone());
+    for skill_name in &plan.skills {
+        let Some(skill_ref) = plan.resolved_skill_map.get(skill_name) else {
+            continue;
+        };
+        let target = plan.skills_dir.join(skill_name);
+        if plan.skip_existing && target.join("SKILL.md").is_file() {
+            continue;
+        }
+        let mut fields = task_fields(request.task_id, request.subtask_id);
+        fields.push(("skill", skill_name.clone()));
+        fields.push(("target", target.display().to_string()));
+        let spec = SkillSyncSpec {
+            name: skill_name.clone(),
+            skill_id: skill_ref.skill_id,
+            namespace: skill_ref.namespace.clone(),
+            is_public: skill_ref.is_public,
+        };
+        match provider.stage_skill(&spec, &target).await {
+            Ok(()) => log_executor_event("claude task skill deployed", &fields),
+            Err(error) => {
+                fields.push(("error_len", error.to_string().len().to_string()));
+                log_executor_event("claude task skill deployment failed", &fields);
+            }
+        }
+    }
 }
 
 fn home_claude_dir() -> PathBuf {

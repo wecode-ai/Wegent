@@ -101,6 +101,33 @@ impl ResponsesEventBuilder {
         )
     }
 
+    pub fn response_text_delta(&self, delta: &str, offset: usize) -> EventEnvelope {
+        self.envelope(
+            "response.output_text.delta",
+            json!({
+                "type": "response.output_text.delta",
+                "item_id": self.item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": delta,
+                "offset": offset
+            }),
+        )
+    }
+
+    pub fn response_reasoning_delta(&self, delta: &str) -> EventEnvelope {
+        self.envelope(
+            "response.reasoning_summary_text.delta",
+            json!({
+                "type": "response.reasoning_summary_text.delta",
+                "item_id": self.item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": delta
+            }),
+        )
+    }
+
     pub fn response_waiting_for_user_input(&self, stop_reason: &str) -> EventEnvelope {
         let stop_reason = stop_reason.trim();
         let mut response = self.response_payload("completed", json!([]));

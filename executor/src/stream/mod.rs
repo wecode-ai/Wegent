@@ -119,10 +119,14 @@ fn is_interruption_message(value: &str) -> bool {
     value.contains("interrupted") || value.contains("cancelled") || value.contains("canceled")
 }
 
-fn extract_text(value: &Value) -> Option<String> {
+pub fn extract_text(value: &Value) -> Option<String> {
     extract_claude_assistant_text(value)
         .or_else(|| extract_claude_text_delta(value))
         .or_else(|| extract_codex_agent_delta(value))
+}
+
+pub fn extract_reasoning(value: &Value) -> Option<String> {
+    extract_claude_thinking_delta(value)
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {
@@ -146,6 +150,14 @@ fn extract_claude_text_delta(value: &Value) -> Option<String> {
     let delta = value.get("delta")?;
     (delta.get("type").and_then(Value::as_str) == Some("text_delta"))
         .then(|| delta.get("text").and_then(Value::as_str))
+        .flatten()
+        .map(ToOwned::to_owned)
+}
+
+fn extract_claude_thinking_delta(value: &Value) -> Option<String> {
+    let delta = value.get("delta")?;
+    (delta.get("type").and_then(Value::as_str) == Some("thinking_delta"))
+        .then(|| delta.get("thinking").and_then(Value::as_str))
         .flatten()
         .map(ToOwned::to_owned)
 }

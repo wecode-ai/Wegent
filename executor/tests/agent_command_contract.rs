@@ -78,6 +78,10 @@ fn claude_command_uses_headless_stream_json_mode() {
 
 #[test]
 fn claude_command_maps_nested_model_env_to_process_environment() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-nested-model-home");
+    let project_dir = unique_dir("claude-nested-model-project");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({
@@ -89,7 +93,7 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
             }
         }),
-        project_workspace_path: Some("/tmp/project".to_owned()),
+        project_workspace_path: Some(project_dir.display().to_string()),
         ..ExecutionRequest::default()
     };
 
@@ -115,15 +119,15 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
     );
     assert_eq!(
         spec.current_dir().unwrap().display().to_string(),
-        "/tmp/project"
+        project_dir.display().to_string()
     );
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        "/tmp/project/.claude"
+        &home.join(".claude").display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        "/tmp/project/.claude/skills"
+        &home.join(".claude/skills").display().to_string()
     );
 }
 
@@ -391,7 +395,9 @@ fn claude_command_rejects_unsafe_string_bot_id_for_session_filename() {
 #[test]
 fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     let _lock = env_lock();
+    let home = unique_dir("claude-chat-home");
     let workspace_root = unique_dir("claude-chat-workspace-root");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let request = ExecutionRequest {
         task_id: 42,
@@ -407,11 +413,11 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     assert_eq!(spec.current_dir().unwrap(), &task_dir);
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        &task_dir.join(".claude").display().to_string()
+        &home.join(".claude").display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        &task_dir.join(".claude/skills").display().to_string()
+        &home.join(".claude/skills").display().to_string()
     );
 }
 
@@ -518,6 +524,38 @@ fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header()
         .get("ANTHROPIC_CUSTOM_HEADERS")
         .unwrap()
         .contains("wecode-project: 0"));
+}
+
+#[test]
+fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_task_skills_dir() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-standalone-skill-home");
+    let workspace_root = unique_dir("claude-standalone-skill-workspace");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let request = ExecutionRequest {
+        task_id: 1905,
+        prompt: json!("standalone chat with skills"),
+        bot: json!([{"id": 1905, "shell_type": "ClaudeCode"}]),
+        extra: serde_json::Map::from_iter([
+            ("project_id".to_owned(), json!(0)),
+            ("standalone_chat_workspace".to_owned(), json!(true)),
+            ("skill_names".to_owned(), json!(["task-skill"])),
+        ]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let task_dir = workspace_root.join("1905");
+
+    assert_eq!(
+        spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
+        &home.join(".claude").display().to_string()
+    );
+    assert_eq!(
+        spec.envs().get("SKILLS_DIR").unwrap(),
+        &task_dir.join(".claude/skills").display().to_string()
+    );
 }
 
 #[test]
