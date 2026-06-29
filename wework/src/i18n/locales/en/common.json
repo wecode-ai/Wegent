@@ -419,6 +419,8 @@
     "ide": "IDE",
     "desktop": "Desktop",
     "open_project_ide": "Open project IDE",
+    "open_project_ide_with": "Open with {{opener}}",
+    "choose_project_ide": "Choose IDE",
     "project_ide_start_failed_title": "Unable to open project IDE",
     "project_ide_start_failed_message": "Failed to start project IDE",
     "project_ide_error_close": "OK",

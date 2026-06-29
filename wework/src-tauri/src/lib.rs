@@ -197,6 +197,64 @@ fn local_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
+    match opener {
+        "vscode" => Some("Visual Studio Code"),
+        "vscode-insiders" => Some("Visual Studio Code - Insiders"),
+        "cursor" => Some("Cursor"),
+        "sublime-text" => Some("Sublime Text"),
+        "windsurf" => Some("Windsurf"),
+        "finder" => Some("Finder"),
+        "terminal" => Some("Terminal"),
+        "iterm2" => Some("iTerm"),
+        "ghostty" => Some("Ghostty"),
+        "warp" => Some("Warp"),
+        "xcode" => Some("Xcode"),
+        "android-studio" => Some("Android Studio"),
+        "intellij-idea" => Some("IntelliJ IDEA"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
+    let output = std::process::Command::new("open")
+        .args(["-a", app_name, path])
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err(format!("Failed to open workspace with {app_name}"))
+    } else {
+        Err(stderr)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
+    Err("Opening a local workspace is only supported on macOS".to_string())
+}
+
+#[tauri::command]
+fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
+    let opener =
+        normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
+    let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
+    let app_name = local_workspace_opener_app_name(&opener)
+        .ok_or_else(|| format!("Unsupported workspace opener: {opener}"))?;
+
+    if !std::path::Path::new(&path).exists() {
+        return Err("Workspace path does not exist".to_string());
+    }
+
+    open_local_workspace_with_app(app_name, &path)
+}
+
 #[derive(serde::Serialize)]
 struct DroppedFilePayload {
     name: String,
@@ -676,6 +734,33 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::local_workspace_opener_app_name;
+
+    #[test]
+    fn maps_local_workspace_openers_to_macos_app_names() {
+        assert_eq!(
+            local_workspace_opener_app_name("vscode"),
+            Some("Visual Studio Code")
+        );
+        assert_eq!(
+            local_workspace_opener_app_name("vscode-insiders"),
+            Some("Visual Studio Code - Insiders")
+        );
+        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
+        assert_eq!(
+            local_workspace_opener_app_name("android-studio"),
+            Some("Android Studio")
+        );
+        assert_eq!(
+            local_workspace_opener_app_name("intellij-idea"),
+            Some("IntelliJ IDEA")
+        );
+        assert_eq!(local_workspace_opener_app_name("unknown"), None);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -741,6 +826,7 @@ pub fn run() {
             set_tray_menu_state,
             download_local_file_to_downloads,
             local_path_exists,
+            open_local_workspace,
             read_dropped_files,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,

@@ -1,14 +1,21 @@
 import { useMemo, useState } from 'react'
-import { AlertCircle, Code2, Loader2, PanelBottom, PanelRight } from 'lucide-react'
+import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice } from '@/lib/device-capabilities'
+import { isCloudDevice, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import {
+  DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
+import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
+import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { cn } from '@/lib/utils'
+import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -49,8 +56,8 @@ export function WorkspacePanelActions({
   onToggleBottomPanel,
 }: WorkspacePanelActionsProps) {
   const { t } = useTranslation('common')
-  const [codeServerLoading, setCodeServerLoading] = useState(false)
-  const [codeServerError, setCodeServerError] = useState<string | null>(null)
+  const [ideLoading, setIdeLoading] = useState(false)
+  const [ideError, setIdeError] = useState<string | null>(null)
   const showEnvironmentInfo = mode !== 'panel-toggles'
   const showPanelToggles = mode !== 'environment'
   const hasEnvironmentContext = Boolean(
@@ -66,9 +73,26 @@ export function WorkspacePanelActions({
     ? devices.find(device => device.device_id === codeServerProjectDeviceId)
     : undefined
   const codeServerEnabled = Boolean(codeServerDevice && isCloudDevice(codeServerDevice))
-  const codeServerTitle = codeServerEnabled
-    ? t('workbench.open_project_ide')
-    : t('workbench.project_ide_cloud_only_tooltip')
+  const localWorkspacePath =
+    workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
+  const projectUsesLocalWorkspace = Boolean(
+    currentProject &&
+    (currentProject.config?.execution?.targetType === 'local' ||
+      currentProject.config?.workspace?.source === 'local_path')
+  )
+  const localWorkspaceEnabled = Boolean(
+    localWorkspacePath?.trim() &&
+    isLocalTerminalAvailable() &&
+    (projectUsesLocalWorkspace ||
+      (codeServerDevice && supportsLocalTerminalLaunch(codeServerDevice)))
+  )
+  const ideTitle = localWorkspaceEnabled
+    ? t('workbench.open_project_ide_with', {
+        opener: 'VS Code',
+      })
+    : codeServerEnabled
+      ? t('workbench.open_project_ide')
+      : t('workbench.project_ide_cloud_only_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
   const projectApi = useMemo(() => {
@@ -84,9 +108,9 @@ export function WorkspacePanelActions({
   }
 
   const handleOpenCodeServer = async () => {
-    if (!currentProject || codeServerLoading || !codeServerEnabled) return
-    setCodeServerLoading(true)
-    setCodeServerError(null)
+    if (!currentProject || ideLoading || !codeServerEnabled) return
+    setIdeLoading(true)
+    setIdeError(null)
     try {
       const session = await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
@@ -95,9 +119,28 @@ export function WorkspacePanelActions({
       window.open(session.url, '_blank', 'noopener')
     } catch (error) {
       console.error('Failed to start project IDE:', error)
-      setCodeServerError(getStartFailedMessage(error))
+      setIdeError(getStartFailedMessage(error))
     } finally {
-      setCodeServerLoading(false)
+      setIdeLoading(false)
+    }
+  }
+
+  const handleOpenLocalWorkspace = async (
+    opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+  ) => {
+    if (!localWorkspacePath || ideLoading || !localWorkspaceEnabled) return
+    setIdeLoading(true)
+    setIdeError(null)
+    try {
+      await openLocalWorkspace({
+        opener,
+        path: localWorkspacePath,
+      })
+    } catch (error) {
+      console.error('Failed to open local workspace:', error)
+      setIdeError(getStartFailedMessage(error))
+    } finally {
+      setIdeLoading(false)
     }
   }
 
@@ -115,30 +158,66 @@ export function WorkspacePanelActions({
           onOpenChangesReview={onOpenEnvironmentChangesReview}
         />
       )}
-      {showPanelToggles && canOpenCodeServer && (
+      {showPanelToggles && canOpenCodeServer && localWorkspaceEnabled && (
+        <div className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+          <button
+            type="button"
+            data-testid="open-code-server-titlebar-button"
+            onClick={() => void handleOpenLocalWorkspace()}
+            disabled={ideLoading}
+            className={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              'h-7 w-8 rounded-none bg-[#f2f3f5] hover:bg-[#eceef0] active:bg-[#e4e6e8]',
+              ideLoading && 'cursor-wait opacity-70'
+            )}
+            aria-label={t('workbench.open_project_ide_with', {
+              opener: 'VS Code',
+            })}
+            title={ideTitle}
+          >
+            {ideLoading ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <LocalWorkspaceOpenerIcon opener="vscode" className="h-4 w-4" />
+            )}
+          </button>
+          <LocalWorkspaceOpenerPicker
+            ariaLabel={t('workbench.choose_project_ide')}
+            buttonTestId="open-local-workspace-picker-button"
+            menuTestId="open-local-workspace-picker-menu"
+            optionTestIdPrefix="open-local-workspace-option"
+            disabled={ideLoading}
+            buttonClassName={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              'h-7 w-6 rounded-none border-l border-[#e8eaed] bg-[#f7f8f9] hover:bg-[#f0f1f2] active:bg-[#e9ebed] [&_svg]:h-3.5 [&_svg]:w-3.5',
+              ideLoading && 'cursor-wait opacity-70'
+            )}
+            onSelect={handleOpenLocalWorkspace}
+          />
+        </div>
+      )}
+      {showPanelToggles && canOpenCodeServer && !localWorkspaceEnabled && (
         <button
           type="button"
           data-testid="open-code-server-titlebar-button"
           onClick={() => void handleOpenCodeServer()}
-          disabled={codeServerLoading || !codeServerEnabled}
+          disabled={ideLoading || !codeServerEnabled}
           className={cn(
             DESKTOP_TOP_BAR_BUTTON_CLASS,
             !codeServerEnabled && 'cursor-not-allowed opacity-45',
-            codeServerLoading && 'cursor-wait opacity-70'
+            ideLoading && 'cursor-wait opacity-70'
           )}
           aria-label={t('workbench.open_project_ide')}
-          title={codeServerTitle}
+          title={ideTitle}
         >
-          {codeServerLoading ? (
+          {ideLoading ? (
             <Loader2 className="animate-spin" />
           ) : (
-            <Code2 className="text-[#007ACC]" />
+            <LocalWorkspaceOpenerIcon opener="vscode" className="h-[18px] w-[18px]" />
           )}
         </button>
       )}
-      {codeServerError && (
-        <CodeServerErrorDialog message={codeServerError} onClose={() => setCodeServerError(null)} />
-      )}
+      {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {showPanelToggles && (
         <>
           <button
