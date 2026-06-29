@@ -9,10 +9,18 @@ import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 
 const BOTTOM_THRESHOLD = 48
-const STABLE_SCROLL_DELAYS = [0]
+const MAX_CACHED_MESSAGE_PANES = 3
+const STABLE_SCROLL_DELAYS = [0, 50]
+const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
+const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 
 interface ConversationScrollSnapshot {
   scrollTop: number
+  anchorMessageId?: string
+  anchorOffsetTop?: number
+  anchorDocumentTop?: number
+  anchorIndex?: number
+  anchorKind?: 'message' | 'content'
 }
 
 interface RuntimeTranscriptGap {
@@ -52,10 +60,57 @@ interface ScrollableMessageAreaProps {
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
 }
 
+interface ScrollableMessagePaneContentProps extends ScrollableMessageAreaProps {
+  activationVersion: number
+}
+
+interface CachedMessagePane {
+  key: string
+  paneProps: ScrollableMessageAreaProps
+  activationVersion: number
+}
+
+interface MessagePaneCacheState {
+  activeKey: string | null
+  panes: CachedMessagePane[]
+}
+
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
   props: ScrollableMessageAreaProps
 ) {
-  return <ScrollableMessagePaneFrame paneProps={props} />
+  const cacheKey = scrollPositionKey(props.conversationKey)
+  const [paneCache, setPaneCache] = useState<MessagePaneCacheState>({
+    activeKey: null,
+    panes: [],
+  })
+  const renderedPaneCache = useMemo(
+    () =>
+      cacheKey === null
+        ? { activeKey: null, panes: [] }
+        : deriveMessagePaneCache(paneCache, cacheKey, props),
+    [cacheKey, paneCache, props]
+  )
+
+  if (!areMessagePaneCacheStatesEqual(paneCache, renderedPaneCache)) {
+    setPaneCache(renderedPaneCache)
+  }
+
+  if (cacheKey === null) {
+    return <ScrollableMessagePaneFrame paneProps={props} active activationVersion={0} />
+  }
+
+  return (
+    <>
+      {renderedPaneCache.panes.map(({ key: paneKey, paneProps, activationVersion }) => (
+        <ScrollableMessagePaneFrame
+          key={paneKey}
+          paneProps={paneProps}
+          active={paneKey === cacheKey}
+          activationVersion={activationVersion}
+        />
+      ))}
+    </>
+  )
 }, areScrollableMessageAreaPropsEqual)
 
 function areScrollableMessageAreaPropsEqual(
@@ -85,13 +140,72 @@ function areScrollableMessageAreaPropsEqual(
   return changed.length === 0
 }
 
-function ScrollableMessagePaneFrame({ paneProps }: { paneProps: ScrollableMessageAreaProps }) {
+function deriveMessagePaneCache(
+  current: MessagePaneCacheState,
+  activeKey: string,
+  activePaneProps: ScrollableMessageAreaProps
+): MessagePaneCacheState {
+  const existingActivePane = current.panes.find(pane => pane.key === activeKey)
+  const activationVersion =
+    current.activeKey === activeKey
+      ? (existingActivePane?.activationVersion ?? 1)
+      : (existingActivePane?.activationVersion ?? 0) + 1
+  const panes = [
+    ...current.panes.filter(pane => pane.key !== activeKey),
+    {
+      key: activeKey,
+      paneProps: activePaneProps,
+      activationVersion,
+    },
+  ].slice(-MAX_CACHED_MESSAGE_PANES)
+
+  return {
+    activeKey,
+    panes,
+  }
+}
+
+function areMessagePaneCacheStatesEqual(
+  previous: MessagePaneCacheState,
+  next: MessagePaneCacheState
+): boolean {
+  if (previous.activeKey !== next.activeKey || previous.panes.length !== next.panes.length) {
+    return false
+  }
+
+  return previous.panes.every((previousPane, index) => {
+    const nextPane = next.panes[index]
+    return (
+      previousPane.key === nextPane.key &&
+      previousPane.activationVersion === nextPane.activationVersion &&
+      areScrollableMessageAreaPropsEqual(previousPane.paneProps, nextPane.paneProps)
+    )
+  })
+}
+
+function ScrollableMessagePaneFrame({
+  paneProps,
+  active,
+  activationVersion,
+}: {
+  paneProps: ScrollableMessageAreaProps
+  active: boolean
+  activationVersion: number
+}) {
   return (
     <div
-      data-active-conversation-pane="true"
-      className={cn('relative min-h-0 flex-1 bg-background', paneProps.className, 'z-10')}
+      data-active-conversation-pane={active ? 'true' : 'false'}
+      className={cn(
+        'relative min-h-0 flex-1 bg-background',
+        paneProps.className,
+        active ? 'z-10' : 'hidden'
+      )}
     >
-      <MemoizedScrollableMessagePaneContent {...paneProps} className="h-full" />
+      <MemoizedScrollableMessagePaneContent
+        {...paneProps}
+        activationVersion={activationVersion}
+        className="h-full"
+      />
     </div>
   )
 }
@@ -118,13 +232,15 @@ function ScrollableMessagePaneContent({
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
-}: ScrollableMessageAreaProps) {
+  activationVersion,
+}: ScrollableMessagePaneContentProps) {
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const turnNavigationLoadingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
+  const previousActivationVersionRef = useRef<number | null>(null)
   const previousLastMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
@@ -244,8 +360,12 @@ function ScrollableMessagePaneContent({
   const saveCurrentScrollPosition = useCallback(
     (scrollTop?: number) => {
       const element = scrollRef.current
+      const content = contentRef.current
       if (!element || currentScrollKey === null || messages.length === 0) return
-      conversationScrollSnapshots.set(currentScrollKey, createScrollSnapshot(element, scrollTop))
+      conversationScrollSnapshots.set(
+        currentScrollKey,
+        createScrollSnapshot(element, content, scrollTop)
+      )
     },
     [currentScrollKey, messages.length]
   )
@@ -304,6 +424,7 @@ function ScrollableMessagePaneContent({
   const restoreSavedScrollPosition = useCallback(
     (key: string, options: { clearScheduled?: boolean } = {}) => {
       const element = scrollRef.current
+      const content = contentRef.current
       const savedSnapshot = conversationScrollSnapshots.get(key)
       if (!element || !savedSnapshot) return
 
@@ -311,7 +432,10 @@ function ScrollableMessagePaneContent({
         clearScheduledScrolls()
       }
       const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-      const nextScrollTop = Math.min(getRestoredScrollTop(savedSnapshot), maxScrollTop)
+      const nextScrollTop = Math.min(
+        getRestoredScrollTop(element, content, savedSnapshot),
+        maxScrollTop
+      )
       applyingSavedScrollRef.current = true
       if (typeof element.scrollTo === 'function') {
         element.scrollTo({
@@ -395,21 +519,24 @@ function ScrollableMessagePaneContent({
 
   useLayoutEffect(() => {
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
+    const activationChanged = previousActivationVersionRef.current !== activationVersion
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
-      (conversationChanged || messagesLoaded) &&
+      (conversationChanged || activationChanged || messagesLoaded) &&
       conversationScrollSnapshots.has(currentScrollKey)
     )
     const shouldForceBottom =
       !shouldRestoreScroll &&
       (conversationChanged ||
+        activationChanged ||
         messagesLoaded ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
+    previousActivationVersionRef.current = activationVersion
     previousLastMessageIdRef.current = lastMessage?.id ?? null
     previousMessageCountRef.current = messages.length
 
@@ -433,6 +560,7 @@ function ScrollableMessagePaneContent({
     }
   }, [
     conversationKey,
+    activationVersion,
     currentScrollKey,
     clearScheduledScrolls,
     isTurnNavigationAutoScrollSuspended,
@@ -629,8 +757,18 @@ function ScrollableMessagePaneContent({
 
 const MemoizedScrollableMessagePaneContent = memo(
   ScrollableMessagePaneContent,
-  areScrollableMessageAreaPropsEqual
+  areScrollableMessagePaneContentPropsEqual
 )
+
+function areScrollableMessagePaneContentPropsEqual(
+  previous: ScrollableMessagePaneContentProps,
+  next: ScrollableMessagePaneContentProps
+): boolean {
+  return (
+    previous.activationVersion === next.activationVersion &&
+    areScrollableMessageAreaPropsEqual(previous, next)
+  )
+}
 
 function scrollPositionKey(conversationKey: string | number | null | undefined): string | null {
   return conversationKey == null ? null : String(conversationKey)
@@ -638,15 +776,121 @@ function scrollPositionKey(conversationKey: string | number | null | undefined):
 
 function createScrollSnapshot(
   scroller: HTMLElement,
+  content: HTMLElement | null,
   scrollTop?: number
 ): ConversationScrollSnapshot {
-  return {
+  const snapshot: ConversationScrollSnapshot = {
     scrollTop: scrollTop ?? scroller.scrollTop,
   }
+  if (scrollTop !== undefined || !content) return snapshot
+
+  const anchor = findTopVisibleMessageAnchor(scroller, content)
+  if (!anchor) return snapshot
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor.getBoundingClientRect()
+  const message = anchor.matches(MESSAGE_ANCHOR_SELECTOR)
+    ? anchor
+    : anchor.closest<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)
+  const messageId = message?.dataset.messageId
+  if (!messageId) return snapshot
+
+  snapshot.anchorMessageId = messageId
+  snapshot.anchorOffsetTop = anchorRect.top - scrollerRect.top
+  snapshot.anchorDocumentTop = snapshot.scrollTop + snapshot.anchorOffsetTop
+  snapshot.anchorKind = anchor.matches(SCROLL_ANCHOR_SELECTOR) ? 'content' : 'message'
+  if (message && snapshot.anchorKind === 'content') {
+    snapshot.anchorIndex = getMessageScrollAnchors(message).indexOf(anchor)
+  }
+  return snapshot
 }
 
-function getRestoredScrollTop(snapshot: ConversationScrollSnapshot): number {
-  return Math.max(0, snapshot.scrollTop)
+function getRestoredScrollTop(
+  scroller: HTMLElement,
+  content: HTMLElement | null,
+  snapshot: ConversationScrollSnapshot
+): number {
+  if (!content || !snapshot.anchorMessageId || snapshot.anchorOffsetTop === undefined) {
+    return Math.max(0, snapshot.scrollTop)
+  }
+
+  const anchor = findSavedAnchor(content, snapshot)
+  if (!anchor || !hasMeasurableRect(anchor)) {
+    return Math.max(0, snapshot.scrollTop)
+  }
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor.getBoundingClientRect()
+  const currentAnchorOffsetTop = anchorRect.top - scrollerRect.top
+  if (snapshot.anchorDocumentTop !== undefined) {
+    const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
+    return Math.max(0, snapshot.scrollTop + currentAnchorDocumentTop - snapshot.anchorDocumentTop)
+  }
+
+  return Math.max(0, scroller.scrollTop + currentAnchorOffsetTop - snapshot.anchorOffsetTop)
+}
+
+function findTopVisibleMessageAnchor(
+  scroller: HTMLElement,
+  content: HTMLElement
+): HTMLElement | null {
+  return (
+    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(SCROLL_ANCHOR_SELECTOR))) ??
+    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(MESSAGE_ANCHOR_SELECTOR)))
+  )
+}
+
+function findTopVisibleAnchor(scroller: HTMLElement, anchors: Element[]): HTMLElement | null {
+  const scrollerRect = scroller.getBoundingClientRect()
+  let nearestAnchor: HTMLElement | null = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (const anchor of anchors) {
+    if (!(anchor instanceof HTMLElement)) continue
+    if (!hasMeasurableRect(anchor)) continue
+
+    const rect = anchor.getBoundingClientRect()
+    if (rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom) {
+      return anchor
+    }
+
+    const distance = Math.abs(rect.top - scrollerRect.top)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestAnchor = anchor
+    }
+  }
+
+  return nearestAnchor
+}
+
+function findSavedAnchor(
+  content: HTMLElement,
+  snapshot: ConversationScrollSnapshot
+): HTMLElement | null {
+  const message = findMessageAnchorById(content, snapshot.anchorMessageId ?? '')
+  if (!message) return null
+  if (snapshot.anchorKind !== 'content' || snapshot.anchorIndex === undefined) return message
+
+  return getMessageScrollAnchors(message)[snapshot.anchorIndex] ?? message
+}
+
+function findMessageAnchorById(content: HTMLElement, messageId: string): HTMLElement | null {
+  if (!messageId) return null
+  return (
+    Array.from(content.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)).find(
+      anchor => anchor.dataset.messageId === messageId
+    ) ?? null
+  )
+}
+
+function getMessageScrollAnchors(message: HTMLElement): HTMLElement[] {
+  return Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
+}
+
+function hasMeasurableRect(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect()
+  return rect.bottom > rect.top
 }
 
 function RuntimeTranscriptGapMarker({

@@ -71,7 +71,7 @@ export function DesktopWorkbenchLayout() {
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
   } = useWorkbench()
   const activeItem = 'chat'
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -115,12 +115,6 @@ export function DesktopWorkbenchLayout() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
-
-  useEffect(() => {
-    if (settingsOpen && autoOpenAddCloudDeviceDialog) {
-      setAutoOpenAddCloudDeviceDialog(false)
-    }
-  }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
@@ -193,9 +187,11 @@ export function DesktopWorkbenchLayout() {
     return settings
   }, [onGetImNotificationSettings])
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Initial IM notification settings are hydrated from the connected workbench service. */
   useEffect(() => {
     void refreshImNotificationSettings().catch(() => undefined)
   }, [refreshImNotificationSettings])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {

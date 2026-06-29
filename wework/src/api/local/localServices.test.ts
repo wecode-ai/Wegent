@@ -388,6 +388,7 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
       address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
       message: 'continue',
+      message_id: expect.any(Number),
       modelId: 'gpt-5.5',
     })
   })
