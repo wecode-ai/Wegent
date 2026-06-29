@@ -520,8 +520,8 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
     """Pods returned by K8s that have no subtask rows should be deleted."""
     job_service_instance = JobService(Mock())
     old_pods = [
-        {"task_id": "500", "pod_name": "wegent-task-500-xyz"},
-        {"task_id": "501", "pod_name": "wegent-task-501-abc"},
+        {"task_id": "1001", "pod_name": "wegent-task-1001-xyz"},
+        {"task_id": "1002", "pod_name": "wegent-task-1002-abc"},
     ]
 
     with (
@@ -533,8 +533,8 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
             "_cleanup_orphan_pod",
             new_callable=AsyncMock,
             return_value={
-                "task_id": 500,
-                "pod_name": "wegent-task-500-xyz",
+                "task_id": 1001,
+                "pod_name": "wegent-task-1001-xyz",
                 "deleted": True,
                 "skipped": False,
                 "reason": "pod_deleted",
@@ -552,13 +552,13 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
 
     assert result["total_scanned"] == 2
     assert len(result["deleted"]) == 1
-    assert result["deleted"][0]["task_id"] == 500
-    assert result["skipped"][0]["task_id"] == 501
+    assert result["deleted"][0]["task_id"] == 1001
+    assert result["skipped"][0]["task_id"] == 1002
     assert result["skipped"][0]["reason"] == "has_subtask_records"
     mock_cleanup.assert_awaited_once()
     call_kwargs = mock_cleanup.call_args.kwargs
-    assert call_kwargs["task_id"] == 500
-    assert call_kwargs["pod_name"] == "wegent-task-500-xyz"
+    assert call_kwargs["task_id"] == 1001
+    assert call_kwargs["pod_name"] == "wegent-task-1001-xyz"
     assert call_kwargs["inactive_hours"] == 24  # stale_hours default
 
 
@@ -567,7 +567,7 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
 async def test_cleanup_orphan_pods_dry_run_skips_deletion():
     """dry_run=True should skip all deletions and report them as dry_run skips."""
     job_service_instance = JobService(Mock())
-    old_pods = [{"task_id": "600", "pod_name": "wegent-task-600-dry"}]
+    old_pods = [{"task_id": "1200", "pod_name": "wegent-task-1200-dry"}]
 
     with (
         patch(
@@ -593,7 +593,7 @@ async def test_cleanup_orphan_pods_dry_run_skips_deletion():
 
     assert result["total_scanned"] == 1
     assert result["deleted"] == []
-    assert result["skipped"][0]["task_id"] == 600
+    assert result["skipped"][0]["task_id"] == 1200
     assert result["skipped"][0]["reason"] == "dry_run"
     mock_cleanup.assert_not_called()
 
@@ -603,7 +603,7 @@ async def test_cleanup_orphan_pods_dry_run_skips_deletion():
 async def test_cleanup_orphan_pods_pod_already_gone():
     """When direct pod delete returns not_found, report as failed (delete_failed)."""
     job_service_instance = JobService(Mock())
-    old_pods = [{"task_id": "700", "pod_name": "wegent-task-700-gone"}]
+    old_pods = [{"task_id": "1100", "pod_name": "wegent-task-1100-gone"}]
 
     with (
         patch(
@@ -620,8 +620,8 @@ async def test_cleanup_orphan_pods_pod_already_gone():
             "_cleanup_orphan_pod",
             new_callable=AsyncMock,
             return_value={
-                "task_id": 700,
-                "pod_name": "wegent-task-700-gone",
+                "task_id": 1100,
+                "pod_name": "wegent-task-1100-gone",
                 "deleted": False,
                 "skipped": False,
                 "reason": "delete_failed",
@@ -635,7 +635,7 @@ async def test_cleanup_orphan_pods_pod_already_gone():
         )
 
     assert result["deleted"] == []
-    assert result["failed"][0]["task_id"] == 700
+    assert result["failed"][0]["task_id"] == 1100
     assert result["failed"][0]["reason"] == "delete_failed"
 
 
@@ -662,27 +662,14 @@ async def test_cleanup_orphan_pods_empty_k8s_response():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_no_task_id_deletes_directly():
-    """Pods without a task_id label should be deleted directly by pod_name."""
+async def test_cleanup_orphan_pods_no_task_id_skipped():
+    """Pods without a task_id label must be skipped, mirroring cleanup_stale_tasks.sh."""
     job_service_instance = JobService(Mock())
     old_pods = [{"task_id": None, "pod_name": "sandbox-unlabeled-xyz"}]
 
-    with (
-        patch(
-            "app.services.adapters.executor_job.executor_kinds_service"
-        ) as executor_service,
-        patch.object(
-            job_service_instance,
-            "_cleanup_orphan_pod_no_task_id",
-            new_callable=AsyncMock,
-            return_value={
-                "pod_name": "sandbox-unlabeled-xyz",
-                "deleted": True,
-                "skipped": False,
-                "reason": "pod_deleted",
-            },
-        ) as mock_direct,
-    ):
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as executor_service:
         executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
 
         result = await job_service_instance.cleanup_orphan_pods(
@@ -690,6 +677,33 @@ async def test_cleanup_orphan_pods_no_task_id_deletes_directly():
         )
 
     assert result["total_scanned"] == 1
-    assert len(result["deleted"]) == 1
-    assert result["deleted"][0]["pod_name"] == "sandbox-unlabeled-xyz"
-    mock_direct.assert_awaited_once_with(pod_name="sandbox-unlabeled-xyz")
+    assert result["deleted"] == []
+    assert result["failed"] == []
+    assert result["skipped"][0]["pod_name"] == "sandbox-unlabeled-xyz"
+    assert result["skipped"][0]["reason"] == "no_task_id"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_task_id_below_threshold_skipped():
+    """Pods with task_id <= 1000 must be skipped, mirroring awk '$1+0 > 1000' in delete_notfound_pods.sh."""
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "500", "pod_name": "wegent-task-500-lowid"},
+        {"task_id": "1000", "pod_name": "wegent-task-1000-boundary"},
+    ]
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as executor_service:
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 2
+    assert result["deleted"] == []
+    assert result["failed"] == []
+    assert len(result["skipped"]) == 2
+    assert all(s["reason"] == "task_id_below_threshold" for s in result["skipped"])

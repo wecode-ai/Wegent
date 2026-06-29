@@ -24,3 +24,6 @@ ORPHAN_POD_CLEANUP_INTERVAL_SECONDS = int(
 )
 ORPHAN_POD_MIN_AGE_HOURS = int(os.getenv("ORPHAN_POD_MIN_AGE_HOURS", "48"))
 ORPHAN_POD_CLEANUP_STALE_HOURS = int(os.getenv("ORPHAN_POD_CLEANUP_STALE_HOURS", "24"))
+# Mirrors the awk '$1+0 > 1000' guard in delete_notfound_pods.sh: skip pods whose
+# task_id label is missing or not a valid integer above this threshold.
+ORPHAN_POD_MIN_TASK_ID = int(os.getenv("ORPHAN_POD_MIN_TASK_ID", "1000"))

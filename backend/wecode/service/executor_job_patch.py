@@ -122,47 +122,6 @@ async def _cleanup_orphan_pod(
     }
 
 
-async def _cleanup_orphan_pod_no_task_id(
-    self,
-    *,
-    pod_name: str,
-) -> Dict[str, object]:
-    """Delete an orphan pod that has no task_id label at all.
-
-    These pods can't be looked up via the cleanup API, so we go straight
-    to direct K8s deletion by pod name.
-    """
-    ek_service = _executor_job_mod.executor_kinds_service
-    try:
-        result = await ek_service.delete_pod_by_name_async(pod_name)
-    except Exception as exc:
-        logger.warning(
-            "[executor_job] Failed to delete unlabeled orphan pod pod_name=%s error=%s",
-            pod_name,
-            exc,
-        )
-        return {
-            "pod_name": pod_name,
-            "deleted": False,
-            "skipped": False,
-            "reason": "delete_failed",
-        }
-
-    k8s_status = result.get("status")
-    deleted = k8s_status in ("success", "not_found")
-    logger.info(
-        "[executor_job] Deleted unlabeled orphan pod pod_name=%s k8s_status=%s",
-        pod_name,
-        k8s_status,
-    )
-    return {
-        "pod_name": pod_name,
-        "deleted": deleted,
-        "skipped": False,
-        "reason": "pod_deleted" if deleted else "delete_failed",
-    }
-
-
 async def cleanup_orphan_pods(
     self,
     db,
@@ -175,15 +134,18 @@ async def cleanup_orphan_pods(
 
     Mirrors the pod_delete/ pipeline:
     1. get_old_pods_async: list old pods by name pattern (wegent-task|sandbox)
-    2. For each pod with a valid task_id and no DB records:
+    2. For each pod with a valid task_id > ORPHAN_POD_MIN_TASK_ID and no DB records:
        - call cleanup_stale_task_executor with stale_hours (matches script INACTIVE_HOURS=24)
        - if executor_not_found, delete K8s pod by name directly
-    3. For pods with no task_id label: delete directly by pod_name
+    3. Pods with no task_id label or task_id <= threshold are skipped entirely,
+       matching the original scripts' awk '$1+0 > 1000' guard.
 
     Args:
         older_than_hours: minimum pod age to scan (default 48h = 2 days)
         stale_hours: inactive_hours passed to cleanup_stale_task_executor (default 24h)
     """
+    from wecode.config.orphan_pod_config import ORPHAN_POD_MIN_TASK_ID
+
     result: Dict[str, Any] = {
         "target": "orphan_pods",
         "older_than_hours": older_than_hours,
@@ -209,15 +171,9 @@ async def cleanup_orphan_pods(
         if not pod_name:
             continue
 
-        # Pods without a task_id label go straight to direct deletion
+        # Mirrors cleanup_stale_tasks.sh: skip pods with no task_id label
         if not task_id_str:
-            if dry_run:
-                result["skipped"].append({"pod_name": pod_name, "reason": "dry_run"})
-                continue
-            cleanup_result = await self._cleanup_orphan_pod_no_task_id(
-                pod_name=pod_name
-            )
-            _append_pod_result(result, cleanup_result, task_id=None)
+            result["skipped"].append({"pod_name": pod_name, "reason": "no_task_id"})
             continue
 
         try:
@@ -225,6 +181,20 @@ async def cleanup_orphan_pods(
         except (ValueError, TypeError):
             logger.warning(
                 "[executor_job] Invalid task_id from K8s label: %s", task_id_str
+            )
+            result["skipped"].append(
+                {"pod_name": pod_name, "reason": "invalid_task_id"}
+            )
+            continue
+
+        # Mirrors delete_notfound_pods.sh: awk '$1+0 > 1000' guard
+        if task_id <= ORPHAN_POD_MIN_TASK_ID:
+            result["skipped"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "task_id_below_threshold",
+                }
             )
             continue
 
@@ -349,7 +319,6 @@ def apply_patch():
     _original_cleanup_stale_task_executor = JobService.cleanup_stale_task_executor
 
     JobService._cleanup_orphan_pod = _cleanup_orphan_pod
-    JobService._cleanup_orphan_pod_no_task_id = _cleanup_orphan_pod_no_task_id
     JobService.cleanup_orphan_pods = cleanup_orphan_pods
     JobService.cleanup_stale_task_executor = _cleanup_stale_task_executor_wecode
 
