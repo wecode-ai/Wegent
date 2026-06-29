@@ -620,8 +620,8 @@ async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_threa
                     "runtime": "codex",
                     "status": "running",
                     "running": true,
-                    "created_at": 1780000000000_i64,
-                    "updated_at": 1780000030000_i64,
+                    "created_at": 4102444800000_i64,
+                    "updated_at": 4102444800000_i64,
                     "runtime_handle": {},
                     "parent": null
                 }
@@ -648,7 +648,7 @@ async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_threa
 }
 
 #[tokio::test]
-async fn runtime_task_list_drops_stale_unmapped_pending_codex_tasks() {
+async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-pending-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -666,16 +666,16 @@ async fn runtime_task_list_drops_stale_unmapped_pending_codex_tasks() {
         serde_json::to_vec_pretty(&json!({
             "version": 1,
             "tasks": {
-                "stale-pending": {
-                    "local_task_id": "stale-pending",
+                "unmapped-pending": {
+                    "local_task_id": "unmapped-pending",
                     "thread_id": null,
                     "workspace_path": "/repo/Wegent",
-                    "title": "Stale pending task",
+                    "title": "Unmapped pending task",
                     "runtime": "codex",
                     "status": "running",
                     "running": true,
-                    "created_at": 1780000000000_i64,
-                    "updated_at": 1780000000000_i64,
+                    "created_at": 4102444800000_i64,
+                    "updated_at": 4102444800000_i64,
                     "runtime_handle": {},
                     "parent": null
                 }
@@ -695,7 +695,11 @@ async fn runtime_task_list_drops_stale_unmapped_pending_codex_tasks() {
         .await
         .expect("task list should succeed");
 
-    assert_eq!(listed, json!({"success": true, "workspaces": []}));
+    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["localTaskId"], "unmapped-pending");
+    assert_eq!(tasks[0]["status"], "active");
+    assert_eq!(tasks[0]["running"], false);
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

@@ -91,10 +91,7 @@ impl RuntimeTaskLink {
         } else {
             thread_status(thread)
         };
-        let local_running = local_link.as_ref().is_some_and(|link| link.running);
-        let running = !local_archived
-            && local_terminal_status.is_none()
-            && (local_running || thread_running(thread));
+        let running = !local_archived && local_terminal_status.is_none() && thread_running(thread);
         Self {
             local_task_id: local_link
                 .as_ref()

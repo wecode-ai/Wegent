@@ -57,7 +57,6 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
-const UNMAPPED_PENDING_TASK_STALE_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
@@ -65,6 +64,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_binary: String,
     codex_app_server: CodexAppServerClient,
     event_tx: Option<broadcast::Sender<Value>>,
+    active_local_tasks: Arc<Mutex<HashSet<String>>>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
@@ -78,6 +78,7 @@ impl RuntimeWorkRpcHandler {
             codex_binary: codex_binary.clone(),
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
+            active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
@@ -878,6 +879,7 @@ impl RuntimeWorkRpcHandler {
         }
         log_executor_event("runtime work turn spawning", &fields);
 
+        self.mark_active_local_task(&local_task_id);
         let handler = self.clone();
         tokio::spawn(async move {
             emit_response_event(
@@ -1062,8 +1064,8 @@ impl RuntimeWorkRpcHandler {
             if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
-            if is_stale_unmapped_pending_codex_task(&link, now_ms()) {
-                continue;
+            if !self.is_active_local_task(&link.local_task_id) {
+                normalize_unmapped_pending_codex_task(&mut link);
             }
             link.list_order = Some(links.len());
             links.push(link);
@@ -1353,6 +1355,27 @@ impl RuntimeWorkRpcHandler {
         self.thread_list_cache.invalidate();
     }
 
+    fn mark_active_local_task(&self, local_task_id: &str) {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .insert(local_task_id.to_owned());
+    }
+
+    fn unmark_active_local_task(&self, local_task_id: &str) {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
+    fn is_active_local_task(&self, local_task_id: &str) -> bool {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .contains(local_task_id)
+    }
+
     fn finish_local_task(&self, local_task_id: &str, thread_id: Option<String>, status: &str) {
         let invalidate_thread_id = thread_id.clone();
         self.store.update_task(local_task_id, |link| {
@@ -1370,6 +1393,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(thread_id) = invalidate_thread_id {
             self.transcript_cache.invalidate(&thread_id);
         }
+        if status != "running" {
+            self.unmark_active_local_task(local_task_id);
+        }
         self.thread_list_cache.invalidate();
     }
 }
@@ -1384,9 +1410,12 @@ fn is_unmapped_pending_codex_shadow(
             .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
 }
 
-fn is_stale_unmapped_pending_codex_task(link: &RuntimeTaskLink, now_ms: i64) -> bool {
-    is_unmapped_pending_codex_task(link)
-        && now_ms.saturating_sub(link.updated_at) > UNMAPPED_PENDING_TASK_STALE_MS
+fn normalize_unmapped_pending_codex_task(link: &mut RuntimeTaskLink) {
+    if !is_unmapped_pending_codex_task(link) {
+        return;
+    }
+    link.status = "active".to_owned();
+    link.running = false;
 }
 
 fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
