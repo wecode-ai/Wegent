@@ -927,6 +927,54 @@ describe('DesktopSidebar', () => {
     expect(markButton).toHaveAttribute('aria-label', '标记任务')
   })
 
+  test('reserves runtime task hover actions without padding the truncated title', async () => {
+    const user = userEvent.setup()
+    const taskTitle = '修复进行中任务未显示 tool 调用'
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: taskTitle,
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-item-button'))
+
+    const title = screen.getByText(taskTitle)
+    const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
+    const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
+
+    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(title).not.toHaveClass('group-hover/task:pr-20')
+    expect(trailing).toHaveClass('min-w-[28px]', 'group-hover/task:w-[78px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[78px]')
+  })
+
   test('moves pinned runtime tasks to the top of the project task list', async () => {
     const user = userEvent.setup()
 
