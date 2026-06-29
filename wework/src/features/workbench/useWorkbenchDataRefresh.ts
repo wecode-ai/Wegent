@@ -41,11 +41,13 @@ export function useWorkbenchDataRefresh({
   const [cloudWorkStatus, setCloudWorkStatus] = useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
   const runtimeWorkRefreshInFlightRef = useRef(false)
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Cloud work status mirrors service availability and must reset when the service is removed. */
   useEffect(() => {
     if (!services.cloudBackgroundApi) {
       setCloudWorkStatus(EMPTY_CLOUD_WORK_STATUS)
     }
   }, [services.cloudBackgroundApi])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const refreshCloudBackgroundData = useCallback(
     async (

@@ -82,15 +82,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       key: runtimeTranscriptPaneKey(currentRuntimeTask),
       address: currentRuntimeTask,
     }
-  }, [
-    currentRuntimeTask?.deviceId,
-    currentRuntimeTask?.localTaskId,
-    currentRuntimeTask?.workspacePath,
-  ])
+  }, [currentRuntimeTask])
   const activeAssistantMessage = useMemo(() => findActiveAssistantMessage(messages), [messages])
   const hasActiveAssistant = Boolean(activeAssistantMessage)
   const busy = sending || waitingForAssistant || hasActiveAssistant
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
@@ -176,7 +173,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       cancelled = true
     }
   }, [runtimeTaskLoadTarget])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       return
@@ -360,6 +359,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
     })
   }, [busy, currentRuntimeTask, queuedMessages, sendRuntimeMessage])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const send = useCallback(async () => {
     const submittedInput = input.trim()

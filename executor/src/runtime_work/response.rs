@@ -233,11 +233,10 @@ pub(crate) fn workspace_response(
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => right.2.cmp(&left.2).then_with(|| left.3.cmp(&right.3)),
     });
-    let workspaces = workspaces
+    workspaces
         .into_iter()
         .map(|(workspace, _, _, _)| workspace)
-        .collect::<Vec<_>>();
-    workspaces
+        .collect::<Vec<_>>()
 }
 
 pub(crate) fn archived_conversations_response(

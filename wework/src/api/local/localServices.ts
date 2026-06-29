@@ -1,4 +1,4 @@
-import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import type {
   ArchivedConversationsListRequest,

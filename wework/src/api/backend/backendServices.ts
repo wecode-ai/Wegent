@@ -12,7 +12,7 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
-import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
 

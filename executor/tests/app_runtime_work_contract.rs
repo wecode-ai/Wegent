@@ -531,7 +531,14 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         }))
         .await
         .expect("runtime transcript should succeed");
-    let blocks = transcript["messages"][1]["blocks"]
+    let messages = transcript["messages"]
+        .as_array()
+        .expect("transcript messages should exist");
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant" && message["subtaskId"] == 92)
+        .expect("assistant message should exist");
+    let blocks = assistant["blocks"]
         .as_array()
         .expect("assistant blocks should exist");
     let tool_block = blocks
@@ -539,12 +546,12 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         .find(|block| block["status"] == "done" && block["tool_output"] == "ok\n")
         .expect("running task transcript should include cached tool block");
 
-    assert_eq!(transcript["messages"][1]["role"], "assistant");
-    assert_eq!(transcript["messages"][1]["subtaskId"], 92);
-    assert_eq!(transcript["messages"][1]["status"], "streaming");
-    assert_eq!(transcript["messages"][1]["content"], "done");
-    assert!(transcript["messages"][1].get("completedAt").is_none());
-    assert!(transcript["messages"][1].get("fileChanges").is_none());
+    assert_eq!(assistant["role"], "assistant");
+    assert_eq!(assistant["subtaskId"], 92);
+    assert_eq!(assistant["status"], "streaming");
+    assert_eq!(assistant["content"], "done");
+    assert!(assistant.get("completedAt").is_none());
+    assert!(assistant.get("fileChanges").is_none());
     assert_eq!(blocks[0]["type"], "thinking");
     assert_eq!(blocks[0]["content"], "checking context");
     assert_eq!(blocks[0]["status"], "done");

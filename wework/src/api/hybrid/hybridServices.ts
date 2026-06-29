@@ -1,7 +1,7 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices } from '@/api/local/localServices'
-import type { WorkbenchServices } from '@/features/workbench/WorkbenchProvider'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import {

@@ -86,7 +86,7 @@ export function MessageTurnNavigation({
 
       let activeMarker = loadedMarkers[0]
       for (const marker of loadedMarkers) {
-        if (marker.targetTop <= currentPosition) {
+        if (marker.targetTop !== null && marker.targetTop <= currentPosition) {
           activeMarker = marker
         } else {
           break
@@ -243,7 +243,7 @@ export function MessageTurnNavigation({
             finishNavigationLoad(onNavigationLoadStateChange)
           }
         }
-        scrollToMessageAnchor(scroller, currentAnchor)
+        scrollToMessageAnchor(scroller, currentAnchor, 'smooth')
         setActiveMarkerId(marker.id)
         return
       }
@@ -527,12 +527,21 @@ function scrollToMarkerTarget(
   })
 }
 
-function scrollToMessageAnchor(scroller: HTMLDivElement, anchor: HTMLElement) {
+function scrollToMessageAnchor(
+  scroller: HTMLDivElement,
+  anchor: HTMLElement,
+  behavior: ScrollBehavior = 'auto'
+) {
+  if (behavior === 'smooth') {
+    scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, anchor), behavior)
+    return
+  }
+
   if (typeof anchor.scrollIntoView === 'function') {
     anchor.scrollIntoView({
       block: 'start',
       inline: 'nearest',
-      behavior: 'auto',
+      behavior,
     })
     scroller.scrollTop = Math.max(0, scroller.scrollTop - SCROLL_OFFSET_PX)
     return

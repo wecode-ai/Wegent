@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/refs -- Inactive workbench panes are intentionally cached in refs so their local UI state survives pane switches. */
+/* eslint-disable react-refresh/only-export-components -- The stack exports pane identity helpers used by layout modules. */
 import { createContext, memo, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { cn } from '@/lib/utils'

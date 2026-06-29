@@ -197,6 +197,7 @@ export function AttachmentImagePreview({
   const currentLightboxAttachment = gallery[clampIndex(lightboxIndex, gallery.length)] ?? attachment
   const canNavigateLightbox = gallery.length > 1
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Attachment identity changes must clear stale preview UI before loading the next image. */
   useEffect(() => {
     setShouldLoadPreview(false)
     setPreviewUrl(null)
@@ -205,6 +206,7 @@ export function AttachmentImagePreview({
     setLightboxUrl(null)
     setZoom(1)
   }, [previewIdentity])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (shouldLoadPreview) return undefined
@@ -249,7 +251,7 @@ export function AttachmentImagePreview({
         } else if (objectUrl) {
           URL.revokeObjectURL(objectUrl)
         }
-      } catch (error) {
+      } catch {
         if (isMounted) {
           rememberFailedAttachmentPreview(attachment)
           setHasError(true)
