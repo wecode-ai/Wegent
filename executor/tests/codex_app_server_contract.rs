@@ -432,6 +432,34 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
     );
 }
 
+#[tokio::test]
+async fn codex_app_server_engine_reports_nested_turn_error_details() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_nested_turn_error();
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message:
+                "Reconnecting... 2/5: stream disconnected before completion: tls handshake eof"
+                    .to_owned()
+        }
+    );
+}
+
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().await
@@ -563,6 +591,44 @@ fn write_fake_codex_hang() -> PathBuf {
         r#"#!/bin/sh
 while IFS= read -r _line; do
   sleep 30
+done
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_nested_turn_error() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-nested-turn-error-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{"protocolVersion":1}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
+      printf '%s\n' '{"method":"error","params":{"error":{"additionalDetails":"stream disconnected before completion: tls handshake eof","message":"Reconnecting... 2/5"},"threadId":"thread-1","turnId":"turn-1","willRetry":true}}'
+      exit 0
+      ;;
+  esac
 done
 "#,
     )
