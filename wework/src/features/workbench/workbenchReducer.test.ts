@@ -451,6 +451,87 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('drops an optimistic runtime task when refresh returns it in a different workspace kind', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/workspace/repo',
+                    title: 'Create cloud config',
+                    runtime: 'codex',
+                    status: 'creating',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo/.worktrees/codex-1',
+                workspaceKind: 'worktree',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/workspace/repo/.worktrees/codex-1',
+                    title: 'Create cloud config',
+                    runtime: 'codex',
+                    running: true,
+                    status: 'running',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    const taskItems =
+      refreshed.runtimeWork?.projects.flatMap(project =>
+        project.deviceWorkspaces.flatMap(workspace => workspace.localTasks)
+      ) ?? []
+
+    expect(taskItems.map(task => task.localTaskId)).toEqual(['codex-1'])
+    expect(taskItems[0]).toMatchObject({
+      workspacePath: '/workspace/repo/.worktrees/codex-1',
+      status: 'running',
+    })
+    expect(refreshed.runtimeWork?.totalLocalTasks).toBe(1)
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

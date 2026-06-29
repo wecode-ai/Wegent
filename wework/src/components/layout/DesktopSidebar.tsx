@@ -18,7 +18,12 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type {
+  KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEventHandler,
+  ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
@@ -80,6 +85,12 @@ interface DesktopSidebarProps {
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'automation'
   collapsed?: boolean
+  containerTestId?: string
+  hideResizeHandle?: boolean
+  onResizeCollapse?: () => void
+  onResizeStateChange?: (resizing: boolean) => void
+  onPointerEnter?: PointerEventHandler<HTMLElement>
+  onPointerLeave?: PointerEventHandler<HTMLElement>
   onNewChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
@@ -465,7 +476,7 @@ function SidebarSectionHeader({
       </button>
       <div
         data-testid={`${toggleTestId}-actions`}
-        className="pointer-events-none invisible absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:visible group-hover/section:opacity-100 focus-within:pointer-events-auto focus-within:visible focus-within:opacity-100"
+        className="pointer-events-none absolute right-2.5 top-1/2 z-[70] flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
       >
         {children}
       </div>
@@ -1152,7 +1163,7 @@ function RuntimeLocalTaskRow({
           </span>
           <span
             data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
-            className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
+            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
@@ -1374,7 +1385,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-[58px] text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
@@ -1383,7 +1394,7 @@ function ProjectItem({
             onToggleProject(project.id)
           }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 pr-1 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
           <ProjectFolderIcon
             project={project}
@@ -1401,7 +1412,7 @@ function ProjectItem({
             />
           )}
         </button>
-        <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
+        <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
           <ActionMenu
             ariaLabel={t('workbench.project_actions', '项目操作')}
             testId={`project-menu-${project.id}`}
@@ -1433,6 +1444,7 @@ function ProjectItem({
                 },
               },
             ]}
+            triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
           />
           <button
             type="button"
@@ -1558,9 +1570,18 @@ export function DesktopSidebar({
   onRefreshWorkLists,
   onLogout,
   collapsed = false,
+  containerTestId = 'desktop-sidebar',
+  hideResizeHandle = false,
+  onResizeCollapse,
+  onResizeStateChange,
+  onPointerEnter,
+  onPointerLeave,
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
-  const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
+    onCollapse: onResizeCollapse,
+    onResizeStateChange,
+  })
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
 
   const storageScope = getDesktopSidebarStorageScope(user)
@@ -1840,19 +1861,19 @@ export function DesktopSidebar({
 
   return (
     <aside
-      data-testid="desktop-sidebar"
+      data-testid={containerTestId}
       aria-hidden={collapsed}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
       className={cn(
-        'relative shrink-0 overflow-hidden bg-transparent transition-[width,opacity] duration-[220ms] ease-out motion-reduce:transition-none',
-        collapsed ? 'pointer-events-none opacity-0' : 'opacity-100'
+        'relative z-popover shrink-0 overflow-hidden bg-transparent transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        resizing && 'transition-none',
+        collapsed && 'pointer-events-none'
       )}
       style={{ width: collapsed ? 0 : sidebarWidth }}
     >
       <div
-        className={cn(
-          'relative flex h-full flex-col px-1.5 pb-4 pt-1.5 transition-transform duration-[220ms] ease-out motion-reduce:transition-none',
-          collapsed ? '-translate-x-3' : 'translate-x-0'
-        )}
+        className="relative flex h-full flex-col px-1.5 pb-4 pt-1.5"
         style={{ width: sidebarWidth }}
       >
         <nav className="space-y-0.5">
@@ -2168,13 +2189,15 @@ export function DesktopSidebar({
           </div>
         </div>
 
-        <button
-          type="button"
-          data-testid="sidebar-resize-handle"
-          onPointerDown={handleResizeStart}
-          className="absolute right-[-4px] top-0 z-20 h-full w-3 cursor-col-resize bg-transparent"
-          aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
-        />
+        {!hideResizeHandle && (
+          <button
+            type="button"
+            data-testid="sidebar-resize-handle"
+            onPointerDown={handleResizeStart}
+            className="absolute right-[-6px] top-0 z-[60] h-full w-10 cursor-col-resize touch-none bg-transparent after:absolute after:right-1.5 after:top-0 after:h-full after:w-px after:bg-transparent after:transition-colors after:duration-150 hover:after:bg-primary/35"
+            aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
+          />
+        )}
 
         <StandaloneBlankProjectDialog
           open={blankProjectDialogOpen}

@@ -143,7 +143,7 @@ export function ProjectChatComposer({
       <form
         ref={formRef}
         data-testid="project-chat-composer-form"
-        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
+        className="flex min-h-[100px] w-full flex-col rounded-[28px] border border-border bg-background pb-4 pl-4 pr-2 pt-2"
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onSubmit={event => {
@@ -177,7 +177,7 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
-          className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[116px] min-h-8 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           selectedModel={selectedModel}

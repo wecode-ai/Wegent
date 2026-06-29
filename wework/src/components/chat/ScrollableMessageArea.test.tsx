@@ -108,6 +108,28 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
   })
 
+  test('updates the message list layout when only the layout class changes', () => {
+    const messages = [
+      {
+        id: '1',
+        role: 'assistant' as const,
+        content: 'Ready',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <ScrollableMessageArea messages={messages} messageListClassName="layout-width-a" />
+    )
+
+    expect(screen.getByTestId('message-assistant').parentElement).toHaveClass('layout-width-a')
+
+    rerender(<ScrollableMessageArea messages={messages} messageListClassName="layout-width-b" />)
+
+    expect(screen.getByTestId('message-assistant').parentElement).toHaveClass('layout-width-b')
+    expect(screen.getByTestId('message-assistant').parentElement).not.toHaveClass('layout-width-a')
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea

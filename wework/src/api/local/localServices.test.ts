@@ -422,6 +422,11 @@ describe('createLocalAppServices', () => {
       address: { deviceId: 'local-device', localTaskId: 'task-1' },
       message: 'continue',
       modelId: 'codex-gpt-5.5',
+      modelOptions: {
+        reasoning: 'extra_high',
+        summary: 'concise',
+        speed: 'fast',
+      },
       attachments: [
         {
           id: -46,
@@ -442,6 +447,11 @@ describe('createLocalAppServices', () => {
       message: 'continue',
       message_id: expect.any(Number),
       modelId: 'gpt-5.5',
+      modelOptions: {
+        reasoning: 'extra_high',
+        summary: 'concise',
+        speed: 'fast',
+      },
       attachments: [
         {
           id: -46,

@@ -797,7 +797,7 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByRole('main')).toHaveClass('h-dvh', 'overflow-hidden')
+    expect(screen.getByRole('main')).toHaveClass('h-full', 'overflow-hidden')
     expect(screen.getByTestId('chat-message-scroll-area')).toHaveClass(
       'overflow-y-auto',
       'pb-28',
@@ -809,6 +809,9 @@ describe('MobileWorkbenchLayout', () => {
       'pointer-events-none',
       'z-chrome'
     )
+    expect(
+      within(screen.getByTestId('mobile-chat-input-dock')).getByTestId('chat-message-input')
+    ).toHaveAttribute('placeholder', '要求后续变更')
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
       'bg-background/95',

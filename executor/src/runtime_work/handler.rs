@@ -897,7 +897,15 @@ impl RuntimeWorkRpcHandler {
                 notifications,
             )
             .await;
-            mapper_task.abort();
+            if let Err(error) = mapper_task.await {
+                log_executor_event(
+                    "runtime work notification mapper failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                );
+            }
 
             handler.handle_turn_result(&local_task_id, &request, result);
         });

@@ -78,7 +78,9 @@ export function MessageTurnNavigation({
       }
 
       const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
-      const loadedMarkers = nextMarkers.filter(marker => marker.targetTop !== null)
+      const loadedMarkers = nextMarkers.filter(
+        (marker): marker is MessageTurnMarker & { targetTop: number } => marker.targetTop !== null
+      )
       if (loadedMarkers.length === 0) {
         setActiveMarkerId(null)
         return

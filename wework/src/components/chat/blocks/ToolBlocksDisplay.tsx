@@ -24,7 +24,9 @@ interface ToolBlocksDisplayProps {
   // timer from the refresh moment.
   startedAt?: number
   forceExpanded?: boolean
+  hasFinalContent?: boolean
   showSummary?: boolean
+  showRunningPlaceholder?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }
@@ -34,7 +36,9 @@ export function ToolBlocksDisplay({
   isStreaming,
   startedAt,
   forceExpanded = false,
+  hasFinalContent = false,
   showSummary = true,
+  showRunningPlaceholder = true,
   stateKey,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
@@ -71,20 +75,20 @@ export function ToolBlocksDisplay({
   }, [completedAt, hasRenderedRunning, isRunning])
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = useMemo(
-    () => buildProcessingDisplayRows(blocks, { groupCompletedTools: !isRunning }),
-    [blocks, isRunning]
-  )
-  const expanded = forceExpanded || isRunning || userExpanded
-  const hasLiveNarrativeBlock = useMemo(
+  const rows = useMemo(() => buildProcessingDisplayRows(blocks), [blocks])
+  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent)
+  const expanded = isLockedOpen || userExpanded
+  const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
+  const hasLiveDisplayBlock = useMemo(
     () =>
       rows.some(
         row =>
           row.type === 'block' &&
-          (row.block.type === 'thinking' || row.block.type === 'text') &&
           row.block.status !== 'done' &&
           row.block.status !== 'error' &&
-          Boolean(row.block.content)
+          (row.block.type === 'tool' ||
+            row.block.type === 'file_changes' ||
+            Boolean(row.block.content))
       ),
     [rows]
   )
@@ -103,34 +107,32 @@ export function ToolBlocksDisplay({
             <ToolBlockItem
               key={row.id}
               block={row.block}
-              forceExpanded={forceExpanded}
               stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )
         )}
-        {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+        {isRunning && showRunningPlaceholder && !hasLiveDisplayBlock && <ThinkingIndicator />}
       </div>
     ),
-    [forceExpanded, hasLiveNarrativeBlock, isRunning, onOpenWorkspaceFile, rows, stateKey]
+    [hasLiveDisplayBlock, isRunning, onOpenWorkspaceFile, rows, showRunningPlaceholder, stateKey]
   )
 
   if (blocks.length === 0 && !isStreaming) return null
 
   return (
-    <div className="mb-3 min-w-0">
-      {showSummary && isRunning ? (
-        // While the turn is still running the summary is informational only:
-        // render it as plain, non-interactive text so it does not look clickable.
-        <div className="mb-3 border-b border-border pb-2 text-xs text-text-muted">
+    <div className="mb-3 min-w-0 w-full">
+      {showSummary && !canToggleSummary ? (
+        <div className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted">
           <span className="inline-flex items-center gap-1">{duration}</span>
         </div>
       ) : showSummary ? (
-        <div className="mb-3 border-b border-border pb-2">
+        <div className="mb-3 w-full border-b border-border pb-2">
           <button
             type="button"
             className="inline-flex items-center gap-1 text-left text-xs text-text-muted hover:text-text-secondary"
             onClick={() => setUserExpanded(value => !value)}
+            aria-expanded={expanded}
           >
             <span>{duration}</span>
             <svg
@@ -246,7 +248,20 @@ function ToolActivityGroup({
 }) {
   const [expanded, setExpanded] = useState(false)
   const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
+  const isGuidanceGroup = isGuidanceActivityGroup(row.blocks)
   const icon = renderActivityGroupIcon(row.blocks)
+
+  if (isGuidanceGroup) {
+    return (
+      <div
+        className="flex max-w-full items-center gap-1.5 text-[13px] text-text-muted"
+        data-testid="processing-activity-group-label"
+      >
+        {icon}
+        <span className="min-w-0 truncate">{row.label}</span>
+      </div>
+    )
+  }
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
@@ -344,7 +359,7 @@ function getDurationText(
   // Once finished, lock to the completion time (or the last block timestamp
   // when the turn was restored from history after a refresh).
   const endTime = isRunning ? now : (completedAt ?? last)
-  const durationMs = Math.max(0, endTime - first)
+  const durationMs = isRunning ? Math.max(1000, endTime - first) : Math.max(0, endTime - first)
   const duration = formatDuration(durationMs)
 
   return `已处理 ${duration}`

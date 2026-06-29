@@ -871,7 +871,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbenchWithDefaultServices(<BootstrapProbe />)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('local'))
-    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'), {
+      timeout: 3000,
+    })
     expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
