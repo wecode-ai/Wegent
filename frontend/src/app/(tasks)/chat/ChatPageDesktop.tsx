@@ -37,6 +37,7 @@ import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import type { UnifiedMessage } from '@wegent/chat-core'
@@ -112,14 +113,13 @@ export function ChatPageDesktop() {
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
-  const _hasShareId = !!searchParams.get('share_id')
+  const _hasShareId = !!getSearchParam(searchParams, 'share_id')
   const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
-  const isCodeAgentMode = searchParams.get('agent') === 'code'
+  const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
   const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
-  const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
 
   // Determine taskType based on device selection, URL agent filter, and selected task.
@@ -156,7 +156,7 @@ export function ChatPageDesktop() {
       if (selectedTaskDetail.device_id) {
         params.set('deviceId', selectedTaskDetail.device_id)
       }
-      const projectIdParam = searchParams.get('projectId')
+      const projectIdParam = getSearchParam(searchParams, 'projectId')
       if (projectIdParam) {
         params.set('projectId', projectIdParam)
       }

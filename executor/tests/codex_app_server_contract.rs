@@ -266,6 +266,52 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_does_not_override_user_runtime_home() {
+    let _lock = env_lock().await;
+    let home = unique_dir("codex-user-home");
+    let codex_home = unique_dir("codex-home");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-user-home-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(&log_path, &["CODEX_HOME", "HOME"]);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("list skills"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": true,
+                    "configured": true
+                }
+            },
+            "model_provider": "openai"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    assert_eq!(
+        messages[0]["env"]["CODEX_HOME"],
+        codex_home.display().to_string()
+    );
+    assert_eq!(messages[0]["env"]["HOME"], home.display().to_string());
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     let _lock = env_lock().await;
     let executor_home = unique_dir("codex-mcp-home");

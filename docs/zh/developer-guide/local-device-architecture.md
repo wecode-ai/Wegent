@@ -261,6 +261,25 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 
+### 聊天任务设备解析与 Claude Code 启动上下文
+
+普通聊天 Task 通过本地 executor 执行时，Backend 在创建或继续任务前解析真实派发设备，优先级如下：
+
+1. 本轮请求显式传入的 `device_id`。
+2. 当前 Project 的本地执行配置，例如 `config.execution.targetType = local` 和 `config.execution.deviceId`。
+3. 已存在 Task spec 中保存的 `deviceId`。
+
+前端 App IPC 使用的 `appDeviceId` 只是本机进程侧身份；Backend 会将它映射到 Device CRD 的 executor Socket.IO `name` 后再派发。如果解析出的本地设备已经离线，但当前用户只有一台在线本地 executor，Backend 会把该任务切到这台在线设备，避免旧设备 id 阻塞本地执行。未知设备 id 不会被静默改写。
+
+Claude Code 子进程启动前，executor 会完成以下准备：
+
+- 下载本轮附件到任务目录；Project 工作区下的附件放入 `.wegent/attachments/<taskId>/<subtaskId>/`，非 Project 任务放入 executor 任务目录下的附件子目录。
+- 恢复 `~/.claude/plugins/cache` 中仍被 `enabledPlugins` 启用但安装目录缺失的插件包，并修复插件 hook 权限。
+- 根据 Bot/Task 选择的 Skills，把需要的 task skills 部署到 `SKILLS_DIR`。普通 Project 任务使用全局 `~/.claude/skills`；独立 `project_id = 0` 且带 task skills 的本地工作使用任务级 `.claude/skills`，避免污染全局目录。
+- 如果配置了 `WEGENT_FILE_EDIT_HOOK_COMMAND`，在 Claude `settings.json` 中写入 `Write|Edit|MultiEdit|NotebookEdit` 的 `PreToolUse` 和 `PostToolUse` hook，使文件变更记录能进入本轮 artifact。
+
+本地 executor 对 Claude stdout 的 NDJSON 输出会即时转换为 Responses API 事件：可见文本产生 `response.output_text.delta`，reasoning 摘要产生 `response.reasoning_summary_text.delta`，进程结束后仍发送最终 `response.completed` 或错误事件。Backend 和前端不能假设 `response.created` 之后紧跟终态事件。
+
 ---
 
 ## 🔄 任务执行流程
@@ -341,9 +360,9 @@ flowchart LR
 
 ### 本地执行器连接配置
 
-本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。`EXECUTOR_STARTUP_MODE` 控制监听入口，默认值为 `http`，无参数启动会按 `HOST`/`PORT` 启动 HTTP server；需要本机 App IPC 时设置 `EXECUTOR_STARTUP_MODE=socket`，executor 会监听 `~/.wegent-executor/app-ipc.sock`。在 socket 启动模式下，设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后，executor 继续保留本机 socket，同时以本地设备模式连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。Wework App 只管理自己启动的 executor；如果用户在 App 外手动启动 executor，App 会优先连接已有 socket，不会在退出时终止该外部进程。不要让多个手动启动的 executor 复用同一个 `WEGENT_EXECUTOR_HOME` 或 socket 路径，否则后启动的进程可能替换 socket 路径并造成连接归属不清。
+本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。`EXECUTOR_MODE=remote` 会启动本机 App IPC socket，并在设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。`EXECUTOR_STARTUP_MODE=socket` 仍兼容旧脚本，但新启动命令不再需要设置它。Wework App 只管理自己启动的 executor；如果用户在 App 外手动启动 executor，App 会优先连接已有 socket，不会在退出时终止该外部进程。不要让多个手动启动的 executor 复用同一个 executor home 或 socket 路径，否则后启动的进程可能替换 socket 路径并造成连接归属不清。
 
-`EXECUTOR_MODE` 覆盖 `mode`，`EXECUTOR_STARTUP_MODE` 覆盖启动入口，`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入连接环境变量；只要设备配置文件中已有有效模式和连接信息，并且启动入口符合场景，executor 就可以直接启动。
+`EXECUTOR_MODE` 覆盖 `mode`。`remote` 表示 socket 启动模式，`docker` 表示 HTTP 模式，其他值保持本地默认行为。`EXECUTOR_STARTUP_MODE` 仅作为旧脚本兼容入口保留。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入 executor home；只要设备配置文件中已有有效模式和连接信息，executor 就可以直接启动。
 
 ### 云设备启动身份变量
 
