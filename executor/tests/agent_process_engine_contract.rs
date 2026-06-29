@@ -121,12 +121,10 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
         }
     );
     assert_eq!(
-        fs::read_to_string(workspace_root.join("81/.claude_session_id_321")).unwrap(),
+        fs::read_to_string(executor_home.join("sessions/81/.claude_session_id_321")).unwrap(),
         "saved-from-output"
     );
-    assert!(!executor_home
-        .join("sessions/81/.claude_session_id_321")
-        .exists());
+    assert!(!workspace_root.join("81/.claude_session_id_321").exists());
 }
 
 #[cfg(unix)]

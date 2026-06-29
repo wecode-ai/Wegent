@@ -369,7 +369,7 @@ fn claude_command_sends_interactive_form_answer_as_tool_result_query() {
 }
 
 #[test]
-fn claude_command_prefers_workspace_task_session_over_executor_home() {
+fn claude_command_prefers_executor_home_session_over_legacy_workspace() {
     let _lock = env_lock();
     let executor_home = unique_dir("claude-session-home-fallback");
     let workspace_root = unique_dir("claude-session-workspace-root");
@@ -400,11 +400,11 @@ fn claude_command_prefers_workspace_task_session_over_executor_home() {
     let spec = build_claude_command(&request, "claude");
 
     assert!(spec.args().contains(&"--resume".to_owned()));
-    assert!(spec.args().contains(&"workspace-session".to_owned()));
+    assert!(spec.args().contains(&"home-session".to_owned()));
 }
 
 #[test]
-fn claude_command_falls_back_to_legacy_task_session_file() {
+fn claude_command_ignores_legacy_workspace_task_session_file() {
     let _lock = env_lock();
     let workspace_root = unique_dir("claude-session-legacy-workspace-root");
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
@@ -422,8 +422,8 @@ fn claude_command_falls_back_to_legacy_task_session_file() {
 
     let spec = build_claude_command(&request, "claude");
 
-    assert!(spec.args().contains(&"--resume".to_owned()));
-    assert!(spec.args().contains(&"legacy-session".to_owned()));
+    assert!(!spec.args().contains(&"--resume".to_owned()));
+    assert!(!spec.args().contains(&"legacy-session".to_owned()));
 }
 
 #[test]
@@ -449,22 +449,40 @@ fn claude_command_seeds_inherited_session_when_no_saved_session_exists() {
     assert!(spec.args().contains(&"--resume".to_owned()));
     assert!(spec.args().contains(&"inherited-session".to_owned()));
     assert_eq!(
-        fs::read_to_string(executor_home.join("workspace/77/.claude_session_id_987")).unwrap(),
+        fs::read_to_string(executor_home.join("sessions/77/.claude_session_id_987")).unwrap(),
         "inherited-session"
     );
+    assert!(!executor_home
+        .join("workspace/77/.claude_session_id_987")
+        .exists());
 }
 
 #[test]
-fn claude_command_new_session_deletes_saved_session_and_skips_resume() {
+fn claude_command_new_session_deletes_saved_and_legacy_sessions_and_skips_resume() {
     let _lock = env_lock();
     let executor_home = unique_dir("claude-session-new-session-home");
+    let workspace_root = unique_dir("claude-session-new-session-workspace-root");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let session_dir = executor_home.join("sessions/77");
+    let legacy_session_dir = workspace_root.join("77");
     fs::create_dir_all(&session_dir).unwrap();
+    fs::create_dir_all(&legacy_session_dir).unwrap();
     fs::write(session_dir.join(".claude_session_id_987"), "old-session\n").unwrap();
     fs::write(
         session_dir.join(".claude_session_id"),
         "legacy-old-session\n",
+    )
+    .unwrap();
+    fs::write(
+        legacy_session_dir.join(".claude_session_id_987"),
+        "workspace-old-session\n",
+    )
+    .unwrap();
+    fs::write(
+        legacy_session_dir.join(".claude_session_id"),
+        "workspace-legacy-old-session\n",
     )
     .unwrap();
     let request = ExecutionRequest {
@@ -481,6 +499,8 @@ fn claude_command_new_session_deletes_saved_session_and_skips_resume() {
     assert!(!spec.args().contains(&"--resume".to_owned()));
     assert!(!session_dir.join(".claude_session_id_987").exists());
     assert!(!session_dir.join(".claude_session_id").exists());
+    assert!(!legacy_session_dir.join(".claude_session_id_987").exists());
+    assert!(!legacy_session_dir.join(".claude_session_id").exists());
 }
 
 #[test]

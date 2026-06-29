@@ -25,7 +25,7 @@ pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
         return;
     }
 
-    for path in session_file_candidates(request) {
+    for path in writable_session_file_candidates(request) {
         if write_session_file(&path, session_id).is_ok() {
             return;
         }
@@ -44,7 +44,7 @@ pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> 
 }
 
 fn read_session_file(request: &ExecutionRequest) -> Option<String> {
-    for path in session_file_candidates(request) {
+    for path in readable_session_file_candidates(request) {
         let Some(value) = read_trimmed_file(path) else {
             continue;
         };
@@ -93,7 +93,7 @@ fn inherited_session_id(request: &ExecutionRequest) -> Option<String> {
 }
 
 fn delete_saved_session_files(request: &ExecutionRequest) {
-    for path in session_file_candidates(request) {
+    for path in removable_session_file_candidates(request) {
         let _ = fs::remove_file(path);
     }
 }
@@ -111,7 +111,27 @@ fn read_trimmed_file(path: PathBuf) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
-fn session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+fn readable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+    writable_session_file_candidates(request)
+}
+
+fn removable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    candidates.extend(writable_session_file_candidates(request));
+    candidates.extend(legacy_workspace_session_file_candidates(request));
+
+    dedup_paths(candidates)
+}
+
+fn writable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
+    session_file_paths(
+        executor_home_session_root().join(request.task_id.to_string()),
+        request,
+    )
+}
+
+fn legacy_workspace_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
     let task_id = request.task_id.to_string();
     let mut candidates = Vec::new();
 
@@ -119,12 +139,7 @@ fn session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
         candidates.extend(session_file_paths(root.join(&task_id), request));
     }
 
-    candidates.extend(session_file_paths(
-        executor_home_session_root().join(task_id),
-        request,
-    ));
-
-    dedup_paths(candidates)
+    candidates
 }
 
 fn session_file_paths(task_dir: PathBuf, request: &ExecutionRequest) -> Vec<PathBuf> {

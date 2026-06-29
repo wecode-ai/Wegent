@@ -12,7 +12,10 @@ use serde_json::json;
 use wegent_executor::{
     runner::ExecutionOutcome,
     services::turn_file_changes::ClaudeToolFileChangeTracker,
-    stream::{collect_ndjson_outcome, extract_claude_session_id},
+    stream::{
+        collect_ndjson_outcome, extract_claude_session_id, extract_claude_tool_results,
+        extract_claude_tool_uses, extract_reasoning,
+    },
 };
 
 #[test]
@@ -51,6 +54,68 @@ fn claude_thinking_deltas_are_not_final_answer_text() {
             content: "visible answer".to_owned()
         }
     );
+}
+
+#[test]
+fn claude_assistant_thinking_blocks_are_reasoning_chunks() {
+    let event = json!({
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "thinking", "thinking": "checking cwd before answering"},
+                {"type": "text", "text": "visible answer"}
+            ]
+        }
+    });
+
+    assert_eq!(
+        extract_reasoning(&event),
+        Some("checking cwd before answering".to_owned())
+    );
+}
+
+#[test]
+fn claude_assistant_tool_use_blocks_are_extracted_for_ui_tool_events() {
+    let event = json!({
+        "type": "assistant",
+        "message": {
+            "content": [{
+                "type": "tool_use",
+                "id": "Read_0",
+                "name": "Read",
+                "input": {"file_path": "README.md"}
+            }]
+        }
+    });
+
+    let tool_uses = extract_claude_tool_uses(&event);
+
+    assert_eq!(tool_uses.len(), 1);
+    assert_eq!(tool_uses[0].id, "Read_0");
+    assert_eq!(tool_uses[0].name, "Read");
+    assert_eq!(tool_uses[0].input, json!({"file_path": "README.md"}));
+}
+
+#[test]
+fn claude_user_tool_result_blocks_are_extracted_for_ui_tool_events() {
+    let event = json!({
+        "type": "user",
+        "message": {
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "Read_0",
+                "content": "# Project",
+                "is_error": false
+            }]
+        }
+    });
+
+    let tool_results = extract_claude_tool_results(&event);
+
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "Read_0");
+    assert_eq!(tool_results[0].content.as_deref(), Some("# Project"));
+    assert!(!tool_results[0].is_error);
 }
 
 #[test]

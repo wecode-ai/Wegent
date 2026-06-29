@@ -128,6 +128,79 @@ impl ResponsesEventBuilder {
         )
     }
 
+    pub fn response_function_call_added(
+        &self,
+        call_id: &str,
+        name: &str,
+        arguments: &Value,
+    ) -> EventEnvelope {
+        let arguments_text = serialize_json(arguments);
+        self.envelope(
+            "response.output_item.added",
+            json!({
+                "type": "response.output_item.added",
+                "response_id": self.response_id,
+                "output_index": 0,
+                "item": {
+                    "type": "function_call",
+                    "id": call_id,
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments_text
+                },
+                "display_name": name,
+                "argument_status": "done",
+                "arguments_summary": arguments
+            }),
+        )
+    }
+
+    pub fn response_function_call_arguments_done(
+        &self,
+        call_id: &str,
+        arguments: &Value,
+    ) -> EventEnvelope {
+        self.envelope(
+            "response.function_call_arguments.done",
+            json!({
+                "type": "response.function_call_arguments.done",
+                "response_id": self.response_id,
+                "item_id": call_id,
+                "call_id": call_id,
+                "output_index": 0,
+                "arguments": serialize_json(arguments),
+                "arguments_summary": arguments
+            }),
+        )
+    }
+
+    pub fn response_function_call_done(
+        &self,
+        call_id: &str,
+        name: &str,
+        arguments: &Value,
+        output: Option<&str>,
+        is_error: bool,
+    ) -> EventEnvelope {
+        self.envelope(
+            "response.output_item.done",
+            json!({
+                "type": "response.output_item.done",
+                "response_id": self.response_id,
+                "output_index": 0,
+                "item": {
+                    "type": "function_call",
+                    "id": call_id,
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": serialize_json(arguments),
+                    "status": if is_error { "failed" } else { "completed" },
+                    "output": output
+                }
+            }),
+        )
+    }
+
     pub fn response_waiting_for_user_input(&self, stop_reason: &str) -> EventEnvelope {
         let stop_reason = stop_reason.trim();
         let mut response = self.response_payload("completed", json!([]));
@@ -189,4 +262,8 @@ fn current_epoch_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+fn serialize_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned())
 }

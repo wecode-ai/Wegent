@@ -3,8 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap, env, fs, future::Future, path::PathBuf, pin::Pin, process::Stdio,
-    time::Duration, time::Instant,
+    collections::{BTreeMap, HashMap},
+    env, fs,
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    process::Stdio,
+    time::Duration,
+    time::Instant,
 };
 
 use serde_json::Value;
@@ -24,12 +30,15 @@ use crate::{
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
-    stream::{collect_claude_stream_summary, extract_reasoning, extract_text},
+    stream::{
+        collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
+        extract_reasoning, extract_text, ClaudeToolUse,
+    },
 };
 
 const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 300;
-const DEFAULT_STREAM_CHUNK_CHARS: usize = 80;
-const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 12;
+const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
+const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
 
@@ -613,6 +622,7 @@ where
 {
     let mut output = String::new();
     let mut offset = 0usize;
+    let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
     let mut lines = BufReader::new(stdout).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         output.push_str(&line);
@@ -622,8 +632,31 @@ where
         };
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
-                emit_reasoning_chunk(&sink, &builder, &reasoning, task_id, subtask_id).await;
+                emit_reasoning_chunks(&sink, &builder, &reasoning, task_id, subtask_id).await;
             }
+        }
+        for tool_use in extract_claude_tool_uses(&value) {
+            emit_claude_tool_use(&sink, &builder, &tool_use, task_id, subtask_id).await;
+            tool_uses.insert(tool_use.id.clone(), tool_use);
+        }
+        for tool_result in extract_claude_tool_results(&value) {
+            let tool_use = tool_uses
+                .remove(&tool_result.tool_use_id)
+                .unwrap_or_else(|| ClaudeToolUse {
+                    id: tool_result.tool_use_id.clone(),
+                    name: "Tool".to_owned(),
+                    input: Value::Object(Default::default()),
+                });
+            emit_claude_tool_result(
+                &sink,
+                &builder,
+                &tool_use,
+                tool_result.content.as_deref(),
+                tool_result.is_error,
+                task_id,
+                subtask_id,
+            )
+            .await;
         }
         let Some(text) = extract_text(&value) else {
             continue;
@@ -644,7 +677,61 @@ where
     output.trim().to_owned()
 }
 
-async fn emit_reasoning_chunk<S>(
+async fn emit_claude_tool_use<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    tool_use: &ClaudeToolUse,
+    task_id: i64,
+    subtask_id: i64,
+) where
+    S: EventSink,
+{
+    for event in [
+        builder.response_function_call_added(&tool_use.id, &tool_use.name, &tool_use.input),
+        builder.response_function_call_arguments_done(&tool_use.id, &tool_use.input),
+    ] {
+        if let Err(message) = sink.send(event).await {
+            let fields = vec![
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("tool_use_id", tool_use.id.clone()),
+                ("error_len", message.len().to_string()),
+            ];
+            log_executor_event("streaming tool use callback failed", &fields);
+        }
+    }
+}
+
+async fn emit_claude_tool_result<S>(
+    sink: &S,
+    builder: &ResponsesEventBuilder,
+    tool_use: &ClaudeToolUse,
+    output: Option<&str>,
+    is_error: bool,
+    task_id: i64,
+    subtask_id: i64,
+) where
+    S: EventSink,
+{
+    let event = builder.response_function_call_done(
+        &tool_use.id,
+        &tool_use.name,
+        &tool_use.input,
+        output,
+        is_error,
+    );
+    if let Err(message) = sink.send(event).await {
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            ("tool_use_id", tool_use.id.clone()),
+            ("error_len", message.len().to_string()),
+        ];
+        log_executor_event("streaming tool result callback failed", &fields);
+    }
+}
+
+async fn emit_reasoning_chunks<S>(
     sink: &S,
     builder: &ResponsesEventBuilder,
     reasoning: &str,
@@ -653,22 +740,31 @@ async fn emit_reasoning_chunk<S>(
 ) where
     S: EventSink,
 {
-    let event = builder.response_reasoning_delta(reasoning);
-    if let Err(message) = sink.send(event).await {
-        let fields = vec![
-            ("task_id", task_id.to_string()),
-            ("subtask_id", subtask_id.to_string()),
-            ("error_len", message.len().to_string()),
-        ];
-        log_executor_event("streaming reasoning callback failed", &fields);
-        return;
+    let chunks = split_stream_text(reasoning, stream_chunk_chars());
+    let delay = Duration::from_millis(stream_chunk_delay_ms());
+    let should_delay = chunks.len() > 1 && !delay.is_zero();
+    let chunk_count = chunks.len();
+    for (index, delta) in chunks.into_iter().enumerate() {
+        let event = builder.response_reasoning_delta(&delta);
+        if let Err(message) = sink.send(event).await {
+            let fields = vec![
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("error_len", message.len().to_string()),
+            ];
+            log_executor_event("streaming reasoning callback failed", &fields);
+        }
+        if should_delay && index + 1 < chunk_count {
+            tokio::time::sleep(delay).await;
+        }
     }
     let fields = vec![
         ("task_id", task_id.to_string()),
         ("subtask_id", subtask_id.to_string()),
         ("reasoning_chars", reasoning.chars().count().to_string()),
+        ("chunk_count", chunk_count.to_string()),
     ];
-    log_executor_event("streaming reasoning chunk emitted", &fields);
+    log_executor_event("streaming reasoning chunks emitted", &fields);
 }
 
 async fn emit_text_chunks<S>(
@@ -854,4 +950,51 @@ fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
 
 fn decode_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::*;
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_chunk_defaults_are_tuned_for_smooth_device_chat() {
+        let _lock = env_lock();
+        let _chunk_chars = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS");
+        let _chunk_delay = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS");
+
+        assert_eq!(stream_chunk_chars(), 20);
+        assert_eq!(stream_chunk_delay_ms(), 0);
+    }
 }
