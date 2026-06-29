@@ -51,6 +51,7 @@ import {
   type DesktopReviewMetadata,
   type DesktopReviewState,
 } from './desktopWorkbenchPaneTypes'
+import { findRuntimeLocalTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -617,6 +618,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
+  const runtimeTaskTitle =
+    findRuntimeLocalTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
+  const paneTaskTitle = runtimeTaskTitle ? (
+    <div
+      data-testid="workbench-pane-task-title"
+      className="min-w-0 max-w-[min(52rem,calc(100vw-28rem))] truncate text-[13px] font-medium leading-none text-text-primary"
+      title={runtimeTaskTitle}
+    >
+      {runtimeTaskTitle}
+    </div>
+  ) : undefined
   const topBarLeftActions = !isTauri ? (
     sidebarCollapsed ? (
       <DesktopWindowControls
@@ -631,7 +643,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       />
     )
   ) : undefined
-  const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const topBarLeftContent =
+    topBarLeftActions || paneTaskTitle ? (
+      <>
+        {topBarLeftActions}
+        {paneTaskTitle}
+      </>
+    ) : undefined
+  const showPageTopBar = !isTauri || Boolean(topBarLeftContent)
   const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
@@ -741,11 +760,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7',
+              'absolute left-0 top-0 z-chrome h-11 overflow-hidden border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
-            left={topBarLeftActions}
+            left={topBarLeftContent}
+            leftClassName="min-w-0 max-w-[calc(100%-12rem)] gap-2"
           />
         )}
       </WorkbenchPaneActiveOnly>
@@ -754,7 +774,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'relative flex min-w-0 flex-none flex-col overflow-hidden',
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
-          showPageTopBar && 'pt-[52px]',
+          showPageTopBar && 'pt-11',
           rightPanelOpen && 'border-r border-border'
         )}
         style={
