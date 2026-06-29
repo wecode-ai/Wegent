@@ -8,6 +8,7 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import type {
   Attachment,
   ModelOptions,
@@ -183,6 +184,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             type: 'reset',
             messages: nextMessages,
           })
+          if (hasSettledAssistantMessage(nextMessages)) {
+            setWaitingForAssistant(false)
+          }
           clearRuntimePaneMessageSeed(address)
         }
       })
@@ -353,6 +357,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       setWaitingForAssistant(true)
       appendLocalUserMessage(message.content, message.attachments)
+      const messageAttachments = message.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message: message.content,
@@ -363,9 +370,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
             }
           : {}),
-        ...(message.attachments && message.attachments.length > 0
-          ? { attachmentIds: message.attachments.map(attachment => attachment.id) }
-          : {}),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
       })
       if (!sent) {
         setWaitingForAssistant(false)
@@ -689,6 +695,12 @@ function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessag
 
 function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
   runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
+}
+
+function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolean {
+  return (
+    messages.some(message => message.role === 'assistant') && !findActiveAssistantMessage(messages)
+  )
 }
 
 function mergeRuntimeTranscriptMessages(

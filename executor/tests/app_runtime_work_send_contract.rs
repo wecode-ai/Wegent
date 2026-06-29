@@ -104,13 +104,18 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "conversation_id": "conv-1",
         "sender_id": "sender-1"
     });
+    let attachment_path = temp_path("runtime-send-photo", "png");
+    fs::write(&attachment_path, b"image").expect("attachment image should be writable");
+    let attachment_path = attachment_path.display().to_string();
     let attachment = json!({
         "id": 45,
         "original_filename": "photo.png",
         "mime_type": "image/png",
         "file_size": 1200,
         "subtask_id": 0,
-        "file_extension": ".png"
+        "file_extension": ".png",
+        "local_path": attachment_path,
+        "local_preview_url": attachment_path
     });
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -165,11 +170,20 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
     assert_eq!(last_turn_start["params"]["effort"], "xhigh");
     assert_eq!(last_turn_start["params"]["summary"], "concise");
-    assert_eq!(last_turn_start["params"]["input"][0]["type"], "text");
-    assert!(last_turn_start["params"]["input"][0]["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("continue from content"));
+    let input = last_turn_start["params"]["input"].as_array().unwrap();
+    assert!(input.iter().any(|item| {
+        item["type"] == "text"
+            && item["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("continue from content"))
+    }));
+    assert_eq!(input[0]["type"], "text");
+    assert!(input.iter().any(|item| {
+        item["type"] == "localImage"
+            && item["path"]
+                .as_str()
+                .is_some_and(|path| path == attachment_path)
+    }));
 
     let runtime_events = recv_events_until(&mut events, |runtime_events| {
         find_runtime_event(runtime_events, "response.created", |event| {
@@ -281,6 +295,112 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(user["attachments"][0]["filename"], "photo.png");
     assert_eq!(user["attachments"][0]["status"], "ready");
     assert_eq!(user["attachments"][0]["file_size"], 1200);
+    assert_eq!(user["attachments"][0]["local_preview_url"], attachment_path);
+    assert_eq!(user["attachments"][0]["local_path"], attachment_path);
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_includes_local_text_attachment_content() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-text-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-text-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let sqlite_home = temp_path("runtime-send-text-sqlite", "dir");
+    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
+    write_codex_state_db_thread(&sqlite_home);
+    let log_path = temp_path("runtime-send-text-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-text",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "prompt": "first turn",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
+    drain_events(&mut events);
+
+    let attachment_path = temp_path("runtime-send-pasted-text", "txt");
+    fs::write(&attachment_path, "THE_USER_PASTED_TEXT_ATTACHMENT").unwrap();
+    let attachment_path = attachment_path.display().to_string();
+    let attachment = json!({
+        "id": -46,
+        "original_filename": "clipboard-text.txt",
+        "mime_type": "text/plain",
+        "file_size": 31,
+        "local_path": attachment_path,
+        "local_preview_url": attachment_path
+    });
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "localTaskId": "local-task-text"
+                },
+                "content": "我贴的是啥",
+                "modelId": "gpt-4.1",
+                "attachments": [attachment]
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+
+    assert_eq!(sent["success"], true);
+    wait_for_turn_count(&log_path, 2).await;
+
+    let calls = read_json_lines(&log_path);
+    let last_turn_start = calls
+        .iter()
+        .rev()
+        .find(|call| call["method"] == "turn/start")
+        .expect("send should start a turn");
+    let input_text = last_turn_start["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "text")
+        .filter_map(|item| item["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(input_text.contains("clipboard-text.txt"));
+    assert!(input_text.contains("THE_USER_PASTED_TEXT_ATTACHMENT"));
+    assert!(input_text.contains("我贴的是啥"));
 }
 
 #[tokio::test]

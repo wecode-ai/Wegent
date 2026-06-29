@@ -17,6 +17,13 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/webp",
     "image/bmp",
 ];
+const MAX_TEXT_ATTACHMENT_PREVIEW_LINES: usize = 10;
+const MAX_TEXT_ATTACHMENT_PREVIEW_BYTES: usize = 4 * 1024;
+const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "json", "jsonl", "yaml", "yml", "toml", "csv", "tsv", "log", "xml",
+    "html", "htm", "css", "js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "swift", "c",
+    "cc", "cpp", "h", "hpp", "sh", "bash", "zsh", "sql",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentRecord {
@@ -102,6 +109,57 @@ impl AttachmentPromptProcessor {
         }
 
         format!("\n\n<attachment>\n{}\n</attachment>", lines.join("\n"))
+    }
+
+    pub fn build_text_attachment_context(success_attachments: &[AttachmentRecord]) -> String {
+        if success_attachments.is_empty() {
+            return String::new();
+        }
+
+        let mut sections = Vec::new();
+        for attachment in success_attachments {
+            if !is_text_attachment(attachment) {
+                continue;
+            }
+            let Some(local_path) = attachment
+                .local_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+
+            let (content, truncated) = read_text_attachment_preview(local_path);
+            let mut section = format!(
+                "## {}\nLocal File Path: {}\nMIME Type: {}\nSize: {}\n\nContent:\n{}",
+                attachment.original_filename,
+                local_path,
+                attachment
+                    .mime_type
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("unknown"),
+                format_file_size(attachment.file_size.unwrap_or_default()),
+                content
+            );
+            if truncated {
+                section.push_str(&format!(
+                    "\n\n[Content preview truncated after {} lines or {}. Read the full Local File Path for complete content.]",
+                    MAX_TEXT_ATTACHMENT_PREVIEW_LINES,
+                    format_file_size(MAX_TEXT_ATTACHMENT_PREVIEW_BYTES as u64)
+                ));
+            }
+            sections.push(section);
+        }
+
+        if sections.is_empty() {
+            return String::new();
+        }
+        format!(
+            "\n\n# User-provided text attachments\n\n{}",
+            sections.join("\n\n")
+        )
     }
 
     pub fn build_image_content_blocks(success_attachments: &[AttachmentRecord]) -> Vec<Value> {
@@ -270,6 +328,69 @@ fn append_failed_download_warning(
         ));
     }
     text
+}
+
+fn is_text_attachment(attachment: &AttachmentRecord) -> bool {
+    if attachment
+        .mime_type
+        .as_deref()
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|mime_type| {
+            mime_type.starts_with("text/")
+                || matches!(
+                    mime_type.as_str(),
+                    "application/json"
+                        | "application/jsonl"
+                        | "application/x-ndjson"
+                        | "application/xml"
+                        | "application/yaml"
+                        | "application/x-yaml"
+                        | "application/toml"
+                        | "application/javascript"
+                        | "application/typescript"
+                )
+        })
+    {
+        return true;
+    }
+
+    attachment
+        .original_filename
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .is_some_and(|extension| TEXT_ATTACHMENT_EXTENSIONS.contains(&extension.as_str()))
+}
+
+fn read_text_attachment_preview(local_path: &str) -> (String, bool) {
+    let Ok(bytes) = fs::read(local_path) else {
+        return (
+            "[Attachment content could not be read from the Local File Path.]".to_owned(),
+            false,
+        );
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines = text.lines();
+    let preview = lines
+        .by_ref()
+        .take(MAX_TEXT_ATTACHMENT_PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let truncated_by_lines = lines.next().is_some();
+    let (preview, truncated_by_bytes) =
+        truncate_text_at_boundary(&preview, MAX_TEXT_ATTACHMENT_PREVIEW_BYTES);
+    (preview, truncated_by_lines || truncated_by_bytes)
+}
+
+fn truncate_text_at_boundary(text: &str, max_bytes: usize) -> (String, bool) {
+    if text.len() <= max_bytes {
+        return (text.to_owned(), false);
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), true)
 }
 
 fn build_sandbox_path(

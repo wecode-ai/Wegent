@@ -19,7 +19,7 @@ import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createChatStream } from '@/stream/chatStream'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 
 export interface WorkbenchServices {
@@ -53,6 +53,14 @@ export interface WorkbenchServices {
   }
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  attachmentApi?: {
+    uploadAttachment: (
+      file: File,
+      onProgress?: (progress: number) => void,
+      context?: { workspacePath?: string | null }
+    ) => Promise<Attachment>
+    deleteAttachment?: (attachmentId: number) => Promise<void>
+  }
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>

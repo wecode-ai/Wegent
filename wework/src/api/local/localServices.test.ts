@@ -108,6 +108,19 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      attachments: [
+        {
+          id: -45,
+          filename: 'clipboard.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+        },
+      ],
     })
     await services.deviceApi.executeCommand('local-device', {
       command_key: 'home_dir',
@@ -127,6 +140,19 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      attachments: [
+        {
+          id: -45,
+          filename: 'clipboard.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+        },
+      ],
       executionRequest: expect.objectContaining({
         task_id: expect.any(Number),
         subtask_id: expect.any(Number),
@@ -164,6 +190,19 @@ describe('createLocalAppServices', () => {
         skill_names: ['planner'],
         preload_skills: [{ name: 'planner', namespace: 'default' }],
         user_selected_skills: [{ name: 'planner', namespace: 'default' }],
+        attachments: [
+          {
+            id: -45,
+            filename: 'clipboard.png',
+            original_filename: 'clipboard.png',
+            file_size: 1200,
+            mime_type: 'image/png',
+            subtask_id: expect.any(Number),
+            file_extension: '.png',
+            local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          },
+        ],
       }),
     })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -388,6 +427,19 @@ describe('createLocalAppServices', () => {
         summary: 'concise',
         speed: 'fast',
       },
+      attachments: [
+        {
+          id: -46,
+          filename: 'follow-up.png',
+          file_size: 640,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+        },
+      ],
     })
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
@@ -400,6 +452,19 @@ describe('createLocalAppServices', () => {
         summary: 'concise',
         speed: 'fast',
       },
+      attachments: [
+        {
+          id: -46,
+          filename: 'follow-up.png',
+          file_size: 640,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+        },
+      ],
     })
   })
 

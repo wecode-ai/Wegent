@@ -953,6 +953,38 @@ describe('ChatInput', () => {
     expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
   })
 
+  test('turns long pasted text from the desktop message textbox into a text attachment', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const onChange = vi.fn()
+    const longText = 'long pasted text\n'.repeat(400)
+
+    render(
+      <ChatInput
+        value=""
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? longText : ''),
+      },
+    })
+
+    expect(onChange).not.toHaveBeenCalled()
+    expect(handleFileSelect).toHaveBeenCalledTimes(1)
+    const files = handleFileSelect.mock.calls[0][0] as File[]
+    expect(files).toHaveLength(1)
+    expect(files[0].name).toMatch(/^clipboard-text-\d+\.txt$/)
+    expect(files[0].type).toBe('text/plain')
+    expect(await files[0].text()).toBe(longText)
+  })
+
   test('uploads dropped files from the desktop composer', () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'drop-requirements.pdf', {
@@ -1028,6 +1060,38 @@ describe('ChatInput', () => {
     })
 
     expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+  })
+
+  test('turns long pasted text from the fullscreen compact textbox into a text attachment', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const onChange = vi.fn()
+    const longText = 'fullscreen pasted text\n'.repeat(400)
+
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    fireEvent.paste(screen.getByTestId('fullscreen-message-input'), {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? longText : ''),
+      },
+    })
+
+    expect(onChange).not.toHaveBeenCalled()
+    expect(handleFileSelect).toHaveBeenCalledTimes(1)
+    const files = handleFileSelect.mock.calls[0][0] as File[]
+    expect(files).toHaveLength(1)
+    expect(files[0].name).toMatch(/^clipboard-text-\d+\.txt$/)
+    expect(files[0].type).toBe('text/plain')
+    expect(await files[0].text()).toBe(longText)
   })
 
   test('enables compact send when only image attachments are present', async () => {

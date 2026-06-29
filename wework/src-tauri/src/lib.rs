@@ -389,6 +389,84 @@ fn download_local_file_to_downloads(
     Ok(target_path.to_string_lossy().to_string())
 }
 
+fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Ok(home) = std::env::var("WEGENT_EXECUTOR_HOME") {
+        if let Some(home) = normalized_non_empty(home) {
+            return Ok(std::path::PathBuf::from(home));
+        }
+    }
+
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to locate home directory: {error}"))?;
+    Ok(home.join(".wegent-executor"))
+}
+
+fn local_attachment_root(
+    app: &tauri::AppHandle,
+    workspace_path: Option<String>,
+) -> Result<std::path::PathBuf, String> {
+    if let Some(workspace_path) = workspace_path.and_then(normalized_non_empty) {
+        return Ok(std::path::PathBuf::from(workspace_path)
+            .join(".wegent")
+            .join("attachments")
+            .join("draft"));
+    }
+
+    Ok(default_executor_home(app)?
+        .join("workspace")
+        .join("attachments")
+        .join("draft"))
+}
+
+fn unique_attachment_directory(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before UNIX epoch: {error}"))?
+        .as_millis();
+
+    for index in 0..1000 {
+        let directory_name = if index == 0 {
+            millis.to_string()
+        } else {
+            format!("{millis}-{index}")
+        };
+        let directory = root.join(directory_name);
+        if !directory.exists() {
+            return Ok(directory);
+        }
+    }
+
+    Err("Failed to allocate attachment directory".to_string())
+}
+
+#[tauri::command]
+fn save_local_attachment_file(
+    app: tauri::AppHandle,
+    workspace_path: Option<String>,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Attachment file is empty".to_string());
+    }
+
+    let root = local_attachment_root(&app, workspace_path)?;
+    std::fs::create_dir_all(&root)
+        .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+    let directory = unique_attachment_directory(&root)?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+
+    let filename = sanitized_download_filename(&filename, std::path::Path::new("attachment"));
+    let target_path = unique_download_path(&directory, &filename);
+    std::fs::write(&target_path, bytes)
+        .map_err(|error| format!("Failed to save attachment file: {error}"))?;
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<String> {
     let expected_backend_url = expected_backend_url
@@ -828,6 +906,7 @@ pub fn run() {
             local_path_exists,
             open_local_workspace,
             read_dropped_files,
+            save_local_attachment_file,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal

@@ -6,6 +6,7 @@ import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
+import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 
 interface CompactChatComposerProps {
@@ -69,10 +70,18 @@ export function CompactChatComposer({
 
   const handlePasteFiles: ClipboardEventHandler<HTMLTextAreaElement> = event => {
     const files = Array.from(event.clipboardData.files)
-    if (files.length === 0) return
+    if (files.length > 0) {
+      event.preventDefault()
+      onFileSelect?.(files)
+      return
+    }
+
+    if (!onFileSelect) return
+    const textAttachment = createLongPastedTextAttachment(event.clipboardData.getData('text/plain'))
+    if (!textAttachment) return
 
     event.preventDefault()
-    onFileSelect?.(files)
+    onFileSelect([textAttachment])
   }
 
   useEffect(() => {

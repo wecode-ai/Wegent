@@ -166,6 +166,9 @@ function createTurnFileChanges(): TurnFileChangesSummary {
   }
 }
 
+const LOCAL_IMAGE_ATTACHMENT_PATH =
+  '/workspace/project-alpha/.wegent/attachments/draft/-45/photo.png'
+
 function createImageAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
     id: 45,
@@ -177,6 +180,15 @@ function createImageAttachment(overrides: Partial<Attachment> = {}): Attachment 
     created_at: '2026-05-27T00:00:00.000Z',
     ...overrides,
   }
+}
+
+function createLocalImageAttachment(overrides: Partial<Attachment> = {}): Attachment {
+  return createImageAttachment({
+    id: -45,
+    local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+    local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
+    ...overrides,
+  })
 }
 
 function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
@@ -419,6 +431,7 @@ function DeviceStatusProbe() {
 function ProjectSendProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const imageAttachment = createImageAttachment()
+  const localImageAttachment = createLocalImageAttachment()
 
   return (
     <div>
@@ -467,6 +480,12 @@ function ProjectSendProbe() {
         onClick={() => workbench.projectChat.addExistingAttachment(imageAttachment)}
       >
         add image attachment
+      </button>
+      <button
+        type="button"
+        onClick={() => workbench.projectChat.addExistingAttachment(localImageAttachment)}
+      >
+        add local image attachment
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send
@@ -709,6 +728,7 @@ function RuntimeModelCompatibilityProbe() {
 function FollowUpProbe() {
   const { workbench, paneSession } = useWorkbenchProbeSession()
   const imageAttachment = createImageAttachment()
+  const localImageAttachment = createLocalImageAttachment()
   const firstQueuedMessage = paneSession.queuedMessages[0]
   const gptModel =
     workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
@@ -763,6 +783,12 @@ function FollowUpProbe() {
         onClick={() => workbench.projectChat.addExistingAttachment(imageAttachment)}
       >
         add image attachment
+      </button>
+      <button
+        type="button"
+        onClick={() => workbench.projectChat.addExistingAttachment(localImageAttachment)}
+      >
+        add local image attachment
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send follow-up
@@ -1506,6 +1532,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
+  test('clears thinking when a created runtime task transcript is already complete', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: 'device-1',
+        localTaskId: request.localTaskId,
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
+        localTaskId: address.localTaskId,
+        workspacePath: address.workspacePath ?? '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [
+          {
+            id: `${address.localTaskId}:user:1`,
+            role: 'user',
+            content: '修复 CI',
+            status: 'done',
+          },
+          {
+            id: `${address.localTaskId}:assistant:1`,
+            role: 'assistant',
+            content: 'done answer',
+            status: 'done',
+          },
+        ],
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant'))
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:done answer')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
   test('renders image attachments immediately when creating a runtime local task', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:runtime-message-image-preview')
     URL.revokeObjectURL = vi.fn()
@@ -1552,6 +1624,41 @@ describe('WorkbenchProvider runtime tasks', () => {
       'src',
       'blob:runtime-message-image-preview'
     )
+  })
+
+  test('sends local image attachments as runtime attachments when creating a runtime local task', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        localTaskId: request.localTaskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('add local image attachment'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    expect(request.attachmentIds).toEqual([])
+    expect(request.attachments).toEqual([
+      expect.objectContaining({
+        id: -45,
+        filename: 'photo.png',
+        local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+        local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
+      }),
+    ])
   })
 
   test('creates a runtime local task from an explicitly opened standalone workspace', async () => {
@@ -3376,6 +3483,59 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
     expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
+  })
+
+  test('sends local image attachments with current runtime task follow-up messages', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      localTaskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add local image attachment'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-a',
+      },
+      message: '继续修',
+      attachments: [
+        expect.objectContaining({
+          id: -45,
+          filename: 'photo.png',
+          local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+          local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
+        }),
+      ],
+    })
   })
 
   test('loads local skills from the current runtime task device', async () => {
