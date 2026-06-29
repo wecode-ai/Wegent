@@ -24,6 +24,7 @@ import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -993,7 +994,10 @@ export function WorkbenchProvider({
 
   return (
     <WorkbenchContext.Provider value={value}>
-      <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
+      <WorkbenchPaneContext.Provider value={paneValue}>
+        <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
+        {children}
+      </WorkbenchPaneContext.Provider>
     </WorkbenchContext.Provider>
   )
 }

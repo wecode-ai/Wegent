@@ -849,10 +849,7 @@ pub fn run() {
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-            ) {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window
                     .app_handle()
                     .state::<local_executor::LocalExecutorState>();
