@@ -320,6 +320,63 @@ require_macos_build_target() {
   fi
 }
 
+build_executor_sidecar_for_target() {
+  local release_version="$1"
+  local rust_target="$2"
+  local executor_dir="$WEWORK_DIR/../executor"
+
+  echo "Building local executor sidecar for $rust_target"
+  WEGENT_EXECUTOR_BUILD_TARGET="$rust_target" "$executor_dir/local.sh" build "$release_version"
+}
+
+build_universal_executor_sidecar() {
+  local release_version="$1"
+  local executor_dir="$WEWORK_DIR/../executor"
+  local arm_binary="$executor_dir/dist/wegent-executor-aarch64-apple-darwin"
+  local intel_binary="$executor_dir/dist/wegent-executor-x86_64-apple-darwin"
+  local universal_binary="$executor_dir/dist/wegent-executor"
+
+  build_executor_sidecar_for_target "$release_version" "aarch64-apple-darwin"
+  cp -f "$universal_binary" "$arm_binary"
+
+  build_executor_sidecar_for_target "$release_version" "x86_64-apple-darwin"
+  cp -f "$universal_binary" "$intel_binary"
+
+  echo "Creating universal local executor sidecar"
+  lipo -create "$arm_binary" "$intel_binary" -output "$universal_binary"
+  chmod 0755 "$universal_binary"
+  codesign --force --sign - --options runtime "$universal_binary" >/dev/null 2>&1 || true
+}
+
+ensure_local_executor_sidecar() {
+  local release_version="$1"
+
+  if [ -n "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
+    if [ ! -f "$WEWORK_EXECUTOR_SIDECAR" ]; then
+      echo "Configured local executor sidecar does not exist: $WEWORK_EXECUTOR_SIDECAR" >&2
+      exit 1
+    fi
+    echo "Using configured local executor sidecar: $WEWORK_EXECUTOR_SIDECAR"
+    return
+  fi
+
+  case "$MACOS_BUILD_TARGET" in
+    universal-apple-darwin)
+      build_universal_executor_sidecar "$release_version"
+      ;;
+    aarch64-apple-darwin|x86_64-apple-darwin)
+      build_executor_sidecar_for_target "$release_version" "$MACOS_BUILD_TARGET"
+      ;;
+    "")
+      "$WEWORK_DIR/../executor/local.sh" build "$release_version"
+      ;;
+    *)
+      echo "Unsupported macOS build target for executor sidecar: $MACOS_BUILD_TARGET" >&2
+      exit 1
+      ;;
+  esac
+}
+
 find_update_archive() {
   find "$(bundle_root)" -type f \
     -name "*.app.tar.gz" \
@@ -590,6 +647,8 @@ elif [ "$TARGET" = "local" ]; then
 fi
 echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+
+ensure_local_executor_sidecar "$next_version"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"

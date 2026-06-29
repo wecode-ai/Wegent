@@ -14,6 +14,9 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。发布流程由 `we
 - updater manifest 同时写入 `darwin-aarch64` 和 `darwin-x86_64`，两个平台可以指向同一个 universal archive。
 - `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。发布脚本会在构建时通过临时 Tauri config 注入。
 - updater 私钥和发布 token 只通过环境变量或本机文件读取，不提交到仓库。
+- 发布脚本会在 Tauri 构建前自动准备本地 executor sidecar。默认 universal 构建会分别构建 `aarch64-apple-darwin` 和 `x86_64-apple-darwin`，再通过 `lipo` 合成为 `executor/dist/wegent-executor`。
+
+如果需要使用外部 sidecar，可以设置 `WEWORK_EXECUTOR_SIDECAR` 指向已有文件；脚本会先校验该文件存在，再交给 Tauri 构建流程打包。
 
 ## 环境变量
 

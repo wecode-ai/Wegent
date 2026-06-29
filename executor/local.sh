@@ -40,6 +40,7 @@ Environment:
   WEGENT_BACKEND_URL             Optional; overrides device-config.json
   WEGENT_FILE_EDIT_HOOK_COMMAND  Default: local file edit hook collector
   WEGENT_EXECUTOR_BINARY         Default: dist/wegent-executor
+  WEGENT_EXECUTOR_BUILD_TARGET   Optional Rust target triple for build command
   CARGO_TARGET_DIR               Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT       Shared Cargo target root for Wegent local builds.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
@@ -69,22 +70,40 @@ is_running() {
 
 build_executor() {
     local version_arg="${1:-}"
+    local build_target="${WEGENT_EXECUTOR_BUILD_TARGET:-}"
     ensure_pid_dir
     configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor"
     echo "Building local executor. Log: $BUILD_LOG"
     echo "Cargo target dir: ${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+    if [[ -n "$build_target" ]]; then
+        echo "Rust target: $build_target"
+    fi
     (
         cd "$ROOT_DIR"
-        cargo build --release --locked
+        cargo_args=(build --release --locked)
+        if [[ -n "$build_target" ]]; then
+            cargo_args+=(--target "$build_target")
+        fi
+        cargo "${cargo_args[@]}"
         mkdir -p dist
-        cp "$(cargo_target_binary_path "$ROOT_DIR" release wegent-executor)" dist/wegent-executor
+        binary_profile="release"
+        if [[ -n "$build_target" ]]; then
+            binary_profile="$build_target/release"
+        fi
+        cp "$(cargo_target_binary_path "$ROOT_DIR" "$binary_profile" wegent-executor)" dist/wegent-executor
         chmod 0755 dist/wegent-executor
         if [[ "$(uname -s)" == "Darwin" ]]; then
             codesign --force --sign - --options runtime dist/wegent-executor >/dev/null 2>&1 || true
         fi
         if [[ -n "$version_arg" ]]; then
-            echo "Building with version: $version_arg"
-            WEGENT_EXECUTOR_VERSION="$version_arg" dist/wegent-executor --version
+            local host_target
+            host_target="$(rustc -vV | awk '/^host: /{print $2; exit}')"
+            if [[ -z "$build_target" || "$build_target" == "$host_target" ]]; then
+                echo "Building with version: $version_arg"
+                WEGENT_EXECUTOR_VERSION="$version_arg" dist/wegent-executor --version
+            else
+                echo "Skipping version execution check for cross-compiled target: $build_target"
+            fi
         fi
     ) 2>&1 | tee "$BUILD_LOG"
 }

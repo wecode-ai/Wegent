@@ -217,7 +217,7 @@ describe('LocalRuntimeInitializer', () => {
       processPids: [],
       processPaths: [],
       sidecarSource: 'bundled',
-      sidecarPath: 'binaries/wegent-executor',
+      sidecarPath: 'wegent-executor',
       currentDir: '/tmp/wework',
       executorHome: '~/.wegent-executor',
       backendUrl: null,
