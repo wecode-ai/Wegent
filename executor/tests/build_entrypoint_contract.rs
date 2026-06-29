@@ -93,6 +93,7 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "docker cp \"$container_id:/app/executor\" executor/target/release/wegent-executor"
     ));
     assert!(e2e_workflow.contains("test -x executor/target/release/wegent-executor"));
+    assert!(e2e_workflow.contains("EXECUTOR_STARTUP_MODE: socket"));
     assert!(!e2e_workflow.contains("cd executor\n            cargo build --release --locked"));
 
     let e2e_fixture =
