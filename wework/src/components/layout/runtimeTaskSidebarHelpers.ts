@@ -90,6 +90,7 @@ export function getRuntimeTaskAddress(
     deviceId: workspace.deviceId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     localTaskId: task.localTaskId,
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
 

@@ -171,6 +171,7 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
             "payload": {
                 "localTaskId": "thread-1",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 50
             }
         }))
@@ -236,6 +237,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
             "payload": {
                 "localTaskId": "thread-1",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1
             }
         }))
@@ -247,6 +249,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
             "payload": {
                 "localTaskId": "thread-1",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1,
                 "beforeCursor": "offset:1"
             }
@@ -299,6 +302,7 @@ async fn app_runtime_reads_transcript_from_cached_thread_list_rollout_path() {
             "payload": {
                 "localTaskId": "thread-fast",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-fast"},
                 "limit": 50
             }
         }))
@@ -331,6 +335,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
             "payload": {
                 "localTaskId": "thread-signature",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
                 "refresh": true
             }
@@ -343,6 +348,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
             "payload": {
                 "localTaskId": "thread-signature",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
                 "refresh": true
             }
@@ -361,6 +367,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
             "payload": {
                 "localTaskId": "thread-signature",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
                 "refresh": true
             }
@@ -394,6 +401,7 @@ async fn app_runtime_rebuilds_transcript_from_rollout_when_thread_read_has_no_tu
             "payload": {
                 "localTaskId": "thread-rollout",
                 "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-rollout"},
                 "limit": 50
             }
         }))

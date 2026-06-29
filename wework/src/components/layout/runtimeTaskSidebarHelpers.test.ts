@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeDeviceWorkspace } from '@/types/api'
-import { getRuntimeSidebarTaskItems } from './runtimeTaskSidebarHelpers'
+import { getRuntimeSidebarTaskItems, getRuntimeTaskAddress } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
   test('keeps runtime task items in workspace order', () => {
@@ -32,5 +32,32 @@ describe('runtimeTaskSidebarHelpers', () => {
       'older-running',
       'newer-idle',
     ])
+  })
+
+  test('carries runtime handle into task addresses when present', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      localTasks: [],
+    }
+    const address = getRuntimeTaskAddress(workspace, {
+      localTaskId: 'local-visible-task',
+      workspacePath: '/workspace/repo',
+      title: 'Existing task',
+      runtime: 'codex',
+      runtimeHandle: {
+        threadId: 'provider-session-1',
+      },
+    })
+
+    expect(address).toEqual({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      localTaskId: 'local-visible-task',
+      runtimeHandle: {
+        threadId: 'provider-session-1',
+      },
+    })
   })
 })
