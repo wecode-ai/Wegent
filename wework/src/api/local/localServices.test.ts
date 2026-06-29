@@ -53,6 +53,51 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('normalizes runtime handles returned by local executor task lists', async () => {
+    const request = vi.fn().mockResolvedValue({
+      workspaces: [
+        {
+          workspace_path: '/Users/me/project',
+          local_tasks: [
+            {
+              local_task_id: 'local-visible-task',
+              workspace_path: '/Users/me/project',
+              title: 'Fix guidance',
+              runtime: 'codex',
+              runtime_handle: {
+                threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toMatchObject({
+      projects: [
+        {
+          deviceWorkspaces: [
+            {
+              localTasks: [
+                {
+                  localTaskId: 'local-visible-task',
+                  runtimeHandle: {
+                    threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  })
+
   test('keeps local device visible when executor startup fails', async () => {
     const services = createLocalAppServices({
       ensure: vi.fn().mockRejectedValue(new Error('sidecar missing')),

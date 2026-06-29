@@ -95,6 +95,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .expect("create should be accepted");
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
+    wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
     let source = json!({
@@ -350,6 +351,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .await
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
+    wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
     let attachment_path = temp_path("runtime-send-pasted-text", "txt");
@@ -504,6 +506,122 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
     assert_eq!(cancelled["accepted"], true);
 }
 
+#[tokio::test]
+async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_id() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-guide-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-guide-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-send-guide-log", "jsonl");
+    let fake_codex = write_fake_codex_slow_first_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-visible-task",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "modelId": "gpt-5.5"
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-visible-task"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-visible-task",
+                "message": "second turn",
+                "modelId": "gpt-5.5"
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+    assert_eq!(sent["accepted"], true);
+
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume = calls
+        .iter()
+        .rev()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("send should resume a provider thread");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_index() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-address-handle-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-address-handle-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-send-address-handle-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "localTaskId": "local-visible-task",
+                    "runtimeHandle": {
+                        "threadId": "thread-1"
+                    }
+                },
+                "content": "continue from address handle",
+                "modelId": "gpt-4.1"
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+    assert_eq!(sent["accepted"], true);
+
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume = calls
+        .iter()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("send should resume the nested runtime handle");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
@@ -543,6 +661,51 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"workspace."}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_slow_first_turn(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-send-guide", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"inProgress","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      case "$line" in
+        *'second turn'*)
+          printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-2","status":"completed"}}}}}}'
+          exit 0
+          ;;
+      esac
+      sleep 2
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
       ;;
@@ -718,6 +881,18 @@ async fn wait_for_thread_mapping(
     panic!("runtime task mapping was not persisted");
 }
 
+async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
+    for _ in 0..200 {
+        let calls = read_json_lines(log_path);
+        let count = calls.iter().filter(|call| call["method"] == method).count();
+        if count >= expected {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected at least {expected} {method} calls");
+}
+
 async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
     for _ in 0..50 {
         let listed = handler
@@ -739,6 +914,29 @@ async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id:
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("runtime task did not become running");
+}
+
+async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
+    for _ in 0..50 {
+        let listed = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.list",
+                "payload": {}
+            }))
+            .await
+            .expect("list should succeed");
+        let idle = listed["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
+            .any(|task| task["localTaskId"] == local_task_id && task["running"] == false);
+        if idle {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("runtime task did not become idle");
 }
 
 async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {

@@ -13,6 +13,7 @@ import type {
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
@@ -540,11 +541,14 @@ function findRuntimeTaskAddressByLocalTaskId(
   ]
 
   for (const workspace of workspaces) {
-    if (!workspace.localTasks.some(task => task.localTaskId === localTaskId)) continue
+    const task = workspace.localTasks.find(task => task.localTaskId === localTaskId)
+    if (!task) continue
 
     const address = {
       deviceId: workspace.deviceId,
+      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       localTaskId,
+      ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
     }
     if (match && match.deviceId !== address.deviceId) {
       return null
