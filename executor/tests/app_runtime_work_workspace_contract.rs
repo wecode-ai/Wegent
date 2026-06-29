@@ -256,35 +256,33 @@ async fn runtime_task_list_coalesces_codex_git_worktrees_under_common_repo_root(
     )
     .unwrap();
 
-    let sqlite_home = temp_path("runtime-worktree-sqlite", "dir");
-    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
-    write_codex_state_db_thread(
-        &sqlite_home,
-        CodexStateDbThread {
-            id: "thread-a",
-            cwd: &codex_worktree_a.join("frontend").display().to_string(),
-            title: "Fix conflict",
-            preview: "fix conflict",
-            rollout_path: "/tmp/codex/thread-a.jsonl",
-            created_at_ms: 1780000000000,
-            updated_at_ms: 1780000060000,
-            archived: false,
+    let threads = json!([
+        {
+            "id": "thread-b",
+            "cwd": codex_worktree_b.join("executor").display().to_string(),
+            "name": "Resolve conflict",
+            "preview": "resolve conflict",
+            "path": "/tmp/codex/thread-b.jsonl",
+            "createdAt": 1780000100000_i64,
+            "updatedAt": 1780000120000_i64,
+            "status": "idle",
+            "turns": []
         },
-    );
-    write_codex_state_db_thread(
-        &sqlite_home,
-        CodexStateDbThread {
-            id: "thread-b",
-            cwd: &codex_worktree_b.join("executor").display().to_string(),
-            title: "Resolve conflict",
-            preview: "resolve conflict",
-            rollout_path: "/tmp/codex/thread-b.jsonl",
-            created_at_ms: 1780000100000,
-            updated_at_ms: 1780000120000,
-            archived: false,
-        },
-    );
-    let fake_codex = write_fake_codex_empty(&temp_path("runtime-worktree-log", "jsonl"));
+        {
+            "id": "thread-a",
+            "cwd": codex_worktree_a.join("frontend").display().to_string(),
+            "name": "Fix conflict",
+            "preview": "fix conflict",
+            "path": "/tmp/codex/thread-a.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-worktree-log", "jsonl"), &threads);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let listed = handler
@@ -337,35 +335,33 @@ async fn runtime_task_list_filters_threads_to_codex_global_projects() {
             "electron-workspace-root-labels": {"/repo/Wegent": "Wegent"}
         }),
     );
-    let sqlite_home = temp_path("runtime-global-filter-sqlite", "dir");
-    let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
-    write_codex_state_db_thread(
-        &sqlite_home,
-        CodexStateDbThread {
-            id: "thread-in-project",
-            cwd: "/repo/Wegent/frontend",
-            title: "Visible",
-            preview: "visible",
-            rollout_path: "/tmp/codex/thread-in-project.jsonl",
-            created_at_ms: 1780000000000,
-            updated_at_ms: 1780000060000,
-            archived: false,
+    let threads = json!([
+        {
+            "id": "thread-outside-project",
+            "cwd": "/repo/Other",
+            "name": "Hidden",
+            "preview": "hidden",
+            "path": "/tmp/codex/thread-outside-project.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000070000_i64,
+            "status": "idle",
+            "turns": []
         },
-    );
-    write_codex_state_db_thread(
-        &sqlite_home,
-        CodexStateDbThread {
-            id: "thread-outside-project",
-            cwd: "/repo/Other",
-            title: "Hidden",
-            preview: "hidden",
-            rollout_path: "/tmp/codex/thread-outside-project.jsonl",
-            created_at_ms: 1780000000000,
-            updated_at_ms: 1780000070000,
-            archived: false,
-        },
-    );
-    let fake_codex = write_fake_codex_empty(&temp_path("runtime-global-filter-log", "jsonl"));
+        {
+            "id": "thread-in-project",
+            "cwd": "/repo/Wegent/frontend",
+            "name": "Visible",
+            "preview": "visible",
+            "path": "/tmp/codex/thread-in-project.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-global-filter-log", "jsonl"), &threads);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let listed = handler
@@ -386,6 +382,71 @@ async fn runtime_task_list_filters_threads_to_codex_global_projects() {
         workspace["localTasks"][0]["localTaskId"],
         "thread-in-project"
     );
+}
+
+#[tokio::test]
+async fn runtime_task_list_preserves_codex_global_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-global-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-global-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Older", "/repo/Newer"],
+            "project-order": ["/repo/Older", "/repo/Newer"],
+            "electron-workspace-root-labels": {
+                "/repo/Older": "Older",
+                "/repo/Newer": "Newer"
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-newer",
+            "cwd": "/repo/Newer",
+            "name": "Newer task",
+            "preview": "newer task",
+            "path": "/tmp/codex/thread-newer.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-older",
+            "cwd": "/repo/Older",
+            "name": "Older task",
+            "preview": "older task",
+            "path": "/tmp/codex/thread-older.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-global-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(listed["success"], true);
+    assert_eq!(listed["workspaces"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["workspaces"][0]["workspacePath"], "/repo/Older");
+    assert_eq!(listed["workspaces"][1]["workspacePath"], "/repo/Newer");
 }
 
 #[tokio::test]
@@ -536,14 +597,15 @@ fn write_fake_codex_with_threads(log_path: &Path, threads: &str) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":{},"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":{},"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done

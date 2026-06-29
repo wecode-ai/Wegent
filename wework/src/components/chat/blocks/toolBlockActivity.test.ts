@@ -10,7 +10,7 @@ function tool(
 ): ToolBlock {
   return {
     id,
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName,
     toolInput: toolName === 'exec_command' ? { cmd: command } : { command },
@@ -46,7 +46,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'cmdline-1',
-          subtaskId: 1,
+          turnId: 1,
           type: 'tool',
           toolName: 'bash',
           toolInput: { commandLine: 'find . -name package.json' },
@@ -62,7 +62,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'guidance-1',
-          subtaskId: 1,
+          turnId: 1,
           type: 'tool',
           toolName: 'conversation_guidance',
           toolInput: { message: 'follow this file' },
@@ -76,7 +76,7 @@ describe('toolBlockActivity', () => {
   test('groups completed tools while preserving running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'thinking',
       content: 'Reading context',
       status: 'done',
@@ -86,7 +86,7 @@ describe('toolBlockActivity', () => {
       thinking,
       {
         id: 'text-1',
-        subtaskId: 1,
+        turnId: 1,
         type: 'text',
         content: 'Let me inspect package files.',
         status: 'done',

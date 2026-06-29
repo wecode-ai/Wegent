@@ -5,7 +5,6 @@
 mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
-mod codex_state_db;
 mod events;
 pub mod fork_transfer;
 mod handler;

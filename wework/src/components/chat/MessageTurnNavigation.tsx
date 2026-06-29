@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { RuntimeTurnNavigationItem } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 const USER_PREVIEW_LENGTH = 56
@@ -21,8 +22,11 @@ const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
 interface MessageTurnNavigationProps {
   messages: WorkbenchMessage[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
+  onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
+  onNavigationLoadStateChange?: (loading: boolean) => void
 }
 
 interface UserTurn {
@@ -31,29 +35,42 @@ interface UserTurn {
   messageIndex: number
   promptPreview: string
   responsePreview: string
+  cursor?: string | null
+  loaded: boolean
 }
 
 interface MessageTurnMarker extends UserTurn {
-  targetTop: number
+  targetTop: number | null
 }
 
 export function MessageTurnNavigation({
   messages,
+  turnNavigation,
   scrollRef,
   contentRef,
+  onLoadTurnNavigationItem,
+  onNavigationLoadStateChange,
 }: MessageTurnNavigationProps) {
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
+  const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
+  const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
   const rafRef = useRef<number | null>(null)
+  const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
 
-  const userTurns = useMemo(() => buildUserTurns(messages), [messages])
+  const userTurns = useMemo(() => {
+    return turnNavigation && turnNavigation.length > 0
+      ? buildUserTurnsFromNavigation(turnNavigation, messages)
+      : buildUserTurns(messages)
+  }, [messages, turnNavigation])
 
   const updateActiveMarker = useCallback(
-    (nextMarkers: MessageTurnMarker[]) => {
+    (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
+      void reason
       const scroller = scrollRef.current
       if (!scroller || nextMarkers.length === 0) {
         setActiveMarkerId(null)
@@ -61,8 +78,14 @@ export function MessageTurnNavigation({
       }
 
       const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
-      let activeMarker = nextMarkers[0]
-      for (const marker of nextMarkers) {
+      const loadedMarkers = nextMarkers.filter(marker => marker.targetTop !== null)
+      if (loadedMarkers.length === 0) {
+        setActiveMarkerId(null)
+        return
+      }
+
+      let activeMarker = loadedMarkers[0]
+      for (const marker of loadedMarkers) {
         if (marker.targetTop <= currentPosition) {
           activeMarker = marker
         } else {
@@ -75,98 +98,175 @@ export function MessageTurnNavigation({
     [scrollRef]
   )
 
-  const calculateMarkers = useCallback(() => {
-    const scroller = scrollRef.current
-    const content = contentRef.current
-    if (!scroller || !content || userTurns.length === 0) {
-      markersRef.current = []
-      setMarkers([])
-      setActiveMarkerId(null)
-      return
-    }
+  const calculateMarkers = useCallback(
+    (reason: string) => {
+      const scroller = scrollRef.current
+      const content = contentRef.current
+      if (!scroller || !content || userTurns.length === 0) {
+        markersRef.current = []
+        setMarkers([])
+        setActiveMarkerId(null)
+        return
+      }
 
-    if (scroller.scrollHeight <= scroller.clientHeight + 8) {
-      markersRef.current = []
-      setMarkers([])
-      setActiveMarkerId(null)
-      return
-    }
+      if (scroller.scrollHeight <= scroller.clientHeight + 8) {
+        markersRef.current = []
+        setMarkers([])
+        setActiveMarkerId(null)
+        return
+      }
 
-    const scrollerRect = scroller.getBoundingClientRect()
-    const nextMarkers = userTurns.flatMap(turn => {
-      const anchor = findMessageAnchorById(content, turn.id)
-      if (!anchor) return []
+      const scrollerRect = scroller.getBoundingClientRect()
+      const anchorByMessageId = getMessageAnchorById(content)
+      const nextMarkers = userTurns.map(turn => {
+        const anchor = anchorByMessageId.get(turn.id)
+        if (!anchor) {
+          return {
+            ...turn,
+            loaded: false,
+            targetTop: null,
+          }
+        }
 
-      const anchorRect = anchor.getBoundingClientRect()
-      const targetTop = Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
-      return [
-        {
+        const anchorRect = anchor.getBoundingClientRect()
+        const targetTop = Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+        return {
           ...turn,
+          loaded: true,
           targetTop,
-        },
-      ]
-    })
+        }
+      })
 
-    markersRef.current = nextMarkers
-    setMarkers(nextMarkers)
-    updateActiveMarker(nextMarkers)
-  }, [contentRef, scrollRef, updateActiveMarker, userTurns])
+      markersRef.current = nextMarkers
+      setMarkers(nextMarkers)
+      updateActiveMarker(nextMarkers, reason)
+    },
+    [contentRef, scrollRef, updateActiveMarker, userTurns]
+  )
 
-  const scheduleCalculateMarkers = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current)
-    }
+  const scheduleCalculateMarkers = useCallback(
+    (reason: string) => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
 
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null
-      calculateMarkers()
-    })
-  }, [calculateMarkers])
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null
+          calculateMarkers(reason)
+        }, 0)
+      })
+    },
+    [calculateMarkers]
+  )
+
+  useEffect(() => {
+    scheduleCalculateMarkers('messages-effect')
+  }, [scheduleCalculateMarkers])
 
   useLayoutEffect(() => {
-    calculateMarkers()
-  }, [calculateMarkers])
+    if (!pendingScrollTargetId) return
+
+    const scroller = scrollRef.current
+    const anchor = findMessageAnchor(contentRef, pendingScrollTargetId)
+    if (!scroller || !anchor) return
+
+    scrollToMessageAnchor(scroller, anchor)
+    setActiveMarkerId(pendingScrollTargetId)
+    setLoadingMarkerId(current => (current === pendingScrollTargetId ? null : current))
+    setPendingScrollTargetId(null)
+    finishNavigationLoad(onNavigationLoadStateChange)
+  }, [contentRef, onNavigationLoadStateChange, pendingScrollTargetId, scrollRef])
 
   useEffect(() => {
     const scroller = scrollRef.current
     const content = contentRef.current
     if (!scroller || !content) return
 
-    const handleScroll = () => updateActiveMarker(markersRef.current)
+    const handleScroll = () => updateActiveMarker(markersRef.current, 'scroll')
+    const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
-    window.addEventListener('resize', scheduleCalculateMarkers)
+    window.addEventListener('resize', handleResize)
 
-    const mutationObserver = new MutationObserver(scheduleCalculateMarkers)
-    mutationObserver.observe(content, { childList: true, subtree: true })
+    const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
+    mutationObserver.observe(content, { childList: true })
 
     const resizeObserver =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleCalculateMarkers)
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
     resizeObserver?.observe(content)
-    resizeObserver?.observe(scroller)
 
     return () => {
       scroller.removeEventListener('scroll', handleScroll)
-      window.removeEventListener('resize', scheduleCalculateMarkers)
+      window.removeEventListener('resize', handleResize)
       mutationObserver.disconnect()
       resizeObserver?.disconnect()
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
       }
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
     }
   }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
 
   const handleMarkerClick = useCallback(
-    (marker: MessageTurnMarker) => {
+    async (marker: MessageTurnMarker) => {
       const scroller = scrollRef.current
       if (!scroller) return
 
-      scroller.scrollTo({
-        top: Math.max(0, marker.targetTop - SCROLL_OFFSET_PX),
-        behavior: 'smooth',
-      })
+      const currentAnchor = findMessageAnchor(contentRef, marker.id)
+      if (currentAnchor) {
+        const gapMarker = findUnloadedMarkerBetween(markersRef.current, activeMarkerId, marker.id)
+        if (gapMarker && onLoadTurnNavigationItem) {
+          setLoadingMarkerId(gapMarker.id)
+          onNavigationLoadStateChange?.(true)
+          try {
+            await onLoadTurnNavigationItem(gapMarker)
+          } catch (error) {
+            console.error('[Wework] Message turn navigation gap load failed', {
+              targetMarkerId: marker.id,
+              gapMarkerId: gapMarker.id,
+              error,
+            })
+          } finally {
+            setLoadingMarkerId(current => (current === gapMarker.id ? null : current))
+            finishNavigationLoad(onNavigationLoadStateChange)
+          }
+        }
+        scrollToMessageAnchor(scroller, currentAnchor)
+        setActiveMarkerId(marker.id)
+        return
+      }
+
+      if (!marker.cursor || !onLoadTurnNavigationItem) {
+        return
+      }
+      setPendingScrollTargetId(marker.id)
+      setLoadingMarkerId(marker.id)
+      onNavigationLoadStateChange?.(true)
+      try {
+        await onLoadTurnNavigationItem(marker)
+      } catch (error) {
+        setPendingScrollTargetId(current => (current === marker.id ? null : current))
+        setLoadingMarkerId(current => (current === marker.id ? null : current))
+        onNavigationLoadStateChange?.(false)
+        console.error('[Wework] Message turn navigation marker load failed', {
+          markerId: marker.id,
+          error,
+        })
+      }
     },
-    [scrollRef]
+    [activeMarkerId, contentRef, onLoadTurnNavigationItem, onNavigationLoadStateChange, scrollRef]
   )
 
   if (markers.length === 0) return null
@@ -199,6 +299,7 @@ export function MessageTurnNavigation({
         <div className="relative w-full" style={{ height: `${navigationHeight}px` }}>
           {markers.map((marker, index) => {
             const isActive = activeMarkerId === marker.id
+            const isLoading = loadingMarkerId === marker.id
             const hoverDistance =
               hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
 
@@ -220,7 +321,11 @@ export function MessageTurnNavigation({
                     index: marker.turnIndex + 1,
                     defaultValue: `跳转到第 ${marker.turnIndex + 1} 条发言`,
                   })}
-                  className="pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                  aria-busy={isLoading}
+                  className={cn(
+                    'pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
+                    isLoading && 'cursor-progress'
+                  )}
                   data-active={isActive}
                   data-testid="message-turn-navigation-marker"
                   onClick={() => handleMarkerClick(marker)}
@@ -230,10 +335,10 @@ export function MessageTurnNavigation({
                   <span
                     className={cn(
                       'block h-[2px] rounded-full transition-all duration-150 ease-out',
-                      getMarkerToneClass(isActive, hoverDistance)
+                      getMarkerToneClass(isActive, hoverDistance, marker.loaded, isLoading)
                     )}
                     style={{
-                      width: `${getMarkerWidthPx(hoverDistance)}px`,
+                      width: `${getMarkerWidthPx(hoverDistance, isLoading)}px`,
                     }}
                   />
                 </button>
@@ -267,19 +372,48 @@ export function MessageTurnNavigation({
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
   const turns: UserTurn[] = []
+  const pendingResponsePreviewTurnIndexes: number[] = []
   messages.forEach((message, index) => {
-    if (message.role !== 'user') return
+    if (message.role !== 'user') {
+      if (message.role === 'assistant' && pendingResponsePreviewTurnIndexes.length > 0) {
+        const responsePreview = getAssistantPreview(message)
+        pendingResponsePreviewTurnIndexes.forEach(turnIndex => {
+          turns[turnIndex].responsePreview = responsePreview
+        })
+        pendingResponsePreviewTurnIndexes.length = 0
+      }
+      return
+    }
 
     turns.push({
       id: message.id,
       turnIndex: turns.length,
       messageIndex: index,
       promptPreview: getUserPromptPreview(message),
-      responsePreview: getFollowingAssistantPreview(messages, index),
+      responsePreview: '',
+      cursor: `offset:${index}`,
+      loaded: true,
     })
+    pendingResponsePreviewTurnIndexes.push(turns.length - 1)
   })
 
   return turns
+}
+
+function buildUserTurnsFromNavigation(
+  navigation: RuntimeTurnNavigationItem[],
+  messages: WorkbenchMessage[]
+): UserTurn[] {
+  const loadedMessageIds = new Set(messages.map(message => message.id))
+  return navigation.map((item, index) => ({
+    id: item.id,
+    turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
+    messageIndex: item.messageIndex,
+    promptPreview: item.promptPreview,
+    responsePreview: item.responsePreview ?? '',
+    cursor: item.cursor ?? `offset:${item.messageIndex}`,
+    loaded: loadedMessageIds.has(item.id),
+  }))
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {
@@ -287,14 +421,9 @@ function getUserPromptPreview(message: WorkbenchMessage) {
   return truncatePreview(codexRequest || message.content, USER_PREVIEW_LENGTH)
 }
 
-function getFollowingAssistantPreview(messages: WorkbenchMessage[], userMessageIndex: number) {
-  const assistantMessage = messages
-    .slice(userMessageIndex + 1)
-    .find(message => message.role === 'assistant')
-  if (!assistantMessage) return ''
-
-  const textBlockContent = getFirstTextBlockContent(assistantMessage)
-  const previewSource = assistantMessage.content.trim() || textBlockContent
+function getAssistantPreview(message: WorkbenchMessage) {
+  const textBlockContent = getFirstTextBlockContent(message)
+  const previewSource = message.content.trim() || textBlockContent
   return truncatePreview(previewSource, RESPONSE_PREVIEW_LENGTH)
 }
 
@@ -336,7 +465,8 @@ function getMarkerTopPx(index: number) {
   return MARKER_ROW_HEIGHT_PX / 2 + index * (MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX)
 }
 
-function getMarkerWidthPx(hoverDistance: number | null) {
+function getMarkerWidthPx(hoverDistance: number | null, loading = false) {
+  if (loading) return EXPANDED_MARKER_WIDTH_PX
   if (hoverDistance === 0) return EXPANDED_MARKER_WIDTH_PX
   if (hoverDistance === 1) return NEARBY_MARKER_WIDTH_PX
   if (hoverDistance === 2) return SECONDARY_MARKER_WIDTH_PX
@@ -344,20 +474,105 @@ function getMarkerWidthPx(hoverDistance: number | null) {
   return COLLAPSED_MARKER_WIDTH_PX
 }
 
-function getMarkerToneClass(isActive: boolean, hoverDistance: number | null) {
+function findUnloadedMarkerBetween(
+  markers: MessageTurnMarker[],
+  activeMarkerId: string | null,
+  targetMarkerId: string
+): MessageTurnMarker | null {
+  if (!activeMarkerId || activeMarkerId === targetMarkerId) return null
+
+  const activeIndex = markers.findIndex(marker => marker.id === activeMarkerId)
+  const targetIndex = markers.findIndex(marker => marker.id === targetMarkerId)
+  if (activeIndex === -1 || targetIndex === -1) return null
+
+  const start = Math.min(activeIndex, targetIndex) + 1
+  const end = Math.max(activeIndex, targetIndex)
+  const candidates = markers.slice(start, end).filter(marker => !marker.loaded)
+  if (candidates.length === 0) return null
+
+  return targetIndex > activeIndex ? candidates[0] : candidates[candidates.length - 1]
+}
+
+function getMarkerToneClass(
+  isActive: boolean,
+  hoverDistance: number | null,
+  loaded: boolean,
+  loading = false
+) {
+  if (loading) return 'animate-pulse bg-primary opacity-100'
   if (hoverDistance === 0) return 'bg-text-primary opacity-100'
   if (hoverDistance === 1) return 'bg-text-primary/70 opacity-90'
   if (hoverDistance === 2) return 'bg-text-muted/75 opacity-80'
   if (hoverDistance !== null) return 'bg-text-muted/55 opacity-70'
   if (isActive) return 'bg-text-primary opacity-100'
+  if (!loaded) return 'bg-text-muted/35 opacity-60'
 
   return 'bg-text-muted/55 opacity-70'
 }
 
-function findMessageAnchorById(content: HTMLElement, messageId: string) {
-  return (
-    Array.from(content.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)).find(
-      anchor => anchor.dataset.messageId === messageId
-    ) ?? null
-  )
+function scrollToMarkerTarget(
+  scroller: HTMLDivElement,
+  targetTop: number,
+  behavior: ScrollBehavior
+) {
+  const top = Math.max(0, targetTop - SCROLL_OFFSET_PX)
+  if (behavior === 'auto') {
+    scroller.scrollTop = top
+    return
+  }
+
+  scroller.scrollTo({
+    top,
+    behavior,
+  })
+}
+
+function scrollToMessageAnchor(scroller: HTMLDivElement, anchor: HTMLElement) {
+  if (typeof anchor.scrollIntoView === 'function') {
+    anchor.scrollIntoView({
+      block: 'start',
+      inline: 'nearest',
+      behavior: 'auto',
+    })
+    scroller.scrollTop = Math.max(0, scroller.scrollTop - SCROLL_OFFSET_PX)
+    return
+  }
+
+  scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, anchor), 'auto')
+}
+
+function findMessageAnchor(
+  contentRef: RefObject<HTMLDivElement | null>,
+  messageId: string
+): HTMLElement | null {
+  const content = contentRef.current
+  return content ? (getMessageAnchorById(content).get(messageId) ?? null) : null
+}
+
+function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement) {
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor.getBoundingClientRect()
+  return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+}
+
+function getMessageAnchorById(content: HTMLElement) {
+  const anchors = new Map<string, HTMLElement>()
+  content.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR).forEach(anchor => {
+    const messageId = anchor.dataset.messageId
+    if (messageId) {
+      anchors.set(messageId, anchor)
+    }
+  })
+  return anchors
+}
+
+function finishNavigationLoad(onNavigationLoadStateChange?: (loading: boolean) => void) {
+  if (!onNavigationLoadStateChange) return
+
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(() => onNavigationLoadStateChange(false))
+    return
+  }
+
+  void Promise.resolve().then(() => onNavigationLoadStateChange(false))
 }

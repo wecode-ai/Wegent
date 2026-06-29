@@ -222,14 +222,15 @@ fn write_fake_codex(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000064,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000063,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-running-rollout","cwd":"/tmp/project","name":"Running rollout","preview":"run","path":"{}","createdAt":1780000000,"updatedAt":1780000062,"status":"idle","turns":[]}},{{"id":"thread-running-wrapped-item","cwd":"/tmp/project","name":"Running wrapped item","preview":"run","path":"/tmp/codex/running-wrapped-item.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[{{"type":"response_item","payload":{{"id":"call-1","type":"function_call","status":"inProgress","call_id":"call-1","name":"exec_command"}}}}]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000064,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000063,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-running-rollout","cwd":"/tmp/project","name":"Running rollout","preview":"run","path":"{}","createdAt":1780000000,"updatedAt":1780000062,"status":"idle","turns":[]}},{{"id":"thread-running-wrapped-item","cwd":"/tmp/project","name":"Running wrapped item","preview":"run","path":"/tmp/codex/running-wrapped-item.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[{{"type":"response_item","payload":{{"id":"call-1","type":"function_call","status":"inProgress","call_id":"call-1","name":"exec_command"}}}}]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done

@@ -7,7 +7,7 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
   id: 'call-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
@@ -19,7 +19,7 @@ const completedCommandBlock: ProcessingBlock = {
 const completedWebSearchBlocks: ProcessingBlock[] = [
   {
     id: 'web-search-1',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -35,7 +35,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-search-2',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -47,7 +47,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-open-1',
-    subtaskId: 1,
+    turnId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -61,7 +61,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
 
 const completedFileChangesBlock: ProcessingBlock = {
   id: 'file-changes-1',
-  subtaskId: 1,
+  turnId: 1,
   type: 'file_changes',
   status: 'done',
   createdAt: 1770000003000,
@@ -355,7 +355,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'thinking',
       content: 'Reading files',
       status: 'streaming',
@@ -371,7 +371,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'streaming',

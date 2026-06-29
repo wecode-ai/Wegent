@@ -323,33 +323,33 @@ export class TaskStateMachine {
    * Handle chat:start event
    */
   handleChatStart(
-    subtaskId: number,
+    turnId: number,
     shellType?: string,
     messageId?: number,
     botName?: string
   ): void {
-    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId, botName })
+    this.dispatch({ type: 'CHAT_START', turnId, shellType, messageId, botName })
   }
 
   /**
    * Handle chat:chunk event
    */
   handleChatChunk(
-    subtaskId: number,
+    turnId: number,
     content: string,
     result?: UnifiedMessage['result'],
     sources?: UnifiedMessage['sources'],
     blockId?: string,
     offset?: number
   ): void {
-    this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, offset, result, sources, blockId })
+    this.dispatch({ type: 'CHAT_CHUNK', turnId, content, offset, result, sources, blockId })
   }
 
   /**
    * Handle chat:done event
    */
   handleChatDone(
-    subtaskId: number,
+    turnId: number,
     content?: string,
     result?: UnifiedMessage['result'],
     messageId?: number,
@@ -359,7 +359,7 @@ export class TaskStateMachine {
   ): void {
     this.dispatch({
       type: 'CHAT_DONE',
-      subtaskId,
+      turnId,
       content,
       result,
       messageId,
@@ -372,15 +372,15 @@ export class TaskStateMachine {
   /**
    * Handle chat:error event
    */
-  handleChatError(subtaskId: number, error: string, messageId?: number, errorType?: string): void {
-    this.dispatch({ type: 'CHAT_ERROR', subtaskId, error, messageId, errorType })
+  handleChatError(turnId: number, error: string, messageId?: number, errorType?: string): void {
+    this.dispatch({ type: 'CHAT_ERROR', turnId, error, messageId, errorType })
   }
 
   /**
    * Handle chat:cancelled event
    */
-  handleChatCancelled(subtaskId: number): void {
-    this.dispatch({ type: 'CHAT_CANCELLED', subtaskId })
+  handleChatCancelled(turnId: number): void {
+    this.dispatch({ type: 'CHAT_CANCELLED', turnId })
   }
 
   /**
@@ -419,7 +419,7 @@ export class TaskStateMachine {
   cleanupMessagesAfterEdit(editedSubtaskId: number): void {
     let editedMessageId: number | undefined
     for (const msg of this.state.messages.values()) {
-      if (msg.subtaskId === editedSubtaskId) {
+      if (msg.turnId === editedSubtaskId) {
         editedMessageId = msg.messageId
         break
       }
@@ -499,10 +499,10 @@ export class TaskStateMachine {
     await this.recover(options)
   }
 
-  private getSyncAfterMessageIdBeforeSubtask(subtaskId?: number): number | undefined {
-    if (subtaskId === undefined) return undefined
+  private getSyncAfterMessageIdBeforeSubtask(turnId?: number): number | undefined {
+    if (turnId === undefined) return undefined
 
-    const activeMessage = this.state.messages.get(generateMessageId('ai', subtaskId))
+    const activeMessage = this.state.messages.get(generateMessageId('ai', turnId))
     const activeMessageId = activeMessage?.messageId
     if (activeMessageId === undefined) return undefined
 
@@ -677,7 +677,7 @@ export class TaskStateMachine {
     const runtime: TaskRuntimeState = {
       ...this.state.runtime,
       phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, true),
-      activeStreamSubtaskId: completion.subtaskId,
+      activeStreamSubtaskId: completion.turnId,
       activeStreamStartedAt: completion.startedAt,
       activeStreamLastActivityAt: completion.lastActivityAt,
       localStreamCursor: completion.cursor,

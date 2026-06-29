@@ -32,8 +32,8 @@ function renderCard(
   overrides: Partial<{
     summary: TurnFileChangesSummary
     deviceOnline: boolean
-    onLoadDiff: (subtaskId: number) => Promise<string>
-    onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+    onLoadDiff: (turnId: number) => Promise<string>
+    onRevert: (turnId: number) => Promise<TurnFileChangesSummary>
     onOpenReview: (request: OpenReviewRequest) => void
   }> = {}
 ) {
@@ -50,7 +50,7 @@ function renderCard(
 
   render(
     <FileChangesCard
-      subtaskId={21}
+      turnId={21}
       summary={overrides.summary ?? summary}
       deviceOnline={overrides.deviceOnline ?? true}
       onLoadDiff={onLoadDiff}
@@ -340,7 +340,7 @@ describe('FileChangesCard', () => {
 
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
-    expect(request.subtaskId).toBe(21)
+    expect(request.turnId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.focusFilePath).toBeUndefined()
@@ -377,7 +377,7 @@ describe('FileChangesCard', () => {
 
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
-    expect(request.subtaskId).toBe(21)
+    expect(request.turnId).toBe(21)
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.focusFilePath).toBe('src/file-2.ts')

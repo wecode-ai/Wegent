@@ -1,7 +1,10 @@
 {
   "message_navigation": {
     "label": "历史发言导航",
-    "jump_to_message": "跳转到第 {{index}} 条发言"
+    "jump_to_message": "跳转到第 {{index}} 条发言",
+    "loading_target": "正在加载目标位置...",
+    "gap_missing": "部分记录未加载",
+    "loading_gap": "正在加载缺失记录..."
   },
   "thinking": {
     "running": "正在思考",

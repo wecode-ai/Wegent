@@ -27,9 +27,7 @@ export const initialWorkbenchState: WorkbenchState = {
   pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
   standaloneWorkspacePath: null,
-  input: '',
   isBootstrapping: true,
-  isSending: false,
   error: null,
 }
 
@@ -92,9 +90,6 @@ export type WorkbenchAction =
       project: ProjectWithTasks | null
     }
   | { type: 'current_task_cleared' }
-  | { type: 'input_changed'; input: string }
-  | { type: 'sending_started' }
-  | { type: 'sending_finished' }
   | { type: 'error_set'; error: string | null }
 
 function keepDevicesOnTransientEmpty(
@@ -590,12 +585,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     case 'current_task_cleared':
       return { ...state, currentRuntimeTask: null }
-    case 'input_changed':
-      return { ...state, input: action.input }
-    case 'sending_started':
-      return { ...state, isSending: true, error: null }
-    case 'sending_finished':
-      return { ...state, isSending: false }
     case 'error_set':
       return { ...state, error: action.error }
   }

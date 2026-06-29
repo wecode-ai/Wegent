@@ -26,7 +26,7 @@ use crate::{
 pub use agno::build_agno_options;
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    request_codex_app_server, run_codex_app_server_turn, CodexAppServerEngine, CodexAppServerTurn,
+    run_codex_app_server_turn, CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn,
     CodexCancellationState, CodexNotificationSender, CodexTurnInterrupter,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};

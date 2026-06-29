@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use serde_json::{json, Map, Value};
 
@@ -16,29 +16,33 @@ use super::util::{
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     let mut messages = Vec::new();
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
-    for turn in thread
+    for (turn_index, turn) in thread
         .get("turns")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .enumerate()
     {
         let created_at = turn_started_at(turn);
         let completed_at = turn_completed_at(turn, created_at);
         let turn_file_changes = file_changes(turn);
-        let turn_id = item_id(turn, "turn");
+        let turn_id = stable_indexed_id(turn, "turn", turn_index);
         let subtask_id = turn_subtask_id(turn, &turn_id);
         let turn_cancelled = turn_interrupted(turn);
         let assistant_status = turn_assistant_status(turn);
         let fold_commentary = turn_should_fold_commentary(turn);
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
-        for raw_item in turn
+        let mut seen_user_messages = HashSet::new();
+        let prefer_user_message_events = turn_has_user_message_event(turn);
+        for (item_index, raw_item) in turn
             .get("items")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .enumerate()
         {
-            let item = transcript_item(raw_item);
+            let item = transcript_item_with_stable_id(raw_item, &turn_id, item_index);
             match item_type(&item).as_str() {
                 "usermessage" => {
                     if is_internal_turn_abort_message(&item) {
@@ -59,8 +63,14 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &mut assistant,
                         false,
                     );
-                    push_user_message(&mut messages, &item, created_at, &turn_id);
-                    if is_guidance {
+                    let pushed_user = push_user_message_once(
+                        &mut messages,
+                        &item,
+                        created_at,
+                        &turn_id,
+                        &mut seen_user_messages,
+                    );
+                    if is_guidance && pushed_user {
                         assistant.blocks.push(guidance_block(
                             &item,
                             item_timestamp(&item).unwrap_or(created_at),
@@ -141,6 +151,9 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     .as_str()
                 {
                     "user" => {
+                        if prefer_user_message_events {
+                            continue;
+                        }
                         if is_internal_turn_abort_message(&item) {
                             continue;
                         }
@@ -159,8 +172,14 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             &mut assistant,
                             false,
                         );
-                        push_user_message(&mut messages, &item, created_at, &turn_id);
-                        if is_guidance {
+                        let pushed_user = push_user_message_once(
+                            &mut messages,
+                            &item,
+                            created_at,
+                            &turn_id,
+                            &mut seen_user_messages,
+                        );
+                        if is_guidance && pushed_user {
                             assistant.blocks.push(guidance_block(
                                 &item,
                                 item_timestamp(&item).unwrap_or(created_at),
@@ -222,7 +241,56 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             true,
         );
     }
+    make_transcript_ids_unique(&mut messages);
     messages
+}
+
+fn make_transcript_ids_unique(messages: &mut [Value]) {
+    let mut message_ids = HashSet::new();
+    for (message_index, message) in messages.iter_mut().enumerate() {
+        ensure_unique_id(
+            message,
+            &mut message_ids,
+            &format!("message-{message_index}"),
+        );
+        let message_id =
+            string_field(message, "id").unwrap_or_else(|| format!("message-{message_index}"));
+
+        let Some(blocks) = message.get_mut("blocks").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let mut block_ids = HashSet::new();
+        for (block_index, block) in blocks.iter_mut().enumerate() {
+            ensure_unique_id(
+                block,
+                &mut block_ids,
+                &format!("{message_id}-block-{block_index}"),
+            );
+        }
+    }
+}
+
+fn ensure_unique_id(value: &mut Value, used: &mut HashSet<String>, fallback: &str) {
+    let base = string_field(value, "id").unwrap_or_else(|| fallback.to_owned());
+    let unique = unique_id(base, used);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("id".to_owned(), Value::String(unique));
+    }
+}
+
+fn unique_id(base: String, used: &mut HashSet<String>) -> String {
+    if used.insert(base.clone()) {
+        return base;
+    }
+
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 pub(crate) fn tool_block_from_notification(params: &Value, status: &str) -> Option<Value> {
@@ -279,6 +347,34 @@ fn transcript_item(item: &Value) -> Value {
         }
     }
     Value::Object(object)
+}
+
+fn transcript_item_with_stable_id(item: &Value, turn_id: &str, item_index: usize) -> Value {
+    let mut normalized = transcript_item(item);
+    if string_field(&normalized, "id").is_some() {
+        return normalized;
+    }
+
+    if let Some(object) = normalized.as_object_mut() {
+        object.insert(
+            "id".to_owned(),
+            Value::String(format!("{turn_id}:item:{}", item_index + 1)),
+        );
+    }
+    normalized
+}
+
+fn stable_indexed_id(item: &Value, prefix: &str, index: usize) -> String {
+    string_field(item, "id").unwrap_or_else(|| format!("{prefix}-{}", index + 1))
+}
+
+fn turn_has_user_message_event(turn: &Value) -> bool {
+    turn.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(transcript_item)
+        .any(|item| item_type(&item) == "usermessage" && !is_internal_turn_abort_message(&item))
 }
 
 fn turn_started_at(turn: &Value) -> i64 {
@@ -579,6 +675,33 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
     messages.push(message);
 }
 
+fn push_user_message_once(
+    messages: &mut Vec<Value>,
+    item: &Value,
+    created_at: i64,
+    turn_id: &str,
+    seen: &mut HashSet<String>,
+) -> bool {
+    let Some(signature) = user_message_signature(item) else {
+        push_user_message(messages, item, created_at, turn_id);
+        return true;
+    };
+    if !seen.insert(signature) {
+        return false;
+    }
+    push_user_message(messages, item, created_at, turn_id);
+    true
+}
+
+fn user_message_signature(item: &Value) -> Option<String> {
+    let content = extract_text(item)?;
+    let normalized = content.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized.to_owned())
+}
+
 fn is_internal_turn_abort_message(item: &Value) -> bool {
     extract_text(item)
         .map(|content| content.trim_start().starts_with("<turn_aborted>"))
@@ -842,6 +965,7 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "status": draft.status,
         "subtaskId": draft.subtask_id,
         "subtask_id": draft.subtask_id,
+        "turn_id": draft.subtask_id,
         "createdAt": draft.created_at,
         "turnId": draft.source_turn_id,
         "blocks": draft.blocks,
@@ -1715,10 +1839,31 @@ mod tests {
                             "type": "response_item",
                             "timestamp": 1_780_000_000,
                             "payload": {
+                                "id": "context-response",
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "# AGENTS.md instructions\n\n<environment_context>"}
+                                ]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_000,
+                            "payload": {
                                 "id": "user-1",
                                 "type": "message",
                                 "role": "user",
                                 "content": [{"type": "input_text", "text": "inspect runtime"}]
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_000,
+                            "payload": {
+                                "id": "user-event-1",
+                                "type": "user_message",
+                                "message": "inspect runtime"
                             }
                         },
                         {
@@ -1799,6 +1944,188 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_deduplicates_user_event_when_response_item_is_present() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_000,
+                            "payload": {
+                                "id": "user-response",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "start app"}]
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "user-event",
+                                "type": "user_message",
+                                "message": "start app\n"
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "id": "assistant-1",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "working"}]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let user_messages = messages
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages[0]["content"], "start app");
+        assert!(!messages.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("AGENTS.md"))
+        }));
+    }
+
+    #[test]
+    fn transcript_makes_message_and_block_ids_unique() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "duplicate-user",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "first request"}]
+                        },
+                        {
+                            "id": "duplicate-user",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "second request"}]
+                        },
+                        {
+                            "id": "duplicate-file-change",
+                            "type": "patchApplyEnd",
+                            "status": "completed",
+                            "changes": {
+                                "/tmp/project/src/one.rs": {
+                                    "type": "update",
+                                    "unified_diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                    "move_path": null
+                                }
+                            }
+                        },
+                        {
+                            "id": "duplicate-file-change",
+                            "type": "patchApplyEnd",
+                            "status": "completed",
+                            "changes": {
+                                "/tmp/project/src/two.rs": {
+                                    "type": "update",
+                                    "unified_diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                    "move_path": null
+                                }
+                            }
+                        },
+                        {
+                            "id": "agent-1",
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": "Done"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let message_ids = messages
+            .iter()
+            .filter_map(|message| message["id"].as_str())
+            .collect::<Vec<_>>();
+        let unique_message_ids = message_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(message_ids.len(), unique_message_ids.len());
+        assert_eq!(message_ids[0], "duplicate-user");
+        assert_eq!(message_ids[1], "duplicate-user-2");
+
+        let block_ids = messages
+            .last()
+            .and_then(|message| message["blocks"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|block| block["id"].as_str())
+            .collect::<Vec<_>>();
+        let unique_block_ids = block_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(block_ids.len(), unique_block_ids.len());
+        assert_eq!(block_ids[0], "file-changes-duplicate-file-change");
+        assert_eq!(block_ids[1], "file-changes-duplicate-file-change-2");
+    }
+
+    #[test]
+    fn transcript_generates_stable_ids_for_items_without_raw_ids() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "first request"}]
+                        },
+                        {
+                            "type": "reasoning",
+                            "text": "thinking"
+                        },
+                        {
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": "Done"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let first = transcript_messages(&thread, "device-1");
+        let second = transcript_messages(&thread, "device-1");
+        let first_ids = first
+            .iter()
+            .filter_map(|message| message["id"].as_str())
+            .collect::<Vec<_>>();
+        let second_ids = second
+            .iter()
+            .filter_map(|message| message["id"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_ids, second_ids);
+        assert_eq!(first_ids[0], "turn-1:item:1");
     }
 
     #[test]

@@ -450,7 +450,8 @@ fn event_text_signature(item: &Value) -> Option<TextSignature> {
     }
     let payload = codex_wrapped_item_payload(item)?;
     match item_type(payload).as_str() {
-        "usermessage" => text_signature(payload, "user"),
+        // Keep user events. They mark the actual user prompt when Codex also
+        // records injected context as `response_item/message role=user`.
         "agentmessage" => text_signature(payload, "assistant"),
         _ => None,
     }
@@ -561,6 +562,8 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::runtime_work::transcript::transcript_messages;
+
     use super::*;
 
     #[test]
@@ -664,8 +667,104 @@ mod tests {
             .as_array()
             .expect("items should exist");
 
-        assert_eq!(items.len(), 2);
-        assert!(items.iter().all(|item| item["type"] == "response_item"));
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["type"], "event_msg");
+        assert_eq!(items[0]["payload"]["type"], "user_message");
+        assert_eq!(items[1]["type"], "response_item");
+        assert_eq!(items[1]["payload"]["role"], "user");
+        assert_eq!(items[2]["type"], "response_item");
+        assert_eq!(items[2]["payload"]["role"], "assistant");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rollout_transcript_hides_injected_context_user_response_items() {
+        let path = temp_rollout_path("injected-context-user");
+        fs::write(
+            &path,
+            [
+                json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n\n<environment_context>"}]}})
+                    .to_string(),
+                json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect runtime"}]}})
+                    .to_string(),
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"inspect runtime"}})
+                    .to_string(),
+                json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"done"}]}})
+                    .to_string(),
+                json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let thread = thread_with_path(&path);
+        let hydrated = thread_with_rollout_turns(&thread).expect("rollout should hydrate thread");
+        let messages = transcript_messages(&hydrated, "device-1");
+        let user_messages = messages
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages[0]["content"], "inspect runtime");
+        assert!(!messages.iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("AGENTS.md"))
+        }));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rollout_transcript_uses_each_turn_iso_start_and_completion_times() {
+        let path = temp_rollout_path("turn-iso-times");
+        fs::write(
+            &path,
+            [
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:27:08.936Z","payload":{"type":"task_started"}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:27:14.516Z","payload":{"type":"user_message","message":"first"}})
+                    .to_string(),
+                json!({"type":"response_item","timestamp":"2026-06-29T07:27:24.733Z","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"one"}]}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:27:24.812Z","payload":{"type":"task_complete"}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:29:39.701Z","payload":{"type":"task_started"}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:29:50.687Z","payload":{"type":"user_message","message":"second"}})
+                    .to_string(),
+                json!({"type":"response_item","timestamp":"2026-06-29T07:29:56.803Z","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"two"}]}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:29:56.820Z","payload":{"type":"task_complete"}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:41:44.833Z","payload":{"type":"task_started"}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:41:50.370Z","payload":{"type":"user_message","message":"third"}})
+                    .to_string(),
+                json!({"type":"response_item","timestamp":"2026-06-29T07:41:56.199Z","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"three"}]}})
+                    .to_string(),
+                json!({"type":"event_msg","timestamp":"2026-06-29T07:41:56.275Z","payload":{"type":"task_complete"}})
+                    .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let thread = thread_with_path(&path);
+        let hydrated = thread_with_rollout_turns(&thread).expect("rollout should hydrate thread");
+        let messages = transcript_messages(&hydrated, "device-1");
+        let assistants = messages
+            .iter()
+            .filter(|message| message["role"] == "assistant")
+            .collect::<Vec<_>>();
+
+        assert_eq!(assistants.len(), 3);
+        assert_eq!(assistants[0]["createdAt"], 1_782_718_028_936_i64);
+        assert_eq!(assistants[0]["completedAt"], 1_782_718_044_812_i64);
+        assert_eq!(assistants[1]["createdAt"], 1_782_718_179_701_i64);
+        assert_eq!(assistants[1]["completedAt"], 1_782_718_196_820_i64);
+        assert_eq!(assistants[2]["createdAt"], 1_782_718_904_833_i64);
+        assert_eq!(assistants[2]["completedAt"], 1_782_718_916_275_i64);
         let _ = fs::remove_file(path);
     }
 

@@ -29,7 +29,7 @@ Rust executor keeps a device-side JSON LocalTask index for runtime work:
 $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 ```
 
-Codex tasks are discovered through the Codex state DB and controlled through the `codex app-server --stdio` JSON-RPC protocol. The executor stores the Wegent `localTaskId`, workspace, title, status, and real Codex `threadId` mapping in this index so app-mode task creation can recover after a restart. The full transcript remains authoritative in the Codex app-server `thread/read` metadata plus the local rollout JSONL and is not synced to the central database.
+Codex tasks are discovered and controlled through the `codex app-server --stdio` JSON-RPC protocol. The executor stores the Wegent `localTaskId`, workspace, title, status, and real Codex `threadId` mapping in its local index so app-mode task creation can recover after a restart. The full transcript remains authoritative in the Codex app-server `thread/read` metadata plus the local rollout JSONL and is not synced to the central database.
 
 ## List Refresh
 
@@ -37,7 +37,7 @@ Wework requests the task list on startup, explicit refresh, or device-state chan
 
 1. Wework requests `GET /api/runtime-work`.
 2. Backend reads the current user's online devices and calls `runtime.tasks.list` over each device WebSocket RPC channel.
-3. The executor refreshes local Codex threads by reading the `threads` table from Codex `state_5.sqlite` and merges the device-side JSON LocalTask index.
+3. The executor refreshes local Codex threads through persistent Codex app-server `thread/list` calls and merges the device-side JSON LocalTask index.
 4. The executor returns `workspaceKind`, workspace path, task title, update time, and device status.
 5. Backend performs light aggregation and returns the result to Wework without reading or matching the Backend `projects` table.
 6. Wework renders Projects and Conversations from the runtime work response, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
@@ -76,13 +76,13 @@ Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tas
 
 Wework uses one primary read path for local Codex conversations so list, open, and refresh do not each implement separate transcript logic:
 
-1. The list path opens Codex state DB through a read-only SQLite connection and queries the `threads` table by `archived` and `updated_at_ms`. It reads thread metadata without starting Codex app-server and without scanning JSONL transcripts. The state DB path is resolved in this order: `WEGENT_CODEX_STATE_DB`, `CODEX_SQLITE_HOME/state_5.sqlite`, `CODEX_HOME/sqlite/state_5.sqlite`, `CODEX_HOME/state_5.sqlite`, `~/.codex/sqlite/state_5.sqlite`, then `~/.codex/state_5.sqlite`. The executor only reads a small rollout tail to infer whether a Codex-native conversation is still running, then merges the device-side LocalTask index.
+1. The list path calls persistent Codex app-server `thread/list` with `recency_at` descending sort, the `archived` filter, and `useStateDbOnly` to read thread metadata without scanning JSONL transcripts. The executor keeps a small-window cache for repeated list requests, invalidates it after thread-management operations or local task state changes, then merges the device-side LocalTask index.
 2. The first open path calls `thread/read` with `includeTurns: false`, which returns thread metadata and the rollout path only. The executor then parses that JSONL once, builds normalized messages, tool blocks, thinking blocks, file changes, and raw rollout turns, and stores them in memory with the rollout length/mtime signature.
 3. Switching to an already loaded conversation no longer calls Codex app-server or rereads the file. The executor serves the full message array from memory and applies the requested `limit`/`beforeCursor` page.
 4. When a switch needs fresh data, the executor first reads the current rollout file signature. If the file only appended bytes, it reads from the previous length, applies those events to the cached rollout turns, regenerates messages only from the first affected turn, and replaces the cached tail by `turnId`. Tool items, thinking, running status, and new text all come from that single append result.
 5. The only recovery path is a non-append file change: truncation, same-length mtime changes, or an old cache without raw turns. In that case the executor discards the cache and runs the first-open path again.
 
-Wework does not use Codex app-server `thread/list` for the list path because Wegent's `request_codex_app_server` starts an app-server child process for each request. Even when `thread/list` only reads the state DB, process startup can push a cold list close to 1 second. Reading the same state DB file directly avoids the IPC and child-process startup cost. Wework also does not use Codex app-server `thread/turns/list` for long transcript paging because the current Codex implementation still replays the whole rollout file on each request. That has the same cost as a full read and cannot reuse the executor's normalized tool/message cache. Opening with `includeTurns: true` is also avoided because large transcripts would be serialized through app-server before the executor normalizes them, increasing IPC and frontend pressure.
+The list, read, and thread-management paths share one persistent Codex app-server connection, avoiding per-RPC child process startup. Wework still does not use Codex app-server `thread/turns/list` for long transcript paging because the current Codex implementation still replays the whole rollout file on each request. That has the same cost as a full read and cannot reuse the executor's normalized tool/message cache. Opening with `includeTurns: true` is also avoided because large transcripts would be serialized through app-server before the executor normalizes them, increasing IPC and frontend pressure.
 
 Use this manual benchmark to recheck a local rollout:
 
@@ -182,7 +182,7 @@ The runtime owns persistence for newly created tasks:
 
 - Claude Code creates an executor JSON LocalTask and stores the transcript and runtime handle in that index.
 - Codex creation first returns the Wegent-side `localTaskId` so the frontend can open the task and receive stream events immediately. After app-server `thread/start` and `turn/start` create the real Codex thread, the executor writes the `localTaskId -> threadId` mapping into the JSON LocalTask index for later send/resume calls.
-- Codex creation and continuation do not cache the full transcript in the executor JSON index. After an executor restart, the executor recovers task links through the Codex state DB plus the local index, then reads transcripts from `thread/read` metadata plus rollout JSONL.
+- Codex creation and continuation do not cache the full transcript in the executor JSON index. After an executor restart, the executor recovers task links through `thread/list` plus the local index, then reads transcripts from `thread/read` metadata plus rollout JSONL.
 - Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
 - Codex app-server input supports `input_text`, `input_image`, and `localImage` prompt blocks. Backend attachment-id download and sandbox-path rewriting require separate device-side attachment handling; the frontend must not send local attachment paths directly to Backend.
 - If Codex response completion includes `file_changes` or `fileChanges`, the executor stores it on the current assistant message's `fileChanges` field, and later transcript refreshes continue to show the same file changes card.

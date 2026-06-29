@@ -17,7 +17,7 @@ import { getWebSearchActivityItems } from './webSearchActivity'
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
   isStreaming: boolean
-  // Wall-clock epoch ms when the turn started (the assistant subtask's
+  // Wall-clock epoch ms when the turn started (the assistant turn's
   // created_at). Used as the duration anchor so the elapsed time survives a
   // page refresh: after a refresh the in-progress blocks are re-streamed with
   // fresh client timestamps, so anchoring to the first block would restart the

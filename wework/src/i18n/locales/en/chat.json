@@ -1,7 +1,10 @@
 {
   "message_navigation": {
     "label": "Previous message navigation",
-    "jump_to_message": "Jump to message {{index}}"
+    "jump_to_message": "Jump to message {{index}}",
+    "loading_target": "Loading target position...",
+    "gap_missing": "Some history is not loaded",
+    "loading_gap": "Loading missing history..."
   },
   "thinking": {
     "running": "Thinking",

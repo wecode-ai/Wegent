@@ -6,6 +6,7 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
   Team,
   TurnFileChangesSummary,
@@ -50,6 +51,7 @@ export type WorkbenchMessage = Omit<
   'blocks'
 > & {
   blocks?: ProcessingBlock[]
+  runtimeMessageIndex?: number | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -78,6 +80,29 @@ export interface GuidanceWorkbenchMessage {
   error?: string
 }
 
+export interface RuntimePaneTranscript {
+  messages: WorkbenchMessage[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
+  rangeStart?: number | null
+  rangeEnd?: number | null
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+  hasMoreAfter?: boolean
+  afterCursor?: string | null
+}
+
+export interface RuntimePaneTranscriptLoadOptions {
+  limit?: number
+  beforeCursor?: string | null
+  afterCursor?: string | null
+  refresh?: boolean
+}
+
+export type RuntimeTranscriptLoader = (
+  address: RuntimeTaskAddress,
+  options?: RuntimePaneTranscriptLoadOptions
+) => Promise<RuntimePaneTranscript>
+
 export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
 export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
 export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
@@ -101,8 +126,6 @@ export interface WorkbenchState {
   pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
   standaloneWorkspacePath: string | null
-  input: string
   isBootstrapping: boolean
-  isSending: boolean
   error: string | null
 }
