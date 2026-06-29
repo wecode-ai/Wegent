@@ -16,6 +16,7 @@ import {
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
+  openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
@@ -129,6 +130,7 @@ vi.mock('@/lib/local-terminal', () => ({
   getLocalExecutorDeviceId: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
   localPathExists: vi.fn(),
+  openLocalWorkspace: vi.fn(),
   startLocalTerminal: vi.fn(),
 }))
 
@@ -304,6 +306,7 @@ const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
+const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
@@ -412,6 +415,7 @@ describe('DesktopWorkbenchLayout', () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
+    openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     fetchQuotaMock.mockResolvedValue({
@@ -1641,11 +1645,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('keeps project code-server disabled for local devices', async () => {
+  test('opens the local project from the Tauri titlebar with VS Code for local devices', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
     })
+    isLocalTerminalAvailableMock.mockReturnValue(true)
 
     render(
       <DesktopWorkbenchLayout
@@ -1660,6 +1665,10 @@ describe('DesktopWorkbenchLayout', () => {
               execution: {
                 targetType: 'local',
                 deviceId: 'local-claude',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/Users/me/github_wegent',
               },
             },
             tasks: [],
@@ -1681,11 +1690,15 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const button = screen.getByTestId('open-code-server-titlebar-button')
-    expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', '项目 IDE 仅支持云设备')
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('title', '使用 VS Code 打开')
 
     await userEvent.click(button)
 
+    expect(openLocalWorkspaceMock).toHaveBeenCalledWith({
+      opener: 'vscode',
+      path: '/Users/me/github_wegent',
+    })
     expect(startCodeServerSessionMock).not.toHaveBeenCalled()
   })
 
