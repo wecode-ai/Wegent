@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use crate::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
-    logging::{log_executor_event, task_fields, write_executor_log_line},
+    logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
 };
@@ -103,7 +103,7 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
 }
 
 pub fn startup_log_line(bind_addr: SocketAddr) -> String {
-    format!("Wegent executor listening on {bind_addr}")
+    format!("{} listening on {bind_addr}", executor_log_timestamp())
 }
 
 async fn health_check() -> Json<Value> {

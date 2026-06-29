@@ -27,6 +27,7 @@ axum = "0.8"
 aes = "0.8"
 base64 = "0.22"
 cbc = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
