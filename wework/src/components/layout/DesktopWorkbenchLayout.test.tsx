@@ -4447,6 +4447,87 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
   })
 
+  test('does not reload environment info when runtime work polling keeps the same project workspace target', async () => {
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+4',
+      deletions: '-1',
+      executionTarget: 'local' as const,
+      deviceId: 'device-1',
+      branchName: 'feature/done',
+    })
+    const workspaceProject = {
+      id: 1,
+      name: 'workspace',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-1',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/repo',
+        },
+      },
+    }
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'project:1', id: 1, name: 'workspace' },
+          deviceWorkspaces: [
+            {
+              id: 1,
+              projectId: 1,
+              deviceId: 'device-1',
+              available: true,
+              mapped: true,
+              workspacePath: '/repo',
+              localTasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 0,
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: workspaceProject,
+          runtimeWork,
+        }}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
+        deviceId: 'device-1',
+        path: '/repo',
+        source: 'project',
+      })
+    })
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: workspaceProject,
+          runtimeWork: structuredClone(runtimeWork),
+        }}
+      />
+    )
+
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+  })
+
   test('closes the right workspace panel from the panel actions', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
