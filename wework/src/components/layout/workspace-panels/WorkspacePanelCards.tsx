@@ -1,10 +1,14 @@
-import { Code2, File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
+import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
 import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
@@ -16,6 +20,7 @@ import {
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
+  openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
@@ -23,6 +28,7 @@ import { buildVncPageUrl } from '@/lib/vnc'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
+import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import { RemoteTerminal } from './RemoteTerminal'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 
@@ -192,14 +198,19 @@ export function WorkspacePanelCards({
     localTerminalSupported && localTerminalRuntimeAvailable && !localTerminalCheckReady
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
+  const localIdeLaunchable = Boolean(
+    localTerminalLaunchable && activeWorkspacePath?.trim() && localTerminalSupported
+  )
   const projectTerminalAvailable =
     localTerminalLaunchable ||
     (!localTerminalSupported && Boolean(currentProject) && remoteTerminalAvailable)
+  const projectIdeAvailable = cloudToolsAvailable || localIdeLaunchable
   const hasLimitedProjectTools = Boolean(
     hasWorkspaceContext &&
     !cloudToolsAvailable &&
     !localTerminalCheckPending &&
-    !projectTerminalAvailable
+    !projectTerminalAvailable &&
+    !projectIdeAvailable
   )
   const projectKey = hasWorkspaceContext
     ? [
@@ -458,12 +469,27 @@ export function WorkspacePanelCards({
     })
   }
 
-  const handleIdeClick = async () => {
-    if (!currentProject || loadingTool || !availableTools.ide) return
+  const handleIdeClick = async (
+    opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+  ) => {
+    if (loadingTool || !availableTools.ide) return
     setLoadingTool('ide')
     setProjectError(null)
     let shouldClosePanel = false
     try {
+      if (localIdeLaunchable) {
+        if (!activeWorkspacePath) {
+          throw new Error('Local workspace path is missing')
+        }
+        await openLocalWorkspace({
+          opener,
+          path: activeWorkspacePath,
+        })
+        shouldClosePanel = true
+        return
+      }
+
+      if (!currentProject) return
       const projectApi = createProjectSessionApi()
       const session = await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
@@ -695,52 +721,100 @@ export function WorkspacePanelCards({
                       : t('workbench.project_tool_unavailable', '暂不可用')}
                   </span>
                 </button>
-                {cloudToolsAvailable && (
+                {projectIdeAvailable && (
                   <>
-                    <button
-                      type="button"
-                      data-testid={testId('workspace-ide-card')}
-                      onClick={handleIdeClick}
-                      disabled={toolsDisabled || !currentProject || !availableTools.ide}
-                      className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {loadingTool === 'ide' ? (
-                        <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                      ) : (
-                        <Code2 className="mb-5 h-7 w-7 text-text-secondary" />
-                      )}
-                      <span className="text-sm font-semibold text-text-primary">
-                        {t('workbench.ide', 'IDE')}
-                      </span>
-                      <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
-                        {availableTools.ide
-                          ? t('workbench.open_project_ide', '打开项目 IDE')
-                          : t('workbench.project_tool_unavailable', '暂不可用')}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      data-testid={testId('workspace-desktop-card')}
-                      onClick={handleDesktopClick}
-                      disabled={
-                        toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
-                      }
-                      className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {loadingTool === 'desktop' ? (
-                        <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                      ) : (
-                        <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                      )}
-                      <span className="text-sm font-semibold text-text-primary">
-                        {t('workbench.desktop', '桌面')}
-                      </span>
-                      <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
-                        {availableTools.desktop
-                          ? t('workbench.open_project_desktop', '打开项目桌面')
-                          : t('workbench.project_tool_unavailable', '暂不可用')}
-                      </span>
-                    </button>
+                    {localIdeLaunchable ? (
+                      <div
+                        data-testid={testId('workspace-ide-card')}
+                        className="relative min-h-[132px] rounded-lg bg-surface text-center hover:bg-muted"
+                      >
+                        <button
+                          type="button"
+                          data-testid={testId('workspace-ide-primary-button')}
+                          onClick={() => void handleIdeClick()}
+                          disabled={toolsDisabled || !availableTools.ide}
+                          className="flex h-full min-h-[132px] w-full flex-col items-center justify-center rounded-lg px-4 text-center disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {loadingTool === 'ide' ? (
+                            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+                          ) : (
+                            <LocalWorkspaceOpenerIcon
+                              opener="vscode"
+                              className="mb-5 h-7 w-7 rounded-lg"
+                            />
+                          )}
+                          <span className="text-sm font-semibold text-text-primary">
+                            {t('workbench.ide', 'IDE')}
+                          </span>
+                          <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                            {availableTools.ide
+                              ? t('workbench.open_project_ide_with', {
+                                  opener: 'VS Code',
+                                })
+                              : t('workbench.project_tool_unavailable', '暂不可用')}
+                          </span>
+                        </button>
+                        <LocalWorkspaceOpenerPicker
+                          ariaLabel={t('workbench.choose_project_ide')}
+                          buttonTestId={testId('workspace-ide-picker-button')}
+                          menuTestId={testId('workspace-ide-picker-menu')}
+                          optionTestIdPrefix={testId('workspace-ide-option')}
+                          disabled={toolsDisabled || !availableTools.ide}
+                          buttonClassName="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                          onSelect={handleIdeClick}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        data-testid={testId('workspace-ide-card')}
+                        onClick={() => void handleIdeClick()}
+                        disabled={toolsDisabled || !currentProject || !availableTools.ide}
+                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {loadingTool === 'ide' ? (
+                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+                        ) : (
+                          <LocalWorkspaceOpenerIcon
+                            opener="vscode"
+                            className="mb-5 h-7 w-7 rounded-lg"
+                          />
+                        )}
+                        <span className="text-sm font-semibold text-text-primary">
+                          {t('workbench.ide', 'IDE')}
+                        </span>
+                        <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                          {availableTools.ide
+                            ? t('workbench.open_project_ide', '打开项目 IDE')
+                            : t('workbench.project_tool_unavailable', '暂不可用')}
+                        </span>
+                      </button>
+                    )}
+                    {cloudToolsAvailable && (
+                      <button
+                        type="button"
+                        data-testid={testId('workspace-desktop-card')}
+                        onClick={handleDesktopClick}
+                        disabled={
+                          toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
+                        }
+                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {loadingTool === 'desktop' ? (
+                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+                        ) : (
+                          <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
+                        )}
+                        <span className="text-sm font-semibold text-text-primary">
+                          {t('workbench.desktop', '桌面')}
+                        </span>
+                        <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                          {availableTools.desktop
+                            ? t('workbench.open_project_desktop', '打开项目桌面')
+                            : t('workbench.project_tool_unavailable', '暂不可用')}
+                        </span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>

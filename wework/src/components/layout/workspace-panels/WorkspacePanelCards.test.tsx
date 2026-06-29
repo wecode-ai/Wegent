@@ -8,6 +8,7 @@ import {
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
+  openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
@@ -42,6 +43,7 @@ vi.mock('@/lib/local-terminal', () => ({
   getLocalExecutorDeviceId: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
   localPathExists: vi.fn(),
+  openLocalWorkspace: vi.fn(),
   startLocalTerminal: vi.fn(),
 }))
 
@@ -68,6 +70,7 @@ const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
+const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const getVncConfigMock = vi.fn()
 const fetchMock = vi.fn()
@@ -159,6 +162,7 @@ describe('WorkspacePanelCards', () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
+    openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     let terminalSessionCount = 0
@@ -333,9 +337,47 @@ describe('WorkspacePanelCards', () => {
     )
     expect(api.startTerminalSession).not.toHaveBeenCalled()
     expect(window.open).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('opens local project IDEs from the default VS Code card action', async () => {
+    const api = createProjectApiMock()
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-ide-primary-button'))
+
+    await waitFor(() =>
+      expect(openLocalWorkspaceMock).toHaveBeenCalledWith({
+        opener: 'vscode',
+        path: '/workspace/projects/project38',
+      })
+    )
+    expect(api.startCodeServerSession).not.toHaveBeenCalled()
+    expect(window.open).not.toHaveBeenCalled()
+  })
+
+  test('opens local project IDEs from the picker menu', async () => {
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-ide-picker-button'))
+
+    expect(screen.getByTestId('workspace-ide-picker-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-ide-option-android-studio')).toHaveTextContent(
+      'Android Studio'
+    )
+    expect(screen.getByTestId('workspace-ide-option-intellij-idea')).toHaveTextContent(
+      'IntelliJ IDEA'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-ide-option-cursor'))
+
+    await waitFor(() =>
+      expect(openLocalWorkspaceMock).toHaveBeenCalledWith({
+        opener: 'cursor',
+        path: '/workspace/projects/project38',
+      })
+    )
   })
 
   test('launches the native terminal for local projects without requiring a device list match', async () => {
@@ -559,7 +601,7 @@ describe('WorkspacePanelCards', () => {
     render(<WorkspacePanelCards currentProject={project} devices={[]} />)
 
     expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })

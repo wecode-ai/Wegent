@@ -419,6 +419,8 @@
     "ide": "IDE",
     "desktop": "桌面",
     "open_project_ide": "打开项目 IDE",
+    "open_project_ide_with": "使用 {{opener}} 打开",
+    "choose_project_ide": "选择 IDE",
     "project_ide_start_failed_title": "无法打开项目 IDE",
     "project_ide_start_failed_message": "项目 IDE 启动失败",
     "project_ide_error_close": "知道了",
