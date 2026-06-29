@@ -491,7 +491,7 @@ function SidebarSectionHeader({
   )
 }
 
-function formatRelativeSidebarTime(value?: string) {
+function formatRelativeSidebarTime(value?: string | number) {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
