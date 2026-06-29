@@ -33,7 +33,7 @@ import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oid
 import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
-import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
+import wecode.api.users_endpoint_patch as users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP employee_id handler
 import wecode.service.cloud_device_monitor_patch  # noqa: F401  register cloud device monitor background worker
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
@@ -47,6 +47,7 @@ import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuil
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
+from app.core.config import settings
 from wecode.api.admin_published_apps import router as admin_published_apps_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
@@ -59,6 +60,16 @@ from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
 from wecode.api.transition_page import router as transition_page_router
 from wecode.api.user_search_with_erp import router as user_search_with_erp_router
+from wecode.config.task_sharding_config import task_sharding_settings
+
+task_sharding_store_patch = None
+if (
+    task_sharding_settings.WECODE_INTERNAL_EXTENSIONS_ENABLED
+    and task_sharding_settings.WECODE_TASK_SHARDING_ENABLED
+):
+    import wecode.task_sharding.store_patch as task_sharding_store_patch
+
+    task_sharding_store_patch.install_task_sharding_store_patch()
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
@@ -98,4 +109,11 @@ def finalize_patches() -> None:
 
     This should be called after all routers are included in api_router.
     """
+    users_endpoint_patch.apply_patch()
     return None
+
+
+def shutdown_patches() -> None:
+    """Release resources owned by internal startup patches."""
+    if task_sharding_store_patch is not None:
+        task_sharding_store_patch.shutdown_task_sharding_store_patch()

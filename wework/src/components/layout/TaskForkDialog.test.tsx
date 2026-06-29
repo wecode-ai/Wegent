@@ -43,7 +43,7 @@ function runtimeWork(workspaces: RuntimeDeviceWorkspace[]): RuntimeWorkListRespo
         ),
       },
     ],
-    unmappedDeviceWorkspaces: [],
+    chats: [],
     totalLocalTasks: 0,
   }
 }
@@ -207,11 +207,11 @@ describe('TaskForkDialog', () => {
               totalLocalTasks: 0,
             },
           ],
-          unmappedDeviceWorkspaces: [
+          chats: [
             workspace({
-              deviceId: 'unmapped-device',
-              deviceName: 'Unmapped Device',
-              workspacePath: '/workspace/unmapped-history',
+              deviceId: 'chat-device',
+              deviceName: 'Chat Device',
+              workspacePath: '/workspace/chat-history',
             }),
           ],
           totalLocalTasks: 1,
@@ -229,7 +229,7 @@ describe('TaskForkDialog', () => {
     )
     expect(screen.getByTestId('task-fork-target-local-2')).toHaveTextContent('Worktree')
     expect(screen.queryByTestId('task-fork-target-other-device')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('task-fork-target-unmapped-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-fork-target-chat-device')).not.toBeInTheDocument()
   })
 
   test('binds an unbound device path to the current project before forking', async () => {

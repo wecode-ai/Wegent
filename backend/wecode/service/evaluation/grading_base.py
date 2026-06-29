@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -204,8 +205,8 @@ class GradingStrategy(ABC):
             # Expire all objects to get fresh data from database
             db.expire_all()
 
-            assistant_subtask = (
-                db.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+            assistant_subtask = task_stores.subtask_store.get_by_id(
+                db, subtask_id=assistant_subtask_id
             )
 
             if not assistant_subtask:

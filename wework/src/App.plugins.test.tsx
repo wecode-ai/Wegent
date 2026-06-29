@@ -515,18 +515,13 @@ describe('App plugins route', () => {
     mockSystemSkillsFetch()
   })
 
-  test('navigates to the plugins page from the sidebar button', async () => {
+  test('does not expose the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
-    await userEvent.click(screen.getByTestId('plugins-button'))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(screen.getByRole('tab', { name: '插件' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: '技能' })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
-    expect(screen.getByText('让 Wework 按你的方式工作')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
   })
 
   test('renders the plugins page on direct /plugins visit', async () => {
@@ -563,7 +558,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
   })
 
   test('does not reserve traffic light space on collapsed plugin routes in Tauri', async () => {
@@ -594,7 +589,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
@@ -609,7 +604,7 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
 
-  test('closes mobile settings when opening plugins from the settings menu', async () => {
+  test('hides plugins from the mobile settings menu', async () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
@@ -621,15 +616,8 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('mobile-settings-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
-
-    await waitFor(() =>
-      expect(screen.queryByTestId('mobile-settings-page')).not.toBeInTheDocument()
-    )
+    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
     expect(window.location.pathname).toBe('/plugins')
-    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
 
   test('uses the mobile shell for plugin management route at the shared mobile breakpoint', async () => {
@@ -672,7 +660,7 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
-    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByText('管理')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
@@ -686,9 +674,7 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(screen.getByTestId('plugins-button')).toHaveClass(
-      'bg-[rgb(var(--color-sidebar-active))]'
-    )
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await waitFor(() =>

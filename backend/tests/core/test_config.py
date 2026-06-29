@@ -70,6 +70,7 @@ class TestSettings:
         monkeypatch.setenv("API_PREFIX", "/test-api")
         monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120")
         monkeypatch.setenv("ENABLE_API_DOCS", "false")
+        monkeypatch.setenv("WECODE_INTERNAL_EXTENSIONS_ENABLED", "true")
 
         s = build_settings_from_env()
 
@@ -77,6 +78,13 @@ class TestSettings:
         assert s.API_PREFIX == "/test-api"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 120
         assert s.ENABLE_API_DOCS is False
+        assert s.WECODE_INTERNAL_EXTENSIONS_ENABLED is True
+
+    def test_wecode_extension_defaults_are_safe_for_open_source(self):
+        """Test internal extensions and sharding are opt-in."""
+        s = build_settings()
+
+        assert s.WECODE_INTERNAL_EXTENSIONS_ENABLED is False
 
     def test_settings_database_url(self):
         """Test database URL configuration"""

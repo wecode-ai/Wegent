@@ -7,6 +7,23 @@ from unittest.mock import AsyncMock
 import pytest
 
 
+def _compressed_runtime_rpc_response(response: dict):
+    import base64
+    import gzip
+    import json
+
+    raw = json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    compressed = gzip.compress(raw)
+    return {
+        "__runtimeRpcEncoding": "gzip+base64+json",
+        "payload": base64.b64encode(compressed).decode("ascii"),
+        "rawBytes": len(raw),
+        "compressedBytes": len(compressed),
+    }
+
+
 @pytest.mark.asyncio
 async def test_runtime_rpc_service_returns_runtime_failure_ack(monkeypatch):
     from app.services.device import runtime_rpc_service as module
@@ -52,3 +69,34 @@ async def test_runtime_rpc_service_returns_runtime_failure_ack(monkeypatch):
         namespace="/local-executor",
         timeout=35,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_decodes_compressed_ack(monkeypatch):
+    from app.services.device import runtime_rpc_service as module
+
+    expected = {
+        "success": True,
+        "messages": [{"id": "m1", "content": "hello" * 200000}],
+    }
+    monkeypatch.setattr(
+        module.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-1"}),
+    )
+    sio = type(
+        "Sio",
+        (),
+        {"call": AsyncMock(return_value=_compressed_runtime_rpc_response(expected))},
+    )()
+    monkeypatch.setattr(module, "get_sio", lambda: sio)
+
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.transcript",
+        payload={"localTaskId": "codex-1"},
+        timeout_seconds=30,
+    )
+
+    assert result == expected

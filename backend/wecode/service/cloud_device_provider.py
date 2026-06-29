@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
@@ -842,8 +843,6 @@ class CloudDeviceProvider(BaseDeviceProvider):
         device_id: str,
     ) -> Dict[str, Any]:
         """Get slot usage information for a device."""
-        from app.models.task import TaskResource
-
         # Get device online info from Redis (includes running_task_ids)
         device_info = await self._get_online_info(user_id, device_id)
 
@@ -854,18 +853,11 @@ class CloudDeviceProvider(BaseDeviceProvider):
         # Query task details from database
         running_tasks = []
         if running_task_ids:
-            tasks = (
-                db.query(TaskResource)
-                .filter(
-                    and_(
-                        TaskResource.id.in_(running_task_ids),
-                        TaskResource.kind == "Task",
-                    )
-                )
-                .all()
-            )
+            tasks = task_stores.task_store.list_by_ids(db, task_ids=running_task_ids)
 
             for task in tasks:
+                if task.kind != "Task":
+                    continue
                 try:
                     from app.schemas.kind import Task as TaskCRD
 

@@ -609,9 +609,8 @@ def _add_group_chat_info(
     # Add is_group_chat to result
     for task_id_str, data in result.items():
         task_id = int(task_id_str)
-        # Use the access store so sharded and legacy task metadata stay consistent.
         task = task_map.get(task_id)
-        is_group_chat = task_stores.task_access_store.is_group_chat(db, task_id=task_id)
+        is_group_chat = bool(task and getattr(task, "is_group_chat", False))
         if task and not is_group_chat:
             task_json = task.json if task.json else {}
             is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)

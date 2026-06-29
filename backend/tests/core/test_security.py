@@ -147,6 +147,21 @@ class TestTokenOperations:
         result = verify_token(token)
         assert result["username"] == "testuser"
 
+    def test_verify_token_accepts_legacy_secret_key(self, monkeypatch):
+        """Test verifying a token signed with a legacy secret key."""
+        legacy_secret_key = "your-secret-key-here"
+        monkeypatch.setattr(settings, "SECRET_KEY", "new-secret-key-for-tests")
+        monkeypatch.setattr(
+            settings, "JWT_LEGACY_SECRET_KEYS", legacy_secret_key, raising=False
+        )
+        token = jwt.encode(
+            {"sub": "testuser"}, legacy_secret_key, algorithm=settings.ALGORITHM
+        )
+
+        result = verify_token(token)
+
+        assert result["username"] == "testuser"
+
     def test_verify_token_with_invalid_token(self):
         """Test verifying an invalid token raises HTTPException"""
         with pytest.raises(HTTPException) as exc_info:

@@ -31,6 +31,7 @@ Example:
 
 import asyncio
 import hashlib
+import ipaddress
 import os
 import platform
 import re
@@ -70,6 +71,19 @@ def build_runtime_auth_file_report(
             "exists": codex_auth_path.is_file(),
         }
     }
+
+
+def _is_usable_device_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    return not (
+        address.is_loopback
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_link_local
+    )
 
 
 class WebSocketClient:
@@ -345,7 +359,7 @@ class WebSocketClient:
                 # Google's public DNS server (8.8.8.8)
                 s.connect(("8.8.8.8", 80))
                 ip = s.getsockname()[0]
-                if ip and ip != "127.0.0.1":
+                if ip and _is_usable_device_ip(ip):
                     return ip
         except Exception:
             logger.debug("Failed to detect IP via UDP socket", exc_info=True)
@@ -353,20 +367,31 @@ class WebSocketClient:
         try:
             # Method 2: Get hostname resolution
             ip = socket.gethostbyname(socket.gethostname())
-            if ip and ip != "127.0.0.1":
+            if ip and _is_usable_device_ip(ip):
                 return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname resolution", exc_info=True)
 
         try:
-            # Method 3: Try to get IP from network interfaces (Linux only)
+            # Method 3: Enumerate hostname addresses, useful on macOS where
+            # gethostbyname may resolve to loopback only.
+            addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+            for address in addresses:
+                ip = address[4][0]
+                if ip and _is_usable_device_ip(ip):
+                    return ip
+        except Exception:
+            logger.debug("Failed to detect IP via hostname addresses", exc_info=True)
+
+        try:
+            # Method 4: Try to get IP from network interfaces (Linux only)
             result = subprocess.run(
                 ["hostname", "-I"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 ips = result.stdout.strip().split()
                 for ip in ips:
-                    if ip and not ip.startswith("127."):
+                    if ip and _is_usable_device_ip(ip):
                         return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname -I", exc_info=True)
@@ -430,6 +455,16 @@ class WebSocketClient:
             "/local-executor" in namespaces
         )
 
+    def _engineio_connected(self) -> bool:
+        """Check whether the underlying Engine.IO transport is still connected."""
+        eio = getattr(self.sio, "eio", None)
+        state = getattr(eio, "state", None)
+        return str(state).lower() == "connected"
+
+    def _has_active_transport(self) -> bool:
+        """Check any Socket.IO/Engine.IO state that blocks a fresh connect."""
+        return self._socketio_connected() or self._engineio_connected()
+
     @property
     def registered(self) -> bool:
         """Check if device is registered."""
@@ -461,6 +496,17 @@ class WebSocketClient:
         if self.connected:
             logger.info("Already connected to WebSocket")
             return True
+
+        if self._has_active_transport():
+            logger.warning(
+                "Socket.IO transport state was stale; disconnecting before connect"
+            )
+            try:
+                await self.sio.disconnect()
+            except Exception as e:
+                logger.warning(f"Error while disconnecting stale WebSocket: {e}")
+            self._connected = False
+            self._registered = False
 
         if self._connected:
             logger.warning("WebSocket local state was stale; resetting before connect")
@@ -503,7 +549,7 @@ class WebSocketClient:
         logger.info("Forcing WebSocket reconnect")
 
         try:
-            if self._connected or self._socketio_connected():
+            if self._connected or self._has_active_transport():
                 await self.sio.disconnect()
         except Exception as e:
             logger.warning(f"Error while disconnecting stale WebSocket: {e}")
@@ -576,11 +622,11 @@ class WebSocketClient:
             logger.error(f"Device registration error: {e}")
             return False
 
-    async def send_heartbeat(self, timeout: float = 5.0) -> bool:
+    async def send_heartbeat(self, timeout: Optional[float] = None) -> bool:
         """Send heartbeat to Backend using call (request-response).
 
         Args:
-            timeout: Timeout for heartbeat response.
+            timeout: Timeout for heartbeat response. Defaults to config value.
 
         Returns:
             True if heartbeat acknowledged, False otherwise.
@@ -589,6 +635,11 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
+            call_timeout = (
+                float(timeout)
+                if timeout is not None
+                else float(config.LOCAL_HEARTBEAT_CALL_TIMEOUT)
+            )
             # Get active task IDs from all local code agents.
             from executor.agents.factory import AgentFactory
 
@@ -609,7 +660,7 @@ class WebSocketClient:
                 "device:heartbeat",
                 heartbeat_data,
                 namespace="/local-executor",
-                timeout=timeout,
+                timeout=call_timeout,
             )
             logger.debug(f"device:heartbeat response: {response}")
 
@@ -625,7 +676,7 @@ class WebSocketClient:
                 logger.warning(f"Heartbeat failed: {error}")
                 return False
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, socketio.exceptions.TimeoutError):
             logger.warning("Heartbeat timeout")
             return False
         except Exception as e:

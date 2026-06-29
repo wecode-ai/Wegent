@@ -133,3 +133,34 @@ export function parseKbUrl(pathname: string): ParsedKbUrl | null {
     docPath,
   }
 }
+
+/**
+ * Find a knowledge base by virtual path components (namespace + name).
+ *
+ * If `namespace` is a non-empty string, both namespace and name must match
+ * case-insensitively. If `namespace` is undefined, null, or empty (organization
+ * KBs), only the name is matched (any namespace).
+ *
+ * @param kbs The list of KB objects to search
+ * @param namespace The namespace to filter by, or undefined/null/empty for org-level KBs
+ * @param name The KB name to search for (case-insensitive)
+ * @returns The first matching KB, or undefined if no match
+ */
+export function findKbByVirtualPath<T extends { name: string; namespace: string }>(
+  kbs: T[],
+  namespace: string | undefined | null,
+  name: string
+): T | undefined {
+  const targetName = name.toLowerCase()
+
+  if (namespace) {
+    // Personal or Team KB: match both namespace and name
+    const targetNs = namespace.toLowerCase()
+    return kbs.find(
+      kb => kb.namespace.toLowerCase() === targetNs && kb.name.toLowerCase() === targetName
+    )
+  }
+
+  // Organization KB: match name only (any namespace)
+  return kbs.find(kb => kb.name.toLowerCase() === targetName)
+}

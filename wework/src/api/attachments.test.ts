@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { deleteAttachment, uploadAttachment } from './attachments'
 
+const originalCreateObjectUrl = URL.createObjectURL
+
 const httpMocks = vi.hoisted(() => ({
   createHttpClient: vi.fn(),
   shouldUseTauriFetch: vi.fn(),
@@ -42,6 +44,7 @@ describe('attachment API', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    URL.createObjectURL = originalCreateObjectUrl
   })
 
   test('uploads through the platform HTTP client in Tauri to avoid WebView CORS', async () => {
@@ -57,6 +60,7 @@ describe('attachment API', () => {
     })
     httpMocks.shouldUseTauriFetch.mockReturnValue(true)
     httpMocks.createHttpClient.mockReturnValue(mockClient({ post }))
+    URL.createObjectURL = vi.fn(() => 'blob:uploaded-image-preview')
     const progress = vi.fn()
     const file = new File(['image'], 'image.png', { type: 'image/png' })
 
@@ -71,8 +75,10 @@ describe('attachment API', () => {
       id: 7,
       filename: 'image.png',
       file_extension: '.png',
+      local_preview_url: 'blob:uploaded-image-preview',
       subtask_id: null,
     })
+    expect(URL.createObjectURL).toHaveBeenCalledWith(file)
   })
 
   test('deletes through the shared HTTP client', async () => {

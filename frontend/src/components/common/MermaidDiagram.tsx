@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import DOMPurify from 'dompurify'
 import {
   ZoomIn,
@@ -61,6 +62,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCode, setShowCode] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null)
 
   // Generate unique ID for this diagram instance
   const diagramId = useMemo(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`, [])
@@ -72,68 +74,83 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     return {
       startOnLoad: false,
       suppressErrorRendering: true,
+      look: 'neo' as const,
       theme: 'base' as const,
       themeVariables: isDark
         ? {
             // Dark theme variables
-            primaryColor: '#1e293b',
-            primaryTextColor: '#e2e8f0',
-            primaryBorderColor: '#475569',
-            lineColor: '#64748b',
-            secondaryColor: '#334155',
-            tertiaryColor: '#1e293b',
-            background: '#0f172a',
-            mainBkg: '#1e293b',
-            secondBkg: '#334155',
-            mainContrastColor: '#e2e8f0',
-            darkTextColor: '#e2e8f0',
-            textColor: '#e2e8f0',
-            labelTextColor: '#e2e8f0',
-            signalTextColor: '#e2e8f0',
-            actorBkg: '#1e293b',
-            actorBorder: '#14b8a6',
-            actorTextColor: '#e2e8f0',
-            actorLineColor: '#475569',
-            noteBkgColor: '#854d0e',
-            noteBorderColor: '#fbbf24',
-            noteTextColor: '#fef3c7',
-            activationBkgColor: '#0c4a6e',
-            activationBorderColor: '#0ea5e9',
+            background: '#0b1120',
+            primaryColor: '#132033',
+            primaryTextColor: '#f8fafc',
+            primaryBorderColor: '#2dd4bf',
+            lineColor: '#7dd3fc',
+            secondaryColor: '#18243a',
+            tertiaryColor: '#0f172a',
+            mainBkg: '#132033',
+            secondBkg: '#18243a',
+            mainContrastColor: '#f8fafc',
+            darkTextColor: '#f8fafc',
+            textColor: '#f8fafc',
+            labelTextColor: '#f8fafc',
+            signalTextColor: '#f8fafc',
+            nodeTextColor: '#f8fafc',
+            actorBkg: '#132033',
+            actorBorder: '#2dd4bf',
+            actorTextColor: '#f8fafc',
+            actorLineColor: '#334155',
+            noteBkgColor: '#422006',
+            noteBorderColor: '#f59e0b',
+            noteTextColor: '#fffbeb',
+            activationBkgColor: '#082f49',
+            activationBorderColor: '#38bdf8',
             sequenceNumberColor: '#ffffff',
+            edgeLabelBackground: '#0b1120',
+            clusterBkg: '#111827',
+            clusterBorder: '#334155',
+            fontFamily:
+              'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           }
         : {
             // Light theme variables
-            primaryColor: '#f8fafc',
-            primaryTextColor: '#0f172a',
-            primaryBorderColor: '#94a3b8',
-            lineColor: '#64748b',
-            secondaryColor: '#f1f5f9',
-            tertiaryColor: '#e2e8f0',
             background: '#ffffff',
-            mainBkg: '#f8fafc',
-            secondBkg: '#f1f5f9',
-            mainContrastColor: '#0f172a',
-            darkTextColor: '#0f172a',
-            textColor: '#0f172a',
-            labelTextColor: '#0f172a',
-            signalTextColor: '#0f172a',
-            actorBkg: '#f8fafc',
+            primaryColor: '#ffffff',
+            primaryTextColor: '#111827',
+            primaryBorderColor: '#14b8a6',
+            lineColor: '#0f766e',
+            secondaryColor: '#f8fafc',
+            tertiaryColor: '#eef2f7',
+            mainBkg: '#ffffff',
+            secondBkg: '#f8fafc',
+            mainContrastColor: '#111827',
+            darkTextColor: '#111827',
+            textColor: '#111827',
+            labelTextColor: '#111827',
+            signalTextColor: '#111827',
+            nodeTextColor: '#111827',
+            actorBkg: '#ffffff',
             actorBorder: '#14b8a6',
-            actorTextColor: '#0f172a',
+            actorTextColor: '#111827',
             actorLineColor: '#cbd5e1',
-            noteBkgColor: '#fef9c3',
-            noteBorderColor: '#fbbf24',
-            noteTextColor: '#1e293b',
-            activationBkgColor: '#e0f2fe',
-            activationBorderColor: '#0ea5e9',
+            noteBkgColor: '#fff7ed',
+            noteBorderColor: '#fb923c',
+            noteTextColor: '#7c2d12',
+            activationBkgColor: '#ecfeff',
+            activationBorderColor: '#06b6d4',
             sequenceNumberColor: '#ffffff',
+            edgeLabelBackground: '#ffffff',
+            clusterBkg: '#f8fafc',
+            clusterBorder: '#cbd5e1',
+            fontFamily:
+              'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           },
       securityLevel: 'strict' as const,
+      htmlLabels: false,
       flowchart: {
         useMaxWidth: true,
-        htmlLabels: true,
         curve: 'basis' as const,
         padding: 15,
+        nodeSpacing: 52,
+        rankSpacing: 58,
       },
       sequence: {
         diagramMarginX: 50,
@@ -153,7 +170,37 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         messageFontSize: 13,
       },
       fontSize: 14,
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+      fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      themeCSS: `
+        .node rect,
+        .node circle,
+        .node ellipse,
+        .node polygon,
+        .node path {
+          filter: drop-shadow(0 8px 20px rgba(15, 23, 42, 0.08));
+          stroke-width: 1.5px !important;
+        }
+
+        .edgePath .path,
+        .flowchart-link {
+          stroke-width: 1.7px !important;
+        }
+
+        .edgeLabel,
+        .labelBkg {
+          border-radius: 6px;
+        }
+
+        text,
+        .nodeLabel,
+        .edgeLabel,
+        .messageText,
+        .actor {
+          font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+          paint-order: stroke fill;
+          stroke: transparent;
+        }
+      `,
     }
   }, [theme])
 
@@ -164,6 +211,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     return DOMPurify.sanitize(svg, {
       USE_PROFILES: { svg: true, svgFilters: true, html: true },
       ADD_TAGS: [
+        'style',
         'foreignObject',
         // HTML elements used by Mermaid inside foreignObject
         'div',
@@ -196,6 +244,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       ],
       // Allow style elements for Mermaid's inline styles
       ALLOW_DATA_ATTR: true,
+      FORBID_TAGS: ['script'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
       // Keep the structure intact
       WHOLE_DOCUMENT: false,
       RETURN_DOM: false,
@@ -602,6 +652,21 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     setIsFullscreen(prev => !prev)
   }, [])
 
+  useEffect(() => {
+    setPortalRoot(document.body)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [isFullscreen])
+
   // Handle ESC key to close fullscreen or code modal
   useEffect(() => {
     if (!isFullscreen && !showCode) return
@@ -634,23 +699,31 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   // Render error state with raw code
   if (error) {
     return (
-      <div className={`my-4 rounded-lg border border-red-300 dark:border-red-800 ${className}`}>
+      <div
+        className={`my-4 overflow-hidden rounded-lg border border-red-200 bg-white shadow-sm dark:border-red-900/70 dark:bg-slate-950 ${className}`}
+      >
         {/* Error banner */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800 rounded-t-lg">
+        <div className="flex items-center gap-2 border-b border-red-100 bg-red-50 px-4 py-2 dark:border-red-900/70 dark:bg-red-950/30">
           <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
           <span className="text-sm font-medium text-red-700 dark:text-red-300">
             {t('chat:mermaid.renderError') || 'Mermaid render failed'}: {error}
           </span>
         </div>
         {/* Raw code display */}
-        <div className="p-4 bg-surface overflow-auto">
+        <div className="max-h-[420px] overflow-auto bg-slate-50 p-4 dark:bg-slate-950">
           <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap">{code}</pre>
         </div>
         {/* Copy button for error state */}
-        <div className="flex justify-end px-4 py-2 border-t border-red-200 dark:border-red-800">
-          <Button variant="ghost" size="sm" onClick={copyCode} className="text-text-secondary">
-            {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
-            {copied
+        <div className="flex justify-end border-t border-red-100 px-4 py-2 dark:border-red-900/70">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={copyCode}
+            className="text-text-secondary"
+            data-testid="mermaid-copy-error-code-button"
+          >
+            {codeCopied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+            {codeCopied
               ? t('chat:mermaid.copied') || 'Copied'
               : t('chat:mermaid.copyCode') || 'Copy Code'}
           </Button>
@@ -663,7 +736,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   if (isLoading) {
     return (
       <div
-        className={`my-4 p-8 rounded-lg border border-border bg-surface flex items-center justify-center ${className}`}
+        className={`my-4 flex items-center justify-center rounded-lg border border-border/70 bg-white p-8 shadow-sm dark:bg-slate-950 ${className}`}
       >
         <div className="flex items-center gap-3 text-text-secondary">
           <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />
@@ -675,7 +748,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
   // Diagram toolbar
   const Toolbar = ({ inModal = false }: { inModal?: boolean }) => (
-    <div className={`flex items-center gap-1 ${inModal ? 'bg-white/10 rounded-lg px-2 py-1' : ''}`}>
+    <div className={`flex items-center gap-1 ${inModal ? 'rounded-lg bg-white/10 px-2 py-1' : ''}`}>
       {/* Zoom controls */}
       <Tooltip>
         <TooltipTrigger asChild>
@@ -683,7 +756,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={zoomOut}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-zoom-out-button"
           >
             <ZoomOut className="w-4 h-4" />
           </Button>
@@ -703,7 +777,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={zoomIn}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-zoom-in-button"
           >
             <ZoomIn className="w-4 h-4" />
           </Button>
@@ -717,7 +792,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={resetZoom}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-reset-zoom-button"
           >
             <RotateCcw className="w-4 h-4" />
           </Button>
@@ -734,7 +810,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={exportPng}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-export-png-button"
           >
             {exportedPng ? (
               <Check className="w-4 h-4 text-green-500" />
@@ -757,7 +834,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={exportSvg}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-export-svg-button"
           >
             {exportedSvg ? (
               <Check className="w-4 h-4 text-green-500" />
@@ -780,7 +858,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={copyImage}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-copy-image-button"
           >
             {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
           </Button>
@@ -799,7 +878,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             variant="ghost"
             size="icon"
             onClick={toggleCodeView}
-            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+            className={`h-8 w-8 rounded-md ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            data-testid="mermaid-view-code-button"
           >
             <Code className="w-4 h-4" />
           </Button>
@@ -815,7 +895,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
               variant="ghost"
               size="icon"
               onClick={toggleFullscreen}
-              className="h-7 w-7 text-text-secondary hover:text-text-primary"
+              className="h-8 w-8 rounded-md text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+              data-testid="mermaid-fullscreen-button"
             >
               <Maximize2 className="w-4 h-4" />
             </Button>
@@ -826,128 +907,126 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     </div>
   )
 
+  const fullscreenModal =
+    isFullscreen && portalRoot
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[1000] flex h-screen w-screen flex-col bg-black/80 backdrop-blur-sm"
+            data-testid="mermaid-fullscreen-modal"
+            onClick={e => {
+              // Close when clicking on the backdrop (not on child elements)
+              if (e.target === e.currentTarget) {
+                toggleFullscreen()
+              }
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/50 to-transparent"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full">
+                  <svg
+                    className="w-4 h-4 text-primary"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium text-white">
+                    {t('knowledge:diagram') || 'Diagram'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2">
+                <Toolbar inModal />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleFullscreen}
+                  className="h-9 w-9 text-white hover:bg-white/10"
+                  data-testid="mermaid-fullscreen-close-button"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Diagram container - click on empty area closes modal */}
+            <div
+              className="flex flex-1 items-center justify-center overflow-auto p-8"
+              onWheel={handleWheel}
+              onClick={e => {
+                // Close when clicking on the container background (not on the diagram)
+                if (e.target === e.currentTarget) {
+                  toggleFullscreen()
+                }
+              }}
+            >
+              <div
+                className="max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] overflow-auto rounded-2xl bg-white p-8 shadow-2xl transition-all duration-100 ease-out dark:bg-slate-900"
+                onClick={e => e.stopPropagation()}
+                dangerouslySetInnerHTML={{ __html: svgContent }}
+              />
+            </div>
+
+            {/* Footer hint */}
+            <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-4 py-2">
+              <span className="text-xs text-white/70">
+                ESC or click backdrop to close • Ctrl/Cmd + Scroll to zoom
+              </span>
+            </div>
+          </div>,
+          portalRoot
+        )
+      : null
+
   return (
     <>
       {/* Main diagram container */}
       <div
         ref={containerRef}
-        className={`my-4 rounded-lg border border-border bg-surface overflow-hidden ${className}`}
+        className={`group/mermaid my-4 overflow-hidden rounded-lg border border-border/80 bg-white shadow-sm dark:bg-slate-950 ${className}`}
+        data-testid="mermaid-diagram"
       >
         {/* Header with toolbar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface/50">
+        <div className="flex items-center justify-between gap-3 border-b border-border/70 bg-slate-50/80 px-3 py-2 dark:bg-slate-900/70 sm:px-4">
           <div className="flex items-center gap-2">
-            <svg
-              className="w-4 h-4 text-primary"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
+            <div className="h-2 w-2 rounded-full bg-primary shadow-[0_0_0_4px_rgba(20,184,166,0.12)]" />
             <span className="text-xs font-medium text-text-secondary">
               {t('knowledge:diagram') || 'Diagram'}
             </span>
           </div>
-          <Toolbar />
+          <div className="shrink-0 overflow-x-auto">
+            <Toolbar />
+          </div>
         </div>
 
         {/* Diagram content */}
         <div
           ref={diagramRef}
-          className="p-4 overflow-auto min-h-[200px] max-h-[600px]"
+          className="max-h-[620px] min-h-[220px] overflow-auto bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.20)_1px,transparent_0)] bg-[length:20px_20px] p-4 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(71,85,105,0.35)_1px,transparent_0)] sm:p-6"
           onWheel={handleWheel}
         >
-          <div className="inline-block" style={{ minWidth: 'fit-content' }}>
+          <div className="flex min-w-fit justify-center">
             <div
-              className="transition-all duration-100 ease-out"
+              className="rounded-md bg-white/90 p-4 transition-all duration-100 ease-out dark:bg-slate-950/80"
               dangerouslySetInnerHTML={{ __html: svgContent }}
             />
           </div>
         </div>
       </div>
 
-      {/* Fullscreen modal */}
-      {isFullscreen && (
-        <div
-          className="fixed inset-0 z-[60] flex flex-col bg-black/80 backdrop-blur-sm"
-          onClick={e => {
-            // Close when clicking on the backdrop (not on child elements)
-            if (e.target === e.currentTarget) {
-              toggleFullscreen()
-            }
-          }}
-        >
-          {/* Header */}
-          <div
-            className="flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/50 to-transparent"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full">
-                <svg
-                  className="w-4 h-4 text-primary"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-                <span className="text-sm font-medium text-white">
-                  {t('knowledge:diagram') || 'Diagram'}
-                </span>
-              </div>
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center gap-2">
-              <Toolbar inModal />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleFullscreen}
-                className="h-9 w-9 text-white hover:bg-white/10"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-          </div>
-
-          {/* Diagram container - click on empty area closes modal */}
-          <div
-            className="flex-1 overflow-auto flex items-center justify-center p-8"
-            onWheel={handleWheel}
-            onClick={e => {
-              // Close when clicking on the container background (not on the diagram)
-              if (e.target === e.currentTarget) {
-                toggleFullscreen()
-              }
-            }}
-          >
-            <div
-              className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 max-w-[90vw] max-h-[80vh] overflow-auto transition-all duration-100 ease-out"
-              onClick={e => e.stopPropagation()}
-              dangerouslySetInnerHTML={{ __html: svgContent }}
-            />
-          </div>
-
-          {/* Footer hint */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 rounded-full pointer-events-none">
-            <span className="text-xs text-white/70">
-              ESC or click backdrop to close • Ctrl/Cmd + Scroll to zoom
-            </span>
-          </div>
-        </div>
-      )}
+      {fullscreenModal}
 
       {/* Code view modal */}
       {showCode && (

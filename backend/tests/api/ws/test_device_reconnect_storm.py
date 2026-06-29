@@ -122,6 +122,63 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_device_register_does_not_mark_online_when_session_disappears(
+    monkeypatch,
+):
+    namespace = DeviceNamespace()
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "127.0.0.1",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        return True, "MacBook", None
+
+    set_device_online = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        namespace,
+        "save_session",
+        AsyncMock(side_effect=KeyError("Session not found")),
+    )
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "set_device_online",
+        set_device_online,
+    )
+
+    result = await namespace.on_device_register(
+        "sid-1",
+        {
+            "device_id": "device-1",
+            "name": "MacBook",
+            "executor_version": "1.8.0",
+        },
+    )
+
+    assert result == {"error": "Client disconnected during device registration"}
+    set_device_online.assert_not_awaited()
+    namespace.enter_room.assert_not_awaited()
+    namespace._broadcast_device_online.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypatch):
     namespace = DeviceNamespace()
     upsert_calls = []

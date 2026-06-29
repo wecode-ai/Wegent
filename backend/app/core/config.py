@@ -120,6 +120,11 @@ class Settings(BaseSettings):
     # Enable in-process executor (no Docker required) when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
 
+    # Internal extension toggles.
+    # Keep disabled by default so local/open-source development uses the public
+    # single-table behavior unless explicitly opted in.
+    WECODE_INTERNAL_EXTENSIONS_ENABLED: bool = False
+
     # Database configuration
     # Supports both MySQL and SQLite:
     # - MySQL: "mysql+pymysql://user:pass@localhost/db"
@@ -155,6 +160,7 @@ class Settings(BaseSettings):
 
     # JWT configuration
     SECRET_KEY: str = "secret-key"
+    JWT_LEGACY_SECRET_KEYS: str = "your-secret-key-here"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
@@ -481,7 +487,13 @@ class Settings(BaseSettings):
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
     MAX_UPLOAD_VIDEO_FILE_SIZE_MB: int = 1024  # Maximum video file size in MB (1 GB)
-    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
+    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted (stored) text length
+    # Max chars of extracted text injected inline into the prompt. Far smaller
+    # than the stored length: the inline copy is only a preview — chat_shell can
+    # page the full text via read_attachment, and executor/device modes read the
+    # downloaded file directly. Keeps the prompt bounded for modes without the
+    # chat_shell token-level preview (executor/device, which have no L3 guard).
+    ATTACHMENT_INJECT_MAX_CHARS: int = 32000
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"

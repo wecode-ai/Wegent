@@ -18,13 +18,12 @@ This approach:
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
-from shared.models.db.enums import SubtaskRole, SubtaskStatus
+import app.stores.tasks as task_stores
+from shared.models.db.enums import SubtaskStatus
 from wecode.models.evaluation import EvalGradingTask, GradingTaskStatus
 from wecode.service.evaluation.grading_service import GradingService
 
@@ -32,6 +31,22 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for stuck task detection (30 minutes)
 DEFAULT_STUCK_TIMEOUT_MINUTES = 30
+
+
+def _extract_result_content(result_data: Any) -> Optional[str]:
+    """Extract report text from common subtask result shapes."""
+    if isinstance(result_data, dict):
+        return (
+            result_data.get("text")
+            or result_data.get("content")
+            or result_data.get("result")
+            or result_data.get("value")
+            or result_data.get("message")
+            or ""
+        )
+    if isinstance(result_data, str):
+        return result_data
+    return None
 
 
 class GradingTaskMonitor:
@@ -121,13 +136,9 @@ class GradingTaskMonitor:
             - status: Task status from JSON (PENDING, RUNNING, COMPLETED, FAILED, etc.)
             - result_content: AI-generated content if completed
         """
-        wegent_task = (
-            db.query(TaskResource)
-            .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
-            .first()
-        )
+        wegent_task = task_stores.task_store.get_by_id(db, task_id=task_id)
 
-        if not wegent_task:
+        if not wegent_task or wegent_task.kind != "Task":
             return None, None
 
         task_json = wegent_task.json or {}
@@ -137,34 +148,32 @@ class GradingTaskMonitor:
         # Get result content from the assistant subtask
         result_content = None
         if task_status == "COMPLETED":
-            assistant_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                    Subtask.status == SubtaskStatus.COMPLETED,
-                )
-                .order_by(Subtask.message_id.desc())
-                .first()
+            assistant_subtask = self._get_latest_assistant_subtask(
+                db,
+                task_id=task_id,
+                statuses=[SubtaskStatus.COMPLETED],
             )
 
             if assistant_subtask and assistant_subtask.result:
-                # Extract text content from result
-                result_data = assistant_subtask.result
-                if isinstance(result_data, dict):
-                    # Try multiple possible fields for the report content
-                    result_content = (
-                        result_data.get("text")
-                        or result_data.get("content")
-                        or result_data.get("result")
-                        or result_data.get("value")
-                        or result_data.get("message")
-                        or ""
-                    )
-                elif isinstance(result_data, str):
-                    result_content = result_data
+                result_content = _extract_result_content(assistant_subtask.result)
 
         return task_status, result_content
+
+    def _get_latest_assistant_subtask(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        statuses: Optional[List[SubtaskStatus]] = None,
+    ):
+        """Load the latest assistant subtask through the store boundary."""
+        status_set = set(statuses) if statuses else None
+        subtasks = task_stores.subtask_store.list_assistant_by_task(db, task_id=task_id)
+        for subtask in reversed(subtasks):
+            if status_set is not None and subtask.status not in status_set:
+                continue
+            return subtask
+        return None
 
     def recover_stuck_task(
         self,
@@ -215,14 +224,9 @@ class GradingTaskMonitor:
         elif task_status in ("FAILED", "CANCELLED"):
             # Wegent Task failed - fail the grading task
             # Try to get detailed error message from subtask
-            assistant_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == grading_task.task_id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                )
-                .order_by(Subtask.message_id.desc())
-                .first()
+            assistant_subtask = self._get_latest_assistant_subtask(
+                db,
+                task_id=grading_task.task_id,
             )
 
             error_msg = f"Wegent Task {task_status.lower()}"
@@ -255,32 +259,15 @@ class GradingTaskMonitor:
         elif task_status == "RUNNING":
             # Wegent Task still running but stuck - check subtask status
             # If assistant subtask is completed, we can extract the result
-            assistant_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == grading_task.task_id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                )
-                .order_by(Subtask.message_id.desc())
-                .first()
+            assistant_subtask = self._get_latest_assistant_subtask(
+                db,
+                task_id=grading_task.task_id,
             )
 
             if assistant_subtask:
                 if assistant_subtask.status == SubtaskStatus.COMPLETED:
                     # Subtask completed but Task not updated - extract result
-                    result_data = assistant_subtask.result
-                    if isinstance(result_data, dict):
-                        # Try multiple possible fields for the report content
-                        result_content = (
-                            result_data.get("text")
-                            or result_data.get("content")
-                            or result_data.get("result")
-                            or result_data.get("value")
-                            or result_data.get("message")
-                            or ""
-                        )
-                    elif isinstance(result_data, str):
-                        result_content = result_data
+                    result_content = _extract_result_content(assistant_subtask.result)
 
                     if result_content:
                         logger.info(

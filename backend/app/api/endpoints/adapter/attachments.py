@@ -967,6 +967,8 @@ from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+from app.core.jwt_compat import decode_jose_jwt
+
 
 class PublicShareLinkResponse(BaseModel):
     """Response for public share link generation."""
@@ -1029,7 +1031,7 @@ def _verify_public_share_token(token: str) -> dict:
     )
 
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = decode_jose_jwt(token, algorithms=["HS256"])
 
         # Verify token type
         if payload.get("type") != "public_dl":

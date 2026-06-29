@@ -107,7 +107,7 @@ RUN dnf install -y \
     procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
     redis \
-    && npm install -g @anthropic-ai/claude-code@2.1.142 \
+    && npm install -g @anthropic-ai/claude-code@2.1.142 @openai/codex@0.137.0 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
@@ -158,6 +158,7 @@ RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
 
 # Install executor (depends on shared via ../shared -> /app/shared)
 RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
+RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
 
 # Copy and install backend
 # Backend's pyproject.toml references:
@@ -196,6 +197,7 @@ ENV ENVIRONMENT=development
 # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
 ENV DATABASE_URL=sqlite:////app/data/wegent.db
 ENV CHAT_SHELL_MODE=package
+ENV CODEX_HOME=/app/data/codex
 ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor
 ENV NODE_PATH=/usr/lib/node_modules
 

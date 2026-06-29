@@ -160,6 +160,49 @@ describe('TaskStateMachine', () => {
     expect(blocks.every(block => block.status === 'done')).toBe(true)
   })
 
+  it('does not duplicate done text blocks after unicode offset streaming', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+    const finalContent = '看起来您在继续发数字 🤔\n\n不过目前'
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, '看起来您在', undefined, undefined, undefined, 0)
+    machine.handleChatChunk(42, '继续发', undefined, undefined, undefined, 5)
+    machine.handleChatChunk(42, '数字', undefined, undefined, undefined, 8)
+    machine.handleChatChunk(42, ' 🤔\n\n', undefined, undefined, undefined, 10)
+    machine.handleChatChunk(42, '不过目前', undefined, undefined, undefined, 14)
+    machine.handleChatDone(42, finalContent, {
+      blocks: [
+        {
+          id: 'backend-thinking-1',
+          type: 'thinking',
+          content: 'Thought.',
+          status: 'done',
+        },
+        {
+          id: 'backend-text-1',
+          type: 'text',
+          content: finalContent,
+          status: 'done',
+        },
+      ],
+    })
+
+    const message = machine.getState().messages.get('ai-42')
+    const textBlocks = (message?.result?.blocks ?? []).filter(block => block.type === 'text')
+
+    expect(message?.content).toBe(finalContent)
+    expect(textBlocks).toHaveLength(1)
+    expect(textBlocks[0]).toMatchObject({
+      type: 'text',
+      content: finalContent,
+      status: 'done',
+    })
+  })
+
   it('finalizes streaming blocks on chat done without event result', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

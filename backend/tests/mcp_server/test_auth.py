@@ -6,8 +6,10 @@
 
 from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 
+from app.core.config import settings
 from app.mcp_server.auth import (
     TaskTokenInfo,
     create_task_token,
@@ -67,6 +69,34 @@ class TestVerifyTaskToken:
         info = verify_task_token(token)
         assert info is not None
         assert isinstance(info, TaskTokenInfo)
+        assert info.task_id == 100
+        assert info.subtask_id == 200
+        assert info.user_id == 300
+        assert info.user_name == "validuser"
+
+    def test_verify_token_accepts_legacy_secret_key(self, monkeypatch):
+        """Test verification of a token signed with a legacy secret key."""
+        legacy_secret_key = "your-secret-key-here"
+        monkeypatch.setattr(settings, "SECRET_KEY", "new-secret-key-for-tests")
+        monkeypatch.setattr(
+            settings, "JWT_LEGACY_SECRET_KEYS", legacy_secret_key, raising=False
+        )
+        token = jwt.encode(
+            {
+                "task_id": 100,
+                "subtask_id": 200,
+                "user_id": 300,
+                "user_name": "validuser",
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+                "type": "task_token",
+            },
+            legacy_secret_key,
+            algorithm=settings.ALGORITHM,
+        )
+
+        info = verify_task_token(token)
+
+        assert info is not None
         assert info.task_id == 100
         assert info.subtask_id == 200
         assert info.user_id == 300

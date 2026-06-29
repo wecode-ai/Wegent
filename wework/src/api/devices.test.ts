@@ -15,6 +15,8 @@ describe('createDeviceApi', () => {
             is_default: true,
             device_type: 'cloud',
             bind_shell: 'claudecode',
+            client_ip: '192.0.2.10',
+            runtime_transfer_host: '192.0.2.10:9000',
           },
           {
             id: 2,
@@ -33,7 +35,11 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi(client)
 
     await expect(api.listDevices()).resolves.toEqual([
-      expect.objectContaining({ device_id: 'claude-device' }),
+      expect.objectContaining({
+        device_id: 'claude-device',
+        client_ip: '192.0.2.10',
+        runtime_transfer_host: '192.0.2.10:9000',
+      }),
     ])
     await expect(api.getAllDevices()).resolves.toEqual([
       expect.objectContaining({ device_id: 'claude-device' }),
@@ -146,7 +152,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).rejects.toThrow(
-      'Invalid workspace tree response',
+      'Invalid workspace tree response'
     )
   })
 
@@ -162,7 +168,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).rejects.toThrow(
-      'Invalid workspace tree response',
+      'Invalid workspace tree response'
     )
   })
 
@@ -186,7 +192,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).rejects.toThrow(
-      'Invalid workspace tree response',
+      'Invalid workspace tree response'
     )
   })
 
@@ -195,7 +201,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(api.listWorkspaceEntries('device-a', 'workspace/project')).rejects.toThrow(
-      'Workspace path must be absolute',
+      'Workspace path must be absolute'
     )
     expect(post).not.toHaveBeenCalled()
   })
@@ -216,7 +222,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts'),
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
     ).resolves.toMatchObject({
       path: '/workspace/project/src/main.ts',
       name: 'main.ts',
@@ -238,7 +244,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(api.readWorkspaceTextFile('device-a', 'src/main.ts')).rejects.toThrow(
-      'Workspace file path must be absolute',
+      'Workspace file path must be absolute'
     )
     expect(post).not.toHaveBeenCalled()
   })
@@ -259,7 +265,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/../main.ts'),
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/../main.ts')
     ).resolves.toMatchObject({
       path: '/workspace/project/main.ts',
       name: 'main.ts',
@@ -289,7 +295,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts'),
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
     ).rejects.toThrow('Invalid workspace text file response')
   })
 
@@ -309,7 +315,7 @@ describe('createDeviceApi', () => {
     const api = createDeviceApi({ post } as never)
 
     await expect(
-      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts'),
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
     ).rejects.toThrow('Invalid workspace text file response')
   })
 })

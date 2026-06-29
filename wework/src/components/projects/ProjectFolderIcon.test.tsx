@@ -22,4 +22,16 @@ describe('ProjectFolderIcon', () => {
 
     expect(screen.getByTestId('project-git-folder-icon-7')).toBeInTheDocument()
   })
+
+  test('marks remote runtime projects with a remote folder icon', () => {
+    const project: ProjectWithTasks = {
+      id: 8,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    render(<ProjectFolderIcon project={project} className="h-4 w-4" remote />)
+
+    expect(screen.getByTestId('project-remote-folder-icon-8')).toBeInTheDocument()
+  })
 })

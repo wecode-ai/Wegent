@@ -62,7 +62,11 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  currentRuntimeTaskRunning?: boolean
+  isAwaitingAssistantStart?: boolean
   isRuntimeTranscriptLoading?: boolean
+  runtimeTranscriptHasMoreBefore?: boolean
+  isRuntimeTranscriptLoadingMore?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -73,8 +77,14 @@ interface MobileWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onLoadOlderRuntimeTranscript?: () => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
+  onOpenStandaloneWorkspace?: (
+    deviceId: string,
+    workspacePath: string,
+    label?: string
+  ) => Promise<void> | void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -157,7 +167,10 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  isAwaitingAssistantStart = false,
   isRuntimeTranscriptLoading = false,
+  runtimeTranscriptHasMoreBefore = false,
+  isRuntimeTranscriptLoadingMore = false,
   upgradingDevices = {},
   activeItem,
   onNewChat,
@@ -167,6 +180,7 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenRuntimeLocalTask,
+  onLoadOlderRuntimeTranscript,
   onForkCurrentRuntimeTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
@@ -257,6 +271,8 @@ export function MobileWorkbenchLayout({
   const baseProjectWork = projectWork ?? {
     projects: state.projects,
     devices: state.devices,
+    runtimeWork: state.runtimeWork,
+    currentProject: state.currentProject,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     executionMode: 'current_workspace',
@@ -293,10 +309,12 @@ export function MobileWorkbenchLayout({
           }
         : undefined,
   }
-  const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentProject: activeConversationProject,
-    standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
-  })
+  const activeDeviceId =
+    state.currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject: activeConversationProject,
+      standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
+    })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
@@ -306,6 +324,7 @@ export function MobileWorkbenchLayout({
   )
   const noStandaloneCompatibleDevice =
     !activeConversationProject &&
+    !state.currentRuntimeTask &&
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
@@ -313,20 +332,21 @@ export function MobileWorkbenchLayout({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
-  const composerDisabledReason = state.isSending
-    ? t('workbench.sending_message')
-    : activeDeviceUnavailable
-      ? t('workbench.device_status_active_unavailable', {
+  const composerDisabledReason = activeDeviceUnavailable
+    ? t('workbench.device_status_active_unavailable', {
+        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+      })
+    : activeDeviceVersionUnsupported
+      ? t('workbench.device_status_active_upgrade_required', {
           device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
-      : activeDeviceVersionUnsupported
-        ? t('workbench.device_status_active_upgrade_required', {
-            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-            version: WEWORK_MIN_EXECUTOR_VERSION,
-          })
-        : noStandaloneCompatibleDevice
-          ? t('workbench.device_status_no_online_device')
-          : undefined
+      : noStandaloneCompatibleDevice
+        ? t('workbench.device_status_no_online_device')
+        : undefined
+  const inlineComposerDisabledReason = showConversationDeviceBanner
+    ? undefined
+    : composerDisabledReason
 
   useEffect(() => {
     const handlePopState = () => {
@@ -364,10 +384,7 @@ export function MobileWorkbenchLayout({
     return () => {
       cancelled = true
     }
-  }, [
-    activeConversationProject,
-    workspaceTargetResolverApi,
-  ])
+  }, [activeConversationProject, workspaceTargetResolverApi])
 
   const openContinueInImDialog = useCallback(() => {
     if (!state.currentRuntimeTask) return
@@ -513,11 +530,15 @@ export function MobileWorkbenchLayout({
             <ScrollableMessageArea
               messages={messages}
               loading={isRuntimeTranscriptLoading}
+              isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
+              hasMoreBefore={runtimeTranscriptHasMoreBefore}
+              loadingMoreBefore={isRuntimeTranscriptLoadingMore}
               conversationKey={state.currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onLoadMoreBefore={onLoadOlderRuntimeTranscript}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
@@ -551,7 +572,7 @@ export function MobileWorkbenchLayout({
                   onSubmit={onSend}
                   disabled={composerDisabled}
                   error={state.error}
-                  disabledReason={composerDisabledReason}
+                  disabledReason={inlineComposerDisabledReason}
                   placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
@@ -639,7 +660,7 @@ export function MobileWorkbenchLayout({
                 onSubmit={onSend}
                 disabled={composerDisabled}
                 error={state.error}
-                disabledReason={composerDisabledReason}
+                disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}

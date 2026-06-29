@@ -29,6 +29,7 @@ import jwt
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.jwt_compat import decode_pyjwt
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class TaskTokenInfo:
     subtask_id: int
     user_id: int
     user_name: str
+    expire_at: Optional[int] = None
 
 
 def create_task_token(
@@ -99,9 +101,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
         TaskTokenInfo if valid, None otherwise
     """
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_pyjwt(token, algorithms=[settings.ALGORITHM])
 
         # Verify it's a task token
         if payload.get("type") != "task_token":
@@ -113,6 +113,7 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             subtask_id=payload["subtask_id"],
             user_id=payload["user_id"],
             user_name=payload["user_name"],
+            expire_at=payload.get("exp"),
         )
     except jwt.ExpiredSignatureError:
         logger.warning("Task token has expired")

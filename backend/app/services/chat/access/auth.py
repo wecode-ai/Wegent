@@ -10,10 +10,10 @@ This module provides JWT token verification for WebSocket connections.
 import logging
 from typing import Optional
 
-from jose import jwt
 from jose.exceptions import ExpiredSignatureError
 
 from app.core.config import settings
+from app.core.jwt_compat import decode_jose_jwt
 from app.db.session import SessionLocal
 from app.models.user import User
 
@@ -31,9 +31,7 @@ def verify_jwt_token(token: str) -> Optional[User]:
         User object if valid, None otherwise
     """
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_jose_jwt(token, algorithms=[settings.ALGORITHM])
         user_name = payload.get("sub")
         if not user_name:
             return None
@@ -62,7 +60,7 @@ def is_token_expired(token: str) -> bool:
         True if token is expired or invalid, False otherwise
     """
     try:
-        jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        decode_jose_jwt(token, algorithms=[settings.ALGORITHM])
         return False
     except ExpiredSignatureError:
         return True
@@ -82,9 +80,8 @@ def get_token_expiry(token: str) -> Optional[int]:
     """
     try:
         # Decode without verification to extract expiry
-        payload = jwt.decode(
+        payload = decode_jose_jwt(
             token,
-            settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
             options={"verify_exp": False},
         )

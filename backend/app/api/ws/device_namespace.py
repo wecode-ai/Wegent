@@ -1048,7 +1048,30 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         effective_device_name = persisted_display_name or payload.name
 
-        # Redis and session operations happen AFTER database connection is released
+        # Update the Socket.IO session before marking the device online. If the
+        # connection disappeared, the online socket would be stale immediately.
+        session["device_id"] = payload.device_id
+        session["device_name"] = effective_device_name
+        session["runtime_transfer_host"] = runtime_transfer_host
+        session["registered"] = True
+
+        device_room = f"device:{user_id}:{payload.device_id}"
+        try:
+            await self.save_session(sid, session)
+            await self.enter_room(sid, device_room)
+        except (KeyError, ValueError) as exc:
+            logger.info(
+                "[Device WS] Connection disappeared before device registration "
+                "completed; user=%s, device=%s, sid=%s, error=%s",
+                user_id,
+                payload.device_id,
+                sid,
+                exc,
+            )
+            return {"error": "Client disconnected during device registration"}
+
+        # Redis online state is written only after Socket.IO session and room
+        # setup have succeeded.
         await device_service.set_device_online(
             user_id=user_id,
             device_id=payload.device_id,
@@ -1058,17 +1081,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
         )
-
-        # Update session with device_id and device_name
-        session["device_id"] = payload.device_id
-        session["device_name"] = effective_device_name
-        session["runtime_transfer_host"] = runtime_transfer_host
-        session["registered"] = True
-        await self.save_session(sid, session)
-
-        # Join device-specific room
-        device_room = f"device:{user_id}:{payload.device_id}"
-        await self.enter_room(sid, device_room)
 
         # Broadcast device online event to user room (via chat namespace)
         await self._broadcast_device_online(
