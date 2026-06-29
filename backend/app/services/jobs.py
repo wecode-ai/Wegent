@@ -34,7 +34,6 @@ if REPO_UPDATE_LOCK_KEY_INTERVAL < 10:
     REPO_UPDATE_LOCK_KEY_INTERVAL = 10
 
 EXECUTOR_CLEANUP_LOCK_KEY = "executor_cleanup_lock"
-ORPHAN_POD_CLEANUP_LOCK_KEY = "orphan_pod_cleanup_lock"
 
 
 async def acquire_repo_update_lock() -> bool:
@@ -135,43 +134,6 @@ async def cleanup_worker(stop_event: asyncio.Event):
             pass
 
 
-async def orphan_pod_cleanup_worker(stop_event: asyncio.Event):
-    """Async background worker for cleaning up orphan executor pods.
-
-    Queries K8s for pods older than ORPHAN_POD_MIN_AGE_HOURS that have no
-    corresponding DB subtask records, then deletes them. Runs every
-    ORPHAN_POD_CLEANUP_INTERVAL_SECONDS seconds.
-    """
-    while not stop_event.is_set():
-        try:
-            async with distributed_lock.acquire_watchdog_context_async(
-                ORPHAN_POD_CLEANUP_LOCK_KEY,
-                expire_seconds=300,
-                extend_interval_seconds=60,
-            ) as acquired:
-                if not acquired:
-                    logger.info(
-                        "[job] Another instance is executing orphan pod cleanup, skipping"
-                    )
-                else:
-                    async with AsyncSessionLocal() as db:
-                        await job_service.cleanup_orphan_pods(
-                            db,
-                            older_than_hours=settings.ORPHAN_POD_MIN_AGE_HOURS,
-                            dry_run=True,
-                        )
-        except Exception as e:
-            logger.error("[job] orphan pod cleanup error: %s", e)
-
-        try:
-            await asyncio.wait_for(
-                stop_event.wait(),
-                timeout=settings.ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            pass
-
-
 def repo_update_worker(stop_event: threading.Event):
     """
     Background worker for updating git repositories cache
@@ -244,13 +206,6 @@ def start_background_jobs(app):
     )
     logger.info("[job] cleanup stale executors worker started (async)")
 
-    # Start orphan pod cleanup async task
-    app.state.orphan_pod_cleanup_stop_event = asyncio.Event()
-    app.state.orphan_pod_cleanup_task = asyncio.create_task(
-        orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
-    )
-    logger.info("[job] orphan pod cleanup worker started (async)")
-
     # Start repository update thread
     app.state.repo_update_stop_event = threading.Event()
     app.state.repo_update_thread = threading.Thread(
@@ -287,19 +242,6 @@ async def stop_background_jobs(app):
         except asyncio.CancelledError:
             pass
     logger.info("[job] cleanup stale executors worker stopped")
-
-    # Stop orphan pod cleanup async task
-    orphan_stop = getattr(app.state, "orphan_pod_cleanup_stop_event", None)
-    orphan_task = getattr(app.state, "orphan_pod_cleanup_task", None)
-    if orphan_stop:
-        orphan_stop.set()
-    if orphan_task:
-        orphan_task.cancel()
-        try:
-            await orphan_task
-        except asyncio.CancelledError:
-            pass
-    logger.info("[job] orphan pod cleanup worker stopped")
 
     # Stop repository update thread gracefully
     repo_stop_event = getattr(app.state, "repo_update_stop_event", None)

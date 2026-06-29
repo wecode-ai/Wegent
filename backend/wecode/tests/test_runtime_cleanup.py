@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.adapters.executor_job import JobService
+import wecode.service.executor_job_patch  # noqa: F401  ensure orphan pod methods are patched onto JobService
 
 
 class RuntimeCleanupHelpers:

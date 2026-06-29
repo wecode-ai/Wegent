@@ -21,6 +21,7 @@ _patch_applied = False
 # Redis lock keys for notification jobs
 HOURLY_NOTIFICATION_LOCK_KEY = "hourly_notification_lock"
 DAILY_NOTIFICATION_LOCK_KEY = "daily_notification_lock"
+ORPHAN_POD_CLEANUP_LOCK_KEY = "orphan_pod_cleanup_lock"
 
 
 def _calculate_seconds_until_next_hour() -> float:
@@ -255,6 +256,51 @@ def _evaluation_grading_monitor_worker(stop_event: threading.Event):
         stop_event.wait(timeout=settings.EVAL_GRADING_MONITOR_INTERVAL_SECONDS)
 
 
+async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
+    """Async background worker for cleaning up orphan executor pods.
+
+    Queries K8s for pods older than ORPHAN_POD_MIN_AGE_HOURS that have no
+    corresponding DB subtask records, then deletes them. Runs every
+    ORPHAN_POD_CLEANUP_INTERVAL_SECONDS seconds.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.services.adapters.executor_job import job_service
+    from app.services.distributed_lock import distributed_lock
+    from wecode.config.orphan_pod_config import (
+        ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
+        ORPHAN_POD_MIN_AGE_HOURS,
+    )
+
+    while not stop_event.is_set():
+        try:
+            async with distributed_lock.acquire_watchdog_context_async(
+                ORPHAN_POD_CLEANUP_LOCK_KEY,
+                expire_seconds=300,
+                extend_interval_seconds=60,
+            ) as acquired:
+                if not acquired:
+                    logger.info(
+                        "[job] Another instance is executing orphan pod cleanup, skipping"
+                    )
+                else:
+                    async with AsyncSessionLocal() as db:
+                        await job_service.cleanup_orphan_pods(
+                            db,
+                            older_than_hours=ORPHAN_POD_MIN_AGE_HOURS,
+                            dry_run=True,
+                        )
+        except Exception as e:
+            logger.error("[job] orphan pod cleanup error: %s", e)
+
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 def apply_patch():
     """Register notification and evaluation grading monitor workers."""
     global _patch_applied
@@ -324,6 +370,13 @@ def apply_patch():
                     "[job] evaluation grading monitor disabled by configuration"
                 )
 
+            # Start orphan pod cleanup async task
+            app.state.orphan_pod_cleanup_stop_event = asyncio.Event()
+            app.state.orphan_pod_cleanup_task = asyncio.create_task(
+                _orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
+            )
+            logger.info("[job] orphan pod cleanup worker started (async)")
+
         async def patched_stop(app):
             # Stop hourly notification thread gracefully
             hourly_stop_event = getattr(
@@ -353,6 +406,19 @@ def apply_patch():
             if eval_thread:
                 eval_thread.join(timeout=5.0)
                 logger.info("[job] evaluation grading monitor worker stopped")
+
+            # Stop orphan pod cleanup async task
+            orphan_stop = getattr(app.state, "orphan_pod_cleanup_stop_event", None)
+            orphan_task = getattr(app.state, "orphan_pod_cleanup_task", None)
+            if orphan_stop:
+                orphan_stop.set()
+            if orphan_task:
+                orphan_task.cancel()
+                try:
+                    await orphan_task
+                except asyncio.CancelledError:
+                    pass
+            logger.info("[job] orphan pod cleanup worker stopped")
 
             # Call original stop (which is async)
             await original_stop(app)

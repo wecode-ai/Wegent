@@ -111,60 +111,6 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
             )
 
-    async def get_old_task_ids_async(self, older_than_hours: int = 48) -> List[str]:
-        """Fetch task IDs for executor pods older than the given age threshold."""
-        try:
-            logger.info(
-                f"executor.get_old_task_ids async request "
-                f"url={settings.EXECUTOR_OLD_TASK_IDS_URL} "
-                f"older_than_hours={older_than_hours}"
-            )
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    settings.EXECUTOR_OLD_TASK_IDS_URL,
-                    params={"older_than_hours": older_than_hours},
-                )
-                response.raise_for_status()
-                return response.json().get("task_ids", [])
-        except httpx.HTTPError as e:
-            logger.warning("Failed to fetch old task IDs from executor_manager: %s", e)
-            return []
-
-    async def delete_executor_by_task_id_async(self, task_id: int) -> Dict:
-        """Delete executor pod(s) by task_id label for orphan pod cleanup.
-
-        Called when no DB subtask records exist but K8s pods may still be running.
-        """
-        if not task_id or task_id <= 0:
-            raise HTTPException(
-                status_code=400, detail="task_id must be a positive integer"
-            )
-        try:
-            payload = {"task_id": task_id}
-            logger.info(
-                f"executor.delete_by_task_id async request "
-                f"url={settings.EXECUTOR_DELETE_BY_TASK_ID_URL} task_id={task_id}"
-            )
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    settings.EXECUTOR_DELETE_BY_TASK_ID_URL,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Invalid delete-by-task-id response: {data!r}",
-                    )
-                return data
-        except httpx.HTTPError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error deleting executor by task_id: {str(e)}",
-            )
-
     async def delete_executor_task_async(
         self, executor_name: str, executor_namespace: str
     ) -> Dict:
