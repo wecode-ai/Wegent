@@ -21,6 +21,20 @@ pub struct ClaudeStreamSummary {
     pub retryable_api_error: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeToolResult {
+    pub tool_use_id: String,
+    pub content: Option<String>,
+    pub is_error: bool,
+}
+
 pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
     collect_claude_stream_summary(output).outcome
 }
@@ -215,10 +229,84 @@ fn contains_retryable_api_error(value: &str) -> bool {
     .any(|pattern| value.contains(pattern))
 }
 
-fn extract_text(value: &Value) -> Option<String> {
+pub fn extract_text(value: &Value) -> Option<String> {
     extract_claude_assistant_text(value)
         .or_else(|| extract_claude_text_delta(value))
         .or_else(|| extract_codex_agent_delta(value))
+}
+
+pub fn extract_reasoning(value: &Value) -> Option<String> {
+    extract_claude_thinking_delta(value).or_else(|| extract_claude_assistant_thinking(value))
+}
+
+pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
+    let Some(content) = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    content
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                return None;
+            }
+            let id = block
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_owned();
+            let name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Tool")
+                .to_owned();
+            let input = block
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Default::default()));
+            Some(ClaudeToolUse { id, name, input })
+        })
+        .collect()
+}
+
+pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
+    let Some(content) = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    content
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                return None;
+            }
+            let tool_use_id = block
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_owned();
+            Some(ClaudeToolResult {
+                tool_use_id,
+                content: stringify_tool_result_content(block.get("content")),
+                is_error: block
+                    .get("is_error")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {
@@ -238,12 +326,55 @@ fn extract_claude_assistant_text(value: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => Some(value.clone()),
+        Value::Array(items) => {
+            let mut text = String::new();
+            for item in items {
+                if let Some(value) = item.get("text").and_then(Value::as_str) {
+                    text.push_str(value);
+                } else if let Some(value) = item.as_str() {
+                    text.push_str(value);
+                }
+            }
+            (!text.is_empty()).then_some(text)
+        }
+        value => serde_json::to_string(value).ok(),
+    }
+}
+
 fn extract_claude_text_delta(value: &Value) -> Option<String> {
     let delta = value.get("delta")?;
     (delta.get("type").and_then(Value::as_str) == Some("text_delta"))
         .then(|| delta.get("text").and_then(Value::as_str))
         .flatten()
         .map(ToOwned::to_owned)
+}
+
+fn extract_claude_thinking_delta(value: &Value) -> Option<String> {
+    let delta = value.get("delta")?;
+    (delta.get("type").and_then(Value::as_str) == Some("thinking_delta"))
+        .then(|| delta.get("thinking").and_then(Value::as_str))
+        .flatten()
+        .map(ToOwned::to_owned)
+}
+
+fn extract_claude_assistant_thinking(value: &Value) -> Option<String> {
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)?;
+
+    let mut thinking = String::new();
+    for block in content {
+        if block.get("type").and_then(Value::as_str) == Some("thinking") {
+            if let Some(block_thinking) = block.get("thinking").and_then(Value::as_str) {
+                thinking.push_str(block_thinking);
+            }
+        }
+    }
+    (!thinking.is_empty()).then_some(thinking)
 }
 
 fn extract_codex_agent_delta(value: &Value) -> Option<String> {

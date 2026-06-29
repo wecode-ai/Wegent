@@ -289,6 +289,13 @@ export function isToolBlock(block: MessageBlock): block is ToolBlock {
 }
 
 /**
+ * Type guard for ThinkingBlock
+ */
+export function isThinkingBlock(block: MessageBlock): block is ThinkingBlock {
+  return block.type === 'thinking'
+}
+
+/**
  * Type guard for VideoBlock
  */
 export function isVideoBlock(block: MessageBlock): block is VideoBlock {

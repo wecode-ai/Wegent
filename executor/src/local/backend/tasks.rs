@@ -206,7 +206,9 @@ async fn run_managed_task<E, S>(
     S: EventSink,
 {
     let task_id = request.task_id;
-    let outcome = engine.run(request).await;
+    let outcome = engine
+        .run_with_events(request, sink.clone(), builder.clone())
+        .await;
     running_tasks.remove(task_id);
     handles.lock().expect("managed task lock").remove(&task_id);
 

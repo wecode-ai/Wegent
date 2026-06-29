@@ -365,29 +365,43 @@ function runtimeServiceTier(modelOptions?: Record<string, string>): string | nul
   return modelOptions?.speed || modelOptions?.service_tier || null
 }
 
+type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
+  id: number
+  filename: string
+  original_filename: string
+  file_size: number
+  mime_type: string
+  subtask_id: number
+  file_extension: string
+  local_path: string
+  local_preview_url: string
+  text_length?: number
+}
+
 function localRuntimeAttachments(
   attachments: RuntimeTaskCreateRequest['attachments'],
   subtaskId: number
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
-  return attachments.flatMap(attachment => {
-    const localPath = stringValue(attachment.local_path)
-    if (!localPath) return []
+  return attachments
+    .map((attachment): LocalRuntimeAttachmentPayload | null => {
+      const localPath = stringValue(attachment.local_path)
+      if (!localPath) return null
 
-    const payload: Record<string, unknown> = {
-      id: attachment.id,
-      filename: attachment.filename,
-      original_filename: attachment.filename,
-      file_size: attachment.file_size,
-      mime_type: attachment.mime_type,
-      subtask_id: attachment.subtask_id ?? subtaskId,
-      file_extension: attachment.file_extension,
-      local_path: localPath,
-      local_preview_url: attachment.local_preview_url ?? localPath,
-      ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
-    }
-    return [payload]
-  })
+      return {
+        id: attachment.id,
+        filename: attachment.filename,
+        original_filename: attachment.filename,
+        file_size: attachment.file_size,
+        mime_type: attachment.mime_type,
+        subtask_id: attachment.subtask_id ?? subtaskId,
+        file_extension: attachment.file_extension,
+        local_path: localPath,
+        local_preview_url: attachment.local_preview_url ?? localPath,
+        ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+      }
+    })
+    .filter((attachment): attachment is LocalRuntimeAttachmentPayload => attachment !== null)
 }
 
 function skillName(skill: unknown): string | null {

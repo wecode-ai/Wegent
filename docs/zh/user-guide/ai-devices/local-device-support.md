@@ -208,11 +208,11 @@ wegent-executor
 # 或用环境变量临时覆盖配置文件中的连接信息
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-export EXECUTOR_STARTUP_MODE=socket
+export EXECUTOR_MODE=remote
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；`EXECUTOR_STARTUP_MODE` 默认是 `http`，无参数启动会启动 HTTP server。需要本机 socket 或本地设备连接时，设置 `EXECUTOR_STARTUP_MODE=socket`，executor 会监听 `~/.wegent-executor/app-ipc.sock`。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 `WEGENT_EXECUTOR_HOME` 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。`EXECUTOR_MODE=remote` 会启动本机 socket，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后以远程设备模式连接 Backend。`EXECUTOR_STARTUP_MODE=socket` 仍兼容旧脚本，但新启动命令不再需要设置它。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 executor home 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
 
 ### 获取 JWT Token
 

@@ -500,11 +500,7 @@ impl JsonRpcConnection {
                 return response_result(message);
             }
             if message.get("method").and_then(Value::as_str) == Some("error") {
-                return Err(message_params(&message)
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("codex app-server error")
-                    .to_owned());
+                return Err(codex_error_message(message_params(&message)));
             }
         }
     }
@@ -615,11 +611,7 @@ impl CodexRunState {
                 let params = message_params(message);
                 log_codex_run_state_error(params);
                 Some(ExecutionOutcome::Failed {
-                    message: params
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("codex app-server error")
-                        .to_owned(),
+                    message: codex_error_message(params),
                 })
             }
             _ => None,
@@ -784,12 +776,13 @@ fn log_codex_run_state_text(
 }
 
 fn log_codex_run_state_error(params: &Value) {
+    let message = codex_error_message(params);
     let params_json = serde_json::to_string(params)
         .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
     log_executor_event(
         "codex run state error",
         &[
-            ("message", json_string_field(params, "message")),
+            ("message", message),
             ("code", json_string_field(params, "code")),
             ("params_len", params_json.len().to_string()),
             ("params_preview", truncate_log_text(&params_json, 500)),
@@ -2029,6 +2022,40 @@ fn response_result(message: Value) -> Result<Value, String> {
 
 fn message_params(message: &Value) -> &Value {
     message.get("params").unwrap_or(message)
+}
+
+fn codex_error_message(params: &Value) -> String {
+    let nested_error = params.get("error");
+    let message = params
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            nested_error
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| nested_error.and_then(Value::as_str));
+    let details = params
+        .get("additionalDetails")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            nested_error
+                .and_then(|error| error.get("additionalDetails"))
+                .and_then(Value::as_str)
+        });
+
+    match (
+        message.filter(|value| !value.trim().is_empty()),
+        details.filter(|value| !value.trim().is_empty()),
+    ) {
+        (Some(message), Some(details)) if message != details => format!("{message}: {details}"),
+        (Some(message), _) => message.to_owned(),
+        (_, Some(details)) => details.to_owned(),
+        _ => nested_error
+            .map(Value::to_string)
+            .filter(|value| value != "null")
+            .unwrap_or_else(|| "codex app-server error".to_owned()),
+    }
 }
 
 fn extract_text(item: &Value) -> Option<String> {
