@@ -46,6 +46,8 @@ import {
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
 
+export type { WorkbenchServices } from './workbenchServices'
+
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 
 export function WorkbenchProvider({

@@ -39,6 +39,7 @@ interface ScrollableMessageAreaProps {
   turnNavigation?: RuntimeTurnNavigationItem[]
   className?: string
   scrollerClassName?: string
+  messageListClassName?: string
   scrollButtonClassName?: string
   scrollTestId?: string
   conversationKey?: string | number | null
@@ -126,10 +127,21 @@ function areScrollableMessageAreaPropsEqual(
     previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
+    previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.devices !== next.devices ? 'devices' : null,
+    previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
+    previous.onSwitchModelForFailedMessage !== next.onSwitchModelForFailedMessage
+      ? 'onSwitchModelForFailedMessage'
+      : null,
+    previous.onLoadFileChangesDiff !== next.onLoadFileChangesDiff ? 'onLoadFileChangesDiff' : null,
+    previous.onRevertFileChanges !== next.onRevertFileChanges ? 'onRevertFileChanges' : null,
+    previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
+      ? 'onOpenFileChangesReview'
+      : null,
+    previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
@@ -219,6 +231,7 @@ function ScrollableMessagePaneContent({
   turnNavigation,
   className,
   scrollerClassName,
+  messageListClassName,
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   conversationKey,
@@ -721,6 +734,7 @@ function ScrollableMessagePaneContent({
               )}
               <MessageList
                 messages={messages}
+                className={messageListClassName}
                 conversationKey={conversationKey}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}

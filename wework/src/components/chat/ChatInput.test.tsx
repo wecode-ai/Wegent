@@ -140,6 +140,7 @@ function runtimeWork(
 
 describe('ChatInput', () => {
   const originalCreateObjectUrl = URL.createObjectURL
+  const originalInnerWidth = window.innerWidth
 
   afterEach(() => {
     vi.restoreAllMocks()
@@ -147,6 +148,10 @@ describe('ChatInput', () => {
     vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth,
+    })
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
@@ -161,7 +166,13 @@ describe('ChatInput', () => {
       />
     )
 
+    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
+      'min-h-[100px]',
+      'pb-4',
+      'pt-2'
+    )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass('min-h-8', 'max-h-[116px]')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
@@ -308,7 +319,12 @@ describe('ChatInput', () => {
       'rounded-[26px]'
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass('py-[14px]', 'scrollbar-none')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass(
+      'py-[14px]',
+      'scrollbar-none',
+      'text-sm',
+      'leading-5'
+    )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
       'absolute',
       'bottom-1',
@@ -1143,6 +1159,50 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
+  test('keeps the desktop model menu in narrow Tauri windows', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    })
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    const model: UnifiedModel = {
+      name: 'codex-gpt-5.5',
+      type: 'user',
+      displayName: '5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: '5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('data-mobile')
+    expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('aria-modal')
+    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
   test('opens the desktop model menu when the external open signal changes', async () => {

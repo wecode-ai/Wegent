@@ -1,4 +1,5 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
@@ -53,26 +54,40 @@ import {
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
-import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 
-const DESKTOP_COMPOSER_FRAME_CLASS =
-  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
+const DESKTOP_CHAT_CONTENT_BASE_CLASS =
+  'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width,max-width]'
+const DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
+const DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(72rem,calc(100%_-_1.5rem))] max-w-[calc(100%_-_1.5rem)]`
+const DESKTOP_CENTERED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} -translate-y-12`
+const DESKTOP_DOCKED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_FLOATING_COMPOSER_CLASS =
-  'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
-const DESKTOP_SPLIT_FLOATING_COMPOSER_CLASS =
-  'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[calc(100%_-_1.5rem)] min-w-0 max-w-[calc(100%_-_1.5rem)] -translate-x-1/2'
-const DESKTOP_SPLIT_COMPOSER_FRAME_CLASS =
-  'mx-auto w-[calc(100%_-_1.5rem)] min-w-0 max-w-[calc(100%_-_1.5rem)] -translate-y-12'
+  'pointer-events-none absolute bottom-2 left-1/2 z-chrome -translate-x-1/2'
+const DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS}`
+const DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS}`
+const DESKTOP_CENTERED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} px-0`
+const DESKTOP_DOCKED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} px-0`
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
   'pointer-events-none absolute left-0 right-8 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
-const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background/95 shadow-md'
-const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-52 z-popover bg-background/95 shadow-md'
+const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
+  'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)] z-popover bg-background/95 shadow-md'
+const DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS = 'pb-[var(--desktop-floating-composer-clearance)]'
+const DEFAULT_FLOATING_COMPOSER_HEIGHT_PX = 112
+const FLOATING_COMPOSER_CLEARANCE_GAP_PX = 104
+const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
+  'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
+const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
+  'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
+const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
+  'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  sidebarCollapsed: boolean
+  sidebarResizing?: boolean
+  onSidebarCollapsedChange: (collapsed: boolean) => void
 }
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
@@ -81,19 +96,28 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       activePane={props.activePane}
       maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
       activeTestId="desktop-workbench-main"
-      renderPane={renderDesktopWorkbenchPane}
+      renderPane={pane => (
+        <DesktopWorkbenchPane
+          pane={pane}
+          sidebarCollapsed={props.sidebarCollapsed}
+          sidebarResizing={props.sidebarResizing ?? false}
+          onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+        />
+      )}
     />
   )
 }
 
-function renderDesktopWorkbenchPane(pane: WorkbenchPaneIdentity) {
-  return <DesktopWorkbenchPane pane={pane} />
-}
-
 const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   pane,
+  sidebarCollapsed,
+  sidebarResizing = false,
+  onSidebarCollapsedChange,
 }: {
   pane: WorkbenchPaneIdentity
+  sidebarCollapsed: boolean
+  sidebarResizing?: boolean
+  onSidebarCollapsedChange: (collapsed: boolean) => void
 }) {
   const {
     state,
@@ -114,7 +138,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
@@ -152,6 +175,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
+  const [floatingComposerHeight, setFloatingComposerHeight] = useState(
+    DEFAULT_FLOATING_COMPOSER_HEIGHT_PX
+  )
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -176,6 +203,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
+  const useDockedChatContentWidth = !sidebarCollapsed || rightPanelOpen
+  const chatContentResizing = sidebarResizing || rightSplitResizing
+  const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
   const workspaceTargetDevice = workspaceTarget?.deviceId
     ? devices.find(device => device.device_id === workspaceTarget.deviceId)
     : undefined
@@ -591,13 +621,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     sidebarCollapsed ? (
       <DesktopWindowControls
         sidebarCollapsed
-        onToggleSidebar={() => setSidebarCollapsed(false)}
+        onToggleSidebar={() => onSidebarCollapsedChange(false)}
         onNewChat={startNewChat}
       />
     ) : (
       <DesktopWindowControls
         sidebarCollapsed={false}
-        onToggleSidebar={() => setSidebarCollapsed(true)}
+        onToggleSidebar={() => onSidebarCollapsedChange(true)}
       />
     )
   ) : undefined
@@ -659,11 +689,40 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     })
   }, [rightPanelSessionKey])
 
+  useLayoutEffect(() => {
+    if (!hasConversation) return
+
+    const element = floatingComposerCardRef.current
+    if (!element) return
+
+    const updateComposerHeight = () => {
+      const nextHeight = Math.ceil(element.getBoundingClientRect().height)
+      if (nextHeight <= 0) return
+      setFloatingComposerHeight(current => (current === nextHeight ? current : nextHeight))
+    }
+
+    updateComposerHeight()
+
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateComposerHeight)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [
+    hasConversation,
+    hasQueuedComposerRows,
+    showConversationDeviceBanner,
+    noStandaloneCompatibleDevice,
+    activeDeviceUnavailable,
+  ])
+
   return (
     <main
       ref={workbenchMainRef}
       className={cn(
         'absolute inset-0 mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[margin]',
+        sidebarResizing && 'transition-none',
         !isTauri && 'mt-1.5',
         sidebarCollapsed && 'ml-1.5'
       )}
@@ -683,7 +742,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             testId="workbench-topbar"
             className={cn(
               'absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7',
-              rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out'
+              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftActions}
@@ -694,11 +753,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="desktop-workbench-content"
         className={cn(
           'relative flex min-w-0 flex-none flex-col overflow-hidden',
-          rightSplitResizing ? 'transition-none' : 'transition-[width] duration-300 ease-out',
+          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
           showPageTopBar && 'pt-[52px]',
           rightPanelOpen && 'border-r border-border'
         )}
-        style={{ width: chatColumnWidth }}
+        style={
+          {
+            width: chatColumnWidth,
+            '--desktop-floating-composer-height': `${floatingComposerHeight}px`,
+            '--desktop-floating-composer-clearance': `${floatingComposerClearance}px`,
+          } as CSSProperties
+        }
       >
         {isBootstrapping ? (
           <div className="flex flex-1" data-testid="desktop-workbench-loading" />
@@ -721,12 +786,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName={cn('scrollbar-soft', hasQueuedComposerRows ? 'pb-52' : 'pb-40')}
-              scrollButtonClassName={
-                hasQueuedComposerRows
-                  ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
-                  : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
+              scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
+              messageListClassName={
+                useDockedChatContentWidth
+                  ? cn(DESKTOP_DOCKED_MESSAGE_LIST_CLASS, chatContentResizing && 'transition-none')
+                  : cn(
+                      DESKTOP_CENTERED_MESSAGE_LIST_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )
               }
+              scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
               devices={devices}
               onRetryFailedMessage={message => {
                 void retryFailedMessage(message.id, paneMessages)
@@ -760,13 +829,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             />
             <div
               className={
-                rightPanelOpen
-                  ? DESKTOP_SPLIT_FLOATING_COMPOSER_CLASS
-                  : DESKTOP_FLOATING_COMPOSER_CLASS
+                useDockedChatContentWidth
+                  ? cn(
+                      DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )
+                  : cn(
+                      DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )
               }
               data-testid="desktop-floating-composer-layer"
             >
-              <div className="pointer-events-auto" data-testid="desktop-floating-composer-card">
+              <div
+                ref={floatingComposerCardRef}
+                className="pointer-events-auto"
+                data-testid="desktop-floating-composer-card"
+              >
                 {showConversationDeviceBanner ? (
                   <ConversationDeviceOfflineBanner
                     device={activeDevice}
@@ -792,7 +871,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   disabled={composerDisabled}
                   error={errorMessage}
                   disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.input_placeholder', '尽管问')}
+                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={paneProjectWork}
@@ -815,7 +894,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <div className="flex flex-1 items-center justify-center px-10">
             <div
               className={
-                rightPanelOpen ? DESKTOP_SPLIT_COMPOSER_FRAME_CLASS : DESKTOP_COMPOSER_FRAME_CLASS
+                useDockedChatContentWidth
+                  ? cn(
+                      DESKTOP_DOCKED_COMPOSER_FRAME_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )
+                  : cn(
+                      DESKTOP_CENTERED_COMPOSER_FRAME_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )
               }
               data-testid="desktop-empty-composer-frame"
             >
@@ -884,7 +971,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           aria-orientation="vertical"
           aria-label={t('workbench.resize_right_workspace_panel')}
           aria-controls="right-workspace-panel-shell"
-          className="absolute top-0 z-popover h-full w-5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent hover:after:bg-primary/40"
+          className={cn(
+            'absolute top-0 z-popover h-full w-5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
+          )}
           style={{ left: rightSplitChatWidth }}
           onPointerDown={handleRightSplitResizeStart}
         />
@@ -894,9 +984,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="right-workspace-panel-shell"
         className={cn(
           'min-w-0 shrink-0 overflow-hidden bg-background',
-          rightSplitResizing
-            ? 'transition-none'
-            : 'transition-[width,opacity] duration-300 ease-out',
+          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
           rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
         style={{ width: rightPanelShellWidth }}
