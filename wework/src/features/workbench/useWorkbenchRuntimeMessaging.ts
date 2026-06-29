@@ -12,6 +12,7 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -219,7 +220,14 @@ export function useWorkbenchRuntimeMessaging({
 
       const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
       if (payloadAttachments.length > 0) {
-        payload.attachment_ids = payloadAttachments.map(attachment => attachment.id)
+        const attachmentIds = remoteAttachmentIds(payloadAttachments)
+        const localAttachments = localRuntimeAttachments(payloadAttachments)
+        if (attachmentIds.length > 0) {
+          payload.attachment_ids = attachmentIds
+        }
+        if (localAttachments.length > 0) {
+          payload.attachments = localAttachments
+        }
         if (!message) {
           payload.title = EMPTY_MESSAGE_TASK_TITLE
         }
@@ -318,6 +326,7 @@ export function useWorkbenchRuntimeMessaging({
         modelOptions: payload.model_options ?? {},
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
+        attachments: payload.attachments ?? [],
         execution: payload.execution,
       }
       const optimisticAddress: RuntimeTaskAddress = {
@@ -474,13 +483,14 @@ export function useWorkbenchRuntimeMessaging({
           return false
         }
         const currentAttachments = attachmentSelection.attachments
+        const attachmentIds = remoteAttachmentIds(currentAttachments)
+        const attachments = localRuntimeAttachments(currentAttachments)
         const sent = await sendRuntimePaneMessage({
           address: state.currentRuntimeTask,
           message: payloadMessage,
           ...runtimeModelFields,
-          ...(currentAttachments.length > 0
-            ? { attachmentIds: currentAttachments.map(attachment => attachment.id) }
-            : {}),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
         })
         if (sent) {
           attachmentSelection.resetAttachments()

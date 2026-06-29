@@ -32,7 +32,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$TEMP/**", "/var/folders/**", "/private/var/folders/**"]
+          "requireLiteralLeadingDot": false,
+          "allow": ["**/*"]
         }
       }
     }

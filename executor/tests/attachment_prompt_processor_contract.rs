@@ -114,6 +114,65 @@ fn attachment_context_lists_available_files_without_layout_guidance() {
 }
 
 #[test]
+fn text_attachment_context_includes_file_content_and_path() {
+    let attachment_path = std::env::temp_dir().join(format!(
+        "wegent-text-attachment-{}-{}.txt",
+        std::process::id(),
+        "prompt"
+    ));
+    let content = (1..=11)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&attachment_path, content).unwrap();
+    let mut downloaded = attachment(
+        274,
+        "clipboard-text.txt",
+        &attachment_path.display().to_string(),
+    );
+    downloaded.file_size = Some(31);
+    downloaded.mime_type = Some("text/plain".to_owned());
+
+    let context = AttachmentPromptProcessor::build_text_attachment_context(&[downloaded]);
+
+    assert!(context.contains("clipboard-text.txt"));
+    assert!(context.contains(&attachment_path.display().to_string()));
+    assert!(context.contains("line 1"));
+    assert!(context.contains("line 10"));
+    assert!(!context.contains("line 11"));
+    assert!(context.contains("Content preview truncated after 10 lines or 4.0 KB"));
+
+    let _ = fs::remove_file(attachment_path);
+}
+
+#[test]
+fn text_attachment_context_truncates_large_file_content() {
+    let attachment_path = std::env::temp_dir().join(format!(
+        "wegent-large-text-attachment-{}-{}.txt",
+        std::process::id(),
+        "prompt"
+    ));
+    let content = format!("{}TAIL_SHOULD_NOT_APPEAR", "A".repeat(70 * 1024));
+    fs::write(&attachment_path, content).unwrap();
+    let mut downloaded = attachment(
+        274,
+        "long-clipboard-text.txt",
+        &attachment_path.display().to_string(),
+    );
+    downloaded.file_size = Some(70 * 1024);
+    downloaded.mime_type = Some("text/plain".to_owned());
+
+    let context = AttachmentPromptProcessor::build_text_attachment_context(&[downloaded]);
+
+    assert!(context.contains("long-clipboard-text.txt"));
+    assert!(context.contains("Content preview truncated after 10 lines or 4.0 KB"));
+    assert!(context.contains("Read the full Local File Path"));
+    assert!(!context.contains("TAIL_SHOULD_NOT_APPEAR"));
+
+    let _ = fs::remove_file(attachment_path);
+}
+
+#[test]
 fn image_content_blocks_downscale_large_images() {
     let image_path = std::env::temp_dir().join(format!(
         "wegent-large-attachment-{}-{}.png",

@@ -1794,6 +1794,23 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
             copy_attachment_field(object, &mut normalized, "mime_type");
             copy_attachment_field(object, &mut normalized, "subtask_id");
             copy_attachment_field(object, &mut normalized, "file_extension");
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_path",
+                &["local_path", "localPath"],
+            );
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_preview_url",
+                &["local_preview_url", "localPreviewUrl"],
+            );
+            if !normalized.contains_key("local_preview_url") {
+                if let Some(local_path) = normalized.get("local_path").cloned() {
+                    normalized.insert("local_preview_url".to_owned(), local_path);
+                }
+            }
             normalized.insert("status".to_owned(), Value::String("ready".to_owned()));
             normalized.insert("created_at".to_owned(), Value::Number(now_ms().into()));
             Some(Value::Object(normalized))
@@ -1804,6 +1821,20 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
+    }
+}
+
+fn copy_attachment_field_alias(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    target_key: &str,
+    source_keys: &[&str],
+) {
+    for source_key in source_keys {
+        if let Some(value) = source.get(*source_key).cloned() {
+            target.insert(target_key.to_owned(), value);
+            return;
+        }
     }
 }
 

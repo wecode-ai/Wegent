@@ -55,6 +55,7 @@ import {
 import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
+import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -362,6 +363,32 @@ function runtimeServiceTier(modelOptions?: Record<string, string>): string | nul
   return modelOptions?.speed || modelOptions?.service_tier || null
 }
 
+function localRuntimeAttachments(
+  attachments: RuntimeTaskCreateRequest['attachments'],
+  subtaskId: number
+): Record<string, unknown>[] {
+  if (!attachments?.length) return []
+  return attachments
+    .map(attachment => {
+      const localPath = stringValue(attachment.local_path)
+      if (!localPath) return null
+
+      return {
+        id: attachment.id,
+        filename: attachment.filename,
+        original_filename: attachment.filename,
+        file_size: attachment.file_size,
+        mime_type: attachment.mime_type,
+        subtask_id: attachment.subtask_id ?? subtaskId,
+        file_extension: attachment.file_extension,
+        local_path: localPath,
+        local_preview_url: attachment.local_preview_url ?? localPath,
+        ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+      }
+    })
+    .filter((attachment): attachment is Record<string, unknown> => attachment !== null)
+}
+
 function skillName(skill: unknown): string | null {
   if (typeof skill === 'string') return skill
   const skillRecord = recordValue(skill)
@@ -599,7 +626,7 @@ function createLocalExecutionRequest(
     collaboration_model: 'single',
     mode: 'code',
     task_mode: 'code',
-    attachments: [],
+    attachments: localRuntimeAttachments(data.attachments, turnId),
     reasoning_config: reasoning,
   }
 }
@@ -1217,6 +1244,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
     deviceApi,
     runtimeWorkApi,
+    attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({
       transportKind: 'local-ipc',
       deviceApi,
