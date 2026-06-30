@@ -1634,6 +1634,55 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
   })
 
+  test('keeps a collapsed Tauri task title clear of titlebar controls', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'workspace',
+                localTasks: [
+                  {
+                    localTaskId: 'runtime-empty',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Fix pane title',
+                    runtime: 'codex',
+                    createdAt: '2026-06-20T00:00:00.000Z',
+                    updatedAt: '2026-06-20T00:00:00.000Z',
+                    running: true,
+                  },
+                ],
+              },
+            ],
+            totalLocalTasks: 1,
+          },
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Fix pane title')
+  })
+
   test('opens project code-server from the Tauri titlebar', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,

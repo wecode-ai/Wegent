@@ -15,6 +15,11 @@ const mockTabs: AppTab[] = [
   },
 ]
 
+const appTabs: AppTab[] = [
+  { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
+  { key: 'apps', label: '应用', mode: 'native', requiresAuth: true },
+]
+
 function mockUserAgent(ua: string) {
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
@@ -59,6 +64,20 @@ describe('ChromeTitlebar', () => {
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
     expect(screen.getByTestId('titlebar-actions')).toBeInTheDocument()
+  })
+
+  test('renders app tabs as icon-only controls with hover labels', () => {
+    render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
+
+    const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const appsTab = screen.getByTestId('chrome-tab-apps')
+
+    expect(weworkTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(appsTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(weworkTab).toHaveAttribute('title', 'WeWork')
+    expect(appsTab).toHaveAttribute('title', '应用')
+    expect(weworkTab.querySelector('.sr-only')).toHaveTextContent('WeWork')
+    expect(appsTab.querySelector('.sr-only')).toHaveTextContent('应用')
   })
 
   test('renders after-tabs content between tabs and titlebar actions', () => {

@@ -353,7 +353,8 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-11', 'pb-2')
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-8', 'pb-2')
+    expect(screen.getByTestId('user-message-content')).toHaveClass('py-1.5')
     expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
   })
 

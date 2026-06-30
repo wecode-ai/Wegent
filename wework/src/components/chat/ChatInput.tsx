@@ -115,7 +115,7 @@ export function ChatInput({
   onPause,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
-  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
+  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '随心输入')
   const controls: ProjectChatControls = projectChat ?? {
     models: [],
     skills: [],

@@ -62,11 +62,12 @@ const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width,max-width]'
 const DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(72rem,calc(100%_-_1.5rem))] max-w-[calc(100%_-_1.5rem)]`
-const DESKTOP_CENTERED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} -translate-y-12`
+const DESKTOP_CENTERED_COMPOSER_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
+const DESKTOP_CENTERED_COMPOSER_FRAME_CLASS = `${DESKTOP_CENTERED_COMPOSER_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_DOCKED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-2 left-1/2 z-chrome -translate-x-1/2'
-const DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS}`
+const DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CENTERED_COMPOSER_WIDTH_CLASS}`
 const DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS}`
 const DESKTOP_CENTERED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} px-0`
 const DESKTOP_DOCKED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} px-0`
@@ -760,7 +761,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
@@ -935,7 +937,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }
               data-testid="desktop-empty-composer-frame"
             >
-              <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
+              <h1 className="mb-10 text-center text-[28px] font-normal leading-9 tracking-normal text-text-primary/95">
                 {emptyTitle}
               </h1>
               <DeviceStatusPrompt
@@ -955,7 +957,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 disabled={composerDisabled}
                 error={errorMessage}
                 disabledReason={inlineComposerDisabledReason}
-                placeholder={t('workbench.input_placeholder', '尽管问')}
+                placeholder={t('workbench.input_placeholder', '随心输入')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={paneProjectWork}

@@ -136,6 +136,12 @@ describe('App center route', () => {
     await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('titlebar-sidebar-toggle-placeholder')).toHaveClass(
+      'invisible',
+      'pointer-events-none'
+    )
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -144,6 +150,22 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('overlays the workbench titlebar so the sidebar can reach the window top', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(screen.getByTestId('chrome-titlebar')).toHaveClass(
+      'absolute',
+      'inset-x-0',
+      'top-0',
+      'z-system',
+      'bg-transparent'
+    )
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {

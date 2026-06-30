@@ -154,6 +154,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -272,6 +273,19 @@ describe('ConnectionsSettingsPage', () => {
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
+  })
+
+  test('adds titlebar clearance for the settings back button in Tauri', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
+    expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
