@@ -56,9 +56,11 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
             .join(attachments_subdir_name(&request.task_id.to_string()))
             .join(attachment_subtask_id.to_string())
     };
+    let api_base_url = request_api_base_url(&request);
     let result = download_attachments(
         &attachments,
         &attachments_dir,
+        &api_base_url,
         &auth_token,
         request.task_id,
         request.subtask_id,
@@ -122,7 +124,12 @@ pub async fn prepare_claude_runtime(
     install_deferred_mcp_hook(&config_dir);
     prepare_project_custom_instructions(&task_dir);
     setup_coordinate_subagents(request, &task_dir);
-    deploy_request_skills(request, &config_dir.join("skills")).await;
+    let skills_dir = spec
+        .envs()
+        .get("SKILLS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config_dir.join("skills"));
+    deploy_request_skills(request, &skills_dir).await;
 
     let global_mcps = load_global_mcp_records();
     log_runtime_event(
@@ -206,7 +213,8 @@ async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
         return;
     };
 
-    if let Err(error) = deploy_skills(&plan).await {
+    let api_base_url = request_api_base_url(request);
+    if let Err(error) = deploy_skills(&plan, &api_base_url).await {
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("error_len", error.len().to_string()));
         log_executor_event("skill deployment skipped after error", &fields);
@@ -221,6 +229,7 @@ struct AttachmentDownloadOutcome {
 async fn download_attachments(
     attachments: &[AttachmentRecord],
     attachments_dir: &Path,
+    api_base_url: &str,
     auth_token: &str,
     task_id: i64,
     subtask_id: i64,
@@ -230,7 +239,15 @@ async fn download_attachments(
     let mut success = Vec::new();
     let mut failed = Vec::new();
     for attachment in attachments {
-        match download_attachment(&client, attachment, attachments_dir, auth_token).await {
+        match download_attachment(
+            &client,
+            attachment,
+            attachments_dir,
+            api_base_url,
+            auth_token,
+        )
+        .await
+        {
             Ok(local_path) => {
                 let mut downloaded = attachment.clone();
                 downloaded.local_path = Some(local_path.display().to_string());
@@ -260,12 +277,13 @@ async fn download_attachment(
     client: &reqwest::Client,
     attachment: &AttachmentRecord,
     attachments_dir: &Path,
+    api_base_url: &str,
     auth_token: &str,
 ) -> Result<PathBuf, String> {
-    let url = api_url(&format!(
-        "/api/attachments/{}/executor-download",
-        attachment.id
-    ));
+    let url = api_url(
+        api_base_url,
+        &format!("/api/attachments/{}/executor-download", attachment.id),
+    );
     let response = client
         .get(url)
         .bearer_auth(auth_token)
@@ -285,7 +303,7 @@ async fn download_attachment(
     Ok(path)
 }
 
-async fn deploy_skills(plan: &SkillDeploymentPlan) -> Result<(), String> {
+async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result<(), String> {
     fs::create_dir_all(&plan.skills_dir).map_err(|error| {
         format!(
             "failed to create skills dir {}: {error}",
@@ -305,7 +323,7 @@ async fn deploy_skills(plan: &SkillDeploymentPlan) -> Result<(), String> {
             let _ = fs::remove_dir_all(&target);
         }
         let skill_ref = plan.resolved_skill_map.get(skill);
-        match download_skill(&client, plan, skill, skill_ref).await {
+        match download_skill(&client, plan, skill, skill_ref, api_base_url).await {
             Ok(true) => success_count += 1,
             Ok(false) => {}
             Err(error) => {
@@ -336,8 +354,10 @@ async fn download_skill(
     plan: &SkillDeploymentPlan,
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
+    api_base_url: &str,
 ) -> Result<bool, String> {
-    let Some((skill_id, namespace)) = resolve_skill(client, plan, skill_name, skill_ref).await?
+    let Some((skill_id, namespace)) =
+        resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {
         return Ok(false);
     };
@@ -345,7 +365,14 @@ async fn download_skill(
     if let Some(task_id) = plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
-    let bytes = get_bytes(client, &plan.auth_token, &path, DOWNLOAD_TIMEOUT).await?;
+    let bytes = get_bytes(
+        client,
+        &plan.auth_token,
+        api_base_url,
+        &path,
+        DOWNLOAD_TIMEOUT,
+    )
+    .await?;
     extract_skill_zip(skill_name, &bytes, &plan.skills_dir)
 }
 
@@ -354,6 +381,7 @@ async fn resolve_skill(
     plan: &SkillDeploymentPlan,
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
+    api_base_url: &str,
 ) -> Result<Option<(i64, String)>, String> {
     if let Some(skill_ref) = skill_ref {
         return Ok(Some((skill_ref.skill_id, skill_ref.namespace.clone())));
@@ -366,7 +394,7 @@ async fn resolve_skill(
     if let Some(task_id) = plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
-    let value = get_json(client, &plan.auth_token, &path, QUERY_TIMEOUT).await?;
+    let value = get_json(client, &plan.auth_token, api_base_url, &path, QUERY_TIMEOUT).await?;
     let Some(item) = value
         .get("items")
         .and_then(Value::as_array)
@@ -388,11 +416,12 @@ async fn resolve_skill(
 async fn get_json(
     client: &reqwest::Client,
     auth_token: &str,
+    api_base_url: &str,
     path: &str,
     timeout: Duration,
 ) -> Result<Value, String> {
     let response = client
-        .get(api_url(path))
+        .get(api_url(api_base_url, path))
         .bearer_auth(auth_token)
         .timeout(timeout)
         .send()
@@ -413,11 +442,12 @@ async fn get_json(
 async fn get_bytes(
     client: &reqwest::Client,
     auth_token: &str,
+    api_base_url: &str,
     path: &str,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
     let response = client
-        .get(api_url(path))
+        .get(api_url(api_base_url, path))
         .bearer_auth(auth_token)
         .timeout(timeout)
         .send()
@@ -1060,8 +1090,18 @@ fn load_global_mcp_records() -> BTreeMap<String, Value> {
         .unwrap_or_default()
 }
 
-fn api_url(path: &str) -> String {
-    format!("{}{}", api_base_url().trim_end_matches('/'), path)
+fn request_api_base_url(request: &ExecutionRequest) -> String {
+    request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(api_base_url)
+}
+
+fn api_url(api_base_url: &str, path: &str) -> String {
+    format!("{}{}", api_base_url.trim_end_matches('/'), path)
 }
 
 fn api_base_url() -> String {
@@ -1108,9 +1148,26 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
 }
 
 fn workspace_root() -> PathBuf {
-    env::var_os("WORKSPACE_ROOT")
+    if let Some(root) = env::var_os("WORKSPACE_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/workspace"))
+        .or_else(|| env::var_os("WEGENT_WORKSPACE_ROOT").map(PathBuf::from))
+    {
+        return root;
+    }
+    if is_local_mode() {
+        return env::var_os("LOCAL_WORKSPACE_ROOT")
+            .map(PathBuf::from)
+            .or_else(|| {
+                env::var_os("WEGENT_EXECUTOR_HOME")
+                    .map(|home| PathBuf::from(home).join("workspace"))
+            })
+            .or_else(|| {
+                env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".wegent-executor/workspace"))
+            })
+            .unwrap_or_else(|| env::temp_dir().join("wegent-executor/workspace"));
+    }
+    PathBuf::from("/workspace")
 }
 
 fn executor_home() -> PathBuf {

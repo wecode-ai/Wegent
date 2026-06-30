@@ -55,6 +55,7 @@ import {
 import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
+import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -201,6 +202,11 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+function timestampValue(value: unknown): string | number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return stringValue(value)
+}
+
 function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unknown> {
   const address = recordValue(value.address)
   return {
@@ -257,9 +263,10 @@ function normalizeRuntimeTaskSummary(
   const workspaceKind =
     stringValue(taskRecord.workspaceKind) ?? stringValue(taskRecord.workspace_kind)
   const worktreeId = stringValue(taskRecord.worktreeId) ?? stringValue(taskRecord.worktree_id)
-  const createdAt = stringValue(taskRecord.createdAt) ?? stringValue(taskRecord.created_at)
-  const updatedAt = stringValue(taskRecord.updatedAt) ?? stringValue(taskRecord.updated_at)
+  const createdAt = timestampValue(taskRecord.createdAt) ?? timestampValue(taskRecord.created_at)
+  const updatedAt = timestampValue(taskRecord.updatedAt) ?? timestampValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
+  const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
 
   const normalized = {
     ...taskRecord,
@@ -272,6 +279,7 @@ function normalizeRuntimeTaskSummary(
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
+    ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
   }
 
   return normalized as LocalTaskSummary
@@ -360,6 +368,47 @@ function runtimeReasoning(modelOptions?: Record<string, string>): Record<string,
 
 function runtimeServiceTier(modelOptions?: Record<string, string>): string | null {
   return modelOptions?.speed || modelOptions?.service_tier || null
+}
+
+type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
+  id: number
+  filename: string
+  original_filename: string
+  file_size: number
+  mime_type: string
+  subtask_id: number
+  file_extension: string
+  local_path: string
+  local_preview_url: string
+  text_length?: number
+}
+
+function localRuntimeAttachments(
+  attachments: RuntimeTaskCreateRequest['attachments'],
+  subtaskId: number
+): Record<string, unknown>[] {
+  if (!attachments?.length) return []
+  const runtimeAttachments: LocalRuntimeAttachmentPayload[] = []
+
+  attachments.forEach(attachment => {
+    const localPath = stringValue(attachment.local_path)
+    if (!localPath) return
+
+    runtimeAttachments.push({
+      id: attachment.id,
+      filename: attachment.filename,
+      original_filename: attachment.filename,
+      file_size: attachment.file_size,
+      mime_type: attachment.mime_type,
+      subtask_id: attachment.subtask_id ?? subtaskId,
+      file_extension: attachment.file_extension,
+      local_path: localPath,
+      local_preview_url: attachment.local_preview_url ?? localPath,
+      ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+    })
+  })
+
+  return runtimeAttachments
 }
 
 function skillName(skill: unknown): string | null {
@@ -599,7 +648,7 @@ function createLocalExecutionRequest(
     collaboration_model: 'single',
     mode: 'code',
     task_mode: 'code',
-    attachments: [],
+    attachments: localRuntimeAttachments(data.attachments, turnId),
     reasoning_config: reasoning,
   }
 }
@@ -1217,6 +1266,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
     deviceApi,
     runtimeWorkApi,
+    attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({
       transportKind: 'local-ipc',
       deviceApi,

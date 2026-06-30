@@ -52,8 +52,49 @@ pub(crate) fn execution_request_from_payload(
     {
         request.device_id = Some(device_id);
     }
+    apply_model_options_to_model_config(&mut request.model_config, payload);
     apply_runtime_payload_metadata(&mut request, payload);
     Ok(request)
+}
+
+fn apply_model_options_to_model_config(model_config: &mut Value, payload: &Value) {
+    let Some(model_options) = payload
+        .get("modelOptions")
+        .or_else(|| payload.get("model_options"))
+        .filter(|value| value.is_object())
+    else {
+        return;
+    };
+
+    let Some(config) = model_config.as_object_mut() else {
+        return;
+    };
+
+    if let Some(reasoning) = reasoning_from_model_options(model_options) {
+        config.insert("reasoning".to_owned(), reasoning);
+    }
+    if let Some(service_tier) =
+        string_field(model_options, "speed").or_else(|| string_field(model_options, "service_tier"))
+    {
+        config.insert("service_tier".to_owned(), Value::String(service_tier));
+    }
+}
+
+fn reasoning_from_model_options(model_options: &Value) -> Option<Value> {
+    let effort = string_field(model_options, "reasoning");
+    let summary = string_field(model_options, "summary");
+    if effort.is_none() && summary.is_none() {
+        return None;
+    }
+
+    let mut reasoning = serde_json::Map::new();
+    if let Some(effort) = effort {
+        reasoning.insert("effort".to_owned(), Value::String(effort));
+    }
+    if let Some(summary) = summary {
+        reasoning.insert("summary".to_owned(), Value::String(summary));
+    }
+    Some(Value::Object(reasoning))
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {

@@ -195,9 +195,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
 
   if (state.isBootstrapping) {
     return (
-      <div className="flex h-dvh overflow-hidden bg-background text-text-primary">
+      <div className="flex h-full overflow-hidden bg-background text-text-primary">
         <main
-          className="flex h-dvh min-h-0 w-full flex-col overflow-hidden"
+          className="flex h-full min-h-0 w-full flex-col overflow-hidden"
           data-testid="mobile-workbench-loading"
         />
       </div>
@@ -205,8 +205,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background text-text-primary">
-      <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden">
+    <div className="flex h-full overflow-hidden bg-background text-text-primary">
+      <main className="flex h-full min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
@@ -321,7 +321,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   disabled={composerDisabled}
                   error={state.error}
                   disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
+                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={effectiveProjectWork}
                   queuedMessages={paneQueuedMessages}
@@ -339,7 +339,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
             </div>
           </div>
         ) : (
-          <div className="flex h-dvh min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
+          <div className="flex h-full min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
             <header
               data-testid="mobile-empty-header"
               className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"

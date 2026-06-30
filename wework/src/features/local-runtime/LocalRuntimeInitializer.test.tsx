@@ -140,9 +140,14 @@ describe('LocalRuntimeInitializer', () => {
       await vi.advanceTimersByTimeAsync(SLOW_STARTUP_WARNING_MS)
     })
 
-    expect(screen.getByTestId('local-runtime-slow-startup-help')).toHaveTextContent(
-      '启动时间有点久'
-    )
+    const slowStartupHelp = screen.getByTestId('local-runtime-slow-startup-help')
+    expect(slowStartupHelp).toHaveTextContent('启动时间有点久')
+    expect(slowStartupHelp.className).toContain('sm:flex-row')
+    expect(slowStartupHelp.className).toContain('bg-amber-50/70')
+    expect(
+      within(slowStartupHelp).getByTestId('local-runtime-slow-startup-icon').className
+    ).toContain('bg-amber-100')
+    expect(screen.getByTestId('local-runtime-copy-debug-button').className).toContain('sm:w-auto')
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('local-runtime-copy-debug-button'))
@@ -212,7 +217,7 @@ describe('LocalRuntimeInitializer', () => {
       processPids: [],
       processPaths: [],
       sidecarSource: 'bundled',
-      sidecarPath: 'binaries/wegent-executor',
+      sidecarPath: 'wegent-executor',
       currentDir: '/tmp/wework',
       executorHome: '~/.wegent-executor',
       backendUrl: null,

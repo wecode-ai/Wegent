@@ -144,6 +144,7 @@ impl CodexNotificationCacheMapper {
                 }
                 self.agent_message_phases.forget_item(params);
             }
+            "thread/started" => cache_runtime_thread_id(store, local_task_id, params),
             "turn/completed" => complete_runtime_assistant_message(store, local_task_id, request),
             _ => debug_ignored_codex_notification(message, &notification.method, params),
         }
@@ -225,6 +226,23 @@ fn truncate_log_text(text: &str, max_chars: usize) -> String {
         result.push(ch);
     }
     result
+}
+
+fn cache_runtime_thread_id(store: &RuntimeWorkStore, local_task_id: &str, params: &Value) {
+    let Some(thread_id) = params
+        .get("thread")
+        .and_then(|thread| string_field(thread, "id"))
+        .or_else(|| string_field(params, "threadId"))
+        .or_else(|| string_field(params, "thread_id"))
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    store.update_task(local_task_id, |link| {
+        link.thread_id = Some(thread_id);
+        link.updated_at = now_ms();
+    });
 }
 
 pub(crate) fn retain_runtime_handle_user_messages(runtime_handle: &mut Value) {

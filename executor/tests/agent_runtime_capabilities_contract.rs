@@ -27,9 +27,11 @@ use wegent_executor::{
 #[tokio::test]
 async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let _lock = env_lock().await;
+    let home = unique_dir("claude-runtime-home");
     let workspace_root = unique_dir("claude-runtime-workspace");
     let log_path = unique_dir("claude-runtime-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
@@ -101,14 +103,13 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .unwrap()
         .join("settings.json");
     let settings = read_json(&settings_path);
-    assert_eq!(
-        settings["hooks"]["PreToolUse"][0]["hooks"][0]["type"],
-        "command"
-    );
-    assert!(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .ends_with("defer-interactive-mcp-hook.sh"));
+    let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
+    assert!(pre_tool_use.iter().any(|entry| {
+        entry["hooks"][0]["type"] == "command"
+            && entry["hooks"][0]["command"]
+                .as_str()
+                .is_some_and(|command| command.ends_with("defer-interactive-mcp-hook.sh"))
+    }));
 }
 
 #[tokio::test]
@@ -215,6 +216,7 @@ async fn claude_runtime_does_not_overwrite_regular_claude_md() {
 #[tokio::test]
 async fn claude_runtime_downloads_request_skills_before_process_start() {
     let _lock = env_lock().await;
+    let home = unique_dir("claude-runtime-skill-home");
     let workspace_root = unique_dir("claude-runtime-skill-workspace");
     let log_path = unique_dir("claude-runtime-skill-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
@@ -231,6 +233,7 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         stream.write_all(response.as_bytes()).await.unwrap();
         stream.write_all(&archive).await.unwrap();
     });
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
@@ -265,7 +268,7 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         }
     );
     server.await.unwrap();
-    let skill_path = workspace_root.join("7789/.claude/skills/example-skill/SKILL.md");
+    let skill_path = home.join(".claude/skills/example-skill/SKILL.md");
     assert_eq!(fs::read_to_string(skill_path).unwrap(), "# Example Skill\n");
 }
 

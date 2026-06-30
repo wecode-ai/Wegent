@@ -6,6 +6,7 @@ import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
+import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 
 interface CompactChatComposerProps {
@@ -69,10 +70,18 @@ export function CompactChatComposer({
 
   const handlePasteFiles: ClipboardEventHandler<HTMLTextAreaElement> = event => {
     const files = Array.from(event.clipboardData.files)
-    if (files.length === 0) return
+    if (files.length > 0) {
+      event.preventDefault()
+      onFileSelect?.(files)
+      return
+    }
+
+    if (!onFileSelect) return
+    const textAttachment = createLongPastedTextAttachment(event.clipboardData.getData('text/plain'))
+    if (!textAttachment) return
 
     event.preventDefault()
-    onFileSelect?.(files)
+    onFileSelect([textAttachment])
   }
 
   useEffect(() => {
@@ -155,7 +164,7 @@ export function CompactChatComposer({
             placeholder={placeholder}
             rows={1}
             onPasteFiles={files => onFileSelect?.(files)}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
             selectedModel={selectedModel}

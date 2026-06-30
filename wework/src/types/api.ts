@@ -19,6 +19,7 @@ export interface UserPreferences {
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
   wework_project_execution_mode?: ProjectExecutionMode | null
+  wework_project_work_preferences?: Record<string, ProjectWorkPreference> | null
   runtime_configs?: Record<
     string,
     {
@@ -26,6 +27,11 @@ export interface UserPreferences {
       use_proxy?: boolean
     }
   > | null
+}
+
+export interface ProjectWorkPreference {
+  executionMode?: ProjectExecutionMode | null
+  worktreeBranch?: string | null
 }
 
 export interface Team {
@@ -322,8 +328,8 @@ export interface LocalTaskSummary {
   gitInfo?: Record<string, unknown> | null
   title: string
   runtime: RuntimeName
-  createdAt?: string | null
-  updatedAt?: string | null
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
   running?: boolean
   status?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -480,6 +486,7 @@ export interface RuntimeSendRequest {
   modelType?: ModelType | null
   modelOptions?: ModelOptions
   attachmentIds?: number[]
+  attachments?: Attachment[]
   source?: RuntimeMessageSource | null
 }
 
@@ -666,6 +673,7 @@ export interface RuntimeTaskCreateRequest {
   modelOptions?: Record<string, string>
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
+  attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
 }
 
@@ -972,6 +980,7 @@ export interface ChatSendPayload {
   force_override_bot_model_type?: ModelType
   model_options?: ModelOptions
   attachment_ids?: number[]
+  attachments?: Attachment[]
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
@@ -1564,6 +1573,7 @@ export interface Attachment {
   file_extension: string
   created_at: string
   local_preview_url?: string
+  local_path?: string
 }
 
 export interface AttachmentUploadProgress {

@@ -117,6 +117,28 @@ fn socket_startup_mode_with_backend_plans_sidecar_plus_backend_runner() {
 }
 
 #[test]
+fn remote_executor_mode_with_backend_plans_sidecar_plus_backend_runner() {
+    let _lock = env_lock();
+    let _startup_mode = EnvGuard::remove("EXECUTOR_STARTUP_MODE");
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "remote");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _device_id = EnvGuard::set("DEVICE_ID", "device-remote");
+    let home = unique_home("remote-mode");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+
+    let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
+    let plan = startup_plan(args).unwrap();
+
+    assert_eq!(
+        plan,
+        StartupPlan::SocketSidecar {
+            backend_enabled: true,
+            device_id: "device-remote".to_owned()
+        }
+    );
+}
+
+#[test]
 fn invalid_startup_mode_fails_fast() {
     let _lock = env_lock();
     let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "pipe");

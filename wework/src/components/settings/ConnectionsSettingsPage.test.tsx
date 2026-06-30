@@ -6,6 +6,7 @@ import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
+import { openExternalUrl } from '@/lib/external-links'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -50,6 +51,10 @@ vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn(),
+}))
+
 vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ sessionId, active }: { sessionId: string; active: boolean }) => (
     <div
@@ -63,6 +68,7 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 
@@ -162,6 +168,7 @@ describe('ConnectionsSettingsPage', () => {
     window.history.pushState({}, '', '/')
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
+    openExternalUrlMock.mockResolvedValue(true)
     api.openLocalTerminal.mockResolvedValue(undefined)
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
@@ -933,6 +940,27 @@ describe('ConnectionsSettingsPage', () => {
       'data-session-id',
       'terminal-1'
     )
+  })
+
+  test('opens URL-based terminal sessions through the external URL helper', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.startTerminal.mockResolvedValue({
+      session_id: 'terminal-1',
+      device_id: 'device-1',
+      type: 'terminal',
+      path: '/workspace',
+      url: 'http://localhost/terminal',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-device-1'))
+
+    await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1'))
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/terminal')
+    expect(openSpy).not.toHaveBeenCalled()
   })
 
   test('keeps local device terminal hidden outside the WeWork macOS app', async () => {

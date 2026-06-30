@@ -600,7 +600,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
 
       const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
-        window.open(result.url, '_blank', 'noopener')
+        await openExternalUrl(result.url)
         return
       }
       setTerminalSession(result)

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -344,6 +345,60 @@ def test_create_new_task_writes_execution_workspace(
             "source": "git_worktree",
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_persists_resolved_device_for_existing_task(
+    test_db: Session,
+    test_user: User,
+):
+    """Existing device task follow-ups should persist the resolved device id."""
+    task = _build_existing_task(task_id=2501, user_id=test_user.id)
+    task.project_id = 49
+    task.client_origin = CLIENT_ORIGIN_FRONTEND
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="pwd",
+        task_type="task",
+        device_id="project-device",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+        pipeline_bot_ids=[1255],
+    )
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+            should_trigger_ai=True,
+        )
+
+    assert result.task.json["spec"]["device_id"] == "project-device"
 
 
 def test_create_new_task_uses_real_task_row_without_placeholder(

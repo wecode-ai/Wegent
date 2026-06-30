@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:webview:allow-create-webview",
     "core:webview:allow-webview-close",
@@ -15,6 +16,7 @@
     "core:webview:allow-set-webview-focus",
     "opener:allow-open-url",
     "opener:allow-default-urls",
+    "shell:allow-open",
     "updater:default",
     "process:allow-restart",
     {

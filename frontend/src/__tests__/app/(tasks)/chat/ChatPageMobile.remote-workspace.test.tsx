@@ -8,10 +8,10 @@ import type { ReactNode } from 'react'
 
 import { ChatPageMobile } from '@/app/(tasks)/chat/ChatPageMobile'
 
+let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
+
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => ({
-    get: () => null,
-  }),
+  useSearchParams: () => mockSearchParams,
   useRouter: () => ({
     push: jest.fn(),
     replace: jest.fn(),
@@ -120,9 +120,21 @@ jest.mock('@/features/tasks/components/remote-workspace', () => ({
 }))
 
 describe('ChatPageMobile remote workspace integration', () => {
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams()
+  })
+
   test('chat mobile renders remote workspace entry in top nav when task selected', () => {
     render(<ChatPageMobile />)
 
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('42')
+  })
+
+  test('chat mobile renders when search params are unavailable', () => {
+    mockSearchParams = undefined
+
+    render(<ChatPageMobile />)
+
+    expect(screen.getByText('chat-area')).toBeInTheDocument()
   })
 })

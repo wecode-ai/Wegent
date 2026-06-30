@@ -80,7 +80,7 @@ interface MobileDrawerProps {
   onRefreshWorkLists?: () => Promise<void>
 }
 
-function formatRelativeTime(value?: string) {
+function formatRelativeTime(value?: string | number) {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''

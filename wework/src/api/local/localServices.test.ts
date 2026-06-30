@@ -53,6 +53,97 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('normalizes runtime handles returned by local executor task lists', async () => {
+    const request = vi.fn().mockResolvedValue({
+      workspaces: [
+        {
+          workspace_path: '/Users/me/project',
+          local_tasks: [
+            {
+              local_task_id: 'local-visible-task',
+              workspace_path: '/Users/me/project',
+              title: 'Fix guidance',
+              runtime: 'codex',
+              runtime_handle: {
+                threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toMatchObject({
+      projects: [
+        {
+          deviceWorkspaces: [
+            {
+              localTasks: [
+                {
+                  localTaskId: 'local-visible-task',
+                  runtimeHandle: {
+                    threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  test('preserves numeric runtime task timestamps from local executor lists', async () => {
+    const request = vi.fn().mockResolvedValue({
+      workspaces: [
+        {
+          workspace_path: '/Users/me/project',
+          local_tasks: [
+            {
+              local_task_id: 'newer-task',
+              workspace_path: '/Users/me/project',
+              title: 'Newer task',
+              runtime: 'codex',
+              createdAt: 1780000100000,
+              updatedAt: 1780000120000,
+            },
+            {
+              local_task_id: 'older-task',
+              workspace_path: '/Users/me/project',
+              title: 'Older task',
+              runtime: 'codex',
+              created_at: 1780000000000,
+              updated_at: 1780000060000,
+            },
+          ],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+    const tasks = response?.projects[0].deviceWorkspaces[0].localTasks
+
+    expect(tasks?.map(task => task.localTaskId)).toEqual(['newer-task', 'older-task'])
+    expect(tasks?.[0]).toMatchObject({
+      createdAt: 1780000100000,
+      updatedAt: 1780000120000,
+    })
+    expect(tasks?.[1]).toMatchObject({
+      createdAt: 1780000000000,
+      updatedAt: 1780000060000,
+    })
+  })
+
   test('keeps local device visible when executor startup fails', async () => {
     const services = createLocalAppServices({
       ensure: vi.fn().mockRejectedValue(new Error('sidecar missing')),
@@ -108,6 +199,19 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      attachments: [
+        {
+          id: -45,
+          filename: 'clipboard.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+        },
+      ],
     })
     await services.deviceApi.executeCommand('local-device', {
       command_key: 'home_dir',
@@ -127,6 +231,19 @@ describe('createLocalAppServices', () => {
         reasoning: 'medium',
       },
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
+      attachments: [
+        {
+          id: -45,
+          filename: 'clipboard.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+        },
+      ],
       executionRequest: expect.objectContaining({
         task_id: expect.any(Number),
         subtask_id: expect.any(Number),
@@ -164,6 +281,19 @@ describe('createLocalAppServices', () => {
         skill_names: ['planner'],
         preload_skills: [{ name: 'planner', namespace: 'default' }],
         user_selected_skills: [{ name: 'planner', namespace: 'default' }],
+        attachments: [
+          {
+            id: -45,
+            filename: 'clipboard.png',
+            original_filename: 'clipboard.png',
+            file_size: 1200,
+            mime_type: 'image/png',
+            subtask_id: expect.any(Number),
+            file_extension: '.png',
+            local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          },
+        ],
       }),
     })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -383,6 +513,24 @@ describe('createLocalAppServices', () => {
       address: { deviceId: 'local-device', localTaskId: 'task-1' },
       message: 'continue',
       modelId: 'codex-gpt-5.5',
+      modelOptions: {
+        reasoning: 'extra_high',
+        summary: 'concise',
+        speed: 'fast',
+      },
+      attachments: [
+        {
+          id: -46,
+          filename: 'follow-up.png',
+          file_size: 640,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+        },
+      ],
     })
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
@@ -390,6 +538,24 @@ describe('createLocalAppServices', () => {
       message: 'continue',
       message_id: expect.any(Number),
       modelId: 'gpt-5.5',
+      modelOptions: {
+        reasoning: 'extra_high',
+        summary: 'concise',
+        speed: 'fast',
+      },
+      attachments: [
+        {
+          id: -46,
+          filename: 'follow-up.png',
+          file_size: 640,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-06-29T00:00:00.000Z',
+          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+        },
+      ],
     })
   })
 

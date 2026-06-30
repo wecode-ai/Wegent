@@ -153,6 +153,41 @@ async fn app_runtime_caches_consecutive_codex_thread_lists() {
 }
 
 #[tokio::test]
+async fn app_runtime_preserves_codex_thread_list_recency_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-list-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-order-codex-home");
+    let log_path = temp_path("wegent-app-runtime-list-order-log", "jsonl");
+    let fake_codex = write_fake_codex_recency_order(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("runtime task list should succeed");
+
+    let task_ids = listed["workspaces"][0]["localTasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["localTaskId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        task_ids,
+        vec!["thread-recency-first", "thread-updated-first"]
+    );
+    assert_eq!(listed["workspaces"][0]["updatedAt"], 1780000060000_i64);
+}
+
+#[tokio::test]
 async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -888,6 +923,39 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_recency_order(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-list-order", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-recency-first","cwd":"/tmp/project","name":"Recency first","preview":"recency first","path":"/tmp/codex/thread-recency-first.jsonl","createdAt":1780000000,"updatedAt":1780000010,"status":"idle","turns":[]}},{{"id":"thread-updated-first","cwd":"/tmp/project","name":"Updated first","preview":"updated first","path":"/tmp/codex/thread-updated-first.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done

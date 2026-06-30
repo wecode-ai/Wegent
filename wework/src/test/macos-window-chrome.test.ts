@@ -20,6 +20,7 @@ interface TauriConfig {
       assetProtocol?: {
         enable?: boolean
         scope?: {
+          requireLiteralLeadingDot?: boolean
           allow?: string[]
         }
       }
@@ -65,14 +66,13 @@ describe('macOS window chrome', () => {
     expect(capability.permissions).not.toContain('opener:allow-reveal-item-in-dir')
   })
 
-  test('enables asset protocol access for temporary Codex clipboard images', () => {
+  test('allows asset protocol access to local attachment previews', () => {
     const configPath = resolve(process.cwd(), 'src-tauri/tauri.conf.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as TauriConfig
     const assetProtocol = config.app.security?.assetProtocol
 
     expect(assetProtocol?.enable).toBe(true)
-    expect(assetProtocol?.scope?.allow).toEqual(
-      expect.arrayContaining(['$TEMP/**', '/var/folders/**', '/private/var/folders/**'])
-    )
+    expect(assetProtocol?.scope?.requireLiteralLeadingDot).toBe(false)
+    expect(assetProtocol?.scope?.allow).toEqual(['**/*'])
   })
 })
