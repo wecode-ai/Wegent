@@ -137,6 +137,7 @@ class TestDockerExecutor:
         assert any("subtask_id=456" in str(item) for item in cmd)
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
         assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
+        assert "EXECUTOR_MODE=docker" in cmd
         assert not any(
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
@@ -184,6 +185,7 @@ class TestDockerExecutor:
 
         assert "AUTH_TOKEN=token-123" in cmd
         assert "TASK_ID=123" in cmd
+        assert "EXECUTOR_MODE=docker" in cmd
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
         assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
         assert not any(
