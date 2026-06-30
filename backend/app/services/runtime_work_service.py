@@ -3346,7 +3346,6 @@ def _target_create_request_to_runtime_request(
     target = request.target
     execution = _target_create_execution(request)
     common_fields = {
-        "localTaskId": request.local_task_id,
         "teamId": request.team_id,
         "runtime": request.runtime,
         "message": request.message,

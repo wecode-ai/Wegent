@@ -672,16 +672,11 @@ class RuntimeTaskCreateTarget(BaseModel):
 class RuntimeTaskCreateWithTargetRequest(BaseModel):
     """Request to create a runtime task with an explicit target object."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     target: RuntimeTaskCreateTarget = Field(
         ...,
         description="Device chat or Project target.",
-    )
-    local_task_id: Optional[str] = Field(
-        default=None,
-        alias="localTaskId",
-        description="Caller-generated local task ID for optimistic task opening.",
     )
     team_id: int = Field(
         ...,

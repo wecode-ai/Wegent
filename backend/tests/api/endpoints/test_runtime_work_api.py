@@ -205,7 +205,7 @@ def test_create_runtime_task_target_endpoint_dispatches_device_default(
         return_value={
             "accepted": True,
             "deviceId": "device-1",
-            "localTaskId": "runtime-client-1",
+            "localTaskId": "runtime-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
         }
@@ -221,7 +221,6 @@ def test_create_runtime_task_target_endpoint_dispatches_device_default(
         headers=_auth_headers(test_token),
         json={
             "target": {"type": "device"},
-            "localTaskId": "runtime-client-1",
             "teamId": 3,
             "runtime": "codex",
             "message": "create runtime task",
@@ -231,11 +230,42 @@ def test_create_runtime_task_target_endpoint_dispatches_device_default(
     )
 
     assert response.status_code == 200
-    assert response.json()["localTaskId"] == "runtime-client-1"
+    assert response.json()["localTaskId"] == "runtime-1"
     request = service_mock.await_args.kwargs["request"]
     assert request.target.type == "device"
     assert request.target.project_id is None
+    assert not hasattr(request, "local_task_id")
     assert request.model_id == "gpt-5.5"
+
+
+def test_create_runtime_task_target_endpoint_rejects_local_task_id(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock()
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_runtime_task_with_target",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/tasks",
+        headers=_auth_headers(test_token),
+        json={
+            "target": {"type": "device"},
+            "localTaskId": "runtime-client-1",
+            "teamId": 3,
+            "runtime": "codex",
+            "message": "create runtime task",
+        },
+    )
+
+    assert response.status_code == 422
+    service_mock.assert_not_awaited()
 
 
 def test_create_runtime_task_target_endpoint_dispatches_project(

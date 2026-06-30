@@ -2168,33 +2168,34 @@ async def test_create_runtime_task_with_target_maps_default_device_request(
         return_value={
             "accepted": True,
             "deviceId": "device-1",
-            "localTaskId": "runtime-client-1",
+            "localTaskId": "runtime-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
         }
     )
     monkeypatch.setattr(runtime_work_service, "create_runtime_task", create_mock)
 
+    request = RuntimeTaskCreateWithTargetRequest(
+        target={"type": "device"},
+        teamId=3,
+        runtime="codex",
+        message="create runtime task",
+        modelId="gpt-5.5",
+        modelType="codex",
+    )
     await runtime_work_service.create_runtime_task_with_target(
         db=test_db,
         user_id=test_user.id,
-        request=RuntimeTaskCreateWithTargetRequest(
-            target={"type": "device"},
-            localTaskId="runtime-client-1",
-            teamId=3,
-            runtime="codex",
-            message="create runtime task",
-            modelId="gpt-5.5",
-            modelType="codex",
-        ),
+        request=request,
     )
 
+    assert not hasattr(request, "local_task_id")
     legacy_request = create_mock.await_args.kwargs["request"]
     assert legacy_request.device_id is None
     assert legacy_request.workspace_path is None
     assert legacy_request.project_id is None
     assert legacy_request.device_workspace_id is None
-    assert legacy_request.local_task_id == "runtime-client-1"
+    assert legacy_request.local_task_id is None
     assert legacy_request.model_id == "gpt-5.5"
 
 
@@ -2230,8 +2231,8 @@ async def test_create_runtime_task_with_target_uses_default_device_chat_workspac
             "success": True,
             "accepted": True,
             "deviceId": "device-1",
-            "localTaskId": "runtime-client-1",
-            "workspacePath": "/Users/alice/Documents/Codex/2026-06-30/runtime-client-1",
+            "localTaskId": "runtime-1",
+            "workspacePath": "/Users/alice/Documents/Codex/2026-06-30/runtime-1",
             "runtime": "codex",
         }
     )
@@ -2242,7 +2243,6 @@ async def test_create_runtime_task_with_target_uses_default_device_chat_workspac
         user_id=test_user.id,
         request=RuntimeTaskCreateWithTargetRequest(
             target={"type": "device"},
-            localTaskId="runtime-client-1",
             teamId=3,
             runtime="codex",
             message="create runtime task",
@@ -2255,6 +2255,7 @@ async def test_create_runtime_task_with_target_uses_default_device_chat_workspac
     assert captured_target["target"].workspace_path is None
     payload = rpc.await_args.kwargs["payload"]
     assert "workspacePath" not in payload
+    assert "localTaskId" not in payload
     assert payload["executionRequest"]["project_id"] == 0
     assert payload["executionRequest"]["standalone_chat_workspace"] is True
 
