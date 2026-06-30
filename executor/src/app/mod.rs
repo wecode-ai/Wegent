@@ -22,10 +22,8 @@ use std::net::SocketAddr;
 pub enum AppError {
     Cli(cli::CliError),
     Config(crate::config::device::ConfigError),
-    NotImplemented(&'static str),
     Server(String),
     ServerConfig(crate::server::ServerConfigError),
-    StartupMode(String),
     Upgrade(String),
 }
 
@@ -34,10 +32,8 @@ impl AppError {
         match self {
             Self::Cli(_) => 2,
             Self::Config(_) => 1,
-            Self::NotImplemented(_) => 2,
             Self::Server(_) => 1,
             Self::ServerConfig(_) => 1,
-            Self::StartupMode(_) => 2,
             Self::Upgrade(_) => 1,
         }
     }
@@ -48,18 +44,8 @@ impl fmt::Display for AppError {
         match self {
             Self::Cli(error) => write!(formatter, "{error}"),
             Self::Config(error) => write!(formatter, "{error}"),
-            Self::NotImplemented(feature) => {
-                write!(
-                    formatter,
-                    "{feature} is not implemented in the Rust executor yet"
-                )
-            }
             Self::Server(error) => write!(formatter, "{error}"),
             Self::ServerConfig(error) => write!(formatter, "{error}"),
-            Self::StartupMode(value) => write!(
-                formatter,
-                "invalid EXECUTOR_STARTUP_MODE: {value}; expected http or socket"
-            ),
             Self::Upgrade(error) => write!(formatter, "{error}"),
         }
     }
@@ -84,63 +70,27 @@ impl From<crate::server::ServerConfigError> for AppError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StartupPlan {
-    HttpServer {
-        host: String,
-        port: u16,
-    },
-    SocketSidecar {
-        backend_enabled: bool,
-        device_id: String,
-    },
+pub struct StartupPlan {
+    pub host: String,
+    pub port: u16,
+    pub socket_sidecar: Option<SocketSidecarPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SocketSidecarPlan {
+    pub backend_enabled: bool,
+    pub device_id: String,
 }
 
 impl StartupPlan {
     pub fn bind_addr(&self) -> Result<SocketAddr, AppError> {
-        self.server_config()?.bind_addr().map_err(AppError::from)
+        self.server_config().bind_addr().map_err(AppError::from)
     }
 
-    fn server_config(&self) -> Result<ServerConfig, AppError> {
-        match self {
-            Self::HttpServer { host, port } => Ok(ServerConfig {
-                host: host.clone(),
-                port: *port,
-            }),
-            Self::SocketSidecar { .. } => Err(AppError::NotImplemented("Socket sidecar server")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StartupMode {
-    Http,
-    Socket,
-}
-
-impl StartupMode {
-    fn from_config(config: &crate::config::device::DeviceConfig) -> Result<Self, AppError> {
-        let Some(value) = env::var("EXECUTOR_STARTUP_MODE")
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-        else {
-            return Ok(Self::inferred_from_config(config));
-        };
-
-        if value.eq_ignore_ascii_case("http") {
-            Ok(Self::Http)
-        } else if value.eq_ignore_ascii_case("socket") {
-            Ok(Self::Socket)
-        } else {
-            Err(AppError::StartupMode(value))
-        }
-    }
-
-    fn inferred_from_config(config: &crate::config::device::DeviceConfig) -> Self {
-        if config.mode.trim().eq_ignore_ascii_case("remote") {
-            Self::Socket
-        } else {
-            Self::Http
+    fn server_config(&self) -> ServerConfig {
+        ServerConfig {
+            host: self.host.clone(),
+            port: self.port,
         }
     }
 }
@@ -169,19 +119,27 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     init_executor_logging(&DeviceConfig::default());
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
-    match startup_plan_for_config(&config)? {
-        plan @ StartupPlan::HttpServer { .. } => server::serve(plan.server_config()?)
-            .await
-            .map_err(AppError::Server),
-        StartupPlan::SocketSidecar {
-            backend_enabled: true,
-            ..
-        } => serve_local_backend_sidecar(config)
-            .await
-            .map_err(AppError::Server),
-        StartupPlan::SocketSidecar { device_id, .. } => serve_app_ipc_sidecar(device_id)
-            .await
-            .map_err(AppError::Server),
+    let plan = startup_plan_for_config(&config)?;
+    let server_config = plan.server_config();
+    let Some(socket_sidecar) = plan.socket_sidecar else {
+        return server::serve(server_config).await.map_err(AppError::Server);
+    };
+
+    let socket_sidecar_future = serve_socket_sidecar(config, socket_sidecar);
+    tokio::select! {
+        result = server::serve(server_config) => result.map_err(AppError::Server),
+        result = socket_sidecar_future => result.map_err(AppError::Server),
+    }
+}
+
+async fn serve_socket_sidecar(
+    config: crate::config::device::DeviceConfig,
+    plan: SocketSidecarPlan,
+) -> Result<(), String> {
+    if plan.backend_enabled {
+        serve_local_backend_sidecar(config).await
+    } else {
+        serve_app_ipc_sidecar(plan.device_id).await
     }
 }
 
@@ -220,17 +178,19 @@ pub fn startup_plan(args: CliArgs) -> Result<StartupPlan, AppError> {
 fn startup_plan_for_config(
     config: &crate::config::device::DeviceConfig,
 ) -> Result<StartupPlan, AppError> {
-    match StartupMode::from_config(config)? {
-        StartupMode::Http => {
-            let server = ServerConfig::from_env()?;
-            Ok(StartupPlan::HttpServer {
-                host: server.host,
-                port: server.port,
-            })
-        }
-        StartupMode::Socket => Ok(StartupPlan::SocketSidecar {
+    let server = ServerConfig::from_env()?;
+    let socket_sidecar = if config.runtime_mode() == crate::config::device::RuntimeMode::Docker {
+        None
+    } else {
+        Some(SocketSidecarPlan {
             backend_enabled: !config.connection.backend_url.trim().is_empty(),
             device_id: normalize_device_id(config.device_id.clone()),
-        }),
-    }
+        })
+    };
+
+    Ok(StartupPlan {
+        host: server.host,
+        port: server.port,
+        socket_sidecar,
+    })
 }

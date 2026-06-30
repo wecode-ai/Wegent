@@ -14,7 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum RuntimeMode {
     Local,
     Docker,
-    Remote,
 }
 
 #[derive(Debug)]
@@ -186,7 +185,6 @@ impl DeviceConfig {
     pub fn runtime_mode(&self) -> RuntimeMode {
         match self.mode.trim().to_ascii_lowercase().as_str() {
             "docker" => RuntimeMode::Docker,
-            "remote" => RuntimeMode::Remote,
             _ => RuntimeMode::Local,
         }
     }

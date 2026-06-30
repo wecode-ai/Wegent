@@ -581,13 +581,16 @@ impl RuntimeWorkRpcHandler {
         };
         apply_runtime_payload_metadata(&mut request, &payload);
 
-        let mut link =
-            RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path.clone(), title);
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            workspace_path.clone(),
+            title.clone(),
+        );
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         self.upsert_local_task(link);
-        self.spawn_turn(local_task_id.clone(), request, None);
+        self.spawn_turn(local_task_id.clone(), request, None, Some(title));
 
         Ok(json!({
             "success": true,
@@ -669,7 +672,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        self.spawn_turn(local_task_id.clone(), request, Some(thread_id));
+        self.spawn_turn(local_task_id.clone(), request, Some(thread_id), None);
 
         Ok(json!({
             "success": true,
@@ -899,6 +902,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         request: ExecutionRequest,
         resume_thread_id: Option<String>,
+        initial_thread_name: Option<String>,
     ) {
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -939,6 +943,7 @@ impl RuntimeWorkRpcHandler {
                 &handler.codex_binary,
                 request.clone(),
                 resume_thread_id,
+                initial_thread_name,
                 notifications,
                 Some(cancel_rx),
             )

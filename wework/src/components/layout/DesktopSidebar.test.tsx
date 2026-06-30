@@ -326,19 +326,22 @@ describe('DesktopSidebar', () => {
       name: 'alice-remote-device',
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {},
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
       commands: [
         {
           kind: 'docker',
           label: 'Docker',
           description: 'Run in Docker.',
-          command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+          command:
+            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
         },
         {
           kind: 'process',
           label: '宿主机启动',
           description: 'Run as a local process.',
-          command: 'DEVICE_TYPE=remote WEGENT_BACKEND_URL=http://backend wegent-executor',
+          command:
+            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
         },
       ],
     })
@@ -366,19 +369,22 @@ describe('DesktopSidebar', () => {
       name: 'alice-remote-device',
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {},
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
       commands: [
         {
           kind: 'docker',
           label: 'Docker',
           description: 'Run in Docker.',
-          command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+          command:
+            'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
         },
         {
           kind: 'process',
           label: '宿主机启动',
           description: 'Run as a local process.',
-          command: 'DEVICE_TYPE=remote WEGENT_BACKEND_URL=http://backend wegent-executor',
+          command:
+            'DEVICE_TYPE=remote EXECUTOR_MODE=local WEGENT_BACKEND_URL=http://backend wegent-executor',
         },
       ],
     })
