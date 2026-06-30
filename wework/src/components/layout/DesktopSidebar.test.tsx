@@ -1946,7 +1946,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('limits project runtime tasks to five rows and preserves append order', async () => {
+  test('limits project runtime tasks to five newest rows', async () => {
     renderSidebar({
       runtimeWork: {
         projects: [
@@ -2019,13 +2019,13 @@ describe('DesktopSidebar', () => {
     const collapsedRows = screen.getAllByTestId(/^runtime-local-task-row-/)
     expect(collapsedRows).toHaveLength(5)
     expect(collapsedRows.map(row => row.textContent)).toEqual([
-      expect.stringContaining('Oldest hidden task'),
-      expect.stringContaining('Third task'),
       expect.stringContaining('Newest task'),
-      expect.stringContaining('Fifth task'),
       expect.stringContaining('Second task'),
+      expect.stringContaining('Third task'),
+      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Fifth task'),
     ])
-    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
 
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
 
@@ -2038,7 +2038,7 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
-    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
   test('toggles a project when its sidebar row is clicked', async () => {

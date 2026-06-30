@@ -11,7 +11,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, State};
@@ -30,6 +30,7 @@ const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
+const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 120;
@@ -326,6 +327,28 @@ fn next_request_id(state: &LocalExecutorState) -> String {
     format!("local-req-{id}")
 }
 
+fn local_executor_instance_name() -> &'static str {
+    static INSTANCE_NAME: OnceLock<String> = OnceLock::new();
+    INSTANCE_NAME.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        format!("wework-{}-{nanos}", std::process::id())
+    })
+}
+
+fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
+    let home = local_executor_home_path()?;
+    if cfg!(debug_assertions) {
+        return Ok(home
+            .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+            .join(local_executor_instance_name()));
+    }
+
+    Ok(home)
+}
+
 fn app_ipc_socket_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_SOCKET_ENV) {
         let trimmed = path.trim();
@@ -334,17 +357,7 @@ fn app_ipc_socket_path() -> Result<PathBuf, String> {
         }
     }
 
-    if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed).join(LOCAL_EXECUTOR_SOCKET_NAME));
-        }
-    }
-
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home)
-        .join(".wegent-executor")
-        .join(LOCAL_EXECUTOR_SOCKET_NAME))
+    Ok(local_executor_runtime_dir_path()?.join(LOCAL_EXECUTOR_SOCKET_NAME))
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
@@ -360,13 +373,7 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
 }
 
 fn local_executor_log_path() -> Result<PathBuf, String> {
-    let log_dir = std::env::var(LOCAL_EXECUTOR_LOG_DIR_ENV)
-        .ok()
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(|| local_executor_home_path().map(|path| path.join("logs")))?;
+    let log_dir = local_executor_log_dir_path()?;
     let log_file = std::env::var(LOCAL_EXECUTOR_LOG_FILE_ENV)
         .ok()
         .map(|value| value.trim().to_string())
@@ -374,6 +381,16 @@ fn local_executor_log_path() -> Result<PathBuf, String> {
         .unwrap_or_else(|| LOCAL_EXECUTOR_LOG_FILE_NAME.to_string());
 
     Ok(log_dir.join(log_file))
+}
+
+fn local_executor_log_dir_path() -> Result<PathBuf, String> {
+    std::env::var(LOCAL_EXECUTOR_LOG_DIR_ENV)
+        .ok()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| local_executor_runtime_dir_path().map(|path| path.join("logs")))
 }
 
 fn read_local_executor_log_tail(
@@ -622,13 +639,26 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
+    let executor_home = path_or_error(local_executor_home_path());
+    let socket_path = path_or_error(app_ipc_socket_path());
+    let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         ("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string()),
+        (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
+        (LOCAL_EXECUTOR_SOCKET_ENV.to_string(), socket_path),
+        (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
             process_environment::normalized_current_path(),
         ),
     ];
+    if let Some(log_file) = std::env::var(LOCAL_EXECUTOR_LOG_FILE_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        envs.push((LOCAL_EXECUTOR_LOG_FILE_ENV.to_string(), log_file));
+    }
     let Some(connection) = &inner.backend_connection else {
         return envs;
     };
@@ -1442,7 +1472,7 @@ mod tests {
     }
 
     #[test]
-    fn app_ipc_socket_path_uses_executor_home() {
+    fn app_ipc_socket_path_follows_build_mode_with_executor_home() {
         let _guard = env_lock();
         let previous_socket = std::env::var_os("WEGENT_EXECUTOR_APP_IPC_SOCKET");
         let previous_home = std::env::var_os("WEGENT_EXECUTOR_HOME");
@@ -1452,21 +1482,90 @@ mod tests {
         restore_env("WEGENT_EXECUTOR_APP_IPC_SOCKET", previous_socket);
         restore_env("WEGENT_EXECUTOR_HOME", previous_home);
 
-        assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.sock"));
+        if cfg!(debug_assertions) {
+            assert!(path.starts_with("/tmp/wegent-home/app-runtime"));
+        } else {
+            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.sock"));
+        }
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("app-ipc.sock")
+        );
     }
 
     #[test]
-    fn local_executor_log_path_uses_executor_home() {
+    fn local_executor_log_path_follows_build_mode() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("WEGENT_EXECUTOR_HOME");
+        let previous_log_dir = std::env::var_os("WEGENT_EXECUTOR_LOG_DIR");
+        let previous_socket = std::env::var_os("WEGENT_EXECUTOR_APP_IPC_SOCKET");
         std::env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/wegent-executor-debug");
+        std::env::remove_var("WEGENT_EXECUTOR_LOG_DIR");
+        std::env::remove_var("WEGENT_EXECUTOR_APP_IPC_SOCKET");
 
         let path = local_executor_log_path().expect("log path should resolve");
         restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+        restore_env("WEGENT_EXECUTOR_LOG_DIR", previous_log_dir);
+        restore_env("WEGENT_EXECUTOR_APP_IPC_SOCKET", previous_socket);
+
+        if cfg!(debug_assertions) {
+            assert!(path.starts_with("/tmp/wegent-executor-debug/app-runtime"));
+        } else {
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/wegent-executor-debug/logs/executor.log")
+            );
+        }
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("executor.log")
+        );
+    }
+
+    #[test]
+    fn default_runtime_paths_follow_build_mode() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
+        std::env::set_var("HOME", "/tmp/wework-test-home");
+        std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
+
+        let home = local_executor_home_path().expect("executor home should resolve");
+        let socket = app_ipc_socket_path().expect("socket path should resolve");
+        let log = local_executor_log_path().expect("log path should resolve");
+
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
 
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wegent-executor-debug/logs/executor.log")
+            home,
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+        );
+        if cfg!(debug_assertions) {
+            assert!(socket.starts_with(home.join("app-runtime")));
+            assert!(socket
+                .parent()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("wework-")));
+            assert_eq!(
+                log,
+                socket
+                    .parent()
+                    .expect("socket should have parent")
+                    .join("logs")
+                    .join(LOCAL_EXECUTOR_LOG_FILE_NAME)
+            );
+        } else {
+            assert_eq!(socket, home.join(LOCAL_EXECUTOR_SOCKET_NAME));
+            assert_eq!(log, home.join("logs").join(LOCAL_EXECUTOR_LOG_FILE_NAME));
+        }
+        assert_eq!(
+            socket.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_SOCKET_NAME)
         );
     }
 
@@ -1551,6 +1650,11 @@ mod tests {
 
     #[test]
     fn backend_env_marks_current_app_device_without_changing_device_id() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
+        std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
                 backend_url: "https://cloud.example.com".to_string(),
@@ -1563,6 +1667,9 @@ mod tests {
         let envs = local_executor_backend_env(&inner)
             .into_iter()
             .collect::<HashMap<_, _>>();
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
 
         assert_eq!(
             envs.get("EXECUTOR_STARTUP_MODE").map(String::as_str),
@@ -1585,6 +1692,26 @@ mod tests {
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
+        assert_eq!(
+            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
+            Some("/tmp/wework-instance-executor")
+        );
+        let socket_env = envs
+            .get(LOCAL_EXECUTOR_SOCKET_ENV)
+            .expect("socket env should be passed to sidecar");
+        let log_dir_env = envs
+            .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
+            .expect("log dir env should be passed to sidecar");
+        if cfg!(debug_assertions) {
+            assert!(
+                socket_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
+                    && socket_env.ends_with("/app-ipc.sock")
+            );
+            assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
+        } else {
+            assert_eq!(socket_env, "/tmp/wework-instance-executor/app-ipc.sock");
+            assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
+        }
     }
 
     #[test]

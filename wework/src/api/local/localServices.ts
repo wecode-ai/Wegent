@@ -56,7 +56,7 @@ import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
-import { LOCAL_USER } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -1273,10 +1273,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       runtimeWorkApi,
     }),
     userApi: {
-      updateCurrentUser: async (data: { preferences?: User['preferences'] }) => ({
-        ...LOCAL_USER,
-        preferences: data.preferences ?? LOCAL_USER.preferences,
-      }),
+      updateCurrentUser: async (data: { preferences?: User['preferences'] }) =>
+        Object.prototype.hasOwnProperty.call(data, 'preferences')
+          ? saveLocalUserPreferences(data.preferences ?? {})
+          : getLocalUser(),
       getRuntimeConfig: () => cloudConnectionRequired('getRuntimeConfig'),
       updateRuntimeConfig: () => cloudConnectionRequired('updateRuntimeConfig'),
       getProxyConfig: () => cloudConnectionRequired('getProxyConfig'),
