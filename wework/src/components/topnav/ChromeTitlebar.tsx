@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
-import { TITLEBAR_ACTIONS_PORTAL_ID } from './TitlebarActionsPortal'
+import { TITLEBAR_ACTIONS_PORTAL_ID, TITLEBAR_RIGHT_PANEL_PORTAL_ID } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import type { ReactNode } from 'react'
 
@@ -113,10 +113,23 @@ export function ChromeTitlebar({
       <div className="min-w-6 flex-1" {...(isTauri ? { 'data-tauri-drag-region': '' } : {})} />
       {isTauri && <TitlebarExtensionSlot />}
       <div
-        id={TITLEBAR_ACTIONS_PORTAL_ID}
-        data-testid="titlebar-actions"
-        className="flex shrink-0 items-center gap-2"
-      />
+        data-testid="titlebar-right-workspace-zone"
+        className="pointer-events-none absolute right-0 top-[3px] z-chrome flex h-[calc(100%-3px)] items-center"
+        style={{
+          width: 'var(--right-workspace-titlebar-width, auto)',
+        }}
+      >
+        <div
+          id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
+          data-testid="titlebar-right-panel"
+          className="pointer-events-auto flex min-w-0 flex-1 items-center"
+        />
+        <div
+          id={TITLEBAR_ACTIONS_PORTAL_ID}
+          data-testid="titlebar-actions"
+          className="pointer-events-auto flex shrink-0 items-center gap-2"
+        />
+      </div>
 
       {/* Windows/Linux: right spacer for native window controls */}
       {isTauri && platform !== 'mac' && (

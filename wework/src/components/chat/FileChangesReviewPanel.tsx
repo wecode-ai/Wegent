@@ -8,8 +8,6 @@ import {
   GitBranch,
   GitCompareArrows,
   ListCollapse,
-  PanelRightClose,
-  PanelRightOpen,
   RefreshCw,
   Search,
   WrapText,
@@ -178,11 +176,6 @@ export function FileChangesReviewPanel({
     focusFilePath?: string
     index: number
   }>({ diff: '', index: 0 })
-  const [fileTreeVisibility, setFileTreeVisibility] = useState({
-    diff,
-    defaultFileTreeVisible,
-    visible: defaultFileTreeVisible,
-  })
   const [wrapLines, setWrapLines] = useState(false)
   const [hunksCollapsed, setHunksCollapsed] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
@@ -203,11 +196,7 @@ export function FileChangesReviewPanel({
   const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
   const isLargeDiff = useMemo(() => isLargeReviewDiff(sections), [sections])
   const displayedSections = isLargeDiff && selectedSection ? [selectedSection] : sections
-  const fileTreeVisible =
-    fileTreeVisibility.diff === diff &&
-    fileTreeVisibility.defaultFileTreeVisible === defaultFileTreeVisible
-      ? fileTreeVisibility.visible
-      : defaultFileTreeVisible
+  const fileTreeVisible = defaultFileTreeVisible
 
   const selectSection = (index: number) => {
     setSelection({ diff, focusFilePath, index })
@@ -250,18 +239,10 @@ export function FileChangesReviewPanel({
             viewOptions={viewOptions}
             additions={diffStats.additions}
             deletions={diffStats.deletions}
-            fileTreeVisible={fileTreeVisible}
             wrapLines={wrapLines}
             hunksCollapsed={hunksCollapsed}
             canRefresh={Boolean(onRefresh)}
             onRefresh={onRefresh}
-            onToggleFileTree={() =>
-              setFileTreeVisibility({
-                diff,
-                defaultFileTreeVisible,
-                visible: !fileTreeVisible,
-              })
-            }
             onToggleWrap={() => setWrapLines(value => !value)}
             onToggleHunks={() => setHunksCollapsed(value => !value)}
             onCopyGitApplyCommand={copyGitApplyCommand}
@@ -315,12 +296,10 @@ function ReviewToolbar({
   viewOptions,
   additions,
   deletions,
-  fileTreeVisible,
   wrapLines,
   hunksCollapsed,
   canRefresh,
   onRefresh,
-  onToggleFileTree,
   onToggleWrap,
   onToggleHunks,
   onCopyGitApplyCommand,
@@ -331,12 +310,10 @@ function ReviewToolbar({
   viewOptions?: FileChangesReviewViewOption[]
   additions: number
   deletions: number
-  fileTreeVisible: boolean
   wrapLines: boolean
   hunksCollapsed: boolean
   canRefresh: boolean
   onRefresh?: () => void
-  onToggleFileTree: () => void
   onToggleWrap: () => void
   onToggleHunks: () => void
   onCopyGitApplyCommand: () => void
@@ -437,17 +414,6 @@ function ReviewToolbar({
             label={t('file_changes.actions.copy_git_apply')}
             onClick={onCopyGitApplyCommand}
             icon={Copy}
-          />
-          <ToolbarButton
-            testId="toggle-file-tree-button"
-            label={
-              fileTreeVisible
-                ? t('file_changes.actions.hide_files')
-                : t('file_changes.actions.show_files')
-            }
-            onClick={onToggleFileTree}
-            pressed={fileTreeVisible}
-            icon={fileTreeVisible ? PanelRightClose : PanelRightOpen}
           />
         </div>
       </div>

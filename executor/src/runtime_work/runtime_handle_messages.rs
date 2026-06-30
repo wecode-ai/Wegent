@@ -20,7 +20,8 @@ use super::{
     store::RuntimeWorkStore,
     transcript::{tool_block_from_notification, tool_update_from_notification},
     util::{
-        extract_text, integer_field, now_ms, raw_string_field, reasoning_content, string_field,
+        completed_plan_item_text, extract_text, integer_field, now_ms, raw_string_field,
+        reasoning_content, string_field,
     },
 };
 
@@ -155,6 +156,11 @@ impl CodexNotificationCacheMapper {
                 self.observe_root_thread(params);
                 if self.is_subagent_delta(params) {
                     self.forget_subagent_item(params);
+                    self.agent_message_phases.forget_item(params);
+                    return;
+                }
+                if let Some(text) = completed_plan_item_text(params) {
+                    append_runtime_assistant_content_delta(store, local_task_id, request, text);
                     self.agent_message_phases.forget_item(params);
                     return;
                 }
@@ -1247,6 +1253,49 @@ mod tests {
         let messages = cached_messages(&link);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["content"], "Current directory: /tmp/project");
+        assert_eq!(messages[0]["blocks"].as_array().map(Vec::len), Some(0));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_appends_completed_plan_item_as_content() {
+        let index_path = temp_index_path("completed-plan-item");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "# Plan\n\n- Inspect the repo.");
         assert_eq!(messages[0]["blocks"].as_array().map(Vec::len), Some(0));
 
         let _ = fs::remove_file(index_path);

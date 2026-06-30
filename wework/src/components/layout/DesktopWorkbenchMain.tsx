@@ -39,6 +39,10 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  isImplementationPlanRequestUserInput,
+  requestUserInputPayloadKey,
+} from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   CachedWorkbenchPaneStack,
@@ -82,6 +86,7 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
+const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
@@ -168,12 +173,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
+  const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const [workbenchMainWidth, setWorkbenchMainWidth] = useState(0)
   const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
   const [floatingComposerHeight, setFloatingComposerHeight] = useState(
     DEFAULT_FLOATING_COMPOSER_HEIGHT_PX
@@ -201,6 +208,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
+  const rightPanelTitlebarWidth =
+    rightPanelOpen && workbenchMainWidth > rightSplitChatWidth
+      ? `${workbenchMainWidth - rightSplitChatWidth}px`
+      : 'auto'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
@@ -217,6 +228,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     workspaceTarget?.source !== 'runtime' &&
     !workspaceTargetUsesRemoteDevice &&
     !workspaceTargetUsesRemoteSource
+
+  useLayoutEffect(() => {
+    const main = workbenchMainRef.current
+    if (!main) return
+
+    const updateMainWidth = () => {
+      setWorkbenchMainWidth(main.getBoundingClientRect().width)
+    }
+
+    updateMainWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateMainWidth)
+    observer.observe(main)
+    return () => observer.disconnect()
+  }, [])
+
   const bottomPanelWorkspaceKey = [
     currentRuntimeTask
       ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}:${
@@ -283,10 +311,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible?: boolean
   } | null>(null)
   const paneMessages = paneSession.messages
-  const pendingRequestUserInput = pendingRequestUserInputPayload(
-    paneMessages,
-    paneSession.answeredRequestUserInputIds
-  )
+  const pendingRequestUserInput = pendingRequestUserInputPayload(paneMessages)
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -480,6 +505,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectTerminalView = useCallback(() => {
     openRightPanelTab('terminal')
   }, [openRightPanelTab])
+  const selectPlanView = useCallback(() => {
+    openRightPanelTab('plan')
+  }, [openRightPanelTab])
+  const openAssistantPlanInRightPanel = useCallback(
+    (content: string) => {
+      setRightPanelPlanContent(content)
+      openRightPanelTab('plan')
+    },
+    [openRightPanelTab]
+  )
 
   const openWorkspaceFileFromMessage = useCallback(
     (path: string) => {
@@ -696,6 +731,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setHasPreviousTurnReview(false)
     setRightPanelView('launcher')
     setRightPanelTabs([])
+    setRightPanelPlanContent(null)
     setReviewState({
       loading: false,
       diff: '',
@@ -748,6 +784,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )}
     >
       <WorkbenchPaneActiveOnly>
+        {isTauri && (
+          <RightWorkspaceTitlebarLayoutSync open={rightPanelOpen} width={rightPanelTitlebarWidth} />
+        )}
         {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
         {!isTauri && (
           <div
@@ -785,8 +824,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'relative flex min-w-0 flex-none flex-col overflow-hidden',
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
-          showPageTopBar && 'pt-11',
-          rightPanelOpen && 'border-r border-border'
+          showPageTopBar && 'pt-11'
         )}
         style={
           {
@@ -850,6 +888,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              onOpenAssistantPlan={openAssistantPlanInRightPanel}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
               hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
@@ -889,8 +928,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
                 {pendingRequestUserInput ? (
                   <RequestUserInputCard
+                    key={
+                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                    }
                     payload={pendingRequestUserInput}
-                    onSubmit={paneSession.sendRequestUserInputResponse}
+                    onSubmit={response => {
+                      const shouldImplementPlan =
+                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                      return paneSession.sendRequestUserInputResponse(response, {
+                        appendUserMessage: shouldImplementPlan,
+                        forceDefaultCollaborationMode: shouldImplementPlan,
+                      })
+                    }}
                   />
                 ) : (
                   <ChatInput
@@ -992,10 +1041,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           aria-label={t('workbench.resize_right_workspace_panel')}
           aria-controls="right-workspace-panel-shell"
           className={cn(
-            'absolute top-0 z-popover h-full w-5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+            'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
           )}
-          style={{ left: rightSplitChatWidth }}
+          style={{ left: rightSplitChatWidth + 2 }}
           onPointerDown={handleRightSplitResizeStart}
         />
       )}
@@ -1003,7 +1052,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id="right-workspace-panel-shell"
         data-testid="right-workspace-panel-shell"
         className={cn(
-          'min-w-0 shrink-0 overflow-hidden bg-background',
+          'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
           rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
@@ -1023,6 +1072,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
+            planContent={rightPanelPlanContent}
             reviewViewOptions={reviewViewOptions}
             canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={paneSession.addCodeComment}
@@ -1030,6 +1080,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             onSelectTerminal={selectTerminalView}
             onSelectBrowser={selectBrowserView}
             onSelectFiles={selectFilesView}
+            onSelectPlan={selectPlanView}
             onCloseTab={closeRightPanelTab}
             onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
           />
@@ -1069,3 +1120,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </main>
   )
 })
+
+function RightWorkspaceTitlebarLayoutSync({ open, width }: { open: boolean; width: string }) {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR, open ? width : 'auto')
+
+    return () => {
+      root.style.removeProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR)
+    }
+  }, [open, width])
+
+  return null
+}

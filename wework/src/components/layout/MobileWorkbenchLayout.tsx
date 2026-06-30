@@ -26,6 +26,10 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  isImplementationPlanRequestUserInput,
+  requestUserInputPayloadKey,
+} from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
 import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
@@ -105,10 +109,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
-  const pendingRequestUserInput = pendingRequestUserInputPayload(
-    paneMessages,
-    paneSession.answeredRequestUserInputIds
-  )
+  const pendingRequestUserInput = pendingRequestUserInputPayload(paneMessages)
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -330,8 +331,18 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 )}
                 {pendingRequestUserInput ? (
                   <RequestUserInputCard
+                    key={
+                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                    }
                     payload={pendingRequestUserInput}
-                    onSubmit={paneSession.sendRequestUserInputResponse}
+                    onSubmit={response => {
+                      const shouldImplementPlan =
+                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                      return paneSession.sendRequestUserInputResponse(response, {
+                        appendUserMessage: shouldImplementPlan,
+                        forceDefaultCollaborationMode: shouldImplementPlan,
+                      })
+                    }}
                   />
                 ) : (
                   <ChatInput

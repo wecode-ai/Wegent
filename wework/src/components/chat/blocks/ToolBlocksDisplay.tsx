@@ -3,9 +3,17 @@ import type { ReactNode, TransitionEvent } from 'react'
 import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
-import { isHiddenRequestUserInputBlock, isRequestUserInputBlock } from '../requestUserInputMessages'
+import {
+  isAnsweredRequestUserInputBlock,
+  isHiddenRequestUserInputBlock,
+  isRequestUserInputBlock,
+} from '../requestUserInputMessages'
 import { ToolBlockItem } from './ToolBlockItem'
-import { RequestUserInputCard, type RequestUserInputPayload } from '../RequestUserInputCard'
+import {
+  RequestUserInputCard,
+  RequestUserInputSummary,
+  type RequestUserInputPayload,
+} from '../RequestUserInputCard'
 import {
   buildProcessingDisplayRows,
   isCommandToolName,
@@ -18,6 +26,14 @@ import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
+
+type ProcessingDisplayItem =
+  | ProcessingDisplayRow
+  | {
+      type: 'request_user_input'
+      id: string
+      block: ToolBlock
+    }
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -88,19 +104,48 @@ export function ToolBlocksDisplay({
   }, [completedAt, hasRenderedRunning, isRunning])
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const requestUserInputBlocks = useMemo(() => {
-    if (hideRequestUserInputBlocks) return []
+  const displayItems = useMemo(() => {
     const hiddenIds = hiddenRequestUserInputIds ?? EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
-    return blocks.filter(
-      (block): block is ToolBlock =>
-        isRequestUserInputBlock(block) && !isHiddenRequestUserInputBlock(block, hiddenIds)
-    )
+    const items: ProcessingDisplayItem[] = []
+    let pendingRegularBlocks: ProcessingBlock[] = []
+
+    const flushRegularBlocks = () => {
+      if (pendingRegularBlocks.length === 0) return
+      items.push(...buildProcessingDisplayRows(pendingRegularBlocks))
+      pendingRegularBlocks = []
+    }
+
+    blocks.forEach(block => {
+      if (!isRequestUserInputBlock(block)) {
+        pendingRegularBlocks.push(block)
+        return
+      }
+
+      const isUnansweredRequest =
+        block.status !== 'error' && !isAnsweredRequestUserInputBlock(block)
+      const shouldHidePendingRequest =
+        isUnansweredRequest &&
+        (hideRequestUserInputBlocks || isHiddenRequestUserInputBlock(block, hiddenIds))
+      if (shouldHidePendingRequest) return
+
+      flushRegularBlocks()
+      items.push({
+        type: 'request_user_input',
+        id: block.id,
+        block,
+      })
+    })
+
+    flushRegularBlocks()
+    return items
   }, [blocks, hiddenRequestUserInputIds, hideRequestUserInputBlocks])
-  const regularBlocks = useMemo(
-    () => blocks.filter(block => !isRequestUserInputBlock(block)),
-    [blocks]
+  const rows = useMemo(
+    () =>
+      displayItems.filter(
+        (item): item is ProcessingDisplayRow => item.type !== 'request_user_input'
+      ),
+    [displayItems]
   )
-  const rows = useMemo(() => buildProcessingDisplayRows(regularBlocks), [regularBlocks])
   const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent)
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
@@ -120,19 +165,36 @@ export function ToolBlocksDisplay({
   const processingContent = useMemo(
     () => (
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-        {rows.map(row =>
-          row.type === 'activity_group' ? (
+        {displayItems.map(item =>
+          item.type === 'request_user_input' ? (
+            isAnsweredRequestUserInputBlock(item.block) ? (
+              <RequestUserInputSummary
+                key={item.id}
+                payload={item.block.renderPayload as RequestUserInputPayload}
+              />
+            ) : (
+              <RequestUserInputCard
+                key={item.id}
+                payload={item.block.renderPayload as RequestUserInputPayload}
+                disabled={item.block.status === 'error'}
+                onSubmit={onRequestUserInputSubmit}
+                onIgnore={() =>
+                  onRequestUserInputIgnore?.(item.block.renderPayload as RequestUserInputPayload)
+                }
+              />
+            )
+          ) : item.type === 'activity_group' ? (
             <ToolActivityGroup
-              key={row.id}
-              row={row}
-              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              key={item.id}
+              row={item}
+              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           ) : (
             <ToolBlockItem
-              key={row.id}
-              block={row.block}
-              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              key={item.id}
+              block={item.block}
+              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )
@@ -140,7 +202,16 @@ export function ToolBlocksDisplay({
         {isRunning && showRunningPlaceholder && !hasLiveDisplayBlock && <ThinkingIndicator />}
       </div>
     ),
-    [hasLiveDisplayBlock, isRunning, onOpenWorkspaceFile, rows, showRunningPlaceholder, stateKey]
+    [
+      displayItems,
+      hasLiveDisplayBlock,
+      isRunning,
+      onOpenWorkspaceFile,
+      onRequestUserInputIgnore,
+      onRequestUserInputSubmit,
+      showRunningPlaceholder,
+      stateKey,
+    ]
   )
 
   if (blocks.length === 0 && !isStreaming) return null
@@ -175,21 +246,6 @@ export function ToolBlocksDisplay({
       <CollapsibleProcessingContent expanded={expanded} keepMounted>
         {processingContent}
       </CollapsibleProcessingContent>
-      {requestUserInputBlocks.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-3">
-          {requestUserInputBlocks.map(block => (
-            <RequestUserInputCard
-              key={block.id}
-              payload={block.renderPayload as RequestUserInputPayload}
-              disabled={block.status === 'done' || block.status === 'error'}
-              onSubmit={onRequestUserInputSubmit}
-              onIgnore={() =>
-                onRequestUserInputIgnore?.(block.renderPayload as RequestUserInputPayload)
-              }
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   )
 }

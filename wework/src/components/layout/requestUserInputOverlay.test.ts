@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  insertUserMessageBeforeRequestUserInput,
+  applyRequestUserInputResponseToMessages,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
@@ -91,6 +91,125 @@ describe('pendingRequestUserInputPayload', () => {
 
     expect(pendingRequestUserInputPayload(messages, new Set(['request:42']))).toBeNull()
   })
+
+  test('returns done request_user_input payloads without a response after refresh', () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        blocks: [
+          {
+            id: 'request-1',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'done',
+            renderPayload: { kind: 'request_user_input', request_id: 42 },
+          },
+        ],
+      },
+    ] as WorkbenchMessage[]
+
+    expect(pendingRequestUserInputPayload(messages)).toEqual({
+      kind: 'request_user_input',
+      request_id: 42,
+    })
+  })
+
+  test('ignores request_user_input payloads that already include a response', () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        blocks: [
+          {
+            id: 'request-1',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'done',
+            renderPayload: {
+              kind: 'request_user_input',
+              request_id: 42,
+              response: {
+                requestId: 42,
+                answers: { goal: { answers: ['工作目标'] } },
+              },
+            },
+          },
+        ],
+      },
+    ] as WorkbenchMessage[]
+
+    expect(pendingRequestUserInputPayload(messages)).toBeNull()
+  })
+
+  test('creates an implementation confirmation for the latest completed plan', () => {
+    const messages = [
+      {
+        id: 'assistant-plan',
+        role: 'assistant',
+        content: [
+          '# 整理环境计划',
+          '',
+          '## Summary',
+          '整理下载目录。',
+          '',
+          '## Test Plan',
+          '确认结果。',
+        ].join('\n'),
+        status: 'done',
+        createdAt: '2026-06-30T00:00:01.000Z',
+      },
+    ] as WorkbenchMessage[]
+
+    expect(pendingRequestUserInputPayload(messages)).toEqual({
+      kind: 'request_user_input',
+      questions: [
+        {
+          id: 'implement',
+          question: '实施此计划?',
+          options: [{ label: '是，实施此计划' }],
+        },
+        {
+          id: 'adjustment',
+          question: '否，请告知 WeWork 如何调整',
+          is_other: true,
+        },
+      ],
+    })
+  })
+
+  test('does not create an implementation confirmation after the user responds to a plan', () => {
+    const messages = [
+      {
+        id: 'assistant-plan',
+        role: 'assistant',
+        content: [
+          '# 整理环境计划',
+          '',
+          '## Summary',
+          '整理下载目录。',
+          '',
+          '## Test Plan',
+          '确认结果。',
+        ].join('\n'),
+        status: 'done',
+        createdAt: '2026-06-30T00:00:01.000Z',
+      },
+      {
+        id: 'user-after-plan',
+        role: 'user',
+        content: '是，实施此计划',
+        status: 'done',
+        createdAt: '2026-06-30T00:00:02.000Z',
+      },
+    ] as WorkbenchMessage[]
+
+    expect(pendingRequestUserInputPayload(messages)).toBeNull()
+  })
 })
 
 describe('request user input message helpers', () => {
@@ -101,14 +220,7 @@ describe('request user input message helpers', () => {
     expect(requestUserInputResponseKey({ requestId: 42, answers: {} })).toBe('request:42')
   })
 
-  test('inserts the local user answer before the assistant request message', () => {
-    const userMessage = {
-      id: 'user-answer',
-      role: 'user',
-      content: '当前任务',
-      status: 'done',
-      createdAt: '2026-06-30T00:00:00.000Z',
-    } as WorkbenchMessage
+  test('stores the local answer on the matching assistant request block', () => {
     const assistantMessage = {
       id: 'assistant-request',
       role: 'assistant',
@@ -126,15 +238,69 @@ describe('request user input message helpers', () => {
       ],
     } as WorkbenchMessage
 
-    const nextMessages = insertUserMessageBeforeRequestUserInput([assistantMessage], userMessage, {
+    const nextMessages = applyRequestUserInputResponseToMessages([assistantMessage], {
       requestId: 42,
-      answers: {},
+      answers: {
+        direction: { answers: ['随便，我就想看看样式'] },
+      },
     })
 
-    expect(nextMessages.map(message => message.id)).toEqual(['user-answer', 'assistant-request'])
+    expect(nextMessages).toHaveLength(1)
+    expect(nextMessages[0].id).toBe('assistant-request')
+    expect(nextMessages[0].blocks?.[0]).toMatchObject({
+      status: 'done',
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 42,
+        response: {
+          requestId: 42,
+          answers: {
+            direction: { answers: ['随便，我就想看看样式'] },
+          },
+        },
+      },
+    })
   })
 
-  test('appends the local user answer when no matching request exists', () => {
+  test('stores the local answer on a done request block without a response', () => {
+    const assistantMessage = {
+      id: 'assistant-request',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '2026-06-30T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'request-1',
+          type: 'tool',
+          toolName: 'request_user_input',
+          status: 'done',
+          renderPayload: { kind: 'request_user_input', request_id: 42 },
+        },
+      ],
+    } as WorkbenchMessage
+
+    const nextMessages = applyRequestUserInputResponseToMessages([assistantMessage], {
+      requestId: 42,
+      answers: {
+        direction: { answers: ['继续'] },
+      },
+    })
+
+    expect(nextMessages[0].blocks?.[0]).toMatchObject({
+      status: 'done',
+      renderPayload: {
+        response: {
+          requestId: 42,
+          answers: {
+            direction: { answers: ['继续'] },
+          },
+        },
+      },
+    })
+  })
+
+  test('keeps messages unchanged when no matching request exists', () => {
     const assistantMessage = {
       id: 'assistant',
       role: 'assistant',
@@ -142,19 +308,12 @@ describe('request user input message helpers', () => {
       status: 'done',
       createdAt: '2026-06-30T00:00:01.000Z',
     } as WorkbenchMessage
-    const userMessage = {
-      id: 'user-answer',
-      role: 'user',
-      content: '继续',
-      status: 'done',
-      createdAt: '2026-06-30T00:00:02.000Z',
-    } as WorkbenchMessage
 
-    const nextMessages = insertUserMessageBeforeRequestUserInput([assistantMessage], userMessage, {
+    const nextMessages = applyRequestUserInputResponseToMessages([assistantMessage], {
       requestId: 42,
       answers: {},
     })
 
-    expect(nextMessages.map(message => message.id)).toEqual(['assistant', 'user-answer'])
+    expect(nextMessages).toEqual([assistantMessage])
   })
 })

@@ -64,6 +64,7 @@ interface ScrollableMessageAreaProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onLoadMoreBefore?: () => Promise<void> | void
@@ -266,6 +267,7 @@ function ScrollableMessagePaneContent({
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
+  onOpenAssistantPlan,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onLoadMoreBefore,
@@ -773,6 +775,7 @@ function ScrollableMessagePaneContent({
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
+                onOpenAssistantPlan={onOpenAssistantPlan}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
