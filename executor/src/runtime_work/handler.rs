@@ -390,6 +390,11 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .map(|link| merge_cached_messages(cached.messages.clone(), cached_messages(link)))
                 .unwrap_or_else(|| cached.messages.clone());
+            let running = transcript_running(
+                local_link.as_ref(),
+                running_hint || cached.running,
+                &messages,
+            );
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
@@ -401,7 +406,7 @@ impl RuntimeWorkRpcHandler {
                 before_cursor: before_cursor.as_deref(),
                 after_cursor: after_cursor.as_deref(),
                 message_count: messages.len(),
-                running: cached.running,
+                running,
             });
             return Ok(transcript_response(
                 &local_task_id,
@@ -485,7 +490,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })
             .unwrap_or_else(|| transcript_messages(&transcript_thread, &self.device_id));
-        let running = running_hint || messages.iter().any(runtime_message_running);
+        let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
         self.transcript_cache.insert(
             thread_id.clone(),
@@ -1527,7 +1532,7 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                 )
             });
-        let running = running_hint || messages.iter().any(runtime_message_running);
+        let running = transcript_running(local_link, running_hint, &messages);
         Some(
             CachedTranscript::new(
                 workspace_path.to_owned(),
@@ -2116,6 +2121,28 @@ fn runtime_message_running(message: &Value) -> bool {
         .unwrap_or(false)
 }
 
+fn transcript_running(
+    local_link: Option<&RuntimeTaskLink>,
+    running_hint: bool,
+    messages: &[Value],
+) -> bool {
+    if local_link.is_some_and(local_task_finished) {
+        return false;
+    }
+    running_hint || messages.iter().any(runtime_message_running)
+}
+
+fn local_task_finished(link: &RuntimeTaskLink) -> bool {
+    !link.running
+        && matches!(
+            link.status
+                .replace(['_', '-'], "")
+                .to_ascii_lowercase()
+                .as_str(),
+            "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
+        )
+}
+
 fn transcript_source_signature(thread: &Value) -> Option<TranscriptSourceSignature> {
     string_field(thread, "path").and_then(|path| TranscriptSourceSignature::from_path(&path))
 }
@@ -2650,6 +2677,31 @@ mod tests {
         assert_eq!(messages[1]["id"], "assistant-turn-2");
         assert_eq!(messages[1]["content"], "fresh");
         assert_eq!(messages[1]["turnId"], "turn-2");
+    }
+
+    #[test]
+    fn terminal_local_task_prevents_transcript_running_state() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        let messages = vec![json!({
+            "id": "assistant-1",
+            "role": "assistant",
+            "status": "streaming",
+            "blocks": [
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "status": "pending"
+                }
+            ]
+        })];
+
+        assert!(!transcript_running(Some(&link), true, &messages));
     }
 
     #[test]

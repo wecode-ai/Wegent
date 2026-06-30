@@ -5,6 +5,7 @@ import type {
   ChatDonePayload,
   ChatErrorPayload,
   ChatStartPayload,
+  RuntimeSubagentActivityPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
@@ -23,6 +24,7 @@ export interface ChatStreamHandlers {
   onChatError?: (payload: ChatErrorPayload) => void
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
+  onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void
