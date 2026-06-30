@@ -193,7 +193,7 @@ export function LocalWorkspaceOpenerIcon({
   if (opener === 'vscode' || opener === 'vscode-insiders') {
     const color = opener === 'vscode' ? '#1f7fbf' : '#4aa99d'
     return (
-      <span className={cn(wrapperClassName, 'relative bg-white')} aria-hidden="true">
+      <span className={cn(wrapperClassName, 'relative bg-background')} aria-hidden="true">
         <span
           data-testid="local-workspace-vscode-mark"
           className="absolute left-[4px] top-[4px] h-[8px] w-[8px] rotate-45 border-b-[2px] border-l-[2px]"
