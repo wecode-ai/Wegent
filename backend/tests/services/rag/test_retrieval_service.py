@@ -70,15 +70,51 @@ async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
 async def test_retrieve_with_routing_treats_empty_scope_as_unfiltered():
     from app.services.rag.retrieval_service import RetrievalService
 
-    result = await RetrievalService().retrieve_with_routing(
-        query="test",
-        knowledge_base_ids=[],
-        db=MagicMock(),
-        scope=RetrievalScope(),
+    service = RetrievalService()
+    service.retrieve_from_knowledge_base_internal = AsyncMock(
+        return_value={
+            "records": [
+                {
+                    "content": "retrieved chunk",
+                    "score": 0.9,
+                    "title": "doc.md",
+                    "metadata": {},
+                }
+            ]
+        }
     )
 
-    assert result["records"] == []
-    assert result["total"] == 0
+    scope = RetrievalScope()
+
+    result = await service.retrieve_with_routing(
+        query="test",
+        knowledge_base_ids=[1],
+        db=MagicMock(),
+        scope=scope,
+        route_mode="rag_retrieval",
+    )
+
+    assert result["records"] == [
+        {
+            "content": "retrieved chunk",
+            "score": 0.9,
+            "title": "doc.md",
+            "metadata": {},
+            "knowledge_base_id": 1,
+            "document_id": None,
+        }
+    ]
+    assert result["total"] == 1
+    service.retrieve_from_knowledge_base_internal.assert_awaited_once_with(
+        query="test",
+        search_hints=None,
+        knowledge_base_id=1,
+        db=ANY,
+        scope=scope,
+        metadata_condition=None,
+        user_name=None,
+        knowledge_base_config=None,
+    )
 
 
 @pytest.mark.asyncio

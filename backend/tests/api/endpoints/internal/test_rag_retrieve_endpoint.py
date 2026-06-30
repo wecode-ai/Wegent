@@ -59,7 +59,11 @@ def _make_runtime_spec(
 ) -> QueryRuntimeSpec:
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids or [1],
-        scope=RetrievalScope(document_ids=document_ids) if document_ids else None,
+        scope=(
+            RetrievalScope(document_ids=document_ids)
+            if document_ids is not None
+            else None
+        ),
         query=query,
         route_mode=route_mode,
         knowledge_base_configs=[

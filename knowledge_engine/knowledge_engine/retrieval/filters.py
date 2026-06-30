@@ -263,6 +263,7 @@ def _build_elasticsearch_condition_filter(
     operator = _normalize_operator(condition.get("operator"))
     value = condition.get("value")
     field_name = f"metadata.{key}.keyword"
+    raw_field_name = f"metadata.{key}"
 
     if operator == "eq":
         return {"term": {field_name: value}}
@@ -273,7 +274,7 @@ def _build_elasticsearch_condition_filter(
     if operator == "nin":
         return {"bool": {"must_not": {"terms": {field_name: value}}}}
     if operator in ["gt", "gte", "lt", "lte"]:
-        return {"range": {field_name: {operator: value}}}
+        return {"range": {raw_field_name: {operator: value}}}
     if operator == "contains":
         return {"wildcard": {field_name: f"*{value}*"}}
     if operator == "text_match":

@@ -30,7 +30,7 @@ def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:
 
     assert filters == [
         {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
-        {"range": {"metadata.priority.keyword": {"gte": 3}}},
+        {"range": {"metadata.priority": {"gte": 3}}},
         {"wildcard": {"metadata.tag.keyword": "*release*"}},
     ]
 
@@ -192,7 +192,7 @@ def test_build_elasticsearch_filters_rejects_not_operator() -> None:
 def test_parse_metadata_filters_rejects_document_scope_metadata(
     operator: str,
 ) -> None:
-    with pytest.raises(ValueError, match="RetrievalScope.document_ids"):
+    with pytest.raises(ValueError, match=r"RetrievalScope\.document_ids"):
         parse_metadata_filters(
             "kb_1",
             {

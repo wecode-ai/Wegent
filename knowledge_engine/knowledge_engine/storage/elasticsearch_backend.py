@@ -386,15 +386,15 @@ class ElasticsearchBackend(BaseStorageBackend):
             else:
                 bool_query = {}
 
-            filter_clauses = list(bool_query.get("filter", []))
-            filter_clauses.extend(native_filter_clauses)
-
             if should_clauses:
                 bool_query["should"] = should_clauses
                 bool_query["minimum_should_match"] = 1
 
-            if filter_clauses:
-                bool_query["filter"] = filter_clauses
+            if native_filter_clauses:
+                bool_query["filter"] = self._merge_filter_clauses(
+                    bool_query.get("filter"),
+                    native_filter_clauses,
+                )
 
             query_body["query"] = {"bool": bool_query}
             return query_body

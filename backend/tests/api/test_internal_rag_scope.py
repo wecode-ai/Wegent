@@ -59,7 +59,11 @@ def test_validate_document_ids_against_scopes_rejects_out_of_scope_document():
 
 def test_internal_retrieve_request_rejects_empty_document_ids():
     with pytest.raises(ValidationError, match="document_ids must not be empty"):
-        InternalRetrieveRequest(query="q", document_ids=[])
+        InternalRetrieveRequest(
+            query="q",
+            knowledge_base_ids=[1],
+            document_ids=[],
+        )
 
 
 @pytest.mark.asyncio

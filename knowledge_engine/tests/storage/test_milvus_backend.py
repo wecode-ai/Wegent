@@ -410,7 +410,7 @@ class TestRetrieve:
             }
         )
 
-        with pytest.raises(ValueError, match="RetrievalScope.document_ids"):
+        with pytest.raises(ValueError, match=r"RetrievalScope\.document_ids"):
             backend.retrieve(
                 knowledge_id="kb_1",
                 query="test query",

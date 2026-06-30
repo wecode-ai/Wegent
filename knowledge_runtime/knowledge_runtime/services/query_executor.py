@@ -173,7 +173,7 @@ class QueryExecutor:
         # Execute query
         knowledge_id = str(knowledge_base_id)
         resolved_scope = request.scope
-        if resolved_scope is None and request.document_ids:
+        if resolved_scope is None and request.document_ids is not None:
             resolved_scope = RetrievalScope(document_ids=request.document_ids)
         result = await executor.execute(
             knowledge_id=knowledge_id,
