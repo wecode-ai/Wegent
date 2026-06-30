@@ -16,6 +16,7 @@ use super::util::{
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     let mut messages = Vec::new();
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
+    let root_thread_id = string_field(thread, "id");
     for (turn_index, turn) in thread
         .get("turns")
         .and_then(Value::as_array)
@@ -23,6 +24,11 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
         .flatten()
         .enumerate()
     {
+        if !is_root_transcript_item(turn)
+            || !is_root_thread_transcript_item(turn, root_thread_id.as_deref())
+        {
+            continue;
+        }
         let created_at = turn_started_at(turn);
         let completed_at = turn_completed_at(turn, created_at);
         let turn_file_changes = file_changes(turn);
@@ -43,6 +49,11 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             .enumerate()
         {
             let item = transcript_item_with_stable_id(raw_item, &turn_id, item_index);
+            if !is_root_transcript_item(raw_item)
+                || !is_root_thread_transcript_item(raw_item, root_thread_id.as_deref())
+            {
+                continue;
+            }
             match item_type(&item).as_str() {
                 "usermessage" => {
                     if is_internal_turn_abort_message(&item) {
@@ -347,6 +358,29 @@ fn transcript_item(item: &Value) -> Value {
         }
     }
     Value::Object(object)
+}
+
+fn is_root_transcript_item(item: &Value) -> bool {
+    transcript_agent_path(item)
+        .or_else(|| codex_wrapped_item_payload(item).and_then(transcript_agent_path))
+        .map_or(true, |agent_path| agent_path == "/root")
+}
+
+fn transcript_agent_path(value: &Value) -> Option<String> {
+    string_field(value, "agent_path").or_else(|| string_field(value, "agentPath"))
+}
+
+fn is_root_thread_transcript_item(item: &Value, root_thread_id: Option<&str>) -> bool {
+    let Some(root_thread_id) = root_thread_id else {
+        return true;
+    };
+    transcript_thread_id(item)
+        .or_else(|| codex_wrapped_item_payload(item).and_then(transcript_thread_id))
+        .map_or(true, |thread_id| thread_id == root_thread_id)
+}
+
+fn transcript_thread_id(value: &Value) -> Option<String> {
+    string_field(value, "threadId").or_else(|| string_field(value, "thread_id"))
 }
 
 fn transcript_item_with_stable_id(item: &Value, turn_id: &str, item_index: usize) -> Value {
@@ -2318,6 +2352,119 @@ mod tests {
             messages[3]["blocks"][1]["content"],
             "I will use the lockfile context."
         );
+    }
+
+    #[test]
+    fn transcript_ignores_subagent_items() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "agent_path": "/root/worker",
+                                "content": [{"type": "output_text", "text": "child output"}]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "agent_path": "/root",
+                                "content": [{"type": "output_text", "text": "root output"}]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "root output");
+    }
+
+    #[test]
+    fn transcript_ignores_cross_thread_items() {
+        let thread = json!({
+            "id": "root-thread",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "threadId": "child-thread",
+                                "content": [{"type": "output_text", "text": "child output"}]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "threadId": "root-thread",
+                                "content": [{"type": "output_text", "text": "root output"}]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "root output");
+    }
+
+    #[test]
+    fn transcript_ignores_cross_thread_turns() {
+        let thread = json!({
+            "id": "root-thread",
+            "turns": [
+                {
+                    "id": "child-turn",
+                    "threadId": "child-thread",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "child output"}]
+                        }
+                    ]
+                },
+                {
+                    "id": "root-turn",
+                    "threadId": "root-thread",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "root output"}]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "root output");
     }
 
     #[test]

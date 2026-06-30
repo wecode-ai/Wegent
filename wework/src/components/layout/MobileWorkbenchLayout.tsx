@@ -31,6 +31,7 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
+import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -243,6 +244,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               </div>
               {currentRuntimeTask ? (
                 <div className="pointer-events-auto flex items-center gap-1">
+                  <SubagentStatusIndicator
+                    statuses={paneSession.subagentStatuses}
+                    availableWidth={0}
+                    compact
+                  />
                   <button
                     type="button"
                     data-testid="mobile-fork-runtime-task-button"
