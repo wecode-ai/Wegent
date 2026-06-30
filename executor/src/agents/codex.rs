@@ -140,7 +140,7 @@ impl AgentEngine for CodexAppServerEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let binary = self.binary.clone();
         Box::pin(async move {
-            match run_codex_app_server_turn(&binary, request, None, None).await {
+            match run_codex_app_server_turn(&binary, request, None, None, None).await {
                 Ok(turn) => turn.outcome,
                 Err(message) => ExecutionOutcome::Failed { message },
             }
@@ -265,6 +265,7 @@ pub async fn run_codex_app_server_turn(
     binary: &str,
     request: ExecutionRequest,
     resume_thread_id: Option<String>,
+    initial_thread_name: Option<String>,
     notifications: Option<CodexNotificationSender>,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
@@ -350,6 +351,22 @@ pub async fn run_codex_app_server_turn(
                     }
                 }
             }));
+        }
+        if let Some(name) = initial_thread_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            with_rpc_timeout(
+                "thread/name/set",
+                timeout_seconds,
+                rpc.request(
+                    "thread/name/set",
+                    json!({"threadId": thread_id.clone(), "name": name}),
+                    &mut state,
+                ),
+            )
+            .await?;
         }
 
         let turn_input = turn_input(&request.prompt);
