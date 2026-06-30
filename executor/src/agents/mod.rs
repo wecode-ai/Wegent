@@ -97,11 +97,11 @@ fn claude_code_process_timeout_seconds() -> u64 {
 }
 
 fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> StreamProcessEngine {
-    let engine = StreamProcessEngine::new(spec);
-    if matches!(agent_kind, AgentKind::ClaudeCode) {
-        engine.with_timeout_seconds(claude_code_process_timeout_seconds())
-    } else {
-        engine
+    match agent_kind {
+        AgentKind::ClaudeCode => {
+            StreamProcessEngine::new(spec, claude_code_process_timeout_seconds())
+        }
+        agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
     }
 }
 

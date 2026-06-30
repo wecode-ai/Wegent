@@ -36,7 +36,6 @@ use crate::{
     },
 };
 
-const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
 const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
@@ -110,18 +109,12 @@ pub struct ProcessEngine {
 }
 
 impl ProcessEngine {
-    pub fn new(spec: CommandSpec) -> Self {
+    pub fn new(spec: CommandSpec, timeout_seconds: u64) -> Self {
+        assert!(timeout_seconds > 0, "timeout_seconds must be positive");
         Self {
             spec,
-            timeout_seconds: DEFAULT_PROCESS_TIMEOUT_SECONDS,
+            timeout_seconds,
         }
-    }
-
-    pub fn with_timeout_seconds(mut self, timeout_seconds: u64) -> Self {
-        if timeout_seconds > 0 {
-            self.timeout_seconds = timeout_seconds;
-        }
-        self
     }
 }
 
@@ -142,18 +135,12 @@ pub struct StreamProcessEngine {
 }
 
 impl StreamProcessEngine {
-    pub fn new(spec: CommandSpec) -> Self {
+    pub fn new(spec: CommandSpec, timeout_seconds: u64) -> Self {
+        assert!(timeout_seconds > 0, "timeout_seconds must be positive");
         Self {
             spec,
-            timeout_seconds: DEFAULT_PROCESS_TIMEOUT_SECONDS,
+            timeout_seconds,
         }
-    }
-
-    pub fn with_timeout_seconds(mut self, timeout_seconds: u64) -> Self {
-        if timeout_seconds > 0 {
-            self.timeout_seconds = timeout_seconds;
-        }
-        self
     }
 }
 
@@ -1016,14 +1003,5 @@ mod tests {
 
         assert_eq!(stream_chunk_chars(), 20);
         assert_eq!(stream_chunk_delay_ms(), 0);
-    }
-
-    #[test]
-    fn process_engines_default_to_one_hour() {
-        let process = ProcessEngine::new(CommandSpec::new("true"));
-        let stream = StreamProcessEngine::new(CommandSpec::new("true"));
-
-        assert_eq!(process.timeout_seconds, 3600);
-        assert_eq!(stream.timeout_seconds, 3600);
     }
 }

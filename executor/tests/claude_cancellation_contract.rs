@@ -53,8 +53,8 @@ async fn claude_timeout_kills_process_before_late_side_effect() {
         CommandSpec::new("sh")
             .arg("-c")
             .arg(format!("sleep 5; printf leaked > {}", marker.display())),
-    )
-    .with_timeout_seconds(1);
+        1,
+    );
 
     let started = Instant::now();
     let outcome = engine.run(ExecutionRequest::default()).await;
@@ -76,10 +76,12 @@ async fn claude_timeout_does_not_persist_interrupted_session_id() {
     let workspace_root = unique_dir("claude-timeout-session-root");
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
-    let engine = StreamProcessEngine::new(CommandSpec::new("sh").arg("-c").arg(
-        r#"printf '%s\n' '{"type":"system","subtype":"init","session_id":"interrupted-session"}'; sleep 5"#,
-    ))
-    .with_timeout_seconds(1);
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("sh").arg("-c").arg(
+            r#"printf '%s\n' '{"type":"system","subtype":"init","session_id":"interrupted-session"}'; sleep 5"#,
+        ),
+        1,
+    );
     let request = ExecutionRequest {
         task_id: 9101,
         bot: json!([{"id": 4101, "shell_type": "ClaudeCode"}]),

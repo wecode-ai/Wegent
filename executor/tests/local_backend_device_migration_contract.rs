@@ -36,6 +36,8 @@ use wegent_executor::{
     services::updater::UpdateResult,
 };
 
+const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
+
 #[tokio::test]
 async fn local_backend_registers_all_python_local_device_events() {
     let transport = RecordingTransport::default();
@@ -677,7 +679,10 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         tracker.clone(),
     );
     let runner = ManagedLocalTaskRunner::new(
-        StreamProcessEngine::new(CommandSpec::new(script.display().to_string())),
+        StreamProcessEngine::new(
+            CommandSpec::new(script.display().to_string()),
+            TEST_PROCESS_TIMEOUT_SECONDS,
+        ),
         sink.clone(),
         tracker.clone(),
     );
