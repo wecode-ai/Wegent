@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
     path::Path,
     pin::Pin,
@@ -12,10 +12,13 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{
-    agents::{run_codex_app_server_turn, CodexAppServerClient, CodexNotificationSender},
+    agents::{
+        run_codex_app_server_turn_with_cancel, CodexAppServerClient, CodexNotificationSender,
+        CODEX_APP_SERVER_TURN_CANCELLED,
+    },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
     protocol::ExecutionRequest,
@@ -24,9 +27,10 @@ use crate::{
 
 use super::{
     codex_global_state::{
-        ensure_codex_global_project, remove_codex_global_project, rename_codex_global_project,
-        CodexGlobalProjectIndex,
+        open_codex_global_project, register_codex_global_thread_workspace_root,
+        remove_codex_global_project, rename_codex_global_project, CodexGlobalProjectIndex,
     },
+    codex_notifications::codex_notification,
     codex_rollout::{
         append_rollout_turns_from_offset, rollout_turns, thread_with_rollout_running_status,
         thread_with_rollout_turns, thread_with_turns,
@@ -47,8 +51,8 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request,
-        execution_request_from_payload, integer_field, normalize_device_id, now_ms, prompt_text,
-        runtime_task_id, string_field, workspace_group_path, workspace_path,
+        execution_request_from_payload, infer_workspace_kind, integer_field, normalize_device_id,
+        now_ms, prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
 };
 
@@ -65,9 +69,15 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
+    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
+}
+
+struct ActiveTurnCancellation {
+    cancel: oneshot::Sender<()>,
+    stopped: oneshot::Receiver<()>,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -79,6 +89,7 @@ impl RuntimeWorkRpcHandler {
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
+            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
@@ -116,6 +127,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.archived_conversations.delete_bulk" => {
                 self.delete_archived_tasks_bulk(payload).await
             }
+            "runtime.archived_conversations.archive_project" => {
+                self.archive_project_conversations(payload).await
+            }
+            "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
@@ -466,6 +481,59 @@ impl RuntimeWorkRpcHandler {
         Ok(task_action_success(&link))
     }
 
+    async fn archive_project_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_index = CodexGlobalProjectIndex::load();
+        let workspace_path = runtime_project_workspace_path(&payload, &project_index)
+            .ok_or_else(|| AppIpcError::new("bad_request", "runtimeProjectKey is required"))?;
+        let links =
+            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        let project_links = links
+            .into_iter()
+            .filter(|link| {
+                let group_path = link
+                    .group_workspace_path
+                    .clone()
+                    .unwrap_or_else(|| workspace_group_path(&link.workspace_path));
+                group_path == workspace_path
+            })
+            .collect::<Vec<_>>();
+        self.archive_links_bulk(project_links).await
+    }
+
+    async fn archive_all_conversations(&self) -> Result<Value, AppIpcError> {
+        let project_index = CodexGlobalProjectIndex::load();
+        let links =
+            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        self.archive_links_bulk(links).await
+    }
+
+    async fn archive_links_bulk(&self, links: Vec<RuntimeTaskLink>) -> Result<Value, AppIpcError> {
+        let requested_count = links.len();
+        let mut accepted_count = 0_usize;
+        let mut results = Vec::new();
+        for link in links {
+            let result = self
+                .archive_task(json!({
+                    "localTaskId": link.local_task_id,
+                    "workspacePath": link.workspace_path,
+                    "runtimeHandle": link.runtime_handle,
+                }))
+                .await?;
+            if result["accepted"].as_bool() == Some(true) {
+                accepted_count += 1;
+            }
+            results.push(result);
+        }
+
+        Ok(json!({
+            "success": accepted_count == requested_count,
+            "accepted": accepted_count == requested_count,
+            "requestedCount": requested_count,
+            "acceptedCount": accepted_count,
+            "results": results,
+        }))
+    }
+
     async fn unarchive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut link = self.task_link_from_payload(&payload, true).await?;
         if let Some(thread_id) = link.thread_id.as_deref() {
@@ -571,13 +639,16 @@ impl RuntimeWorkRpcHandler {
         };
         apply_runtime_payload_metadata(&mut request, &payload);
 
-        let mut link =
-            RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path.clone(), title);
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            workspace_path.clone(),
+            title.clone(),
+        );
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         self.upsert_local_task(link);
-        self.spawn_turn(local_task_id.clone(), request, None);
+        self.spawn_turn(local_task_id.clone(), request, None, Some(title));
 
         Ok(json!({
             "success": true,
@@ -659,7 +730,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        self.spawn_turn(local_task_id.clone(), request, Some(thread_id));
+        self.spawn_turn(local_task_id.clone(), request, Some(thread_id), None);
 
         Ok(json!({
             "success": true,
@@ -681,6 +752,16 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             })
             .or_else(|| self.local_task_link(&local_task_id));
+        if !self.abort_active_turn(&local_task_id).await {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "localTaskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime task did not stop within timeout",
+                "code": "cancel_timeout",
+            }));
+        }
 
         Ok(match link {
             Some(link) => task_action_success(&link),
@@ -739,7 +820,7 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
         let label = string_field(&payload, "label").or_else(|| string_field(&payload, "name"));
-        let project = ensure_codex_global_project(&workspace_path, label.as_deref())
+        let project = open_codex_global_project(&workspace_path, label.as_deref())
             .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
 
         Ok(json!({
@@ -879,6 +960,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         request: ExecutionRequest,
         resume_thread_id: Option<String>,
+        initial_thread_name: Option<String>,
     ) {
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -892,38 +974,59 @@ impl RuntimeWorkRpcHandler {
         log_executor_event("runtime work turn spawning", &fields);
 
         self.mark_active_local_task(&local_task_id);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (stopped_tx, stopped_rx) = oneshot::channel();
+        self.set_active_turn_cancellation(
+            local_task_id.clone(),
+            ActiveTurnCancellation {
+                cancel: cancel_tx,
+                stopped: stopped_rx,
+            },
+        );
         let handler = self.clone();
-        tokio::spawn(async move {
+        let turn_local_task_id = local_task_id.clone();
+        let turn_handle = tokio::spawn(async move {
             emit_response_event(
                 &handler.event_tx,
                 &handler.device_id,
                 "response.created",
-                &local_task_id,
+                &turn_local_task_id,
                 &request,
                 json!({"response": {"status": "in_progress"}}),
             );
 
             let (notifications, mapper_task) =
-                handler.spawn_notification_mapper(local_task_id.clone(), request.clone());
-            let result = run_codex_app_server_turn(
+                handler.spawn_notification_mapper(turn_local_task_id.clone(), request.clone());
+            let result = run_codex_app_server_turn_with_cancel(
                 &handler.codex_binary,
                 request.clone(),
                 resume_thread_id,
+                initial_thread_name,
                 notifications,
+                Some(cancel_rx),
             )
             .await;
             if let Err(error) = mapper_task.await {
                 log_executor_event(
                     "runtime work notification mapper failed",
                     &[
-                        ("local_task_id", local_task_id.clone()),
+                        ("local_task_id", turn_local_task_id.clone()),
                         ("error", error.to_string()),
                     ],
                 );
             }
 
-            handler.handle_turn_result(&local_task_id, &request, result);
+            if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                handler.clear_active_turn_cancellation(&turn_local_task_id);
+                handler.unmark_active_local_task(&turn_local_task_id);
+                let _ = stopped_tx.send(());
+                return;
+            }
+
+            handler.handle_turn_result(&turn_local_task_id, &request, result);
+            let _ = stopped_tx.send(());
         });
+        drop(turn_handle);
     }
 
     fn handle_turn_result(
@@ -941,7 +1044,9 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Failed { .. } => "failed",
                     ExecutionOutcome::Running => "running",
                 };
-                self.finish_local_task(local_task_id, Some(turn.thread_id), status);
+                let thread_id = turn.thread_id.clone();
+                self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
+                self.register_codex_thread_workspace_root(&thread_id, request);
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -1009,6 +1114,33 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    fn register_codex_thread_workspace_root(&self, thread_id: &str, request: &ExecutionRequest) {
+        let Some(workspace_path) = request.cwd() else {
+            return;
+        };
+        if infer_workspace_kind(workspace_path) == "chat" {
+            return;
+        }
+        match register_codex_global_thread_workspace_root(thread_id, workspace_path) {
+            Ok(Some(workspace_root)) => {
+                log_executor_event(
+                    "runtime work codex thread workspace root registered",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("workspace_root", workspace_root),
+                    ],
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log_executor_event(
+                    "runtime work codex thread workspace root registration failed",
+                    &[("thread_id", thread_id.to_owned()), ("error", error)],
+                );
+            }
+        }
+    }
+
     fn spawn_notification_mapper(
         &self,
         local_task_id: String,
@@ -1018,10 +1150,14 @@ impl RuntimeWorkRpcHandler {
         let event_tx = self.event_tx.clone();
         let device_id = self.device_id.clone();
         let store = self.store.clone();
+        let handler = self.clone();
         let task = tokio::spawn(async move {
             let mut event_mapper = CodexNotificationEventMapper::default();
             let mut cache_mapper = CodexNotificationCacheMapper::default();
             while let Some(message) = rx.recv().await {
+                if let Some(thread_id) = codex_started_thread_id(&message) {
+                    handler.register_codex_thread_workspace_root(&thread_id, &request);
+                }
                 cache_mapper.map(&store, &local_task_id, &request, &message);
                 event_mapper.map(&event_tx, &device_id, &local_task_id, &request, message);
             }
@@ -1167,20 +1303,26 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
-        if !project_index.has_projects() {
+        if !project_index.has_projects() && !project_index.has_project_state() {
             return links;
         }
 
         links
             .into_iter()
-            .filter_map(|link| {
+            .filter_map(|mut link| {
                 if !is_codex_runtime(&link.runtime) {
                     return Some(link);
                 }
+                if super::util::infer_workspace_kind(&link.workspace_path) == "chat" {
+                    return Some(link);
+                }
                 let group_path = workspace_group_path(&link.workspace_path);
-                project_index
-                    .project_for_path(&group_path)
-                    .or_else(|| project_index.project_for_path(&link.workspace_path))?;
+                let project = project_index
+                    .project_for_thread(link.thread_id.as_deref(), &link.workspace_path)
+                    .or_else(|| {
+                        project_index.project_for_thread(link.thread_id.as_deref(), &group_path)
+                    })?;
+                link.group_workspace_path = Some(project.workspace_path.clone());
                 Some(link)
             })
             .collect()
@@ -1342,8 +1484,11 @@ impl RuntimeWorkRpcHandler {
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
         let thread_id = string_field(thread, "id")?;
         let mut local_link = self.local_task_by_thread_id(&thread_id);
+        let local_active = local_link
+            .as_ref()
+            .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
         if let Some(link) = &mut local_link {
-            if link.running && !self.is_active_local_task(&link.local_task_id) {
+            if link.running && !local_active {
                 link.running = false;
             }
         }
@@ -1351,7 +1496,11 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let codex_thread = thread_with_rollout_running_status(thread);
-        let link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
+        let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
+        if local_active {
+            link.status = "running".to_owned();
+            link.running = true;
+        }
         Some(link)
     }
 
@@ -1386,6 +1535,43 @@ impl RuntimeWorkRpcHandler {
             .remove(local_task_id);
     }
 
+    fn set_active_turn_cancellation(&self, local_task_id: String, control: ActiveTurnCancellation) {
+        if let Some(previous) = self
+            .active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .insert(local_task_id, control)
+        {
+            let _ = previous.cancel.send(());
+        }
+    }
+
+    fn clear_active_turn_cancellation(&self, local_task_id: &str) {
+        self.active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
+    async fn abort_active_turn(&self, local_task_id: &str) -> bool {
+        let control = {
+            self.active_turn_cancellations
+                .lock()
+                .expect("active turn cancellation map lock should not be poisoned")
+                .remove(local_task_id)
+        };
+        if let Some(control) = control {
+            let _ = control.cancel.send(());
+            let stopped =
+                tokio::time::timeout(std::time::Duration::from_secs(10), control.stopped).await;
+            if stopped.is_err() {
+                return false;
+            }
+        }
+        self.unmark_active_local_task(local_task_id);
+        true
+    }
+
     fn is_active_local_task(&self, local_task_id: &str) -> bool {
         self.active_local_tasks
             .lock()
@@ -1394,6 +1580,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn finish_local_task(&self, local_task_id: &str, thread_id: Option<String>, status: &str) {
+        self.clear_active_turn_cancellation(local_task_id);
         let invalidate_thread_id = thread_id.clone();
         self.store.update_task(local_task_id, |link| {
             if thread_id.is_some() {
@@ -1518,8 +1705,45 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             runtime: "codex".to_owned(),
             created_at: now,
             updated_at: now,
+            workspace_source: project.source.clone(),
+            remote_host_id: project.remote_host_id.clone(),
         })
         .collect()
+}
+
+fn codex_started_thread_id(message: &Value) -> Option<String> {
+    let notification = codex_notification(message);
+    if notification.method != "thread/started" {
+        return None;
+    }
+    notification
+        .params
+        .get("thread")
+        .and_then(|thread| string_field(thread, "id"))
+        .or_else(|| string_field(notification.params, "threadId"))
+        .or_else(|| string_field(notification.params, "thread_id"))
+}
+
+fn runtime_project_workspace_path(
+    payload: &Value,
+    project_index: &CodexGlobalProjectIndex,
+) -> Option<String> {
+    workspace_path(payload)
+        .map(|path| {
+            project_index
+                .project_for_key(&path)
+                .map(|project| project.workspace_path.clone())
+                .unwrap_or_else(|| workspace_group_path(&path))
+        })
+        .or_else(|| {
+            let key = string_field(payload, "runtimeProjectKey")
+                .or_else(|| string_field(payload, "runtime_project_key"))?;
+            let normalized_key = key.strip_prefix("local:").unwrap_or(&key);
+            project_index
+                .project_for_key(normalized_key)
+                .map(|project| project.workspace_path.clone())
+                .or_else(|| Some(super::util::normalize_workspace_path(normalized_key)))
+        })
 }
 
 #[derive(Clone, Default)]

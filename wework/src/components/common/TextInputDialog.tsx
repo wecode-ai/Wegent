@@ -54,26 +54,26 @@ function TextInputDialogContent({
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${inputTestId}-title`}
-        className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl"
+        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 text-text-primary shadow-2xl"
       >
         <div className="flex items-center justify-between gap-4">
-          <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-[#202124]">
+          <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-text-primary">
             {title}
           </h2>
           <button
             type="button"
             data-testid={`${inputTestId}-close-button`}
             onClick={onClose}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={cancelLabel}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         {description && (
-          <p className="mt-2 text-[13px] leading-[18px] text-[#606368]">{description}</p>
+          <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
         )}
-        <label className="mt-5 block text-[13px] font-medium leading-[18px] text-[#3c4043]">
+        <label className="mt-5 block text-[13px] font-medium leading-[18px] text-text-secondary">
           {label}
         </label>
         <input
@@ -85,7 +85,7 @@ function TextInputDialogContent({
             setValue(event.target.value)
             setError(null)
           }}
-          className="mt-2 h-9 w-full rounded-md border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
@@ -93,7 +93,7 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-cancel-button`}
             onClick={onClose}
-            className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium leading-[18px] text-[#3c4043] hover:bg-[#f7f7f8]"
+            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
             {cancelLabel}
           </button>

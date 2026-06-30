@@ -22,7 +22,9 @@ use wegent_executor::{
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    std::env::set_var("WEGENT_DISABLE_CODEX_APP_NOTIFY", "1");
+    guard
 }
 
 struct EnvGuard {
@@ -469,7 +471,20 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .display()
             .to_string(),
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
+    let codex_home = temp_path("wegent-app-runtime-store-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join(".codex-global-state.json"),
+        serde_json::to_vec_pretty(&json!({
+            "electron-saved-workspace-roots": ["/tmp/project"],
+            "project-order": ["/tmp/project"],
+            "thread-workspace-root-hints": {},
+            "projectless-thread-ids": ["thread-1"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let (_sqlite_home_guard, sqlite_home) =
         set_temp_codex_sqlite_home("wegent-app-runtime-store-sqlite");
     write_default_codex_state_db_thread(&sqlite_home, false);
@@ -513,6 +528,15 @@ async fn app_runtime_persists_local_task_thread_mapping() {
         restored["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"],
         "thread-1"
     );
+    let codex_state: Value = serde_json::from_str(
+        &fs::read_to_string(codex_home.join(".codex-global-state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        codex_state["thread-workspace-root-hints"]["thread-1"],
+        "/tmp/project"
+    );
+    assert_eq!(codex_state["projectless-thread-ids"], json!([]));
 }
 
 #[tokio::test]
@@ -1126,21 +1150,25 @@ fn write_fake_codex_running_tool(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/start"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       exit 0
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/reasoning/delta","params":{{"delta":"checking context"}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"running tests","phase":"commentary"}}}}'
       printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"inProgress"}}}}}}'

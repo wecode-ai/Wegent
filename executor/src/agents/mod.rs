@@ -13,7 +13,7 @@ mod git_auth;
 mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
-mod runtime_capabilities;
+pub(crate) mod runtime_capabilities;
 mod task_identity;
 
 use crate::{
@@ -33,8 +33,9 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    run_codex_app_server_turn, CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn,
-    CodexCancellationState, CodexNotificationSender, CodexTurnInterrupter,
+    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexAppServerClient,
+    CodexAppServerEngine, CodexAppServerTurn, CodexCancellationState, CodexNotificationSender,
+    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

@@ -17,6 +17,7 @@ const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'text-[13px] font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
+  '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 
 interface AssistantMarkdownProps {
@@ -116,6 +117,40 @@ function formatMarkdownFileTooltip(target: Extract<MarkdownLinkTarget, { kind: '
   return lineLabel ? `${target.path} (${lineLabel})` : target.path
 }
 
+function getMarkdownFileIcon(path: string): ReactNode {
+  if (/\.(?:json|jsonc)(?:[?#].*)?$/i.test(path)) {
+    return (
+      <span
+        aria-hidden="true"
+        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        data-testid="assistant-markdown-link-icon"
+      >
+        {'{}'}
+      </span>
+    )
+  }
+
+  if (/\.(?:sh|bash|zsh)(?:[?#].*)?$/i.test(path)) {
+    return (
+      <span
+        aria-hidden="true"
+        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        data-testid="assistant-markdown-link-icon"
+      >
+        $
+      </span>
+    )
+  }
+
+  return (
+    <FileText
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0"
+      data-testid="assistant-markdown-link-icon"
+    />
+  )
+}
+
 function AssistantMarkdownLink({
   href,
   onOpenFile,
@@ -126,14 +161,16 @@ function AssistantMarkdownLink({
   children?: ReactNode
 }) {
   const target = classifyMarkdownLink(href)
-  const LinkIcon = target.kind === 'file' ? FileText : Link2
-  const icon = (
-    <LinkIcon
-      aria-hidden="true"
-      className="h-3.5 w-3.5 shrink-0"
-      data-testid="assistant-markdown-link-icon"
-    />
-  )
+  const icon =
+    target.kind === 'file' ? (
+      getMarkdownFileIcon(target.path)
+    ) : (
+      <Link2
+        aria-hidden="true"
+        className="h-3.5 w-3.5 shrink-0"
+        data-testid="assistant-markdown-link-icon"
+      />
+    )
 
   if (target.kind === 'file') {
     const filePath = target.path

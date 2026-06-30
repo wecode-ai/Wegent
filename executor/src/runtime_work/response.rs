@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    codex_wrapped_item_payload, infer_workspace_kind, infer_worktree_id, now_ms, path_is_within,
-    string_field, timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
+    codex_wrapped_item_payload, infer_workspace_kind, infer_worktree_id, normalize_workspace_path,
+    now_ms, path_is_within, string_field, timestamp_ms_field, workspace_group_path,
+    workspace_label, workspace_task_path,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -28,6 +29,8 @@ pub(crate) struct RuntimeTaskLink {
     pub parent: Option<Value>,
     #[serde(skip)]
     pub list_order: Option<usize>,
+    #[serde(skip)]
+    pub group_workspace_path: Option<String>,
 }
 
 impl RuntimeTaskLink {
@@ -45,6 +48,7 @@ impl RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             list_order: None,
+            group_workspace_path: None,
         }
     }
 
@@ -69,6 +73,7 @@ impl RuntimeTaskLink {
             runtime_handle,
             parent: Some(parent),
             list_order: None,
+            group_workspace_path: None,
         }
     }
 
@@ -121,6 +126,7 @@ impl RuntimeTaskLink {
                 .unwrap_or_else(|| json!({})),
             parent: local_link.and_then(|link| link.parent),
             list_order: None,
+            group_workspace_path: None,
         }
     }
 }
@@ -157,6 +163,7 @@ impl Default for RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             list_order: None,
+            group_workspace_path: None,
         }
     }
 }
@@ -169,6 +176,8 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub runtime: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub workspace_source: String,
+    pub remote_host_id: Option<String>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -179,6 +188,8 @@ impl Default for RuntimeWorkspaceLink {
             runtime: "codex".to_owned(),
             created_at: now_ms(),
             updated_at: now_ms(),
+            workspace_source: "local".to_owned(),
+            remote_host_id: None,
         }
     }
 }
@@ -191,7 +202,7 @@ pub(crate) fn workspace_response(
         HashMap::new();
     let mut workspace_order = HashMap::<String, usize>::new();
     for (index, mut workspace) in workspaces.into_iter().enumerate() {
-        let group_path = workspace_group_path(&workspace.workspace_path);
+        let group_path = normalize_workspace_path(&workspace.workspace_path);
         workspace_order
             .entry(group_path.clone())
             .and_modify(|order| *order = (*order).min(index))
@@ -213,7 +224,10 @@ pub(crate) fn workspace_response(
     let mut workspace_roots = groups.keys().cloned().collect::<Vec<_>>();
     workspace_roots.sort_by_key(|root| Reverse(root.len()));
     for mut link in links {
-        let normalized_link_path = workspace_group_path(&link.workspace_path);
+        let normalized_link_path = link
+            .group_workspace_path
+            .clone()
+            .unwrap_or_else(|| workspace_group_path(&link.workspace_path));
         let group_path = workspace_roots
             .iter()
             .find(|root| path_is_within(root, &normalized_link_path))
@@ -242,18 +256,30 @@ pub(crate) fn workspace_response(
                 .map(|workspace| workspace.title.clone())
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| workspace_label(&workspace_path));
+            let workspace_source = workspace
+                .as_ref()
+                .map(|workspace| workspace.workspace_source.clone())
+                .filter(|source| !source.is_empty())
+                .unwrap_or_else(|| "local".to_owned());
+            let remote_host_id = workspace
+                .as_ref()
+                .and_then(|workspace| workspace.remote_host_id.clone());
+            let mut workspace_json = json!({
+                "workspacePath": workspace_path,
+                "workspaceKind": infer_workspace_kind(&workspace_path),
+                "label": label,
+                "workspaceSource": workspace_source,
+                "localTasks": local_tasks
+                    .into_iter()
+                    .map(local_task_json)
+                    .collect::<Vec<_>>(),
+                "updatedAt": updated_at,
+            });
+            if let Some(remote_host_id) = remote_host_id {
+                workspace_json["remoteHostId"] = Value::String(remote_host_id);
+            }
             (
-                json!({
-                    "workspacePath": workspace_path,
-                    "workspaceKind": infer_workspace_kind(&workspace_path),
-                    "label": label,
-                    "workspaceSource": "local",
-                    "localTasks": local_tasks
-                        .into_iter()
-                        .map(local_task_json)
-                        .collect::<Vec<_>>(),
-                    "updatedAt": updated_at,
-                }),
+                workspace_json,
                 workspace_order.get(&workspace_path).copied(),
                 updated_at,
                 workspace_path,

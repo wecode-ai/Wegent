@@ -16,6 +16,7 @@ fn attachment(id: i64, filename: &str, local_path: &str) -> AttachmentRecord {
     AttachmentRecord {
         id,
         original_filename: filename.to_owned(),
+        status: None,
         local_path: Some(local_path.to_owned()),
         file_size: None,
         mime_type: None,

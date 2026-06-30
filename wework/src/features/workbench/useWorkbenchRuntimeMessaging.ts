@@ -143,9 +143,10 @@ export function useWorkbenchRuntimeMessaging({
         })
         return false
       }
+      await refreshWorkLists()
       return true
     },
-    [dispatch, executorClient]
+    [dispatch, executorClient, refreshWorkLists]
   )
 
   const buildSendPayload = useCallback(
@@ -756,9 +757,11 @@ export function useWorkbenchRuntimeMessaging({
           type: 'error_set',
           error: normalizeGuidanceError(ack.error ?? '取消当前回复失败'),
         })
+        return
       }
+      await refreshWorkLists()
     },
-    [dispatch, executorClient, state.currentRuntimeTask]
+    [dispatch, executorClient, refreshWorkLists, state.currentRuntimeTask]
   )
 
   return {

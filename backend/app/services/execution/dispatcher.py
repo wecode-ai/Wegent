@@ -43,6 +43,7 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
+from .attachment_sync import apply_attachment_sync_response, sync_executor_attachments
 from .emitters import (
     ResultEmitter,
     ResultEmitterFactory,
@@ -1719,6 +1720,8 @@ class ExecutionDispatcher:
             f"base_url={base_url}"
         )
 
+        await self._sync_attachments_before_executor_dispatch(request)
+
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
@@ -1769,6 +1772,36 @@ class ExecutionDispatcher:
             subtask_id=request.subtask_id,
             message_id=request.message_id,
             data=self._build_start_event_data(request),
+        )
+
+    async def _sync_attachments_before_executor_dispatch(
+        self, request: ExecutionRequest
+    ) -> None:
+        """Prepare attachments in executor runtime before formal dispatch."""
+        if not request.attachments:
+            return
+        shell_type = self._get_shell_type(request)
+        if shell_type not in {"ClaudeCode", "Agno", "CodeX", "Codex"}:
+            return
+
+        logger.info(
+            "[ExecutionDispatcher] Syncing attachments before executor dispatch: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d",
+            request.task_id,
+            request.subtask_id,
+            shell_type,
+            len(request.attachments),
+        )
+        sync_response = await sync_executor_attachments(request)
+        apply_attachment_sync_response(request, sync_response)
+        logger.info(
+            "[ExecutionDispatcher] Attachment sync applied: task_id=%s, "
+            "subtask_id=%s, executor_name=%s, success_count=%d, failed_count=%d",
+            request.task_id,
+            request.subtask_id,
+            request.executor_name,
+            sync_response.success_count,
+            sync_response.failed_count,
         )
 
     def parse_callback_event(

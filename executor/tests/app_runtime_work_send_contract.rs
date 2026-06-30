@@ -96,7 +96,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_completed(&mut events).await;
+    wait_for_response_event(&mut events, "response.completed", 2001).await;
     wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
@@ -354,7 +354,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_completed(&mut events).await;
+    wait_for_response_event(&mut events, "response.completed", 2002).await;
     wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
@@ -511,6 +511,104 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_cancel_terminates_running_codex_turn() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-cancel-kill-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-kill-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-cancel-kill-log", "jsonl");
+    let fake_codex = write_fake_codex_traps_termination(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-cancel",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "modelId": "gpt-5.5"
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    let pid = wait_for_logged_pid(&log_path, "turn-pid:").await;
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-task-cancel"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    assert_eq!(cancelled["accepted"], true);
+    assert_process_exited(pid).await;
+}
+
+#[tokio::test]
+async fn runtime_tasks_cancel_terminates_codex_turn_process_group() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-cancel-group-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-group-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-cancel-group-log", "jsonl");
+    let fake_codex = write_fake_codex_spawns_worker(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-cancel-group",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "modelId": "gpt-5.5"
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    let parent_pid = wait_for_logged_pid(&log_path, "turn-pid:").await;
+    let worker_pid = wait_for_logged_pid(&log_path, "worker-pid:").await;
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-task-cancel-group"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    assert_eq!(cancelled["accepted"], true);
+    assert_process_exited(parent_pid).await;
+    assert_process_exited(worker_pid).await;
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_id() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -651,8 +749,14 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
       progress_id='progress-1'
@@ -698,8 +802,14 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
@@ -743,11 +853,97 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       sleep 1
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_traps_termination(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-cancel-kill", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+case "$*" in
+  *' -c '*|'-c '*)
+    printf 'turn-pid:%s\n' "$$" >> "$LOG_PATH"
+    ;;
+  *)
+    printf 'persistent-pid:%s\n' "$$" >> "$LOG_PATH"
+    ;;
+esac
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      while true; do sleep 1; done
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_spawns_worker(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-cancel-group", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+case "$*" in
+  *' -c '*|'-c '*)
+    printf 'turn-pid:%s\n' "$$" >> "$LOG_PATH"
+    ;;
+esac
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      sh -c 'trap "" TERM; while true; do sleep 1; done' &
+      printf 'worker-pid:%s\n' "$!" >> "$LOG_PATH"
+      while true; do sleep 1; done
       ;;
   esac
 done
@@ -897,6 +1093,44 @@ async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
     panic!("expected at least {expected} {method} calls");
 }
 
+async fn wait_for_logged_pid(log_path: &Path, prefix: &str) -> u32 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let content = fs::read_to_string(log_path).unwrap_or_default();
+        if let Some(pid) = content.lines().find_map(|line| {
+            line.strip_prefix(prefix)
+                .and_then(|value| value.trim().parse::<u32>().ok())
+        }) {
+            return pid;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for fake codex pid with prefix {prefix:?}; content:\n{content}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+async fn assert_process_exited(pid: u32) {
+    for _ in 0..50 {
+        if !process_exists(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("cancel returned before fake codex process {pid} exited");
+}
+
+fn process_exists(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
     for _ in 0..50 {
         let listed = handler
@@ -929,13 +1163,13 @@ async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &s
             }))
             .await
             .expect("list should succeed");
-        let idle = listed["workspaces"]
+        let running = listed["workspaces"]
             .as_array()
             .into_iter()
             .flatten()
             .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
-            .any(|task| task["localTaskId"] == local_task_id && task["running"] == false);
-        if idle {
+            .any(|task| task["localTaskId"] == local_task_id && task["running"] == true);
+        if !running {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -959,13 +1193,6 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {
     while events.try_recv().is_ok() {}
-}
-
-async fn wait_for_response_completed(events: &mut broadcast::Receiver<Value>) {
-    recv_events_until(events, |runtime_events| {
-        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
-    })
-    .await;
 }
 
 async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done: F) -> Vec<Value>
@@ -992,6 +1219,20 @@ where
             .expect("runtime event channel should stay open");
         received.push(message);
     }
+}
+
+async fn wait_for_response_event(
+    events: &mut broadcast::Receiver<Value>,
+    event_name: &str,
+    subtask_id: i64,
+) {
+    recv_events_until(events, |received| {
+        find_runtime_event(received, event_name, |event| {
+            event["payload"]["subtask_id"] == subtask_id
+        })
+        .is_some()
+    })
+    .await;
 }
 
 fn find_runtime_event<'a, F>(

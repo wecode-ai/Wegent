@@ -110,6 +110,7 @@ describe('DesktopSidebar', () => {
   beforeEach(() => {
     localStorage.clear()
     enableTauri()
+    Element.prototype.scrollIntoView = vi.fn()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -598,12 +599,12 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('marks remote runtime projects separately from local projects', () => {
+  test('hides remote-only runtime projects from the project list', () => {
     renderSidebar({
       runtimeWork: {
         projects: [
           {
-            project: { id: 7, key: 'remote-project-id', name: 'Wegent' },
+            project: { id: 7, key: 'remote-project-id', name: 'Remote Wegent' },
             deviceWorkspaces: [
               {
                 id: 91,
@@ -618,14 +619,32 @@ describe('DesktopSidebar', () => {
               },
             ],
           },
+          {
+            project: { id: 8, key: 'local-project-id', name: 'Local Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 92,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/Wegent',
+                workspaceSource: 'local',
+                localTasks: [],
+              },
+            ],
+          },
         ],
         chats: [],
         totalLocalTasks: 0,
       },
     })
 
-    expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-folder-icon-7')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote Wegent')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-remote-folder-icon-7')).not.toBeInTheDocument()
+    expect(screen.getByText('Local Wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-icon-8')).toBeInTheDocument()
+    expect(screen.getAllByTestId('project-item')).toHaveLength(1)
   })
 
   test('shows running status on running runtime tasks only', async () => {
@@ -1429,7 +1448,7 @@ describe('DesktopSidebar', () => {
     const user = userEvent.setup()
     const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
     const onRemoveProject = vi.fn().mockResolvedValue(undefined)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirmSpy = vi.spyOn(window, 'confirm')
 
     renderSidebar({
       projects: [],
@@ -1483,7 +1502,14 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-menu-7'))
     await user.click(screen.getByTestId('remove-project-7'))
 
-    expect(confirmSpy).toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    const dialog = screen.getByTestId('remove-project-dialog-7')
+    expect(dialog).toHaveTextContent('移除 Wegent?')
+    expect(dialog).toHaveTextContent('这将从 Wework 中移除该项目。磁盘上的文件不会被删除。')
+    expect(onRemoveProject).not.toHaveBeenCalled()
+
+    await user.click(screen.getByTestId('remove-project-dialog-7-confirm-button'))
+
     await waitFor(() => {
       expect(onRemoveProject).toHaveBeenCalledWith(7)
     })
@@ -2047,13 +2073,224 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
+  test('expands project runtime tasks by ten and collapses back to five', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 26,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: Array.from({ length: 26 }, (_, index) => ({
+                  localTaskId: `task-${index + 1}`,
+                  workspacePath: '/repo/Wegent',
+                  title: `Task ${index + 1}`,
+                  runtime: 'codex',
+                  updatedAt: '2026-06-20T06:00:00Z',
+                })),
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 26,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toHaveTextContent('折叠显示')
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(25)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(26)
+    expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+  })
+
   test('toggles a project when its sidebar row is clicked', async () => {
+    const user = userEvent.setup()
+
     renderSidebar()
 
     const button = screen.getByTestId('project-item-button')
-    expect(button).toHaveAttribute('aria-expanded', 'false')
-    await userEvent.click(screen.getByTestId('project-item-button'))
+    const panel = screen.getByTestId('project-local-tasks-panel-7')
 
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(panel).toHaveAttribute('aria-hidden', 'true')
+    expect(panel).toHaveClass(
+      'grid',
+      'overflow-hidden',
+      'transition-[grid-template-rows,opacity]',
+      'grid-rows-[0fr]',
+      'opacity-0'
+    )
+
+    await user.click(button)
+
+    expect(button).toHaveAttribute('aria-expanded', 'true')
+    expect(panel).toHaveAttribute('aria-hidden', 'false')
+    expect(panel).toHaveClass('grid-rows-[1fr]', 'opacity-100')
+
+    await user.click(button)
+
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(panel).toHaveAttribute('aria-hidden', 'true')
+    expect(panel).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+  })
+
+  test('switches project hover affordance based on expanded state', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar()
+
+    const button = screen.getByTestId('project-item-button')
+    const title = screen.getByTestId('project-title-7')
+    const collapsedIndicator = screen.getByTestId('project-collapsed-hover-indicator-7')
+    const expandedIndicator = screen.getByTestId('project-expanded-hover-indicator-7')
+
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(title).toHaveTextContent('Wegent')
+    expect(title).not.toHaveClass('group-hover/project:hidden')
+    expect(title.parentElement).toHaveClass('gap-1.5')
+    expect(collapsedIndicator).toHaveClass(
+      'hidden',
+      'group-hover/project:block',
+      'group-hover/project:opacity-100',
+      'group-focus-within/project:block',
+      'group-focus-within/project:opacity-100'
+    )
+    expect(expandedIndicator).toHaveClass('hidden')
+
+    await user.click(button)
+
+    expect(button).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('project-title-7')).not.toHaveClass('group-hover/project:hidden')
+    expect(screen.getByTestId('project-collapsed-hover-indicator-7')).toHaveClass('hidden')
+    expect(screen.getByTestId('project-expanded-hover-indicator-7')).toHaveClass(
+      'group-hover/project:block',
+      'group-focus-within/project:block'
+    )
+  })
+
+  test('allows collapsing a project while one of its runtime tasks is active', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        workspacePath: '/repo/Wegent',
+        localTaskId: 'codex-active',
+      },
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-active',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Active fix',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    const button = screen.getByTestId('project-item-button')
+    const panel = screen.getByTestId('project-local-tasks-panel-7')
+
+    await waitFor(() => expect(button).toHaveAttribute('aria-expanded', 'true'))
+
+    expect(screen.getByTestId('runtime-local-task-row-codex-active')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+
+    await user.click(button)
+
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(panel).toHaveAttribute('aria-hidden', 'true')
+    expect(panel).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+  })
+
+  test('auto-expands the opened standalone runtime project', () => {
+    renderSidebar({
+      projects: [],
+      devices: [localDevice({ device_id: 'device-1', name: 'Local Mac' })],
+      standaloneDeviceId: 'device-1',
+      standaloneWorkspacePath: '/Users/alice/hello 20',
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              key: 'local:/Users/alice/hello 20',
+              name: 'hello 20',
+            },
+            totalLocalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: null,
+                projectId: null,
+                deviceId: 'device-1',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/hello 20',
+                workspaceKind: 'workspace',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 0,
+      },
+    })
+
+    const button = screen.getByTestId('project-item-button')
+    expect(button).toHaveTextContent('hello 20')
     expect(button).toHaveAttribute('aria-expanded', 'true')
   })
 })

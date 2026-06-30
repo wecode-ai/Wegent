@@ -85,6 +85,26 @@ def test_round_trip_preserves_interactive_form_answer():
     assert converted.interactive_form_answer == request.interactive_form_answer
 
 
+def test_round_trip_preserves_attachments_for_executor_download():
+    request = ExecutionRequest(
+        attachments=[
+            {
+                "id": 16,
+                "filename": "frontend.zip",
+                "content_type": "application/zip",
+                "size": 1024,
+                "download_url": "/api/attachments/16/download",
+            }
+        ]
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["attachments"] == request.attachments
+    assert converted.attachments == request.attachments
+
+
 def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
     request = ExecutionRequest(skip_git_clone=True)
 

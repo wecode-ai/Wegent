@@ -2,6 +2,7 @@ import {
   Archive,
   Bell,
   BellOff,
+  ChevronDown,
   ChevronRight,
   Edit3,
   FolderPlus,
@@ -64,6 +65,7 @@ import type {
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import {
   getRuntimeChatSidebarTaskItems,
+  getNextRuntimeSidebarTaskVisibleLimit,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
@@ -72,6 +74,7 @@ import {
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
+  RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
   type RuntimeSidebarTaskItem,
 } from './runtimeTaskSidebarHelpers'
 import { useResizableSidebar } from './useResizableSidebar'
@@ -427,6 +430,11 @@ function writeStoredStringSet(key: string, values: Set<string>) {
   }
 }
 
+function readStoredStringSetForVersion(key: string, version: number): Set<string> {
+  void version
+  return readStoredStringSet(key)
+}
+
 function pruneProjectIdSet(values: Set<number>, projects: ProjectWithTasks[]): Set<number> {
   if (projects.length === 0) return values
   const projectIds = new Set(projects.map(project => project.id))
@@ -585,9 +593,16 @@ function getRuntimeProjectDeviceState(
 }
 
 function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
-  return Boolean(
-    runtimeProjectWork?.deviceWorkspaces.some(workspace => workspace.workspaceSource === 'remote')
+  const workspaces = runtimeProjectWork?.deviceWorkspaces ?? []
+  return (
+    workspaces.length > 0 && workspaces.every(workspace => workspace.workspaceSource === 'remote')
   )
+}
+
+function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
+  const workspaces = runtimeProjectWork.deviceWorkspaces
+  if (workspaces.length === 0) return true
+  return workspaces.some(workspace => workspace.workspaceSource !== 'remote')
 }
 
 function shouldShowProjectDeviceStatus(
@@ -1380,9 +1395,13 @@ function ProjectItem({
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
     [runtimeWorkspaces]
   )
-  const [runtimeTasksExpanded, setRuntimeTasksExpanded] = useState(false)
+  const [runtimeTaskVisibleLimit, setRuntimeTaskVisibleLimit] = useState(
+    RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  )
   const [projectArchiving, setProjectArchiving] = useState(false)
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
+  const [removingProject, setRemovingProject] = useState(false)
   const pinnedTaskKeysStorageRef = useRef(pinnedTaskKeysStorageKey)
   const [pinnedRuntimeTaskKeys, setPinnedRuntimeTaskKeys] = useState<Set<string>>(() =>
     readStoredStringSet(pinnedTaskKeysStorageKey)
@@ -1392,10 +1411,16 @@ function ProjectItem({
     [pinnedRuntimeTaskKeys, runtimeTaskItems]
   )
   const visibleRuntimeTaskItems = useMemo(
-    () => getVisibleRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTasksExpanded),
-    [prioritizedRuntimeTaskItems, runtimeTasksExpanded]
+    () => getVisibleRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit),
+    [prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
   )
-  const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(runtimeTaskItems)
+  const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
+    prioritizedRuntimeTaskItems,
+    runtimeTaskVisibleLimit
+  )
+  const canCollapseRuntimeTasks =
+    prioritizedRuntimeTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT &&
+    visibleRuntimeTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
     getSidebarDeviceState(getProjectDeviceId(project), devices)
@@ -1449,6 +1474,20 @@ function ProjectItem({
       setProjectArchiving(false)
     }
   }
+  const closeRemoveConfirm = () => {
+    if (!removingProject) {
+      setRemoveConfirmOpen(false)
+    }
+  }
+  const confirmRemoveProject = async () => {
+    setRemovingProject(true)
+    try {
+      await onRemoveProject(project.id)
+      setRemoveConfirmOpen(false)
+    } finally {
+      setRemovingProject(false)
+    }
+  }
 
   return (
     <div data-testid="project-item" className="space-y-0.5">
@@ -1465,13 +1504,37 @@ function ProjectItem({
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
-          <ProjectFolderIcon
-            project={project}
-            remote={isRuntimeRemoteProject(runtimeProjectWork)}
-            className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
-          />
-          <span className="min-w-0 flex-1 truncate" title={project.name}>
-            {project.name}
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+            <ProjectFolderIcon
+              project={project}
+              remote={isRuntimeRemoteProject(runtimeProjectWork)}
+              className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
+            />
+          </span>
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span
+              data-testid={`project-title-${project.id}`}
+              className="min-w-0 truncate"
+              title={project.name}
+            >
+              {project.name}
+            </span>
+            <ChevronRight
+              data-testid={`project-collapsed-hover-indicator-${project.id}`}
+              className={cn(
+                'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
+                !expanded &&
+                  'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+              )}
+            />
+            <ChevronDown
+              data-testid={`project-expanded-hover-indicator-${project.id}`}
+              className={cn(
+                'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
+                expanded &&
+                  'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+              )}
+            />
           </span>
           {showProjectDeviceStatus && (
             <ProjectDeviceInlineStatus
@@ -1506,11 +1569,7 @@ function ProjectItem({
                 icon: X,
                 testId: `remove-project-${project.id}`,
                 danger: true,
-                onSelect: () => {
-                  if (window.confirm(t('workbench.remove_project_confirm', '确定移除该项目吗？'))) {
-                    void onRemoveProject(project.id)
-                  }
-                },
+                onSelect: () => setRemoveConfirmOpen(true),
               },
             ]}
             triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
@@ -1532,56 +1591,82 @@ function ProjectItem({
           </button>
         </div>
       </div>
-      {expanded && (
-        <div className="space-y-0.5">
-          {runtimeTaskItems.length === 0 ? (
-            <div
-              data-testid={`project-local-tasks-empty-${project.id}`}
-              className="ml-9 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
-            >
-              {t('workbench.no_chats', '暂无会话')}
-            </div>
-          ) : (
-            <>
-              {visibleRuntimeTaskItems.map(({ workspace, task }) => (
-                <RuntimeLocalTaskRow
-                  key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
-                  workspace={workspace}
-                  task={task}
-                  selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                  unread={unreadTaskKeys.has(getRuntimeTaskUnreadKey(workspace, task))}
-                  marked={pinnedRuntimeTaskKeys.has(getRuntimeTaskPinKey(workspace, task))}
-                  indentClassName="pl-9"
-                  imNotificationSettings={imNotificationSettings}
-                  showDeviceMarker={showDeviceMarker}
-                  onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-                  onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
-                  onToggleMark={toggleRuntimeTaskPin}
-                  onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-                  onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-                  onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                />
-              ))}
-              {hasHiddenRuntimeTasks && (
-                <button
-                  type="button"
-                  data-testid={
-                    runtimeTasksExpanded
-                      ? `project-runtime-tasks-collapse-${project.id}`
-                      : `project-runtime-tasks-expand-${project.id}`
-                  }
-                  onClick={() => setRuntimeTasksExpanded(expanded => !expanded)}
-                  className="ml-9 flex h-8 items-center rounded-md px-2 text-left text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
-                >
-                  {runtimeTasksExpanded
-                    ? t('workbench.collapse_display', '折叠显示')
-                    : t('workbench.expand_display', '展开显示')}
-                </button>
-              )}
-            </>
-          )}
+      <div
+        data-testid={`project-local-tasks-panel-${project.id}`}
+        aria-hidden={!expanded}
+        className={cn(
+          'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+          expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="space-y-0.5">
+            {runtimeTaskItems.length === 0 ? (
+              <div
+                data-testid={`project-local-tasks-empty-${project.id}`}
+                className="ml-9 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
+              >
+                {t('workbench.no_chats', '暂无会话')}
+              </div>
+            ) : (
+              <>
+                {visibleRuntimeTaskItems.map(({ workspace, task }) => (
+                  <RuntimeLocalTaskRow
+                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                    workspace={workspace}
+                    task={task}
+                    selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                    unread={unreadTaskKeys.has(getRuntimeTaskUnreadKey(workspace, task))}
+                    marked={pinnedRuntimeTaskKeys.has(getRuntimeTaskPinKey(workspace, task))}
+                    indentClassName="pl-9"
+                    imNotificationSettings={imNotificationSettings}
+                    showDeviceMarker={showDeviceMarker}
+                    onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                    onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
+                    onToggleMark={toggleRuntimeTaskPin}
+                    onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
+                    onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+                    onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                  />
+                ))}
+                {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
+                  <div className="ml-9 flex h-8 items-center gap-2">
+                    {hasHiddenRuntimeTasks && (
+                      <button
+                        type="button"
+                        data-testid={`project-runtime-tasks-expand-${project.id}`}
+                        onClick={() =>
+                          setRuntimeTaskVisibleLimit(currentLimit =>
+                            getNextRuntimeSidebarTaskVisibleLimit(
+                              currentLimit,
+                              prioritizedRuntimeTaskItems.length
+                            )
+                          )
+                        }
+                        className="flex h-8 items-center rounded-md px-2 text-left text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                      >
+                        {t('workbench.expand_display', '展开显示')}
+                      </button>
+                    )}
+                    {canCollapseRuntimeTasks && (
+                      <button
+                        type="button"
+                        data-testid={`project-runtime-tasks-collapse-${project.id}`}
+                        onClick={() =>
+                          setRuntimeTaskVisibleLimit(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
+                        }
+                        className="flex h-8 items-center rounded-md px-2 text-left text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                      >
+                        {t('workbench.collapse_display', '折叠显示')}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      )}
+      </div>
       <ArchiveConversationsConfirmDialog
         open={archiveConfirmOpen}
         title={t('workbench.archive_project_dialog_title', {
@@ -1598,6 +1683,22 @@ function ProjectItem({
         testId={`archive-project-conversations-dialog-${project.id}`}
         onClose={closeArchiveConfirm}
         onConfirm={confirmArchiveProjectConversations}
+      />
+      <ArchiveConversationsConfirmDialog
+        open={removeConfirmOpen}
+        title={t('workbench.remove_project_dialog_title', {
+          projectName: project.name,
+          defaultValue: '移除 {{projectName}}?',
+        })}
+        description={t('workbench.remove_project_dialog_desc', {
+          defaultValue: '这将从 Wework 中移除该项目。磁盘上的文件不会被删除。',
+        })}
+        confirmLabel={t('workbench.remove_project_dialog_confirm', '移除')}
+        cancelLabel={t('workbench.cancel', '取消')}
+        submitting={removingProject}
+        testId={`remove-project-dialog-${project.id}`}
+        onClose={closeRemoveConfirm}
+        onConfirm={confirmRemoveProject}
       />
     </div>
   )
@@ -1710,7 +1811,7 @@ export function DesktopSidebar({
     [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
   )
   const filteredRuntimeProjects = useMemo(() => {
-    const items = runtimeWork?.projects ?? []
+    const items = (runtimeWork?.projects ?? []).filter(shouldShowRuntimeProject)
     return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
   }, [runtimeWork?.projects, standaloneProjectWork])
   const sidebarProjects = useMemo(() => {
@@ -1740,8 +1841,11 @@ export function DesktopSidebar({
     ],
     [chatTaskItems, filteredRuntimeProjects]
   )
+  const storedUnreadRuntimeTaskKeys = useMemo(
+    () => readStoredStringSetForVersion(unreadRuntimeTaskKeysStorageKey, runtimeTaskReadVersion),
+    [runtimeTaskReadVersion, unreadRuntimeTaskKeysStorageKey]
+  )
   const runtimeTaskReadState = useMemo(() => {
-    const storedUnreadKeys = readStoredStringSet(unreadRuntimeTaskKeysStorageKey)
     const previousRunningKeys = readStoredStringSet(runningRuntimeTaskKeysStorageKey)
     const currentTaskKeys = new Set<string>()
     const currentRunningKeys = new Set<string>()
@@ -1763,7 +1867,9 @@ export function DesktopSidebar({
       }
     })
 
-    const unreadKeys = new Set([...storedUnreadKeys].filter(key => currentTaskKeys.has(key)))
+    const unreadKeys = new Set(
+      [...storedUnreadRuntimeTaskKeys].filter(key => currentTaskKeys.has(key))
+    )
     completedFromPreviousRunKeys.forEach(taskKey => {
       if (!selectedKeys.has(taskKey)) {
         unreadKeys.add(taskKey)
@@ -1778,8 +1884,7 @@ export function DesktopSidebar({
     allRuntimeTaskItems,
     currentRuntimeTask,
     runningRuntimeTaskKeysStorageKey,
-    runtimeTaskReadVersion,
-    unreadRuntimeTaskKeysStorageKey,
+    storedUnreadRuntimeTaskKeys,
   ])
   const projectSectionArchiveItems = useMemo(() => {
     return filteredRuntimeProjects
@@ -1802,24 +1907,52 @@ export function DesktopSidebar({
     [chatTaskItems]
   )
   const chatSectionArchiveCount = chatSectionArchiveAddresses.length
-  const selectedRuntimeProjectId = useMemo(() => {
-    if (!currentRuntimeTask) return null
-    const projectWork = runtimeWork?.projects.find(item =>
-      item.deviceWorkspaces.some(workspace =>
-        workspace.localTasks.some(task =>
-          isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+  const selectedRuntimeProject = useMemo(() => {
+    if (currentRuntimeTask) {
+      const projectWork = filteredRuntimeProjects.find(item =>
+        item.deviceWorkspaces.some(workspace =>
+          workspace.localTasks.some(task =>
+            isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+          )
         )
       )
+      return projectWork
+        ? {
+            autoExpandKey: `task:${getRuntimeNotificationKey(currentRuntimeTask)}`,
+            id: runtimeProjectUiId(projectWork.project),
+          }
+        : null
+    }
+
+    const normalizedDeviceId = standaloneDeviceId?.trim()
+    const normalizedWorkspacePath = standaloneWorkspacePath
+      ? normalizeSidebarWorkspacePath(standaloneWorkspacePath)
+      : ''
+    if (!normalizedDeviceId || !normalizedWorkspacePath) return null
+
+    const projectWork = filteredRuntimeProjects.find(item =>
+      item.deviceWorkspaces.some(
+        workspace =>
+          workspace.deviceId === normalizedDeviceId &&
+          normalizeSidebarWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
+      )
     )
-    return projectWork?.project.id ?? null
-  }, [currentRuntimeTask, runtimeWork?.projects])
+    return projectWork
+      ? {
+          autoExpandKey: `workspace:${normalizedDeviceId}:${normalizedWorkspacePath}`,
+          id: runtimeProjectUiId(projectWork.project),
+        }
+      : null
+  }, [currentRuntimeTask, filteredRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
+  const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
+  const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
     if (!currentRuntimeTask) return false
     return chatTaskItems.some(({ workspace, task }) =>
       isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
     )
   }, [currentRuntimeTask, chatTaskItems])
-  const displayedProjectsExpanded = projectsExpanded || selectedRuntimeProjectId !== null
+  const displayedProjectsExpanded = projectsExpanded
   const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
   const isArchiveSectionSubmitting =
     archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
@@ -1858,11 +1991,8 @@ export function DesktopSidebar({
       }
     }
   }
-  const displayedExpandedProjectIds = useMemo(() => {
-    if (selectedRuntimeProjectId === null) return visibleExpandedProjectIds
-    if (visibleExpandedProjectIds.has(selectedRuntimeProjectId)) return visibleExpandedProjectIds
-    return new Set([...visibleExpandedProjectIds, selectedRuntimeProjectId])
-  }, [selectedRuntimeProjectId, visibleExpandedProjectIds])
+  const displayedExpandedProjectIds = visibleExpandedProjectIds
+  const autoExpandedProjectKeyRef = useRef<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
     setExpandedProjectIds(previous => {
@@ -1883,6 +2013,20 @@ export function DesktopSidebar({
     writeStoredStringSet(unreadRuntimeTaskKeysStorageKey, nextKeys)
     setRuntimeTaskReadVersion(version => version + 1)
   }
+
+  useEffect(() => {
+    if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
+
+    const scopedAutoExpandKey = `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
+    if (autoExpandedProjectKeyRef.current === scopedAutoExpandKey) return
+
+    autoExpandedProjectKeyRef.current = scopedAutoExpandKey
+    setProjectsExpanded(true)
+    setExpandedProjectIds(previous => {
+      if (previous.has(selectedRuntimeProjectId)) return previous
+      return new Set([...previous, selectedRuntimeProjectId])
+    })
+  }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
 
   const openProjectCreateMenu = (anchor: HTMLElement) => {
     setProjectCreateMenuOpen(open => {
@@ -1924,6 +2068,7 @@ export function DesktopSidebar({
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
     setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
+    setRuntimeTaskReadVersion(version => version + 1)
   }, [
     chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,

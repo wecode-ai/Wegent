@@ -30,6 +30,8 @@ import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
+const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
+
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
@@ -74,6 +76,7 @@ export function DesktopWorkbenchLayout() {
   } = useWorkbench()
   const activeItem = 'chat'
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() =>
@@ -99,6 +102,7 @@ export function DesktopWorkbenchLayout() {
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
+  const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
     const handlePopState = () => {
@@ -121,12 +125,22 @@ export function DesktopWorkbenchLayout() {
   }, [])
 
   useEffect(() => {
-    if (sidebarCollapsed || !sidebarPreviewOpen) return
+    const syncAutoCollapse = () => {
+      setSidebarAutoCollapsed(window.innerWidth <= SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH)
+    }
+
+    syncAutoCollapse()
+    window.addEventListener('resize', syncAutoCollapse)
+    return () => window.removeEventListener('resize', syncAutoCollapse)
+  }, [])
+
+  useEffect(() => {
+    if (effectiveSidebarCollapsed || !sidebarPreviewOpen) return
     const timer = window.setTimeout(() => {
       setSidebarPreviewOpen(false)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [sidebarCollapsed, sidebarPreviewOpen])
+  }, [effectiveSidebarCollapsed, sidebarPreviewOpen])
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
@@ -159,9 +173,9 @@ export function DesktopWorkbenchLayout() {
   }, [])
 
   const openSidebarPreview = useCallback(() => {
-    if (!sidebarCollapsed) return
+    if (!effectiveSidebarCollapsed) return
     setSidebarPreviewOpen(true)
-  }, [sidebarCollapsed])
+  }, [effectiveSidebarCollapsed])
 
   const closeSidebarPreview = useCallback(() => {
     setSidebarPreviewOpen(false)
@@ -170,6 +184,9 @@ export function DesktopWorkbenchLayout() {
   const updateSidebarCollapsed = useCallback(
     (collapsed: boolean) => {
       setSidebarPreviewOpen(false)
+      if (!collapsed) {
+        setSidebarAutoCollapsed(false)
+      }
       setSidebarCollapsed(collapsed)
     },
     [setSidebarCollapsed]
@@ -442,8 +459,8 @@ export function DesktopWorkbenchLayout() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && renderDesktopSidebar({ collapsed: sidebarCollapsed })}
-      {!settingsOpen && sidebarCollapsed && (
+      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+      {!settingsOpen && effectiveSidebarCollapsed && (
         <>
           <div
             data-testid="desktop-sidebar-hover-edge"
@@ -484,7 +501,7 @@ export function DesktopWorkbenchLayout() {
         />
       ) : (
         <DesktopWorkbenchMain
-          sidebarCollapsed={sidebarCollapsed}
+          sidebarCollapsed={effectiveSidebarCollapsed}
           sidebarResizing={sidebarResizing}
           onSidebarCollapsedChange={updateSidebarCollapsed}
           activePane={{
