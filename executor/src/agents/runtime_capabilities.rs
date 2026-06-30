@@ -387,7 +387,8 @@ fn pending_download_attachments(attachments: &[AttachmentRecord]) -> Vec<Attachm
                 .local_path
                 .as_deref()
                 .map(str::trim)
-                .is_none_or(|value| value.is_empty())
+                .map(|value| value.is_empty())
+                .unwrap_or(true)
                 && !attachment_failed_status(attachment)
         })
         .cloned()
