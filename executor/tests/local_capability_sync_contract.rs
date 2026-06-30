@@ -16,9 +16,10 @@ use serde_json::{json, Value};
 use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig},
     local::capabilities::{
-        default_manifest_path, get_project_id, is_project_task, CapabilityPackageProvider,
-        CapabilitySyncError, CapabilitySyncHandler, GlobalCapabilityReporter,
-        GlobalCapabilityStore, ManagedCapabilityManifest, SkillSyncSpec,
+        default_manifest_path, get_project_id, is_project_task,
+        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilitySyncError,
+        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
+        ManagedCapabilityManifest, SkillSyncSpec,
     },
     protocol::ExecutionRequest,
 };
@@ -466,6 +467,10 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
             "superpowers/5.0.7/.claude-plugin/plugin.json",
             r#"{"name":"superpowers","version":"5.0.7"}"#,
         ),
+        (
+            "superpowers/5.0.7/hooks/claude/session-start-hook.cmd",
+            "#!/bin/sh\n",
+        ),
         ("superpowers/5.0.7/skills/debugging/SKILL.md", "# Debug"),
         ("__MACOSX/._superpowers", ""),
         ("__MACOSX/superpowers/._debugging", ""),
@@ -477,9 +482,60 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
         fs::read_to_string(install_path.join("skills/debugging/SKILL.md")).unwrap(),
         "# Debug"
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = fs::metadata(install_path.join("hooks/claude/session-start-hook.cmd"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0);
+    }
     assert!(!install_path.join("superpowers").exists());
     assert!(!install_path.join("__MACOSX").exists());
     assert!(!install_path.join("old.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_enabled_claude_plugin_cache_repairs_existing_hook_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempRoot::new("capability-sync-plugin-hook-permissions");
+    let claude_dir = temp.path().join(".claude");
+    let plugins_dir = claude_dir.join("plugins");
+    let install_path = plugins_dir.join("cache/wegent/superpowers/5.0.7");
+    let hook_path = install_path.join("hooks/run-hook.cmd");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    fs::write(&hook_path, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        json!({"enabledPlugins": {"superpowers@wegent": true}}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        plugins_dir.join("installed_plugins.json"),
+        json!({
+            "version": 2,
+            "plugins": {
+                "superpowers@wegent": [{
+                    "installPath": install_path.display().to_string(),
+                    "version": "5.0.7"
+                }]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let restored = restore_enabled_claude_plugin_cache(&claude_dir).unwrap();
+
+    assert!(restored.is_empty());
+    let mode = fs::metadata(&hook_path).unwrap().permissions().mode();
+    assert_ne!(mode & 0o111, 0);
 }
 
 #[tokio::test]

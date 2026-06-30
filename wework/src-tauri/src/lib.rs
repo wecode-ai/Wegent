@@ -1,6 +1,7 @@
 mod in_app_browser;
 mod local_executor;
 mod local_terminal;
+mod process_environment;
 
 use tauri::Manager;
 
@@ -197,6 +198,64 @@ fn local_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
+    match opener {
+        "vscode" => Some("Visual Studio Code"),
+        "vscode-insiders" => Some("Visual Studio Code - Insiders"),
+        "cursor" => Some("Cursor"),
+        "sublime-text" => Some("Sublime Text"),
+        "windsurf" => Some("Windsurf"),
+        "finder" => Some("Finder"),
+        "terminal" => Some("Terminal"),
+        "iterm2" => Some("iTerm"),
+        "ghostty" => Some("Ghostty"),
+        "warp" => Some("Warp"),
+        "xcode" => Some("Xcode"),
+        "android-studio" => Some("Android Studio"),
+        "intellij-idea" => Some("IntelliJ IDEA"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
+    let output = std::process::Command::new("open")
+        .args(["-a", app_name, path])
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err(format!("Failed to open workspace with {app_name}"))
+    } else {
+        Err(stderr)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
+    Err("Opening a local workspace is only supported on macOS".to_string())
+}
+
+#[tauri::command]
+fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
+    let opener =
+        normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
+    let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
+    let app_name = local_workspace_opener_app_name(&opener)
+        .ok_or_else(|| format!("Unsupported workspace opener: {opener}"))?;
+
+    if !std::path::Path::new(&path).exists() {
+        return Err("Workspace path does not exist".to_string());
+    }
+
+    open_local_workspace_with_app(app_name, &path)
+}
+
 #[derive(serde::Serialize)]
 struct DroppedFilePayload {
     name: String,
@@ -327,6 +386,84 @@ fn download_local_file_to_downloads(
     std::fs::copy(&source_path, &target_path)
         .map_err(|error| format!("Failed to copy file to Downloads: {error}"))?;
     notify_download_finished(&target_path);
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
+fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Ok(home) = std::env::var("WEGENT_EXECUTOR_HOME") {
+        if let Some(home) = normalized_non_empty(home) {
+            return Ok(std::path::PathBuf::from(home));
+        }
+    }
+
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to locate home directory: {error}"))?;
+    Ok(home.join(".wegent-executor"))
+}
+
+fn local_attachment_root(
+    app: &tauri::AppHandle,
+    workspace_path: Option<String>,
+) -> Result<std::path::PathBuf, String> {
+    if let Some(workspace_path) = workspace_path.and_then(normalized_non_empty) {
+        return Ok(std::path::PathBuf::from(workspace_path)
+            .join(".wegent")
+            .join("attachments")
+            .join("draft"));
+    }
+
+    Ok(default_executor_home(app)?
+        .join("workspace")
+        .join("attachments")
+        .join("draft"))
+}
+
+fn unique_attachment_directory(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before UNIX epoch: {error}"))?
+        .as_millis();
+
+    for index in 0..1000 {
+        let directory_name = if index == 0 {
+            millis.to_string()
+        } else {
+            format!("{millis}-{index}")
+        };
+        let directory = root.join(directory_name);
+        if !directory.exists() {
+            return Ok(directory);
+        }
+    }
+
+    Err("Failed to allocate attachment directory".to_string())
+}
+
+#[tauri::command]
+fn save_local_attachment_file(
+    app: tauri::AppHandle,
+    workspace_path: Option<String>,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Attachment file is empty".to_string());
+    }
+
+    let root = local_attachment_root(&app, workspace_path)?;
+    std::fs::create_dir_all(&root)
+        .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+    let directory = unique_attachment_directory(&root)?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+
+    let filename = sanitized_download_filename(&filename, std::path::Path::new("attachment"));
+    let target_path = unique_download_path(&directory, &filename);
+    std::fs::write(&target_path, bytes)
+        .map_err(|error| format!("Failed to save attachment file: {error}"))?;
 
     Ok(target_path.to_string_lossy().to_string())
 }
@@ -676,6 +813,33 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::local_workspace_opener_app_name;
+
+    #[test]
+    fn maps_local_workspace_openers_to_macos_app_names() {
+        assert_eq!(
+            local_workspace_opener_app_name("vscode"),
+            Some("Visual Studio Code")
+        );
+        assert_eq!(
+            local_workspace_opener_app_name("vscode-insiders"),
+            Some("Visual Studio Code - Insiders")
+        );
+        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
+        assert_eq!(
+            local_workspace_opener_app_name("android-studio"),
+            Some("Android Studio")
+        );
+        assert_eq!(
+            local_workspace_opener_app_name("intellij-idea"),
+            Some("IntelliJ IDEA")
+        );
+        assert_eq!(local_workspace_opener_app_name("unknown"), None);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -686,10 +850,7 @@ pub fn run() {
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-            ) {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window
                     .app_handle()
                     .state::<local_executor::LocalExecutorState>();
@@ -741,7 +902,9 @@ pub fn run() {
             set_tray_menu_state,
             download_local_file_to_downloads,
             local_path_exists,
+            open_local_workspace,
             read_dropped_files,
+            save_local_attachment_file,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal

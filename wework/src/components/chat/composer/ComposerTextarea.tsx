@@ -4,6 +4,7 @@ import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode, RefObject 
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
 import type { LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import { createLongPastedTextAttachment } from './pastedTextAttachment'
 
 interface ComposerTextareaProps {
   value: string
@@ -666,10 +667,18 @@ export function ComposerTextarea({
 
   const handlePaste: ClipboardEventHandler<HTMLTextAreaElement> = event => {
     const files = Array.from(event.clipboardData.files)
-    if (files.length === 0) return
+    if (files.length > 0) {
+      event.preventDefault()
+      onPasteFiles?.(files)
+      return
+    }
+
+    if (!onPasteFiles) return
+    const textAttachment = createLongPastedTextAttachment(event.clipboardData.getData('text/plain'))
+    if (!textAttachment) return
 
     event.preventDefault()
-    onPasteFiles?.(files)
+    onPasteFiles([textAttachment])
   }
 
   const hasSkillMentionOverlay = validSkillMentions.length > 0

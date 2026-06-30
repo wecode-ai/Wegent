@@ -25,10 +25,11 @@ use tokio::{
 
 use crate::{
     agents::runtime_capabilities,
-    attachments::{process_prompt, AttachmentRecord},
+    attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
+    process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -340,6 +341,16 @@ pub async fn run_codex_app_server_turn(
             .to_owned();
         thread_fields.push(("thread_id", thread_id.clone()));
         log_executor_event("codex thread request finished", &thread_fields);
+        if let Some(sender) = &notifications {
+            let _ = sender.send(json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": thread_id.clone()
+                    }
+                }
+            }));
+        }
 
         let turn_input = turn_input(&request.prompt);
         let mut turn_fields = task_fields(request.task_id, request.subtask_id);
@@ -362,12 +373,9 @@ pub async fn run_codex_app_server_turn(
             ),
         )
         .await?;
-        let outcome = with_rpc_timeout(
-            "turn",
-            timeout_seconds,
-            rpc.read_turn(turn_request_id, &mut state, notifications),
-        )
-        .await?;
+        let outcome = rpc
+            .read_turn(turn_request_id, &mut state, notifications)
+            .await?;
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -414,6 +422,12 @@ fn spawn_codex_app_server(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    command.env(
+        "PATH",
+        process_environment::normalized_process_path(
+            env::var("PATH").ok().as_deref().unwrap_or_default(),
+        ),
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -490,11 +504,7 @@ impl JsonRpcConnection {
                 return response_result(message);
             }
             if message.get("method").and_then(Value::as_str) == Some("error") {
-                return Err(message_params(&message)
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("codex app-server error")
-                    .to_owned());
+                return Err(codex_error_message(message_params(&message)));
             }
         }
     }
@@ -605,11 +615,7 @@ impl CodexRunState {
                 let params = message_params(message);
                 log_codex_run_state_error(params);
                 Some(ExecutionOutcome::Failed {
-                    message: params
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("codex app-server error")
-                        .to_owned(),
+                    message: codex_error_message(params),
                 })
             }
             _ => None,
@@ -774,12 +780,13 @@ fn log_codex_run_state_text(
 }
 
 fn log_codex_run_state_error(params: &Value) {
+    let message = codex_error_message(params);
     let params_json = serde_json::to_string(params)
         .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
     log_executor_event(
         "codex run state error",
         &[
-            ("message", json_string_field(params, "message")),
+            ("message", message),
             ("code", json_string_field(params, "code")),
             ("params_len", params_json.len().to_string()),
             ("params_preview", truncate_log_text(&params_json, 500)),
@@ -934,6 +941,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
+    launch_config
+        .config_overrides
+        .push(shell_path_config_override());
 
     if let Some(model) = &model {
         launch_config
@@ -998,6 +1008,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
     launch_config
+}
+
+fn shell_path_config_override() -> String {
+    let path = process_environment::normalized_process_path(
+        env::var("PATH").ok().as_deref().unwrap_or_default(),
+    );
+    format!("shell_environment_policy.set.PATH={}", toml_value(&path))
 }
 
 fn thread_config(
@@ -1461,6 +1478,11 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let text_attachment_context =
+        AttachmentPromptProcessor::build_text_attachment_context(&success);
+    if !text_attachment_context.is_empty() {
+        request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
+    }
 
     PreparedCodexExecutionRequest {
         request,
@@ -1640,6 +1662,47 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
     format!(
         "\n# Files mentioned by the user:\n\n{file_lines}\n\n## My request for Codex:\n{request_text}\n"
     )
+}
+
+fn append_text_attachment_context(prompt: &Value, context: &str) -> Value {
+    match prompt {
+        Value::String(text) => Value::String(format!("{text}{context}")),
+        Value::Array(blocks) => {
+            let mut output = blocks.clone();
+            if append_context_to_first_text_block(&mut output, context) {
+                Value::Array(output)
+            } else {
+                output.insert(
+                    0,
+                    json!({"type": "input_text", "text": context.trim_start()}),
+                );
+                Value::Array(output)
+            }
+        }
+        _ => Value::String(format!("{}{}", prompt_text(prompt), context)),
+    }
+}
+
+fn append_context_to_first_text_block(blocks: &mut [Value], context: &str) -> bool {
+    for block in blocks {
+        let Some(object) = block.as_object_mut() else {
+            continue;
+        };
+        let block_type = object.get("type").and_then(Value::as_str).unwrap_or("");
+        if !matches!(block_type, "input_text" | "text") {
+            continue;
+        }
+        let Some(text) = object
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        object.insert("text".to_owned(), Value::String(format!("{text}{context}")));
+        return true;
+    }
+    false
 }
 
 fn extract_user_request_text(text_parts: &[String]) -> String {
@@ -1973,6 +2036,40 @@ fn response_result(message: Value) -> Result<Value, String> {
 
 fn message_params(message: &Value) -> &Value {
     message.get("params").unwrap_or(message)
+}
+
+fn codex_error_message(params: &Value) -> String {
+    let nested_error = params.get("error");
+    let message = params
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            nested_error
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| nested_error.and_then(Value::as_str));
+    let details = params
+        .get("additionalDetails")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            nested_error
+                .and_then(|error| error.get("additionalDetails"))
+                .and_then(Value::as_str)
+        });
+
+    match (
+        message.filter(|value| !value.trim().is_empty()),
+        details.filter(|value| !value.trim().is_empty()),
+    ) {
+        (Some(message), Some(details)) if message != details => format!("{message}: {details}"),
+        (Some(message), _) => message.to_owned(),
+        (_, Some(details)) => details.to_owned(),
+        _ => nested_error
+            .map(Value::to_string)
+            .filter(|value| value != "null")
+            .unwrap_or_else(|| "codex app-server error".to_owned()),
+    }
 }
 
 fn extract_text(item: &Value) -> Option<String> {

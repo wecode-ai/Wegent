@@ -64,6 +64,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_binary: String,
     codex_app_server: CodexAppServerClient,
     event_tx: Option<broadcast::Sender<Value>>,
+    active_local_tasks: Arc<Mutex<HashSet<String>>>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
@@ -77,6 +78,7 @@ impl RuntimeWorkRpcHandler {
             codex_binary: codex_binary.clone(),
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
+            active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
@@ -599,10 +601,6 @@ impl RuntimeWorkRpcHandler {
                 "code": "bad_request",
             }));
         }
-        let thread_id = existing_link
-            .as_ref()
-            .and_then(|link| link.thread_id.clone())
-            .unwrap_or_else(|| local_task_id.clone());
         let workspace_path = workspace_path(&payload)
             .or_else(|| {
                 existing_link
@@ -620,6 +618,19 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
+            existing_link
+                .as_ref()
+                .and_then(runtime_session_id_from_link)
+        }) else {
+            return Ok(json!({
+                "success": false,
+                "error": "runtime task session is not ready",
+                "code": "missing_runtime_session",
+                "localTaskId": local_task_id,
+                "runtime": "codex",
+            }));
+        };
 
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -877,6 +888,7 @@ impl RuntimeWorkRpcHandler {
         }
         log_executor_event("runtime work turn spawning", &fields);
 
+        self.mark_active_local_task(&local_task_id);
         let handler = self.clone();
         tokio::spawn(async move {
             emit_response_event(
@@ -897,7 +909,15 @@ impl RuntimeWorkRpcHandler {
                 notifications,
             )
             .await;
-            mapper_task.abort();
+            if let Err(error) = mapper_task.await {
+                log_executor_event(
+                    "runtime work notification mapper failed",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                );
+            }
 
             handler.handle_turn_result(&local_task_id, &request, result);
         });
@@ -1010,6 +1030,7 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
+        let mut discovered_codex_task_signatures = HashSet::new();
 
         for thread in self.codex_threads(archived).await {
             if let Some(mut link) = self.link_from_thread(&thread) {
@@ -1019,15 +1040,19 @@ impl RuntimeWorkRpcHandler {
                 } else if link.status == "archived" {
                     continue;
                 }
+                link.list_order = Some(links.len());
                 if let Some(thread_id) = &link.thread_id {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
+                if let Some(signature) = codex_task_signature(&link) {
+                    discovered_codex_task_signatures.insert(signature);
+                }
                 links.push(link);
             }
         }
 
-        for link in self.local_task_links(true) {
+        for mut link in self.local_task_links(true) {
             let link_archived = link.status == "archived";
             if link_archived != archived {
                 continue;
@@ -1045,10 +1070,16 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
+            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
+                continue;
+            }
+            if !self.is_active_local_task(&link.local_task_id) {
+                normalize_unmapped_pending_codex_task(&mut link);
+            }
+            link.list_order = Some(links.len());
             links.push(link);
         }
 
-        links.sort_by_key(|link| std::cmp::Reverse(link.updated_at));
         links
     }
 
@@ -1333,6 +1364,27 @@ impl RuntimeWorkRpcHandler {
         self.thread_list_cache.invalidate();
     }
 
+    fn mark_active_local_task(&self, local_task_id: &str) {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .insert(local_task_id.to_owned());
+    }
+
+    fn unmark_active_local_task(&self, local_task_id: &str) {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
+    fn is_active_local_task(&self, local_task_id: &str) -> bool {
+        self.active_local_tasks
+            .lock()
+            .expect("active local task set lock should not be poisoned")
+            .contains(local_task_id)
+    }
+
     fn finish_local_task(&self, local_task_id: &str, thread_id: Option<String>, status: &str) {
         let invalidate_thread_id = thread_id.clone();
         self.store.update_task(local_task_id, |link| {
@@ -1350,8 +1402,51 @@ impl RuntimeWorkRpcHandler {
         if let Some(thread_id) = invalidate_thread_id {
             self.transcript_cache.invalidate(&thread_id);
         }
+        if status != "running" {
+            self.unmark_active_local_task(local_task_id);
+        }
         self.thread_list_cache.invalidate();
     }
+}
+
+fn is_unmapped_pending_codex_shadow(
+    link: &RuntimeTaskLink,
+    discovered_codex_task_signatures: &HashSet<String>,
+) -> bool {
+    is_unmapped_pending_codex_task(link)
+        && codex_task_signature(link)
+            .as_ref()
+            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
+}
+
+fn normalize_unmapped_pending_codex_task(link: &mut RuntimeTaskLink) {
+    if !is_unmapped_pending_codex_task(link) {
+        return;
+    }
+    link.status = "active".to_owned();
+    link.running = false;
+}
+
+fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
+    link.thread_id.is_none()
+        && link.running
+        && link.status == "running"
+        && is_codex_runtime(&link.runtime)
+}
+
+fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
+    if !is_codex_runtime(&link.runtime) {
+        return None;
+    }
+    let title = link.title.trim().to_ascii_lowercase();
+    if title.is_empty() || link.workspace_path.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}\0{}",
+        workspace_group_path(&link.workspace_path),
+        title
+    ))
 }
 
 fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)> {
@@ -1793,6 +1888,23 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
             copy_attachment_field(object, &mut normalized, "mime_type");
             copy_attachment_field(object, &mut normalized, "subtask_id");
             copy_attachment_field(object, &mut normalized, "file_extension");
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_path",
+                &["local_path", "localPath"],
+            );
+            copy_attachment_field_alias(
+                object,
+                &mut normalized,
+                "local_preview_url",
+                &["local_preview_url", "localPreviewUrl"],
+            );
+            if !normalized.contains_key("local_preview_url") {
+                if let Some(local_path) = normalized.get("local_path").cloned() {
+                    normalized.insert("local_preview_url".to_owned(), local_path);
+                }
+            }
             normalized.insert("status".to_owned(), Value::String("ready".to_owned()));
             normalized.insert("created_at".to_owned(), Value::Number(now_ms().into()));
             Some(Value::Object(normalized))
@@ -1803,6 +1915,20 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
+    }
+}
+
+fn copy_attachment_field_alias(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    target_key: &str,
+    source_keys: &[&str],
+) {
+    for source_key in source_keys {
+        if let Some(value) = source.get(*source_key).cloned() {
+            target.insert(target_key.to_owned(), value);
+            return;
+        }
     }
 }
 
@@ -1829,12 +1955,23 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
 }
 
 fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
+    let address = payload.get("address");
     payload
         .get("runtimeHandle")
         .or_else(|| payload.get("runtime_handle"))
         .and_then(runtime_session_id_from_handle)
+        .or_else(|| {
+            address.and_then(|address| {
+                address
+                    .get("runtimeHandle")
+                    .or_else(|| address.get("runtime_handle"))
+                    .and_then(runtime_session_id_from_handle)
+            })
+        })
         .or_else(|| string_field(payload, "providerSessionId"))
         .or_else(|| string_field(payload, "provider_session_id"))
+        .or_else(|| address.and_then(|address| string_field(address, "providerSessionId")))
+        .or_else(|| address.and_then(|address| string_field(address, "provider_session_id")))
 }
 
 fn runtime_session_id_from_handle(handle: &Value) -> Option<String> {

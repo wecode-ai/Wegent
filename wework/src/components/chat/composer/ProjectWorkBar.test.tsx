@@ -552,6 +552,32 @@ describe('ProjectWorkBar', () => {
     expect(onExecutionModeChange).not.toHaveBeenCalled()
   })
 
+  test('does not show a branch selector in local execution mode', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch="develop"
+        onWorktreeBranchChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
+  })
+
   test('does not invent a worktree branch when the current branch is unavailable', async () => {
     const onWorktreeBranchChange = vi.fn()
     const onListBranches = vi.fn().mockResolvedValue(['main', 'develop'])

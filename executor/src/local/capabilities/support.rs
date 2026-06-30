@@ -57,7 +57,8 @@ pub(super) fn extract_plugin_zip(
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(target, bytes)?;
+            fs::write(&target, bytes)?;
+            ensure_plugin_hook_executable(relative, &target)?;
         }
         if !temp_path.join(".claude-plugin/plugin.json").is_file() {
             return Err(CapabilitySyncError::invalid_payload(
@@ -77,6 +78,62 @@ pub(super) fn extract_plugin_zip(
     }
     fs::rename(&temp_path, install_path)?;
     Ok(())
+}
+
+pub(super) fn ensure_plugin_hook_permissions(
+    plugin_path: &Path,
+) -> Result<(), CapabilitySyncError> {
+    if !plugin_path.is_dir() {
+        return Ok(());
+    }
+
+    let mut pending = vec![PathBuf::new()];
+    while let Some(relative_dir) = pending.pop() {
+        for entry in fs::read_dir(plugin_path.join(&relative_dir))? {
+            let entry = entry?;
+            let relative = relative_dir.join(entry.file_name());
+            let target = entry.path();
+            let metadata = fs::metadata(&target)?;
+            if metadata.is_dir() {
+                pending.push(relative);
+            } else if metadata.is_file() {
+                ensure_plugin_hook_executable(&relative, &target)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_plugin_hook_executable(
+    relative: &Path,
+    target: &Path,
+) -> Result<(), CapabilitySyncError> {
+    #[cfg(unix)]
+    {
+        if is_plugin_hook_path(relative) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = fs::metadata(target)?.permissions();
+            permissions.set_mode(permissions.mode() | 0o111);
+            fs::set_permissions(target, permissions)?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = relative;
+        let _ = target;
+    }
+    Ok(())
+}
+
+fn is_plugin_hook_path(path: &Path) -> bool {
+    path.components().next().is_some_and(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| matches!(name, "hooks" | "hooks-handlers" | "hook-handlers"))
+    })
 }
 
 fn plugin_manifest_prefix(entries: &[(PathBuf, Vec<u8>)]) -> Option<PathBuf> {

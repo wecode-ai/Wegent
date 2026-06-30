@@ -96,13 +96,15 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let events = callback.wait_for_events(2).await;
+    let events = callback.wait_for_events(3).await;
 
     assert_eq!(events[0]["event_type"], "response.created");
     assert_eq!(events[0]["task_id"], 91);
-    assert_eq!(events[1]["event_type"], "response.completed");
+    assert_eq!(events[1]["event_type"], "response.output_text.delta");
+    assert_eq!(events[1]["data"]["delta"], "docker done");
+    assert_eq!(events[2]["event_type"], "response.completed");
     assert_eq!(
-        events[1]["data"]["response"]["output"][0]["content"][0]["text"],
+        events[2]["data"]["response"]["output"][0]["content"][0]["text"],
         "docker done"
     );
 }

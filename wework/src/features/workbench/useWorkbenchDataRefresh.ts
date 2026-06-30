@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -21,8 +21,6 @@ import type { WorkbenchAction } from './workbenchReducer'
 import { getRememberedStandaloneDeviceId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 
-const RUNTIME_WORK_REFRESH_INTERVAL_MS = 5000
-
 interface UseWorkbenchDataRefreshOptions {
   user: User
   state: WorkbenchState
@@ -39,7 +37,6 @@ export function useWorkbenchDataRefresh({
   services,
 }: UseWorkbenchDataRefreshOptions) {
   const [cloudWorkStatus, setCloudWorkStatus] = useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
-  const runtimeWorkRefreshInFlightRef = useRef(false)
 
   /* eslint-disable react-hooks/set-state-in-effect -- Cloud work status mirrors service availability and must reset when the service is removed. */
   useEffect(() => {
@@ -240,27 +237,6 @@ export function useWorkbenchDataRefresh({
     state.runtimeWork,
     state.standaloneDeviceId,
   ])
-
-  const refreshRuntimeWork = useCallback(async () => {
-    if (runtimeWorkRefreshInFlightRef.current) return
-    runtimeWorkRefreshInFlightRef.current = true
-    try {
-      const runtimeWork = await executorClient.runtime.listRuntimeWork()
-      dispatch({ type: 'runtime_work_refreshed', runtimeWork })
-    } catch {
-      // Runtime work polling is best-effort; explicit refresh paths surface errors.
-    } finally {
-      runtimeWorkRefreshInFlightRef.current = false
-    }
-  }, [dispatch, executorClient])
-
-  useEffect(() => {
-    if (state.isBootstrapping) return
-    const intervalId = window.setInterval(() => {
-      void refreshRuntimeWork()
-    }, RUNTIME_WORK_REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
-  }, [refreshRuntimeWork, state.isBootstrapping])
 
   const loadDevicesForRefresh = useCallback(
     async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {

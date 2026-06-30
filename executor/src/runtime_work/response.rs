@@ -26,6 +26,8 @@ pub(crate) struct RuntimeTaskLink {
     pub updated_at: i64,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
+    #[serde(skip)]
+    pub list_order: Option<usize>,
 }
 
 impl RuntimeTaskLink {
@@ -42,6 +44,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            list_order: None,
         }
     }
 
@@ -65,6 +68,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle,
             parent: Some(parent),
+            list_order: None,
         }
     }
 
@@ -77,13 +81,17 @@ impl RuntimeTaskLink {
         let local_archived = local_link
             .as_ref()
             .is_some_and(|link| link.status == "archived");
+        let local_terminal_status = local_link
+            .as_ref()
+            .and_then(|link| local_terminal_status_if_current(link, thread));
         let status = if local_archived {
             "archived".to_owned()
+        } else if let Some(status) = &local_terminal_status {
+            status.clone()
         } else {
             thread_status(thread)
         };
-        let local_running = local_link.as_ref().is_some_and(|link| link.running);
-        let running = !local_archived && (local_running || thread_running(thread));
+        let running = !local_archived && local_terminal_status.is_none() && thread_running(thread);
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -107,8 +115,26 @@ impl RuntimeTaskLink {
                 .map(|link| link.runtime_handle.clone())
                 .unwrap_or_else(|| json!({})),
             parent: local_link.and_then(|link| link.parent),
+            list_order: None,
         }
     }
+}
+
+fn local_terminal_status_if_current(link: &RuntimeTaskLink, thread: &Value) -> Option<String> {
+    if link.running || !is_terminal_status(&link.status) {
+        return None;
+    }
+    let local_is_current = timestamp_ms_field(thread, "updatedAt")
+        .map(|thread_updated_at| link.updated_at >= thread_updated_at)
+        .unwrap_or(true);
+    local_is_current.then(|| link.status.clone())
+}
+
+fn is_terminal_status(status: &str) -> bool {
+    matches!(
+        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+        "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
+    )
 }
 
 impl Default for RuntimeTaskLink {
@@ -125,6 +151,7 @@ impl Default for RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            list_order: None,
         }
     }
 }
@@ -198,10 +225,11 @@ pub(crate) fn workspace_response(
     let mut workspaces = groups
         .into_iter()
         .map(|(workspace_path, (workspace, mut local_tasks))| {
-            local_tasks.sort_by_key(|link| Reverse(link.updated_at));
+            local_tasks.sort_by(compare_runtime_task_links);
             let updated_at = local_tasks
-                .first()
+                .iter()
                 .map(|link| link.updated_at)
+                .max()
                 .or_else(|| workspace.as_ref().map(|workspace| workspace.updated_at))
                 .unwrap_or_else(now_ms);
             let label = workspace
@@ -237,6 +265,24 @@ pub(crate) fn workspace_response(
         .into_iter()
         .map(|(workspace, _, _, _)| workspace)
         .collect::<Vec<_>>()
+}
+
+fn compare_runtime_task_links(
+    left: &RuntimeTaskLink,
+    right: &RuntimeTaskLink,
+) -> std::cmp::Ordering {
+    match (left.list_order, right.list_order) {
+        (Some(left_order), Some(right_order)) => left_order
+            .cmp(&right_order)
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
+    }
 }
 
 pub(crate) fn archived_conversations_response(

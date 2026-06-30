@@ -117,7 +117,13 @@ describe('DesktopSidebar', () => {
 
     const actions = screen.getByTestId('projects-section-toggle-actions')
 
-    expect(actions).toHaveClass('absolute', 'right-2.5', 'pointer-events-none', 'invisible')
+    expect(actions).toHaveClass(
+      'absolute',
+      'right-2.5',
+      'z-[70]',
+      'pointer-events-none',
+      'opacity-0'
+    )
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
@@ -131,6 +137,15 @@ describe('DesktopSidebar', () => {
       'w-9',
       'shrink-0'
     )
+  })
+
+  test('keeps the resize handle hit area on the sidebar edge', () => {
+    renderSidebar()
+
+    const handle = screen.getByTestId('sidebar-resize-handle')
+
+    expect(handle).toHaveClass('right-[-14px]', 'w-[18px]')
+    expect(handle).not.toHaveClass('w-10')
   })
 
   test('does not render non-chat runtime workspace groups', async () => {
@@ -658,6 +673,93 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
+  test('persists unread dot when a runtime task finishes while the app is closed', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
+    const runningRuntimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalLocalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              localTasks: [
+                {
+                  localTaskId: 'codex-background',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Background task',
+                  runtime: 'codex' as const,
+                  running: true,
+                  updatedAt: '2026-06-20T03:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 1,
+    }
+    const completedRuntimeWork = {
+      ...runningRuntimeWork,
+      projects: [
+        {
+          ...runningRuntimeWork.projects[0],
+          deviceWorkspaces: [
+            {
+              ...runningRuntimeWork.projects[0].deviceWorkspaces[0],
+              localTasks: [
+                {
+                  ...runningRuntimeWork.projects[0].deviceWorkspaces[0].localTasks[0],
+                  running: false,
+                  updatedAt: '2026-06-20T03:02:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    const firstRender = renderSidebar({
+      runtimeWork: runningRuntimeWork,
+      onOpenRuntimeLocalTask,
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem('wework.desktop.sidebar.runningRuntimeTaskKeys.1')).toContain(
+        'codex-background'
+      )
+    })
+    firstRender.unmount()
+
+    renderSidebar({
+      runtimeWork: completedRuntimeWork,
+      onOpenRuntimeLocalTask,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    const unreadDot = screen.getByTestId('runtime-local-task-unread-dot-codex-background')
+    expect(unreadDot).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-time-codex-background')).toContainElement(
+      unreadDot
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-background'))
+
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('runtime-local-task-unread-dot-codex-background')
+      ).not.toBeInTheDocument()
+    })
+  })
+
   test('does not render online devices section and keeps all runtime tasks visible', async () => {
     renderSidebar({
       devices: [
@@ -814,9 +916,11 @@ describe('DesktopSidebar', () => {
       )
       expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-local-task-archive-icon-codex-1')).toBeInTheDocument()
-      expect(
-        screen.getByTestId('runtime-local-task-hover-actions-codex-1').className
-      ).not.toContain('focus-within')
+      expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1')).toHaveClass(
+        'z-[70]',
+        'hover:pointer-events-auto',
+        'focus-within:pointer-events-auto'
+      )
       expect(screen.getByTestId('runtime-local-task-time-codex-1').className).not.toContain(
         'focus-within'
       )
@@ -858,6 +962,113 @@ describe('DesktopSidebar', () => {
       )
       expect(
         screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
+      ).not.toBeInTheDocument()
+    } finally {
+      setTimeoutSpy.mockRestore()
+      clearTimeoutSpy.mockRestore()
+    }
+  })
+
+  test('offers force archive when a worktree task has uncommitted changes', async () => {
+    const user = userEvent.setup()
+    const onArchiveRuntimeLocalTask = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'dirty_worktree' })
+      .mockResolvedValueOnce({ status: 'archived' })
+    const originalSetTimeout = window.setTimeout
+    const originalClearTimeout = window.clearTimeout
+    const archiveTimerId = 2200
+    let archiveTimerCallback: (() => void) | null = null
+    const setTimeoutSpy = vi
+      .spyOn(window, 'setTimeout')
+      .mockImplementation((handler: TimerHandler, timeout?: number) => {
+        if (timeout === archiveTimerId && typeof handler === 'function') {
+          archiveTimerCallback = handler
+          return archiveTimerId
+        }
+        return originalSetTimeout(handler, timeout)
+      })
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation((id?: number) => {
+      if (id === archiveTimerId) {
+        archiveTimerCallback = null
+        return
+      }
+      originalClearTimeout(id)
+    })
+
+    try {
+      renderSidebar({
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              totalLocalTasks: 1,
+              deviceWorkspaces: [
+                {
+                  id: 91,
+                  deviceId: 'local-device',
+                  deviceName: 'Local Mac',
+                  deviceStatus: 'online',
+                  available: true,
+                  workspacePath: '/repo/worktrees/9/Wegent',
+                  workspaceKind: 'worktree',
+                  worktreeId: '9',
+                  localTasks: [
+                    {
+                      localTaskId: 'codex-1',
+                      workspacePath: '/repo/worktrees/9/Wegent',
+                      workspaceKind: 'worktree',
+                      worktreeId: '9',
+                      title: 'Fix reconnect',
+                      runtime: 'codex',
+                      updatedAt: '2026-06-20T02:00:00Z',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalLocalTasks: 1,
+        },
+        onArchiveRuntimeLocalTask,
+      })
+
+      await user.click(screen.getByTestId('project-item-button'))
+      await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
+      const runArchiveTimer = archiveTimerCallback
+
+      await act(async () => {
+        runArchiveTimer?.()
+        await Promise.resolve()
+      })
+
+      const dialog = await screen.findByTestId('runtime-local-task-force-archive-dialog-codex-1')
+      expect(dialog).toHaveTextContent('工作树有未提交代码')
+      expect(dialog).toHaveTextContent('强制归档会删除这个工作树目录')
+      expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(1)
+      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(1, {
+        deviceId: 'local-device',
+        workspacePath: '/repo/worktrees/9/Wegent',
+        localTaskId: 'codex-1',
+      })
+
+      await user.click(
+        screen.getByTestId('runtime-local-task-force-archive-dialog-codex-1-confirm-button')
+      )
+
+      await waitFor(() => expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(2))
+      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(
+        2,
+        {
+          deviceId: 'local-device',
+          workspacePath: '/repo/worktrees/9/Wegent',
+          localTaskId: 'codex-1',
+        },
+        { force: true }
+      )
+      expect(
+        screen.queryByTestId('runtime-local-task-force-archive-dialog-codex-1')
       ).not.toBeInTheDocument()
     } finally {
       setTimeoutSpy.mockRestore()

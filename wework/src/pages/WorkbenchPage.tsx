@@ -3,11 +3,14 @@ import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayo
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
 
 export function WorkbenchPage() {
-  const isMobile = useIsMobile()
+  const isMobileViewport = useIsMobile()
+  const isTauri = isTauriRuntime()
   const { state } = useWorkbench()
   const trayMenuTaskGroups = useMemo(
     () => buildTrayMenuTaskGroups(state.runtimeWork),
@@ -18,5 +21,9 @@ export function WorkbenchPage() {
     syncTrayMenuState(trayMenuTaskGroups)
   }, [trayMenuTaskGroups])
 
-  return isMobile ? <MobileWorkbenchLayout /> : <DesktopWorkbenchLayout />
+  return shouldUseMobileWorkbenchLayout({ isMobileViewport, isTauri }) ? (
+    <MobileWorkbenchLayout />
+  ) : (
+    <DesktopWorkbenchLayout />
+  )
 }

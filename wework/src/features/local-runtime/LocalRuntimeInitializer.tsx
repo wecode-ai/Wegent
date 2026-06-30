@@ -249,14 +249,26 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
   return (
     <div
       data-testid="local-runtime-slow-startup-help"
-      className="mt-5 w-full max-w-[420px] rounded-lg border border-border bg-surface px-4 py-3 text-left"
+      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-200/70 bg-amber-50/70 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
     >
-      <p className="text-sm font-medium text-text-primary">{t('slow_startup_title')}</p>
-      <p className="mt-1 text-xs leading-5 text-text-secondary">{t('slow_startup_description')}</p>
+      <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+        <span
+          data-testid="local-runtime-slow-startup-icon"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700 sm:h-8 sm:w-8"
+        >
+          <AlertCircle className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-primary">{t('slow_startup_title')}</p>
+          <p className="mt-0.5 text-xs leading-5 text-text-secondary">
+            {t('slow_startup_description')}
+          </p>
+        </div>
+      </div>
       <Button
         type="button"
         variant="outline"
-        className="mt-3 h-11 min-w-[150px]"
+        className="h-11 min-w-[44px] border-amber-200/80 bg-base px-3 text-xs text-text-primary hover:bg-amber-50 sm:h-9 sm:w-auto"
         onClick={onCopyDebugInfo}
         disabled={copying}
         data-testid="local-runtime-copy-debug-button"

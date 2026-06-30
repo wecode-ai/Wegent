@@ -8,6 +8,8 @@ import {
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
   parseGitShortStat,
+  removeGitWorktree,
+  workspaceHasUncommittedChanges,
 } from './environment'
 
 describe('parseGitShortStat', () => {
@@ -44,6 +46,45 @@ describe('buildPullRequestUrl', () => {
     expect(buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info')).toBe(
       'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
     )
+  })
+})
+
+describe('workspaceHasUncommittedChanges', () => {
+  test('detects pending tracked and untracked worktree changes', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: ' M src/App.tsx\n?? notes.md\n',
+      stderr: '',
+    })
+
+    await expect(
+      workspaceHasUncommittedChanges({ executeCommand }, 'device-123', '/workspace/worktrees/9/app')
+    ).resolves.toBe(true)
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_status_porcelain',
+      path: '/workspace/worktrees/9/app',
+      timeout_seconds: 10,
+      max_output_bytes: 65536,
+    })
+  })
+
+  test('removes clean worktrees through the device command API', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    await removeGitWorktree({ executeCommand }, 'device-123', '/workspace/worktrees/9/app')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_worktree_remove',
+      path: '/workspace/worktrees/9/app',
+      args: ['/workspace/worktrees/9/app', '/workspace/worktrees/9/app'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
   })
 })
 

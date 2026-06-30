@@ -78,6 +78,10 @@ fn claude_command_uses_headless_stream_json_mode() {
 
 #[test]
 fn claude_command_maps_nested_model_env_to_process_environment() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-nested-model-home");
+    let project_dir = unique_dir("claude-nested-model-project");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({
@@ -89,7 +93,7 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
             }
         }),
-        project_workspace_path: Some("/tmp/project".to_owned()),
+        project_workspace_path: Some(project_dir.display().to_string()),
         ..ExecutionRequest::default()
     };
 
@@ -115,15 +119,15 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
     );
     assert_eq!(
         spec.current_dir().unwrap().display().to_string(),
-        "/tmp/project"
+        project_dir.display().to_string()
     );
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        "/tmp/project/.claude"
+        &home.join(".claude").display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        "/tmp/project/.claude/skills"
+        &home.join(".claude/skills").display().to_string()
     );
 }
 
@@ -365,7 +369,7 @@ fn claude_command_sends_interactive_form_answer_as_tool_result_query() {
 }
 
 #[test]
-fn claude_command_prefers_workspace_task_session_over_executor_home() {
+fn claude_command_prefers_executor_home_session_over_legacy_workspace() {
     let _lock = env_lock();
     let executor_home = unique_dir("claude-session-home-fallback");
     let workspace_root = unique_dir("claude-session-workspace-root");
@@ -396,11 +400,11 @@ fn claude_command_prefers_workspace_task_session_over_executor_home() {
     let spec = build_claude_command(&request, "claude");
 
     assert!(spec.args().contains(&"--resume".to_owned()));
-    assert!(spec.args().contains(&"workspace-session".to_owned()));
+    assert!(spec.args().contains(&"home-session".to_owned()));
 }
 
 #[test]
-fn claude_command_falls_back_to_legacy_task_session_file() {
+fn claude_command_ignores_legacy_workspace_task_session_file() {
     let _lock = env_lock();
     let workspace_root = unique_dir("claude-session-legacy-workspace-root");
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
@@ -418,8 +422,8 @@ fn claude_command_falls_back_to_legacy_task_session_file() {
 
     let spec = build_claude_command(&request, "claude");
 
-    assert!(spec.args().contains(&"--resume".to_owned()));
-    assert!(spec.args().contains(&"legacy-session".to_owned()));
+    assert!(!spec.args().contains(&"--resume".to_owned()));
+    assert!(!spec.args().contains(&"legacy-session".to_owned()));
 }
 
 #[test]
@@ -448,19 +452,37 @@ fn claude_command_seeds_inherited_session_when_no_saved_session_exists() {
         fs::read_to_string(executor_home.join("sessions/77/.claude_session_id_987")).unwrap(),
         "inherited-session"
     );
+    assert!(!executor_home
+        .join("workspace/77/.claude_session_id_987")
+        .exists());
 }
 
 #[test]
-fn claude_command_new_session_deletes_saved_session_and_skips_resume() {
+fn claude_command_new_session_deletes_saved_and_legacy_sessions_and_skips_resume() {
     let _lock = env_lock();
     let executor_home = unique_dir("claude-session-new-session-home");
+    let workspace_root = unique_dir("claude-session-new-session-workspace-root");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let session_dir = executor_home.join("sessions/77");
+    let legacy_session_dir = workspace_root.join("77");
     fs::create_dir_all(&session_dir).unwrap();
+    fs::create_dir_all(&legacy_session_dir).unwrap();
     fs::write(session_dir.join(".claude_session_id_987"), "old-session\n").unwrap();
     fs::write(
         session_dir.join(".claude_session_id"),
         "legacy-old-session\n",
+    )
+    .unwrap();
+    fs::write(
+        legacy_session_dir.join(".claude_session_id_987"),
+        "workspace-old-session\n",
+    )
+    .unwrap();
+    fs::write(
+        legacy_session_dir.join(".claude_session_id"),
+        "workspace-legacy-old-session\n",
     )
     .unwrap();
     let request = ExecutionRequest {
@@ -477,6 +499,8 @@ fn claude_command_new_session_deletes_saved_session_and_skips_resume() {
     assert!(!spec.args().contains(&"--resume".to_owned()));
     assert!(!session_dir.join(".claude_session_id_987").exists());
     assert!(!session_dir.join(".claude_session_id").exists());
+    assert!(!legacy_session_dir.join(".claude_session_id_987").exists());
+    assert!(!legacy_session_dir.join(".claude_session_id").exists());
 }
 
 #[test]
@@ -526,7 +550,9 @@ fn claude_command_rejects_unsafe_string_bot_id_for_session_filename() {
 #[test]
 fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     let _lock = env_lock();
+    let home = unique_dir("claude-chat-home");
     let workspace_root = unique_dir("claude-chat-workspace-root");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let request = ExecutionRequest {
         task_id: 42,
@@ -542,11 +568,11 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     assert_eq!(spec.current_dir().unwrap(), &task_dir);
     assert_eq!(
         spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
-        &task_dir.join(".claude").display().to_string()
+        &home.join(".claude").display().to_string()
     );
     assert_eq!(
         spec.envs().get("SKILLS_DIR").unwrap(),
-        &task_dir.join(".claude/skills").display().to_string()
+        &home.join(".claude/skills").display().to_string()
     );
 }
 
@@ -653,6 +679,38 @@ fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header()
         .get("ANTHROPIC_CUSTOM_HEADERS")
         .unwrap()
         .contains("wecode-project: 0"));
+}
+
+#[test]
+fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_task_skills_dir() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-standalone-skill-home");
+    let workspace_root = unique_dir("claude-standalone-skill-workspace");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let request = ExecutionRequest {
+        task_id: 1905,
+        prompt: json!("standalone chat with skills"),
+        bot: json!([{"id": 1905, "shell_type": "ClaudeCode"}]),
+        extra: serde_json::Map::from_iter([
+            ("project_id".to_owned(), json!(0)),
+            ("standalone_chat_workspace".to_owned(), json!(true)),
+            ("skill_names".to_owned(), json!(["task-skill"])),
+        ]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let task_dir = workspace_root.join("1905");
+
+    assert_eq!(
+        spec.envs().get("CLAUDE_CONFIG_DIR").unwrap(),
+        &home.join(".claude").display().to_string()
+    );
+    assert_eq!(
+        spec.envs().get("SKILLS_DIR").unwrap(),
+        &task_dir.join(".claude/skills").display().to_string()
+    );
 }
 
 #[test]

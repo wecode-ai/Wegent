@@ -148,7 +148,7 @@ function AppShell() {
   return (
     <LocalRuntimeInitializer startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}>
       <LocalExecutorCloudBridge />
-      <div className="flex h-screen flex-col overflow-hidden bg-surface">
+      <div className="flex h-dvh flex-col overflow-hidden bg-surface">
         {isTauri && (
           <ChromeTitlebar
             tabs={tabs}

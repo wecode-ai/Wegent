@@ -59,7 +59,19 @@ const mockRuntimeConfig = {
   weworkCodeUrl: '',
 }
 let mockPathname = '/chat'
-let mockSearchParams = new URLSearchParams()
+let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
+type MockPaths = {
+  feed?: { getHref: () => string }
+  code?: { getHref: () => string }
+  wiki?: { getHref: () => string }
+  devices?: { getHref: () => string }
+  inbox?: { getHref: () => string }
+  chat?: { getHref: () => string }
+  resourceLibrary?: { getHref: () => string }
+}
+
+const getMockPaths = (): MockPaths =>
+  (globalThis as typeof globalThis & { mockPaths: MockPaths }).mockPaths
 
 jest.mock('next/image', () => ({
   __esModule: true,
@@ -83,7 +95,7 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@/config/paths', () => ({
-  paths: {
+  paths: ((globalThis as typeof globalThis & { mockPaths: MockPaths }).mockPaths = {
     feed: { getHref: () => '/feed' },
     code: { getHref: () => '/chat?agent=code' },
     wiki: { getHref: () => '/knowledge' },
@@ -91,7 +103,7 @@ jest.mock('@/config/paths', () => ({
     inbox: { getHref: () => '/inbox' },
     chat: { getHref: () => '/chat' },
     resourceLibrary: { getHref: () => '/resource-library' },
-  },
+  }),
 }))
 
 jest.mock('@/lib/runtime-config', () => ({
@@ -208,6 +220,15 @@ describe('TaskSidebar scroll structure', () => {
     mockRuntimeConfig.weworkCodeUrl = ''
     mockPathname = '/chat'
     mockSearchParams = new URLSearchParams()
+    Object.assign(getMockPaths(), {
+      feed: { getHref: () => '/feed' },
+      code: { getHref: () => '/chat?agent=code' },
+      wiki: { getHref: () => '/knowledge' },
+      devices: { getHref: () => '/devices' },
+      inbox: { getHref: () => '/inbox' },
+      chat: { getHref: () => '/chat' },
+      resourceLibrary: { getHref: () => '/resource-library' },
+    })
     window.history.pushState({}, '', '/chat')
   })
 
@@ -286,6 +307,42 @@ describe('TaskSidebar scroll structure', () => {
     const codeButton = within(fixedSection).getByTestId('task-sidebar-nav-code-button')
 
     expect(codeButton).not.toHaveClass('bg-primary/10')
+  })
+
+  it('renders plain chat navigation when search params are unavailable', () => {
+    mockPathname = '/chat'
+    mockSearchParams = undefined
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
+    const codeButton = within(fixedSection).getByTestId('task-sidebar-nav-code-button')
+
+    expect(codeButton).toBeInTheDocument()
+    expect(codeButton).not.toHaveClass('bg-primary/10')
+  })
+
+  it('renders with default navigation hrefs when route config entries are unavailable', () => {
+    Object.assign(getMockPaths(), {
+      feed: undefined,
+      wiki: undefined,
+      devices: undefined,
+      inbox: undefined,
+      chat: undefined,
+      resourceLibrary: undefined,
+    })
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
+
+    expect(within(fixedSection).getByTestId('task-sidebar-nav-flow-button')).toBeInTheDocument()
+    expect(within(fixedSection).getByTestId('task-sidebar-nav-code-button')).toBeInTheDocument()
+    expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
   })
 
   it('shows secondary navigation in a right-side flyout from more', () => {
