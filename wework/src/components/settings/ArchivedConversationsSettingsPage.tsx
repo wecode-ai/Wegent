@@ -1,9 +1,7 @@
 import { Loader2, RotateCw, Search, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createHttpClient } from '@/api/http'
-import { createRuntimeWorkApi } from '@/api/runtimeWork'
-import { getRuntimeConfig } from '@/config/runtime'
+import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ArchivedConversationItem, ArchivedConversationsListRequest } from '@/types/api'
 
@@ -21,8 +19,11 @@ interface DeleteArchivedConversationDialogProps {
 }
 
 function createSettingsRuntimeWorkApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createRuntimeWorkApi(createHttpClient({ baseUrl: apiBaseUrl }))
+  const api = createLocalAppServices().runtimeWorkApi
+  if (!api) {
+    throw new Error('Local runtime work API is unavailable')
+  }
+  return api
 }
 
 function itemTestId(item: ArchivedConversationItem) {

@@ -815,6 +815,56 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md')
   })
 
+  test('renders assistant file links with extension-specific Codex-style icons', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-file-type-links',
+            role: 'assistant',
+            content:
+              '[`scripts/build-mac-app.sh`](/Users/crystal/dev/git/Wegent/wework/scripts/build-mac-app.sh:49) and [package.json](/Users/crystal/dev/git/Wegent/wework/package.json:15)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const links = screen.getAllByTestId('assistant-markdown-link')
+    const icons = screen.getAllByTestId('assistant-markdown-link-icon')
+
+    expect(icons[0]).toHaveTextContent('$')
+    expect(icons[1]).toHaveTextContent('{}')
+    expect(links[0]).toHaveClass('[&_code]:!bg-transparent', '[&_code]:!rounded-none')
+    expect(links[0]).toHaveTextContent('scripts/build-mac-app.sh(line 49)')
+    expect(links[1]).toHaveTextContent('package.json(line 15)')
+  })
+
+  test('keeps normal assistant inline code styled as code chips', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-code',
+            role: 'assistant',
+            content: 'Use `.env` and `pnpm run tauri:build` for local configuration.',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-markdown-link')).not.toBeInTheDocument()
+    const inlineCodes = Array.from(container.querySelectorAll('.assistant-markdown code'))
+    expect(inlineCodes).toHaveLength(2)
+    expect(inlineCodes[0]).toHaveTextContent('.env')
+    expect(inlineCodes[0]).toHaveClass('rounded', 'bg-muted')
+    expect(inlineCodes[1]).toHaveTextContent('pnpm run tauri:build')
+    expect(inlineCodes[1]).toHaveClass('rounded', 'bg-muted')
+  })
+
   test('routes assistant file links to the turn diff review focused on that file', async () => {
     const onOpenFileChangesReview = vi.fn()
     const onLoadFileChangesDiff = vi.fn().mockResolvedValue('')

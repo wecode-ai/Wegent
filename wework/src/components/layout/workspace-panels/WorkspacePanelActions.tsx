@@ -160,7 +160,10 @@ export function WorkspacePanelActions({
         />
       )}
       {showPanelToggles && canOpenCodeServer && localWorkspaceEnabled && (
-        <div className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-border bg-background">
+        <div
+          data-testid="local-workspace-titlebar-control"
+          className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-border bg-background"
+        >
           <button
             type="button"
             data-testid="open-code-server-titlebar-button"

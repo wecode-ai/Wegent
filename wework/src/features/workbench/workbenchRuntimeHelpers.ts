@@ -208,11 +208,18 @@ function getSelectableProjectDeviceWorkspaces(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined
 ): RuntimeDeviceWorkspace[] {
+  return getProjectDeviceWorkspaces(runtimeWork, projectId).filter(workspace => workspace.available)
+}
+
+function getProjectDeviceWorkspaces(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): RuntimeDeviceWorkspace[] {
   if (!projectId) return []
   const projectWork = runtimeWork?.projects.find(
     item => runtimeProjectUiId(item.project) === projectId
   )
-  return projectWork?.deviceWorkspaces.filter(workspace => workspace.available) ?? []
+  return projectWork?.deviceWorkspaces ?? []
 }
 
 export function getSingleProjectDeviceWorkspaceId(
@@ -242,6 +249,18 @@ export function findProjectDeviceWorkspace(
   deviceWorkspaceId: number | null | undefined
 ): RuntimeDeviceWorkspace | null {
   const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
+  if (deviceWorkspaceId) {
+    return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
+  }
+  return workspaces.length === 1 ? workspaces[0] : null
+}
+
+export function findProjectMetadataDeviceWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined,
+  deviceWorkspaceId: number | null | undefined
+): RuntimeDeviceWorkspace | null {
+  const workspaces = getProjectDeviceWorkspaces(runtimeWork, projectId)
   if (deviceWorkspaceId) {
     return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }

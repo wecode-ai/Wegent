@@ -23,7 +23,7 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
 import type { ProjectMutationOptions } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
-import { findProjectDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
+import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 
 interface UseWorkbenchProjectActionsOptions {
@@ -89,7 +89,6 @@ export function useWorkbenchProjectActions({
       rememberExecutionDevice(data.deviceId)
       if (options.refreshWorkLists === false) {
         dispatch({ type: 'device_workspace_prepared', mapping: response.mapping })
-        void refreshWorkLists().catch(() => undefined)
       } else {
         await refreshWorkLists()
       }
@@ -118,7 +117,11 @@ export function useWorkbenchProjectActions({
 
   const updateProjectName = useCallback(
     async (projectId: number, name: string) => {
-      const runtimeWorkspace = findProjectDeviceWorkspace(state.runtimeWork, projectId, null)
+      const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
+        state.runtimeWork,
+        projectId,
+        null
+      )
       if (runtimeWorkspace) {
         const response = await executorClient.runtime.renameRuntimeWorkspace({
           deviceId: runtimeWorkspace.deviceId,
@@ -142,7 +145,11 @@ export function useWorkbenchProjectActions({
 
   const removeProject = useCallback(
     async (projectId: number) => {
-      const runtimeWorkspace = findProjectDeviceWorkspace(state.runtimeWork, projectId, null)
+      const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
+        state.runtimeWork,
+        projectId,
+        null
+      )
       if (runtimeWorkspace) {
         const response = await executorClient.runtime.removeRuntimeWorkspace({
           deviceId: runtimeWorkspace.deviceId,
