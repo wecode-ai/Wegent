@@ -200,6 +200,8 @@ Project 场景使用运行时 workspace 引用：
 
 空项目也由运行时持有。Wework 创建或选择目录后调用 workspace open/register 流程，让 executor 把这个工作区纳入 `runtime.tasks.list` 的项目分组；即使目录下还没有 LocalTask 或 Codex 会话，也应显示为项目。这个流程不写 `TaskResource`、`Subtask`，也不写 Backend `projects` 表。
 
+微博私信等后端发起的私聊 Task 创建也走非 Project 运行时任务：当用户在私信里选择“不关联项目”时，Backend 解析当前用户已选择的本地设备，或在只有一个在线本地设备时自动使用该设备，并使用内部独立聊天工作区 `workspace/chat` 创建任务。这个流程同样不创建 `TaskResource` 或 `Subtask`，也不把 `workspacePath` 暴露为 Project 任务的前端输入。
+
 ## 复制和跨设备转移
 
 复制运行时任务时，Wework 只在当前任务所属 Project 内选择目标工作区：

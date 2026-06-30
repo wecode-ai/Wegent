@@ -453,6 +453,54 @@ async def test_new_flow_choice_task_enters_project_selection(
     assert "选择项目" in result.reply
 
 
+async def test_weibo_new_flow_choice_task_enters_project_creation_flow(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user, channel_type="weibo")
+    await im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_NEW_FLOW,
+        payload={},
+    )
+
+    result = await im_command_router.route(
+        test_db,
+        session,
+        "2",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.TASK
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {"first_message": "", "project_ids": [201, 202]}
+    assert "选择项目" in result.reply
+    assert "继续到私聊" not in result.reply
+
+    project_result = await im_command_router.route(
+        test_db,
+        session,
+        "1",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert project_result.handled is True
+    assert project_result.action == IMCommandAction.NONE
+    assert "任务内容" in project_result.reply
+    assert "继续到私聊" not in project_result.reply
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {
+        "first_message": "",
+        "project_ids": [201, 202],
+        "selected_project_id": 201,
+    }
+
+
 async def test_new_flow_choice_recent_tasks_enters_task_switch(
     test_db: Session,
     test_user: User,

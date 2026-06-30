@@ -79,7 +79,7 @@ logger = logging.getLogger(__name__)
 CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
-TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
+PRIVATE_IM_RUNTIME_CHAT_WORKSPACE_PATH = "workspace/chat"
 
 
 @dataclass
@@ -1301,65 +1301,170 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message: str,
         message_context: MessageContext,
     ) -> None:
-        from app.services.chat.storage.task_manager import create_chat_task
-
         team = self._get_task_mode_team(db, user.id)
         if not team:
             await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
             return
 
-        message_source = self._build_private_im_message_source(im_session)
-        params = await im_task_continuation_service.build_new_task_params(
-            db,
-            user=user,
-            message=message,
-            project_id=project_id,
-            task_type="task",
-            message_source=message_source,
-        )
-        result = await create_chat_task(
-            db=db,
-            user=user,
-            team=team,
-            message=message,
-            params=params,
-            should_trigger_ai=bool(message.strip()),
-            source="im",
-        )
-        await im_session_service.bind_active_task(
-            db, session=im_session, task_id=result.task.id
-        )
-
-        if not message.strip():
+        content = (message or "").strip()
+        if not content:
             await self.send_text_reply(
-                message_context, "已创建任务，请继续发送任务需求。"
+                message_context,
+                "请发送任务内容，或发送 /cancel 取消。",
             )
             return
 
-        initial_stream_content = None
-        if self.should_merge_task_created_running_notice_with_stream():
-            initial_stream_content = f"{TASK_CREATED_RUNNING_NOTICE}\n\n"
-        else:
-            await self.send_text_reply(message_context, TASK_CREATED_RUNNING_NOTICE)
+        try:
+            response = await self._create_private_im_runtime_task(
+                db=db,
+                user=user,
+                team=team,
+                project_id=project_id,
+                message=content,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "本地任务创建失败"
+            await self.send_text_reply(message_context, f"创建本地任务失败：{detail}")
+            return
+        except ValidationError as exc:
+            await self.send_text_reply(message_context, f"创建本地任务失败：{exc}")
+            return
 
-        await self._persist_private_im_task_media(
+        if not response.accepted:
+            await self.send_text_reply(
+                message_context,
+                response.error or "本地任务暂时无法创建，请稍后重试。",
+            )
+            return
+
+        runtime_task = self._private_im_runtime_task_payload(response)
+        await im_session_service.bind_active_runtime_task(
+            db,
+            session=im_session,
+            runtime_task=runtime_task,
+        )
+
+        callback_key = self._runtime_task_callback_key(runtime_task)
+        streaming_emitter = await self._create_private_im_runtime_streaming_emitter(
+            callback_key=callback_key,
+            message_context=message_context,
+        )
+        await self._register_private_im_runtime_callback(
+            callback_key=callback_key,
+            message_context=message_context,
+            streaming_emitter=streaming_emitter,
+        )
+
+    async def _create_private_im_runtime_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        team: Kind,
+        project_id: Optional[int],
+        message: str,
+    ) -> Any:
+        from app.schemas.runtime_work import RuntimeTaskCreateRequest
+        from app.services import runtime_work_service
+
+        device_id: Optional[str] = None
+        workspace_path: Optional[str] = None
+        if project_id is None:
+            device_id, workspace_path = await self._private_im_runtime_chat_target(
+                db=db,
+                user=user,
+            )
+
+        runtime_name, model_id, model_type = await self._private_im_runtime_model(
+            db=db,
+            user=user,
+        )
+        return await runtime_work_service.create_runtime_task(
             db=db,
             user_id=user.id,
-            user_subtask_id=result.user_subtask.id,
-            message_context=message_context,
+            request=RuntimeTaskCreateRequest(
+                project_id=project_id,
+                device_id=device_id,
+                workspace_path=workspace_path,
+                team_id=team.id,
+                runtime=runtime_name,
+                message=message,
+                title=self._private_im_runtime_task_title(message),
+                model_id=model_id,
+                model_type=model_type,
+            ),
         )
-        await self._trigger_private_im_task_response(
-            db=db,
-            task=result.task,
-            assistant_subtask=result.assistant_subtask,
-            team=team,
-            user=user,
-            user_subtask_id=result.user_subtask.id,
-            message=message,
-            message_context=message_context,
-            params=params,
-            initial_stream_content=initial_stream_content,
+
+    def _private_im_runtime_task_payload(self, response: Any) -> dict[str, Any]:
+        return {
+            "deviceId": response.device_id,
+            "workspacePath": response.workspace_path,
+            "localTaskId": response.local_task_id,
+            "runtime": response.runtime,
+        }
+
+    async def _private_im_runtime_model(
+        self,
+        *,
+        db: Session,
+        user: User,
+    ) -> tuple[str, Optional[str], Optional[str]]:
+        from app.services.runtime_codex_model import is_codex_runtime_model_name
+
+        model_selection = await model_selection_manager.get_selection(user.id)
+        if model_selection and (
+            model_selection.model_type == "runtime"
+            or is_codex_runtime_model_name(model_selection.model_name)
+        ):
+            return "codex", model_selection.model_name, model_selection.model_type
+
+        model_id, model_type = await self._get_device_mode_model_override(db, user)
+        return "claude_code", model_id, model_type
+
+    def _private_im_runtime_task_title(self, message: str) -> str:
+        first_line = message.strip().splitlines()[0] if message.strip() else ""
+        return first_line[:100] or "Untitled runtime task"
+
+    async def _private_im_runtime_chat_target(
+        self,
+        *,
+        db: Session,
+        user: User,
+    ) -> tuple[str, str]:
+        from app.services.device_service import device_service
+
+        selection = await device_selection_manager.get_selection(user.id)
+        if (
+            selection
+            and selection.device_type == DeviceType.LOCAL
+            and selection.device_id
+        ):
+            device_info = await device_service.get_device_online_info(
+                user.id,
+                selection.device_id,
+            )
+            if device_info:
+                return str(selection.device_id), PRIVATE_IM_RUNTIME_CHAT_WORKSPACE_PATH
+
+        online_devices = await device_service.get_online_devices(db, user.id)
+        local_devices = [
+            device
+            for device in online_devices
+            if str(device.get("device_type") or "local") == DeviceType.LOCAL.value
+            and device.get("device_id")
+        ]
+        if len(local_devices) == 1:
+            return (
+                str(local_devices[0]["device_id"]),
+                PRIVATE_IM_RUNTIME_CHAT_WORKSPACE_PATH,
+            )
+
+        detail = (
+            "请先打开 Wework 本地设备，或使用 /devices 选择本地设备。"
+            if not local_devices
+            else "检测到多个在线本地设备，请先使用 /devices 选择本地设备。"
         )
+        raise HTTPException(status_code=400, detail=detail)
 
     def _build_private_im_message_source(self, im_session: Any) -> Dict[str, Any]:
         return im_task_continuation_service.build_im_message_source(
