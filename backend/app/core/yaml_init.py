@@ -18,6 +18,7 @@ import yaml
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.system_knowledge_init import run_system_knowledge_initialization
 from app.models.user import User
 from app.services.admin_password_bootstrap import (
     create_unusable_password_hash,
@@ -685,6 +686,13 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         # Apply all public resources (Shell, Ghost, Bot, Team, Skill)
         # All resources are now public (user_id=0) and accessible by all users
         summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
+        system_knowledge_summary = run_system_knowledge_initialization(
+            db=db,
+            admin_user_id=user_id,
+            init_data_dir=init_dir,
+        )
+        if isinstance(summary, dict):
+            summary["system_knowledge"] = system_knowledge_summary
 
         logger.info(f"YAML initialization completed: {summary}")
         return summary

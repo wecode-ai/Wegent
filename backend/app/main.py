@@ -91,6 +91,7 @@ def _format_forwarded_headers_for_log(headers) -> str:
 
 def _get_mcp_lifespan_servers():
     from app.mcp_server.server import (
+        help_knowledge_mcp_server,
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
         prompt_optimization_mcp_server,
@@ -101,6 +102,7 @@ def _get_mcp_lifespan_servers():
     servers = [
         ("System", system_mcp_server),
         ("Knowledge", knowledge_mcp_server),
+        ("Help knowledge", help_knowledge_mcp_server),
         ("interactive_form_question", interactive_form_question_mcp_server),
         ("Prompt optimization", prompt_optimization_mcp_server),
         ("Subscription", subscription_mcp_server),
