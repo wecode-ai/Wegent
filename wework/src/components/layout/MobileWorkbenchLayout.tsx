@@ -64,7 +64,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     projectChat,
     upgradeDevice,
     retryFailedMessage,
-    pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -328,7 +327,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   guidanceMessages={paneGuidanceMessages}
                   codeComments={paneSession.codeCommentContexts}
                   isStreaming={paneIsResponseStreaming}
-                  onPause={() => void pauseCurrentResponse(paneMessages)}
+                  onPause={() => void paneSession.pauseCurrentResponse()}
                   onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                   onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                   onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -416,7 +415,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
-                onPause={() => void pauseCurrentResponse(paneMessages)}
+                onPause={() => void paneSession.pauseCurrentResponse()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -473,7 +472,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         devices={state.devices}
         requiresStop={paneIsResponseStreaming}
         onOpenChange={setForkDialogOpen}
-        onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
+        onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

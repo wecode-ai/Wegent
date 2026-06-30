@@ -1126,21 +1126,25 @@ fn write_fake_codex_running_tool(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/start"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
       exit 0
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/reasoning/delta","params":{{"delta":"checking context"}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"running tests","phase":"commentary"}}}}'
       printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"inProgress"}}}}}}'

@@ -127,7 +127,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     projectChat,
     upgradeDevice,
     retryFailedMessage,
-    pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -900,7 +899,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   guidanceMessages={paneGuidanceMessages}
                   codeComments={paneSession.codeCommentContexts}
                   isStreaming={paneIsResponseStreaming}
-                  onPause={() => void pauseCurrentResponse(paneMessages)}
+                  onPause={() => void paneSession.pauseCurrentResponse()}
                   onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                   onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                   onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -954,7 +953,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
-                onPause={() => void pauseCurrentResponse(paneMessages)}
+                onPause={() => void paneSession.pauseCurrentResponse()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1045,7 +1044,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           devices={devices}
           requiresStop={paneIsResponseStreaming}
           onOpenChange={setForkDialogOpen}
-          onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
+          onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}
           onDeleteDeviceWorkspace={deleteDeviceWorkspace}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}

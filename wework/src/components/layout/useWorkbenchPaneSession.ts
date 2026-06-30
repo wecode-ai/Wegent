@@ -563,7 +563,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       if (activeAssistantMessage) {
         const action: RuntimePaneMessageAction = {
-          type: 'assistant_done',
+          type: 'assistant_cancelled',
           messageId: activeAssistantMessage.id,
           turnId: activeAssistantMessage.turnId,
           content: activeAssistantMessage.content,
@@ -592,6 +592,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     ]
   )
 
+  const pauseCurrentResponse = useCallback(async () => {
+    if (!currentRuntimeTask || !activeAssistantMessage) return
+
+    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+    if (!cancelled) return
+
+    dispatchMessages({
+      type: 'assistant_cancelled',
+    })
+  }, [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages])
+
   const cancelGuidanceMessage = useCallback(() => undefined, [])
 
   return {
@@ -617,6 +628,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
+    pauseCurrentResponse,
   }
 }
 

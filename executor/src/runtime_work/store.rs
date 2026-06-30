@@ -123,10 +123,10 @@ impl RuntimeWorkStore {
         });
         if let Ok(payload) = payload {
             let temp_path = temporary_index_path(&self.index_path);
-            if fs::write(&temp_path, payload).is_ok() {
-                if fs::rename(&temp_path, &self.index_path).is_err() {
-                    let _ = fs::remove_file(temp_path);
-                }
+            if fs::write(&temp_path, payload).is_ok()
+                && fs::rename(&temp_path, &self.index_path).is_err()
+            {
+                let _ = fs::remove_file(temp_path);
             }
         }
     }
