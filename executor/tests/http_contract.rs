@@ -409,6 +409,54 @@ async fn envd_files_endpoint_allows_absolute_paths_outside_home_like_python() {
 }
 
 #[tokio::test]
+async fn envd_process_start_runs_foreground_command_via_connect_stream() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("executor-http-process-home");
+    fs::create_dir_all(&home).unwrap();
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let source = home.join("x");
+    let target = home.join("x.txt");
+    fs::write(&source, "abx").unwrap();
+    let payload = json!({
+        "process": {
+            "cmd": "/bin/bash",
+            "args": ["-l", "-c", format!("mv {} {}", source.display(), target.display())],
+            "cwd": home.display().to_string()
+        },
+        "stdin": false
+    })
+    .to_string();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/process.Process/Start")
+                .header(header::CONTENT_TYPE, "application/connect+json")
+                .body(Body::from(connect_envelope(0, payload.as_bytes())))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!source.exists());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "abx");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let messages = decode_connect_json_messages(&body);
+    assert!(messages
+        .iter()
+        .any(|message| message["event"]["start"]["pid"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0));
+    assert!(messages
+        .iter()
+        .any(|message| message["event"]["end"]["exitCode"] == json!(0)));
+}
+
+#[tokio::test]
 async fn envd_archive_routes_upload_and_restore_executor_runtime_snapshot() {
     let _lock = env_lock().lock().await;
     let workspace_root = unique_dir("executor-http-archive-workspace");
@@ -524,6 +572,39 @@ async fn spawn_storage_server(archive: Arc<Mutex<Vec<u8>>>) -> String {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{addr}")
+}
+
+fn connect_envelope(flags: u8, data: &[u8]) -> Vec<u8> {
+    let mut envelope = Vec::with_capacity(5 + data.len());
+    envelope.push(flags);
+    envelope.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    envelope.extend_from_slice(data);
+    envelope
+}
+
+fn decode_connect_json_messages(bytes: &[u8]) -> Vec<Value> {
+    let mut offset = 0;
+    let mut messages = Vec::new();
+    while offset + 5 <= bytes.len() {
+        let flags = bytes[offset];
+        let len = u32::from_be_bytes([
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4],
+        ]) as usize;
+        offset += 5;
+        if offset + len > bytes.len() {
+            break;
+        }
+        let data = &bytes[offset..offset + len];
+        offset += len;
+        if flags & 0b0000_0010 != 0 {
+            break;
+        }
+        messages.push(serde_json::from_slice(data).unwrap());
+    }
+    messages
 }
 
 struct EnvGuard {
