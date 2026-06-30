@@ -144,7 +144,7 @@ describe('DesktopSidebar', () => {
 
     const handle = screen.getByTestId('sidebar-resize-handle')
 
-    expect(handle).toHaveClass('right-[-6px]', 'w-3')
+    expect(handle).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(handle).not.toHaveClass('w-10')
   })
 
