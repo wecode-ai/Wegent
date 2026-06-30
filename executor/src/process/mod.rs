@@ -36,7 +36,7 @@ use crate::{
     },
 };
 
-const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 300;
+const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
 const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
@@ -987,5 +987,13 @@ mod tests {
 
         assert_eq!(stream_chunk_chars(), 20);
         assert_eq!(stream_chunk_delay_ms(), 0);
+    }
+
+    #[test]
+    fn process_timeout_defaults_to_one_hour() {
+        let _lock = env_lock();
+        let _timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");
+
+        assert_eq!(process_timeout_seconds(), 3600);
     }
 }
