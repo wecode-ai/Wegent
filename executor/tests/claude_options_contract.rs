@@ -190,3 +190,97 @@ fn mcp_variables_are_replaced_using_execution_context() {
         "Bearer task-token"
     );
 }
+
+#[test]
+fn http_mcp_timeout_is_preserved_for_claude_and_deferred_proxy() {
+    let request = ExecutionRequest {
+        task_id: 1,
+        bot: json!([{
+            "mcp_servers": [
+                {
+                    "name": "subscription-manager",
+                    "type": "http",
+                    "url": "https://backend.example.com/mcp/subscription/sse",
+                    "headers": {"Authorization": "Bearer task-token"},
+                    "timeout_seconds": 60
+                }
+            ]
+        }]),
+        ..ExecutionRequest::default()
+    };
+
+    let options = extract_claude_options(&request, &BTreeMap::new());
+
+    assert_eq!(
+        options.mcp_servers["subscription-manager"]["timeout"],
+        60000
+    );
+}
+
+#[test]
+fn http_mcp_timeout_accepts_seconds_or_milliseconds() {
+    let request = ExecutionRequest {
+        task_id: 1,
+        bot: json!([{
+            "mcp_servers": [
+                {
+                    "name": "legacy-seconds",
+                    "type": "http",
+                    "url": "https://backend.example.com/mcp/legacy",
+                    "timeout": 12
+                },
+                {
+                    "name": "official-milliseconds",
+                    "type": "http",
+                    "url": "https://backend.example.com/mcp/official",
+                    "timeout": 12000
+                }
+            ]
+        }]),
+        ..ExecutionRequest::default()
+    };
+
+    let options = extract_claude_options(&request, &BTreeMap::new());
+
+    assert_eq!(options.mcp_servers["legacy-seconds"]["timeout"], 12000);
+    assert_eq!(
+        options.mcp_servers["official-milliseconds"]["timeout"],
+        12000
+    );
+}
+
+#[test]
+fn duplicate_request_mcp_preserves_bot_headers_when_incoming_has_none() {
+    let request = ExecutionRequest {
+        task_id: 1,
+        bot: json!([{
+            "mcp_servers": [
+                {
+                    "name": "StatusExtend",
+                    "type": "http",
+                    "url": "http://mcp.com/2/mcp/internal/server/status-extend",
+                    "headers": {"Authorization": "Bearer bot-token"},
+                    "timeout": 60
+                }
+            ]
+        }]),
+        mcp_servers: vec![json!({
+            "name": "StatusExtend",
+            "type": "http",
+            "url": "http://mcp/internal/server/status-extend"
+        })],
+        ..ExecutionRequest::default()
+    };
+
+    let options = extract_claude_options(&request, &BTreeMap::new());
+
+    assert_eq!(
+        options.mcp_servers["StatusExtend"]["url"],
+        "http://mcp/internal/server/status-extend"
+    );
+    assert_eq!(
+        options.mcp_servers["StatusExtend"]["headers"]["Authorization"],
+        "Bearer bot-token"
+    );
+    assert_eq!(options.mcp_servers["StatusExtend"]["timeout"], 60000);
+}

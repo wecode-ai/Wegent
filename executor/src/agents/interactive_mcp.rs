@@ -174,7 +174,7 @@ pub fn build_deferred_mcp_proxy_request(
         tool_name: parsed.tool_name,
         server_url: server_url.to_owned(),
         headers,
-        timeout_seconds: server.get("timeout").and_then(Value::as_u64),
+        timeout_seconds: mcp_timeout_seconds(server),
         arguments: deferred_tool_use.input.clone(),
     })
 }
@@ -440,6 +440,29 @@ fn headers_from_server_config(server: &Value) -> Value {
         }
     }
     Value::Object(headers)
+}
+
+fn mcp_timeout_seconds(server: &Value) -> Option<u64> {
+    if let Some(seconds) = server
+        .get("timeout_seconds")
+        .or_else(|| server.get("timeoutSeconds"))
+        .and_then(Value::as_u64)
+    {
+        return Some(seconds);
+    }
+    server
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .filter(|seconds| *seconds > 0)
+        .map(mcp_timeout_value_to_seconds)
+}
+
+fn mcp_timeout_value_to_seconds(timeout: u64) -> u64 {
+    if timeout < 1000 {
+        timeout
+    } else {
+        timeout.div_ceil(1000).max(1)
+    }
 }
 
 async fn call_streamable_http_mcp(request: &DeferredMcpProxyRequest) -> Result<Value, String> {

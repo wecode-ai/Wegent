@@ -8,7 +8,7 @@ use axum::{routing::get, Json, Router};
 use serde_json::json;
 use tokio::net::TcpListener;
 use wegent_executor::{
-    app::{cli::CliArgs, run, startup_plan, StartupPlan},
+    app::{cli::CliArgs, run, startup_plan, SocketSidecarPlan, StartupPlan},
     services::updater::binary_name_for,
     version::get_version,
 };
@@ -50,55 +50,40 @@ impl Drop for EnvGuard {
 #[test]
 fn default_startup_mode_plans_http_server_with_image_defaults() {
     let _lock = env_lock();
-    let _startup_mode = EnvGuard::remove("EXECUTOR_STARTUP_MODE");
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+    let _device_id = EnvGuard::remove("DEVICE_ID");
     let _port = EnvGuard::set("PORT", "10088");
     let _host = EnvGuard::remove("HOST");
+    let home = unique_home("default");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
 
     let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
     let plan = startup_plan(args).unwrap();
 
     assert_eq!(
         plan,
-        StartupPlan::HttpServer {
+        StartupPlan {
             host: "0.0.0.0".to_owned(),
-            port: 10088
+            port: 10088,
+            socket_sidecar: Some(SocketSidecarPlan {
+                backend_enabled: false,
+                device_id: plan.socket_sidecar.as_ref().unwrap().device_id.clone(),
+            }),
         }
     );
     assert_eq!(plan.bind_addr().unwrap().to_string(), "0.0.0.0:10088");
+    let socket_sidecar = plan.socket_sidecar.unwrap();
+    assert!(!socket_sidecar.backend_enabled);
+    assert!(socket_sidecar.device_id.starts_with("device-"));
+    assert_ne!(socket_sidecar.device_id, "local-device");
 }
 
 #[test]
-fn socket_startup_mode_without_backend_plans_app_ipc_sidecar() {
+fn startup_plan_with_backend_keeps_http_and_enables_backend_sidecar() {
     let _lock = env_lock();
-    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "socket");
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
-    let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-    let _device_id = EnvGuard::remove("DEVICE_ID");
-    let home = unique_home("no-backend");
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
-
-    let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
-    let plan = startup_plan(args).unwrap();
-
-    match plan {
-        StartupPlan::SocketSidecar {
-            backend_enabled,
-            device_id,
-        } => {
-            assert!(!backend_enabled);
-            assert!(device_id.starts_with("device-"), "{device_id}");
-            assert_ne!(device_id, "local-device");
-        }
-        other => panic!("expected local sidecar plan, got {other:?}"),
-    }
-}
-
-#[test]
-fn socket_startup_mode_with_backend_plans_sidecar_plus_backend_runner() {
-    let _lock = env_lock();
-    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "socket");
-    let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _port = EnvGuard::set("PORT", "10089");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
     let home = unique_home("backend");
@@ -109,21 +94,25 @@ fn socket_startup_mode_with_backend_plans_sidecar_plus_backend_runner() {
 
     assert_eq!(
         plan,
-        StartupPlan::SocketSidecar {
-            backend_enabled: true,
-            device_id: "device-1".to_owned()
+        StartupPlan {
+            host: "0.0.0.0".to_owned(),
+            port: 10089,
+            socket_sidecar: Some(SocketSidecarPlan {
+                backend_enabled: true,
+                device_id: "device-1".to_owned(),
+            }),
         }
     );
 }
 
 #[test]
-fn remote_executor_mode_with_backend_plans_sidecar_plus_backend_runner() {
+fn docker_executor_mode_plans_http_without_socket_sidecar() {
     let _lock = env_lock();
-    let _startup_mode = EnvGuard::remove("EXECUTOR_STARTUP_MODE");
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "remote");
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _port = EnvGuard::set("PORT", "10090");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
-    let _device_id = EnvGuard::set("DEVICE_ID", "device-remote");
-    let home = unique_home("remote-mode");
+    let _device_id = EnvGuard::set("DEVICE_ID", "device-docker");
+    let home = unique_home("docker-mode");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
 
     let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
@@ -131,26 +120,12 @@ fn remote_executor_mode_with_backend_plans_sidecar_plus_backend_runner() {
 
     assert_eq!(
         plan,
-        StartupPlan::SocketSidecar {
-            backend_enabled: true,
-            device_id: "device-remote".to_owned()
+        StartupPlan {
+            host: "0.0.0.0".to_owned(),
+            port: 10090,
+            socket_sidecar: None,
         }
     );
-}
-
-#[test]
-fn invalid_startup_mode_fails_fast() {
-    let _lock = env_lock();
-    let _startup_mode = EnvGuard::set("EXECUTOR_STARTUP_MODE", "pipe");
-    let home = unique_home("invalid-startup-mode");
-    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
-
-    let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
-    let error = startup_plan(args).unwrap_err();
-
-    assert!(error
-        .to_string()
-        .contains("invalid EXECUTOR_STARTUP_MODE: pipe"));
 }
 
 #[tokio::test]

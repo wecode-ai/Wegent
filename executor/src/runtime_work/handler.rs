@@ -594,7 +594,10 @@ impl RuntimeWorkRpcHandler {
         let existing_link = self.local_task_link(&local_task_id);
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
-        if existing_link.as_ref().is_some_and(|link| link.running) {
+        if existing_link
+            .as_ref()
+            .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
+        {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1338,7 +1341,12 @@ impl RuntimeWorkRpcHandler {
 
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
         let thread_id = string_field(thread, "id")?;
-        let local_link = self.local_task_by_thread_id(&thread_id);
+        let mut local_link = self.local_task_by_thread_id(&thread_id);
+        if let Some(link) = &mut local_link {
+            if link.running && !self.is_active_local_task(&link.local_task_id) {
+                link.running = false;
+            }
+        }
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());

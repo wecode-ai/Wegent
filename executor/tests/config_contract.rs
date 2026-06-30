@@ -99,15 +99,15 @@ fn env_mode_overrides_config_file_mode() {
 }
 
 #[test]
-fn remote_mode_is_not_treated_as_local_runtime_mode() {
+fn non_docker_mode_is_treated_as_local_runtime_mode() {
     let _lock = lock_env();
-    let _mode = EnvGuard::set("EXECUTOR_MODE", "remote");
-    let path = temp_path("remote-device-config.json");
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "desktop");
+    let path = temp_path("desktop-device-config.json");
     fs::write(&path, r#"{"mode":"local"}"#).unwrap();
 
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
-    assert_eq!(config.runtime_mode(), RuntimeMode::Remote);
+    assert_eq!(config.runtime_mode(), RuntimeMode::Local);
 }
 
 #[test]
