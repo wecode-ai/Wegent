@@ -59,6 +59,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
+    RuntimeTaskCreateWithTargetRequest,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscription,
@@ -1043,6 +1044,22 @@ async def create_runtime_task(
         request.runtime,
         target.device_id,
         target.workspace_path,
+    )
+
+
+async def create_runtime_task_with_target(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateWithTargetRequest,
+) -> RuntimeTaskCreateResponse:
+    """Create a runtime task from the explicit target API shape."""
+
+    legacy_request = _target_create_request_to_runtime_request(request)
+    return await create_runtime_task(
+        db=db,
+        user_id=user_id,
+        request=legacy_request,
     )
 
 
@@ -3278,6 +3295,50 @@ def _resolve_runtime_task_target(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
     )
+
+
+def _target_create_request_to_runtime_request(
+    request: RuntimeTaskCreateWithTargetRequest,
+) -> RuntimeTaskCreateRequest:
+    target = request.target
+    execution = _target_create_execution(request)
+    common_fields = {
+        "localTaskId": request.local_task_id,
+        "teamId": request.team_id,
+        "runtime": request.runtime,
+        "message": request.message,
+        "title": request.title,
+        "modelId": request.model_id,
+        "modelType": request.model_type,
+        "modelOptions": request.model_options,
+        "additionalSkills": request.additional_skills,
+        "attachmentIds": request.attachment_ids,
+        "execution": execution,
+    }
+    if target.type == "device_workspace":
+        return RuntimeTaskCreateRequest(
+            deviceId=target.device_id,
+            workspacePath=target.workspace_path,
+            **common_fields,
+        )
+
+    return RuntimeTaskCreateRequest(
+        projectId=target.project_id,
+        deviceWorkspaceId=target.device_workspace_id,
+        **common_fields,
+    )
+
+
+def _target_create_execution(
+    request: RuntimeTaskCreateWithTargetRequest,
+) -> Optional[dict[str, Any]]:
+    execution = dict(request.execution or {})
+    workspace = request.target.workspace
+    if workspace is None:
+        return execution or None
+
+    execution["workspace"] = dict(workspace)
+    return execution
 
 
 def _runtime_task_title(request: RuntimeTaskCreateRequest) -> str:

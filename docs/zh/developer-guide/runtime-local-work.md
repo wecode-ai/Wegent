@@ -174,6 +174,19 @@ Wework 打开 LocalTask 后，右侧文件、审查和终端工具使用当前 L
 POST /api/runtime-work/create
 ```
 
+面向新调用方，Backend 也提供目标语义更明确的推荐入口：
+
+```text
+POST /api/runtime-work/tasks
+```
+
+该入口的请求体使用 `target.type` 区分两类创建目标：
+
+- `device_workspace`：通过 `deviceId + workspacePath` 在指定设备目录创建独立设备任务。
+- `project_device_workspace`：通过 `projectId + deviceWorkspaceId` 在项目绑定的设备工作区创建项目任务，可在 `target.workspace` 中携带 `source: git_worktree` 和 `branch`。
+
+`/api/runtime-work/tasks` 只做请求语义收敛，内部仍转换并复用 `/api/runtime-work/create` 对应的创建服务；它不会写入中心库 `TaskResource` 或 `Subtask`。
+
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
 在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。

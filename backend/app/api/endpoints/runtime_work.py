@@ -33,6 +33,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
+    RuntimeTaskCreateWithTargetRequest,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
@@ -560,6 +561,25 @@ async def create_runtime_task_endpoint(
     """Create a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.create_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/tasks",
+    response_model=RuntimeTaskCreateResponse,
+    response_model_by_alias=True,
+)
+async def create_runtime_task_with_target_endpoint(
+    request: RuntimeTaskCreateWithTargetRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a native runtime LocalTask with an explicit target object."""
+
+    return await runtime_work_service.create_runtime_task_with_target(
         db=db,
         user_id=current_user.id,
         request=request,

@@ -2122,6 +2122,105 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
 
 
 @pytest.mark.asyncio
+async def test_create_runtime_task_with_target_maps_device_workspace_request(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateWithTargetRequest
+    from app.services import runtime_work_service
+
+    create_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "localTaskId": "runtime-client-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service, "create_runtime_task", create_mock)
+
+    await runtime_work_service.create_runtime_task_with_target(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateWithTargetRequest(
+            target={
+                "type": "device_workspace",
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+            },
+            localTaskId="runtime-client-1",
+            teamId=3,
+            runtime="codex",
+            message="create runtime task",
+            modelId="gpt-5.5",
+            modelType="codex",
+        ),
+    )
+
+    legacy_request = create_mock.await_args.kwargs["request"]
+    assert legacy_request.device_id == "device-1"
+    assert legacy_request.workspace_path == "/repo/Wegent"
+    assert legacy_request.project_id is None
+    assert legacy_request.device_workspace_id is None
+    assert legacy_request.local_task_id == "runtime-client-1"
+    assert legacy_request.model_id == "gpt-5.5"
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_with_target_maps_project_workspace_request(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateWithTargetRequest
+    from app.services import runtime_work_service
+
+    create_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "localTaskId": "runtime-1",
+            "workspacePath": "/repo/Wegent/.worktrees/runtime-1",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service, "create_runtime_task", create_mock)
+
+    await runtime_work_service.create_runtime_task_with_target(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateWithTargetRequest(
+            target={
+                "type": "project_device_workspace",
+                "projectId": 9,
+                "deviceWorkspaceId": 12,
+                "workspace": {
+                    "source": "git_worktree",
+                    "branch": "feature/device-api",
+                },
+            },
+            teamId=3,
+            runtime="codex",
+            message="create project runtime task",
+        ),
+    )
+
+    legacy_request = create_mock.await_args.kwargs["request"]
+    assert legacy_request.project_id == 9
+    assert legacy_request.device_workspace_id == 12
+    assert legacy_request.device_id is None
+    assert legacy_request.workspace_path is None
+    assert legacy_request.execution == {
+        "workspace": {
+            "source": "git_worktree",
+            "branch": "feature/device-api",
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_runtime_task_rejects_device_workspace_from_another_project(
     test_db,
     test_user,

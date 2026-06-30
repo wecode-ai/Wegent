@@ -194,6 +194,107 @@ def test_runtime_transcript_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].before_cursor == "offset:120"
 
 
+def test_create_runtime_task_target_endpoint_dispatches_device_workspace(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "localTaskId": "runtime-client-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_runtime_task_with_target",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/tasks",
+        headers=_auth_headers(test_token),
+        json={
+            "target": {
+                "type": "device_workspace",
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+            },
+            "localTaskId": "runtime-client-1",
+            "teamId": 3,
+            "runtime": "codex",
+            "message": "create runtime task",
+            "modelId": "gpt-5.5",
+            "modelType": "codex",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["localTaskId"] == "runtime-client-1"
+    request = service_mock.await_args.kwargs["request"]
+    assert request.target.type == "device_workspace"
+    assert request.target.device_id == "device-1"
+    assert request.target.workspace_path == "/repo/Wegent"
+    assert request.model_id == "gpt-5.5"
+
+
+def test_create_runtime_task_target_endpoint_dispatches_project_device_workspace(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "localTaskId": "runtime-1",
+            "workspacePath": "/repo/Wegent/.worktrees/runtime-1",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_runtime_task_with_target",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/tasks",
+        headers=_auth_headers(test_token),
+        json={
+            "target": {
+                "type": "project_device_workspace",
+                "projectId": 9,
+                "deviceWorkspaceId": 12,
+                "workspace": {
+                    "source": "git_worktree",
+                    "branch": "feature/device-api",
+                },
+            },
+            "teamId": 3,
+            "runtime": "codex",
+            "message": "create project runtime task",
+        },
+    )
+
+    assert response.status_code == 200
+    request = service_mock.await_args.kwargs["request"]
+    assert request.target.type == "project_device_workspace"
+    assert request.target.project_id == 9
+    assert request.target.device_workspace_id == 12
+    assert request.target.workspace == {
+        "source": "git_worktree",
+        "branch": "feature/device-api",
+    }
+
+
 def test_runtime_search_endpoint_dispatches_request(
     test_client,
     test_token,

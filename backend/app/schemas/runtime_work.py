@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
@@ -604,6 +604,76 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
+    team_id: int = Field(..., alias="teamId", ge=1)
+    runtime: RuntimeName
+    message: str = Field(..., min_length=1)
+    title: Optional[str] = None
+    model_id: Optional[str] = Field(default=None, alias="modelId")
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    model_options: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="modelOptions",
+    )
+    additional_skills: list[Any] = Field(
+        default_factory=list,
+        alias="additionalSkills",
+    )
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    execution: Optional[dict[str, Any]] = None
+
+
+class RuntimeTaskCreateTarget(BaseModel):
+    """Explicit target for creating a device-local runtime task."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["device_workspace", "project_device_workspace"]
+    device_id: Optional[str] = Field(default=None, alias="deviceId")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+    device_workspace_id: Optional[int] = Field(
+        default=None,
+        alias="deviceWorkspaceId",
+        ge=1,
+    )
+    workspace: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_target_fields(self) -> "RuntimeTaskCreateTarget":
+        """Require the identity fields that match the selected target type."""
+
+        if self.type == "device_workspace":
+            if not self.device_id or not self.workspace_path:
+                raise ValueError(
+                    "deviceId and workspacePath are required for device_workspace"
+                )
+            if self.project_id is not None or self.device_workspace_id is not None:
+                raise ValueError(
+                    "projectId and deviceWorkspaceId are not allowed for "
+                    "device_workspace"
+                )
+            return self
+
+        if self.project_id is None or self.device_workspace_id is None:
+            raise ValueError(
+                "projectId and deviceWorkspaceId are required for "
+                "project_device_workspace"
+            )
+        if self.device_id or self.workspace_path:
+            raise ValueError(
+                "deviceId and workspacePath are not allowed for "
+                "project_device_workspace"
+            )
+        return self
+
+
+class RuntimeTaskCreateWithTargetRequest(BaseModel):
+    """Request to create a runtime task with an explicit target object."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    target: RuntimeTaskCreateTarget
     local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
     team_id: int = Field(..., alias="teamId", ge=1)
     runtime: RuntimeName
