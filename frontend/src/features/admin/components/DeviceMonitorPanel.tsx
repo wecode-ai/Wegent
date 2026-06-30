@@ -14,6 +14,7 @@ import {
   DeviceType,
   BindShell,
   VersionFilterOperator,
+  AdminDeviceBatchStartResponse,
 } from '@/apis/admin'
 import { toast } from 'sonner'
 import {
@@ -50,7 +51,9 @@ import { cn, isCompleteVersionString, isVersionAtLeast } from '@/lib/utils'
 // Minimum version required for auto-upgrade support
 const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
 const FILTER_DEBOUNCE_MS = 600
+const DEVICE_BATCH_POLL_INTERVAL_MS = 2000
 const TERMINAL_UPGRADE_STATUSES = ['success', 'error', 'skipped'] as const
+const TERMINAL_DEVICE_BATCH_STATUSES = ['completed', 'failed', 'cancelled'] as const
 
 interface DeviceUpgradeState {
   status: DeviceUpgradeStatusPayload['status']
@@ -59,8 +62,12 @@ interface DeviceUpgradeState {
 }
 
 function isTerminalUpgradeStatus(status: DeviceUpgradeStatusPayload['status']) {
-  return TERMINAL_UPGRADE_STATUSES.includes(
-    status as (typeof TERMINAL_UPGRADE_STATUSES)[number]
+  return TERMINAL_UPGRADE_STATUSES.includes(status as (typeof TERMINAL_UPGRADE_STATUSES)[number])
+}
+
+function isTerminalDeviceBatchStatus(status: string) {
+  return TERMINAL_DEVICE_BATCH_STATUSES.includes(
+    status as (typeof TERMINAL_DEVICE_BATCH_STATUSES)[number]
   )
 }
 
@@ -156,6 +163,9 @@ export function DeviceMonitorPanel() {
   const [isDevicesLoading, setIsDevicesLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
+  const [activeBatches, setActiveBatches] = useState<Record<string, AdminDeviceBatchStartResponse>>(
+    {}
+  )
   const latestDevicesRequestRef = useRef(0)
   const [upgradeStates, setUpgradeStates] = useState<Record<string, DeviceUpgradeState>>({})
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -351,6 +361,66 @@ export function DeviceMonitorPanel() {
     }
   }, [])
 
+  const activeBatchIdsKey = Object.keys(activeBatches).sort().join('|')
+
+  useEffect(() => {
+    const batchIds = activeBatchIdsKey ? activeBatchIdsKey.split('|') : []
+    if (batchIds.length === 0) return
+
+    let cancelled = false
+
+    const pollBatches = async () => {
+      const results = await Promise.allSettled(
+        batchIds.map(batchId => adminApis.getDeviceBatchStatus(batchId))
+      )
+      if (cancelled) return
+
+      let shouldRefresh = false
+      results.forEach((result, index) => {
+        const batchId = batchIds[index]
+        if (result.status === 'rejected') {
+          console.error('Failed to load device batch status:', result.reason)
+          return
+        }
+
+        const batch = result.value
+        if (isTerminalDeviceBatchStatus(batch.status)) {
+          setActiveBatches(prev => {
+            if (!prev[batch.batch_id]) return prev
+
+            const next = { ...prev }
+            delete next[batch.batch_id]
+            return next
+          })
+          shouldRefresh = true
+          if (batch.failed > 0) {
+            toast.info(batch.message)
+          } else {
+            toast.success(batch.message)
+          }
+          return
+        }
+
+        setActiveBatches(prev => {
+          if (!prev[batchId]) return prev
+          return { ...prev, [batch.batch_id]: batch }
+        })
+      })
+
+      if (shouldRefresh) {
+        void Promise.all([loadStats(), loadDevices()])
+      }
+    }
+
+    void pollBatches()
+    const timer = setInterval(() => void pollBatches(), DEVICE_BATCH_POLL_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [activeBatchIdsKey, loadDevices, loadStats])
+
   // Device action handlers
   const handleUpgrade = useCallback(
     async (device: AdminDeviceInfo) => {
@@ -433,6 +503,56 @@ export function DeviceMonitorPanel() {
     [actionLoading, t]
   )
 
+  const handleUpgradeAllLocalDevices = useCallback(async () => {
+    const key = 'bulk-upgrade-local'
+    if (actionLoading[key]) return
+
+    setActionLoading(prev => ({ ...prev, [key]: 'upgrade-all-local' }))
+    try {
+      const result = await adminApis.upgradeAllLocalDevices()
+      if (result.success) {
+        setActiveBatches(prev => ({ ...prev, [result.batch_id]: result }))
+        toast.success(result.message)
+      } else {
+        toast.info(result.message)
+      }
+    } catch (error) {
+      console.error('Failed to upgrade local devices:', error)
+      toast.error(t('admin:device_monitor.errors.upgrade_all_local_failed'))
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+    }
+  }, [actionLoading, t])
+
+  const handleRestartAllCloudDevices = useCallback(async () => {
+    const key = 'bulk-restart-cloud'
+    if (actionLoading[key]) return
+
+    setActionLoading(prev => ({ ...prev, [key]: 'restart-all-cloud' }))
+    try {
+      const result = await adminApis.restartAllCloudDevices()
+      if (result.success) {
+        setActiveBatches(prev => ({ ...prev, [result.batch_id]: result }))
+        toast.success(result.message)
+      } else {
+        toast.info(result.message)
+      }
+    } catch (error) {
+      console.error('Failed to restart cloud devices:', error)
+      toast.error(t('admin:device_monitor.errors.restart_all_cloud_failed'))
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+    }
+  }, [actionLoading, t])
+
   if (isInitialLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -442,6 +562,9 @@ export function DeviceMonitorPanel() {
   }
 
   const totalPages = Math.ceil(total / limit)
+  const activeBatchList = Object.values(activeBatches)
+  const hasActiveLocalUpgradeBatch = activeBatchList.some(batch => batch.action === 'local_upgrade')
+  const hasActiveCloudRestartBatch = activeBatchList.some(batch => batch.action === 'cloud_restart')
 
   return (
     <div className="space-y-6">
@@ -453,12 +576,62 @@ export function DeviceMonitorPanel() {
           </h1>
           <p className="text-text-muted text-sm">{t('admin:device_monitor.description')}</p>
         </div>
-        <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCw
-            className={cn('h-4 w-4', (isRefreshing || isStatsLoading) && 'animate-spin')}
-          />
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleUpgradeAllLocalDevices()}
+            disabled={!!actionLoading['bulk-upgrade-local'] || hasActiveLocalUpgradeBatch}
+            data-testid="upgrade-all-local-devices-button"
+          >
+            <ArrowUpCircle
+              className={cn(
+                'h-4 w-4 mr-2',
+                (actionLoading['bulk-upgrade-local'] || hasActiveLocalUpgradeBatch) &&
+                  'animate-pulse'
+              )}
+            />
+            {t('admin:device_monitor.actions.upgrade_all_local')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleRestartAllCloudDevices()}
+            disabled={!!actionLoading['bulk-restart-cloud'] || hasActiveCloudRestartBatch}
+            data-testid="restart-all-cloud-devices-button"
+          >
+            <RotateCcw
+              className={cn(
+                'h-4 w-4 mr-2',
+                (actionLoading['bulk-restart-cloud'] || hasActiveCloudRestartBatch) &&
+                  'animate-spin'
+              )}
+            />
+            {t('admin:device_monitor.actions.restart_all_cloud')}
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
+            <RefreshCw
+              className={cn('h-4 w-4', (isRefreshing || isStatsLoading) && 'animate-spin')}
+            />
+          </Button>
+        </div>
       </div>
+
+      {activeBatchList.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {activeBatchList.map(batch => (
+            <Tag
+              key={batch.batch_id}
+              variant="info"
+              className="flex items-center gap-1"
+              data-testid={`device-batch-${batch.batch_id}`}
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {batch.message}
+            </Tag>
+          ))}
+        </div>
+      )}
 
       {/* Stats Grid */}
       {stats && (
@@ -726,10 +899,10 @@ export function DeviceMonitorPanel() {
                               {isUpgradeInProgress
                                 ? upgradeState.message
                                 : canUpgrade
-                                ? t('admin:device_monitor.actions.upgrade')
-                                : t('admin:device_monitor.actions.upgrade_unsupported', {
-                                    version: MIN_AUTO_UPGRADE_VERSION,
-                                  })}
+                                  ? t('admin:device_monitor.actions.upgrade')
+                                  : t('admin:device_monitor.actions.upgrade_unsupported', {
+                                      version: MIN_AUTO_UPGRADE_VERSION,
+                                    })}
                             </TooltipContent>
                           </Tooltip>
                         )}

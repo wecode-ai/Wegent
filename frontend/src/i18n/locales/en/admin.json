@@ -1032,13 +1032,17 @@
       "load_failed": "Failed to load device list",
       "load_stats_failed": "Failed to load statistics",
       "upgrade_failed": "Failed to send upgrade command",
+      "upgrade_all_local_failed": "Failed to upgrade local devices",
       "restart_failed": "Failed to send restart command",
+      "restart_all_cloud_failed": "Failed to restart cloud devices",
       "migrate_failed": "Failed to send migrate command"
     },
     "actions": {
       "upgrade": "Upgrade",
+      "upgrade_all_local": "Upgrade All Local Devices",
       "upgrade_unsupported": "Version below {{version}}, online upgrade not supported",
       "restart": "Restart",
+      "restart_all_cloud": "Restart All Cloud Devices",
       "migrate": "Migrate",
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",

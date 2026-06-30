@@ -32,6 +32,9 @@ jest.mock('@/apis/admin', () => ({
     upgradeDevice: jest.fn(),
     restartDevice: jest.fn(),
     migrateDevice: jest.fn(),
+    restartAllCloudDevices: jest.fn(),
+    upgradeAllLocalDevices: jest.fn(),
+    getDeviceBatchStatus: jest.fn(),
   },
 }))
 
@@ -170,10 +173,10 @@ describe('DeviceMonitorPanel', () => {
     jest.clearAllMocks()
 
     mockedAdminApis.getDeviceStats.mockResolvedValue({
-      total: 1,
+      total: 2,
       user_count: 1,
       by_status: { online: 1, offline: 0, busy: 0 },
-      by_device_type: { local: 1, cloud: 0 },
+      by_device_type: { local: 1, cloud: 1 },
       by_bind_shell: { claudecode: 1, openclaw: 0 },
     })
 
@@ -197,6 +200,22 @@ describe('DeviceMonitorPanel', () => {
         },
       ],
     })
+
+    mockedAdminApis.getDeviceBatchStatus.mockImplementation(batchId =>
+      Promise.resolve({
+        success: true,
+        batch_id: batchId,
+        action: 'local_upgrade',
+        status: 'running',
+        total: 1,
+        message: 'Batch running',
+        triggered: 0,
+        failed: 0,
+        skipped: 0,
+        errors: [],
+        items: [],
+      })
+    )
   })
 
   it('refreshes only the device list when search changes', async () => {
@@ -301,5 +320,78 @@ describe('DeviceMonitorPanel', () => {
       undefined,
       undefined
     )
+  })
+
+  it('triggers bulk cloud restart from the header action', async () => {
+    mockedAdminApis.restartAllCloudDevices.mockResolvedValue({
+      success: true,
+      batch_id: 'cloud-batch-1',
+      action: 'cloud_restart',
+      status: 'pending',
+      message: 'Restart queued',
+      total: 1,
+    })
+    mockedAdminApis.getDeviceBatchStatus.mockResolvedValue({
+      success: true,
+      batch_id: 'cloud-batch-1',
+      action: 'cloud_restart',
+      status: 'completed',
+      message: 'cloud_restart completed: 1 triggered, 0 failed, 0 skipped',
+      total: 1,
+      triggered: 1,
+      failed: 0,
+      skipped: 0,
+      errors: [],
+      items: [],
+    })
+
+    render(<DeviceMonitorPanel />)
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByTestId('restart-all-cloud-devices-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.restartAllCloudDevices).toHaveBeenCalledTimes(1)
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith('Restart queued')
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDeviceBatchStatus).toHaveBeenCalledWith('cloud-batch-1')
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith(
+      'cloud_restart completed: 1 triggered, 0 failed, 0 skipped'
+    )
+  })
+
+  it('triggers bulk local upgrade from the header action', async () => {
+    mockedAdminApis.upgradeAllLocalDevices.mockResolvedValue({
+      success: true,
+      batch_id: 'local-batch-1',
+      action: 'local_upgrade',
+      status: 'pending',
+      message: 'Upgrade queued',
+      total: 1,
+    })
+
+    render(<DeviceMonitorPanel />)
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByTestId('upgrade-all-local-devices-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.upgradeAllLocalDevices).toHaveBeenCalledTimes(1)
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith('Upgrade queued')
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDeviceBatchStatus).toHaveBeenCalledWith('local-batch-1')
+    })
+    expect(screen.getByTestId('device-batch-local-batch-1')).toBeInTheDocument()
   })
 })

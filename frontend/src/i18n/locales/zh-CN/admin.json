@@ -1032,13 +1032,17 @@
       "load_failed": "加载设备列表失败",
       "load_stats_failed": "加载统计数据失败",
       "upgrade_failed": "发送升级命令失败",
+      "upgrade_all_local_failed": "批量升级本地设备失败",
       "restart_failed": "发送重启命令失败",
+      "restart_all_cloud_failed": "批量重启云设备失败",
       "migrate_failed": "发送迁移命令失败"
     },
     "actions": {
       "upgrade": "升级",
+      "upgrade_all_local": "升级全部本地设备",
       "upgrade_unsupported": "版本低于 {{version}}，不支持在线升级",
       "restart": "重启",
+      "restart_all_cloud": "重启全部云设备",
       "migrate": "迁移",
       "upgrade_sent": "升级命令已发送",
       "restart_sent": "重启命令已发送",
