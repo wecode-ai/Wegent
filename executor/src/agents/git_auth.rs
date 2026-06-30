@@ -42,10 +42,7 @@ pub async fn setup_git_authentication(request: &ExecutionRequest) {
         let mut skipped_fields = fields;
         skipped_fields.push(("reason", "missing_token".to_owned()));
         skipped_fields.push(("git_domain", git_domain));
-        log_executor_event(
-            "git cli authentication skipped",
-            &skipped_fields,
-        );
+        log_executor_event("git cli authentication skipped", &skipped_fields);
         return;
     };
 

@@ -465,7 +465,10 @@ async fn claude_runtime_authenticates_github_enterprise_cli_with_hostname() {
                 "git_url".to_owned(),
                 json!("https://github.internal.example/wecode-ai/Wegent.git"),
             ),
-            ("user".to_owned(), json!({"git_token": "ghp_enterprise_token"})),
+            (
+                "user".to_owned(),
+                json!({"git_token": "ghp_enterprise_token"}),
+            ),
         ]),
         ..ExecutionRequest::default()
     };
@@ -478,7 +481,10 @@ async fn claude_runtime_authenticates_github_enterprise_cli_with_hostname() {
             content: "ok".to_owned()
         }
     );
-    assert_eq!(fs::read_to_string(marker).unwrap(), "ghp_enterprise_token\n");
+    assert_eq!(
+        fs::read_to_string(marker).unwrap(),
+        "ghp_enterprise_token\n"
+    );
 }
 
 #[tokio::test]
@@ -564,12 +570,13 @@ async fn codex_runtime_authenticates_github_cli_before_start() {
         skip_git_clone: true,
         prompt: json!("authenticate git cli"),
         bot: json!([{"id": 7, "shell_type": "codex"}]),
-        extra: serde_json::Map::from_iter([
-            ("user".to_owned(), json!({
+        extra: serde_json::Map::from_iter([(
+            "user".to_owned(),
+            json!({
                 "git_domain": "github.com",
                 "git_token": "ghp_codex_token"
-            })),
-        ]),
+            }),
+        )]),
         ..ExecutionRequest::default()
     };
 
