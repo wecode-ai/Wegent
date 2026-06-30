@@ -244,6 +244,21 @@ function workspaceLabel(workspacePath: string, label: unknown): string {
   return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
 }
 
+function localRuntimeProjectWorkspacePath(runtimeProjectKey?: string | null): string | null {
+  const key = runtimeProjectKey?.trim()
+  if (!key) return null
+  if (key.startsWith('local:')) return key.slice('local:'.length).trim() || null
+  if (key.startsWith('/') || key.startsWith('~') || /^[A-Za-z]:[\\/]/.test(key)) return key
+  return null
+}
+
+function normalizeLocalArchiveProjectRequest(
+  data: RuntimeArchiveProjectConversationsRequest
+): RuntimeArchiveProjectConversationsRequest & { workspacePath?: string } {
+  const workspacePath = localRuntimeProjectWorkspacePath(data.runtimeProjectKey)
+  return workspacePath ? { ...data, workspacePath } : data
+}
+
 function normalizeRuntimeTaskSummary(
   task: unknown,
   fallbackWorkspacePath: string
@@ -1074,7 +1089,10 @@ function createRuntimeWorkApi(
     archiveProjectConversations(
       data: RuntimeArchiveProjectConversationsRequest
     ): Promise<RuntimeArchivedConversationBulkResponse> {
-      return requestWithLocalDevice('runtime.archived_conversations.archive_project', data)
+      return requestWithLocalDevice(
+        'runtime.archived_conversations.archive_project',
+        normalizeLocalArchiveProjectRequest(data)
+      )
     },
     archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
       return request('runtime.archived_conversations.archive_all', {})

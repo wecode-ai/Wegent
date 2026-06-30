@@ -147,6 +147,21 @@ describe('WorkspacePanelActions', () => {
       />
     )
 
+    expect(screen.getByTestId('local-workspace-titlebar-control')).toHaveClass(
+      'border-border',
+      'bg-background'
+    )
+    expect(screen.getByTestId('local-workspace-titlebar-control')).not.toHaveClass('bg-white')
+    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveClass(
+      'bg-surface',
+      'hover:bg-muted'
+    )
+    expect(screen.getByTestId('open-local-workspace-picker-button')).toHaveClass(
+      'border-border',
+      'bg-background',
+      'hover:bg-muted'
+    )
+
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
     expect(openLocalWorkspaceMock).toHaveBeenCalledWith({

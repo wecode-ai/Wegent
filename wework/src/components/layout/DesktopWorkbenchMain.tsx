@@ -58,6 +58,7 @@ import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
+import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width,max-width]'
@@ -129,7 +130,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     projectChat,
     upgradeDevice,
     retryFailedMessage,
-    pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -766,12 +766,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-hidden border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
             leftClassName="min-w-0 max-w-[calc(100%-12rem)] gap-2"
+            right={
+              (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
+                <SubagentStatusIndicator
+                  statuses={paneSession.subagentStatuses}
+                  availableWidth={rightPanelOpen ? rightSplitChatWidth : null}
+                />
+              ) : null
+            }
+            rightClassName="gap-2"
           />
         )}
       </WorkbenchPaneActiveOnly>
@@ -915,7 +924,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
-                    onPause={() => void pauseCurrentResponse(paneMessages)}
+                    onPause={() => void paneSession.pauseCurrentResponse()}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -970,7 +979,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
-                onPause={() => void pauseCurrentResponse(paneMessages)}
+                onPause={() => void paneSession.pauseCurrentResponse()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1061,7 +1070,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           devices={devices}
           requiresStop={paneIsResponseStreaming}
           onOpenChange={setForkDialogOpen}
-          onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
+          onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}
           onDeleteDeviceWorkspace={deleteDeviceWorkspace}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}

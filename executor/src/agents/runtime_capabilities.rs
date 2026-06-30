@@ -16,7 +16,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{claude_config_dir, claude_task_dir, extract_claude_options},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
@@ -35,6 +35,51 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
     if attachments.is_empty() {
         return request;
     }
+    log_runtime_event(
+        &request,
+        "claude attachment payload received",
+        vec![
+            ("attachment_count", attachments.len().to_string()),
+            ("attachment_ids", attachment_ids(&attachments)),
+            (
+                "has_auth_token",
+                request
+                    .auth_token
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+            (
+                "backend_url_present",
+                request
+                    .backend_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+        ],
+    );
+
+    let mut success = prepared_success_attachments(&attachments);
+    let mut failed = prepared_failed_attachments(&attachments);
+    let download_candidates = pending_download_attachments(&attachments);
+
+    if download_candidates.is_empty() {
+        let attachment_subtask_id = attachment_subtask_id(&attachments, &request);
+        apply_attachment_prompt_updates(&mut request, &success, &failed, attachment_subtask_id);
+        log_runtime_event(
+            &request,
+            "claude attachments prepared from sync result",
+            vec![
+                ("success_count", success.len().to_string()),
+                ("failed_count", failed.len().to_string()),
+            ],
+        );
+        return request;
+    }
+
     let Some(auth_token) = request
         .auth_token
         .as_deref()
@@ -42,21 +87,126 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
     else {
+        log_runtime_event(
+            &request,
+            "claude attachment download skipped",
+            vec![
+                ("reason", "missing_auth_token".to_owned()),
+                ("attachment_count", download_candidates.len().to_string()),
+                ("attachment_ids", attachment_ids(&download_candidates)),
+            ],
+        );
         return request;
     };
 
-    let (workspace, project_layout) = resolve_attachment_workspace(&request);
-    let attachment_subtask_id = attachment_subtask_id(&attachments, &request);
-    let attachments_dir = if project_layout {
-        workspace
-            .join(request.task_id.to_string())
-            .join(attachment_subtask_id.to_string())
-    } else {
-        workspace
-            .join(attachments_subdir_name(&request.task_id.to_string()))
-            .join(attachment_subtask_id.to_string())
-    };
+    let attachment_subtask_id = attachment_subtask_id(&download_candidates, &request);
+    let (attachments_dir, project_layout) =
+        resolve_attachments_dir(&request, &download_candidates, attachment_subtask_id);
     let api_base_url = request_api_base_url(&request);
+    log_runtime_event(
+        &request,
+        "claude attachment download starting",
+        vec![
+            ("attachment_count", download_candidates.len().to_string()),
+            ("attachment_ids", attachment_ids(&download_candidates)),
+            ("attachments_dir", attachments_dir.display().to_string()),
+            ("project_layout", project_layout.to_string()),
+            (
+                "api_base_url_present",
+                (!api_base_url.trim().is_empty()).to_string(),
+            ),
+        ],
+    );
+    let result = download_attachments(
+        &download_candidates,
+        &attachments_dir,
+        &api_base_url,
+        &auth_token,
+        request.task_id,
+        request.subtask_id,
+    )
+    .await;
+
+    let downloaded_success_count = result.success.len();
+    let downloaded_failed_count = result.failed.len();
+    success.extend(result.success);
+    failed.extend(result.failed);
+    apply_attachment_prompt_updates(&mut request, &success, &failed, attachment_subtask_id);
+
+    log_runtime_event(
+        &request,
+        "claude attachments prepared",
+        vec![
+            ("success_count", downloaded_success_count.to_string()),
+            ("failed_count", downloaded_failed_count.to_string()),
+        ],
+    );
+    request
+}
+
+pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
+    let attachments = attachment_records(&request);
+    let attachment_subtask_id = attachment_subtask_id(&attachments, &request);
+    if attachments.is_empty() {
+        return attachment_sync_response(request.task_id, request.subtask_id, &[], &[]);
+    }
+
+    log_runtime_event(
+        &request,
+        "attachment sync payload received",
+        vec![
+            ("attachment_count", attachments.len().to_string()),
+            ("attachment_ids", attachment_ids(&attachments)),
+            (
+                "has_auth_token",
+                request
+                    .auth_token
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+            (
+                "backend_url_present",
+                request
+                    .backend_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+        ],
+    );
+
+    let Some(auth_token) = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+    else {
+        let failed = mark_attachments_failed(&attachments, "missing auth_token");
+        return attachment_sync_response(request.task_id, request.subtask_id, &[], &failed);
+    };
+
+    let api_base_url = request_api_base_url(&request);
+    if api_base_url.trim().is_empty() {
+        let failed = mark_attachments_failed(&attachments, "missing backend_url");
+        return attachment_sync_response(request.task_id, request.subtask_id, &[], &failed);
+    }
+
+    let (attachments_dir, project_layout) =
+        resolve_attachments_dir(&request, &attachments, attachment_subtask_id);
+    log_runtime_event(
+        &request,
+        "attachment sync download starting",
+        vec![
+            ("attachment_count", attachments.len().to_string()),
+            ("attachment_ids", attachment_ids(&attachments)),
+            ("attachments_dir", attachments_dir.display().to_string()),
+            ("project_layout", project_layout.to_string()),
+        ],
+    );
     let result = download_attachments(
         &attachments,
         &attachments_dir,
@@ -66,33 +216,37 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
         request.subtask_id,
     )
     .await;
+    attachment_sync_response(
+        request.task_id,
+        request.subtask_id,
+        &result.success,
+        &result.failed,
+    )
+}
 
-    if !result.success.is_empty() || !result.failed.is_empty() {
-        let mut prompt = process_prompt(
-            &request.prompt,
-            &result.success,
-            &result.failed,
-            Some(request.task_id),
-            Some(attachment_subtask_id),
-        );
-        if let Value::String(text) = &mut prompt {
-            let context = AttachmentPromptProcessor::build_attachment_context(&result.success);
-            if !context.is_empty() {
-                text.push_str(&context);
-            }
-        }
-        request.prompt = prompt;
+fn apply_attachment_prompt_updates(
+    request: &mut ExecutionRequest,
+    success: &[AttachmentRecord],
+    failed: &[AttachmentRecord],
+    attachment_subtask_id: i64,
+) {
+    if success.is_empty() && failed.is_empty() {
+        return;
     }
-
-    log_runtime_event(
-        &request,
-        "claude attachments prepared",
-        vec![
-            ("success_count", result.success.len().to_string()),
-            ("failed_count", result.failed.len().to_string()),
-        ],
+    let mut prompt = process_prompt(
+        &request.prompt,
+        success,
+        failed,
+        Some(request.task_id),
+        Some(attachment_subtask_id),
     );
-    request
+    if let Value::String(text) = &mut prompt {
+        let context = AttachmentPromptProcessor::build_attachment_context(success);
+        if !context.is_empty() {
+            text.push_str(&context);
+        }
+    }
+    request.prompt = prompt;
 }
 
 pub async fn prepare_claude_runtime(
@@ -226,6 +380,152 @@ struct AttachmentDownloadOutcome {
     failed: Vec<AttachmentRecord>,
 }
 
+fn prepared_success_attachments(attachments: &[AttachmentRecord]) -> Vec<AttachmentRecord> {
+    attachments
+        .iter()
+        .filter(|attachment| {
+            attachment
+                .local_path
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+                && !attachment_failed_status(attachment)
+        })
+        .cloned()
+        .collect()
+}
+
+fn prepared_failed_attachments(attachments: &[AttachmentRecord]) -> Vec<AttachmentRecord> {
+    attachments
+        .iter()
+        .filter(|attachment| attachment_failed_status(attachment))
+        .cloned()
+        .collect()
+}
+
+fn pending_download_attachments(attachments: &[AttachmentRecord]) -> Vec<AttachmentRecord> {
+    attachments
+        .iter()
+        .filter(|attachment| {
+            attachment
+                .local_path
+                .as_deref()
+                .map(str::trim)
+                .map(|value| value.is_empty())
+                .unwrap_or(true)
+                && !attachment_failed_status(attachment)
+        })
+        .cloned()
+        .collect()
+}
+
+fn attachment_failed_status(attachment: &AttachmentRecord) -> bool {
+    attachment
+        .error
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        || attachment
+            .status
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("failed"))
+}
+
+fn resolve_attachments_dir(
+    request: &ExecutionRequest,
+    attachments: &[AttachmentRecord],
+    fallback_subtask_id: i64,
+) -> (PathBuf, bool) {
+    let (workspace, project_layout) = resolve_attachment_workspace(request);
+    let attachment_subtask_id = attachments
+        .iter()
+        .find_map(|attachment| attachment.subtask_id)
+        .unwrap_or(fallback_subtask_id);
+    let attachments_dir = if project_layout {
+        workspace
+            .join(request.task_id.to_string())
+            .join(attachment_subtask_id.to_string())
+    } else {
+        workspace
+            .join(attachments_subdir_name(&request.task_id.to_string()))
+            .join(attachment_subtask_id.to_string())
+    };
+    (attachments_dir, project_layout)
+}
+
+fn mark_attachments_failed(attachments: &[AttachmentRecord], error: &str) -> Vec<AttachmentRecord> {
+    attachments
+        .iter()
+        .map(|attachment| {
+            let mut failed = attachment.clone();
+            failed.status = Some("failed".to_owned());
+            failed.error = Some(error.to_owned());
+            failed
+        })
+        .collect()
+}
+
+fn attachment_sync_response(
+    task_id: i64,
+    subtask_id: i64,
+    success: &[AttachmentRecord],
+    failed: &[AttachmentRecord],
+) -> Value {
+    let mut attachments = Vec::with_capacity(success.len() + failed.len());
+    for attachment in success {
+        attachments.push(attachment_sync_item(attachment, "success"));
+    }
+    for attachment in failed {
+        attachments.push(attachment_sync_item(attachment, "failed"));
+    }
+    json!({
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "attachments": attachments,
+        "success_count": success.len(),
+        "failed_count": failed.len(),
+    })
+}
+
+fn attachment_sync_item(attachment: &AttachmentRecord, status: &str) -> Value {
+    let mut item = json!({
+        "id": attachment.id,
+        "status": status,
+        "original_filename": attachment.original_filename,
+    });
+    let Some(object) = item.as_object_mut() else {
+        return item;
+    };
+    if let Some(local_path) = attachment
+        .local_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert(
+            "local_path".to_owned(),
+            Value::String(local_path.to_owned()),
+        );
+    }
+    if let Some(error) = attachment
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert("error".to_owned(), Value::String(error.to_owned()));
+    }
+    if let Some(mime_type) = attachment.mime_type.clone() {
+        object.insert("mime_type".to_owned(), Value::String(mime_type));
+    }
+    if let Some(file_size) = attachment.file_size {
+        object.insert("file_size".to_owned(), Value::from(file_size));
+    }
+    if let Some(subtask_id) = attachment.subtask_id {
+        object.insert("subtask_id".to_owned(), Value::from(subtask_id));
+    }
+    item
+}
+
 async fn download_attachments(
     attachments: &[AttachmentRecord],
     attachments_dir: &Path,
@@ -239,6 +539,20 @@ async fn download_attachments(
     let mut success = Vec::new();
     let mut failed = Vec::new();
     for attachment in attachments {
+        log_executor_event(
+            "attachment download item started",
+            &[
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("attachment_id", attachment.id.to_string()),
+                ("filename", attachment.original_filename.clone()),
+                ("target_dir", attachments_dir.display().to_string()),
+                (
+                    "api_base_url_present",
+                    (!api_base_url.trim().is_empty()).to_string(),
+                ),
+            ],
+        );
         match download_attachment(
             &client,
             attachment,
@@ -250,12 +564,23 @@ async fn download_attachments(
         {
             Ok(local_path) => {
                 let mut downloaded = attachment.clone();
+                downloaded.status = Some("success".to_owned());
                 downloaded.local_path = Some(local_path.display().to_string());
                 downloaded.error = None;
                 success.push(downloaded);
             }
             Err(error) => {
+                log_executor_event(
+                    "attachment download item failed",
+                    &[
+                        ("task_id", task_id.to_string()),
+                        ("subtask_id", subtask_id.to_string()),
+                        ("attachment_id", attachment.id.to_string()),
+                        ("error", error.clone()),
+                    ],
+                );
                 let mut failed_attachment = attachment.clone();
+                failed_attachment.status = Some("failed".to_owned());
                 failed_attachment.error = Some(error);
                 failed.push(failed_attachment);
             }
@@ -291,8 +616,16 @@ async fn download_attachment(
         .send()
         .await
         .map_err(|error| format!("Request error: {error}"))?;
-    if response.status() != StatusCode::OK {
-        return Err(format!("HTTP {}", response.status()));
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body_preview = response
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect::<String>();
+        return Err(format!("HTTP {status}; body={body_preview}"));
     }
     let bytes = response
         .bytes()
@@ -301,6 +634,14 @@ async fn download_attachment(
     let path = attachments_dir.join(sanitize_filename(&attachment.original_filename));
     fs::write(&path, bytes).map_err(|error| format!("IO error: {error}"))?;
     Ok(path)
+}
+
+fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
+    attachments
+        .iter()
+        .map(|attachment| attachment.id.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result<(), String> {
@@ -327,13 +668,9 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             Ok(true) => success_count += 1,
             Ok(false) => {}
             Err(error) => {
-                log_executor_event(
-                    "skill deployment item skipped after error",
-                    &[
-                        ("skill", skill.clone()),
-                        ("error_len", error.len().to_string()),
-                    ],
-                );
+                let mut fields = vec![("skill", skill.clone())];
+                push_error_fields(&mut fields, error);
+                log_executor_event("skill deployment item skipped after error", &fields);
             }
         }
     }
@@ -561,6 +898,9 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
             .or_else(|| value.get("name"))
             .and_then(|value| value_string(Some(value)))
             .unwrap_or_else(|| "attachment".to_owned()),
+        status: value
+            .get("status")
+            .and_then(|value| value_string(Some(value))),
         local_path: value
             .get("local_path")
             .or_else(|| value.get("localPath"))
@@ -1268,5 +1608,71 @@ fn toml_json_value(value: &Value) -> String {
         ),
         Value::String(value) => toml_value(value),
         _ => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attachment(
+        id: i64,
+        status: Option<&str>,
+        local_path: Option<&str>,
+        error: Option<&str>,
+    ) -> AttachmentRecord {
+        AttachmentRecord {
+            id,
+            original_filename: format!("file-{id}.txt"),
+            status: status.map(ToOwned::to_owned),
+            local_path: local_path.map(ToOwned::to_owned),
+            file_size: Some(12),
+            mime_type: Some("text/plain".to_owned()),
+            subtask_id: Some(203),
+            error: error.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn classifies_prepared_success_and_failed_attachments() {
+        let attachments = vec![
+            attachment(1, Some("success"), Some("/workspace/a.txt"), None),
+            attachment(2, Some("failed"), None, Some("HTTP 404")),
+            attachment(3, None, None, None),
+        ];
+
+        assert_eq!(
+            prepared_success_attachments(&attachments),
+            vec![attachments[0].clone()]
+        );
+        assert_eq!(
+            prepared_failed_attachments(&attachments),
+            vec![attachments[1].clone()]
+        );
+        assert_eq!(
+            pending_download_attachments(&attachments),
+            vec![attachments[2].clone()]
+        );
+    }
+
+    #[test]
+    fn attachment_sync_response_serializes_status_and_paths() {
+        let success = vec![attachment(
+            1,
+            Some("success"),
+            Some("/workspace/a.txt"),
+            None,
+        )];
+        let failed = vec![attachment(2, Some("failed"), None, Some("HTTP 404"))];
+
+        let payload = attachment_sync_response(72, 204, &success, &failed);
+
+        assert_eq!(payload["task_id"], 72);
+        assert_eq!(payload["success_count"], 1);
+        assert_eq!(payload["failed_count"], 1);
+        assert_eq!(payload["attachments"][0]["status"], "success");
+        assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
+        assert_eq!(payload["attachments"][1]["status"], "failed");
+        assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
     }
 }

@@ -451,17 +451,23 @@ export function WorkbenchProvider({
       if (!response.accepted) {
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
-      await refreshWorkLists()
+      const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
 
       rememberExecutionDevice(normalizedDeviceId)
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId: normalizedDeviceId,
-        standaloneWorkspacePath: normalizedWorkspacePath,
+        standaloneWorkspacePath: openedWorkspacePath,
+      })
+      dispatch({
+        type: 'runtime_workspace_opened',
+        deviceId: response.deviceId || normalizedDeviceId,
+        workspacePath: openedWorkspacePath,
+        label: normalizedLabel,
       })
       navigateTo('/')
     },
-    [executorClient, refreshWorkLists, rememberExecutionDevice]
+    [executorClient, rememberExecutionDevice]
   )
 
   const startNewChat = useCallback(() => {

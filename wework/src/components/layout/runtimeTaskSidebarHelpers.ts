@@ -6,6 +6,7 @@ export interface RuntimeSidebarTaskItem {
 }
 
 export const RUNTIME_PROJECT_TASK_PREVIEW_LIMIT = 5
+export const RUNTIME_PROJECT_TASK_EXPAND_STEP = 10
 
 export function getRuntimeTaskTime(task: LocalTaskSummary) {
   return task.updatedAt || task.createdAt || undefined
@@ -53,14 +54,23 @@ export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
 
 export function getVisibleRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
-  expanded: boolean
+  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
 ) {
-  if (expanded) return items
-  return items.slice(0, RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
+  return items.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit))
 }
 
-export function hasHiddenRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {
-  return items.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {
+  return Math.min(
+    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, currentLimit) + RUNTIME_PROJECT_TASK_EXPAND_STEP,
+    totalCount
+  )
+}
+
+export function hasHiddenRuntimeSidebarTaskItems(
+  items: RuntimeSidebarTaskItem[],
+  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+) {
+  return items.length > Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
 }
 
 export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) {

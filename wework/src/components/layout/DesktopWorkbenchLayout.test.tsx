@@ -398,6 +398,14 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1024,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 720,
+    })
     tauriMenuMocks.getCurrentWindow.mockReturnValue({
       label: 'main',
       onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()),
@@ -954,9 +962,9 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_1.5rem)]',
       '-translate-y-12'
     )
   })
@@ -987,9 +995,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_1.5rem)]',
       'px-0'
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
@@ -1445,18 +1453,18 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('restores and stores sidebar width in localStorage', () => {
-    localStorage.setItem('wework.desktop.sidebar.width', '230')
+    localStorage.setItem('wework.desktop.sidebar.width', '340')
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '230px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '340px' })
 
     fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
-    fireEvent.pointerMove(document, { clientX: 235 })
+    fireEvent.pointerMove(document, { clientX: 360 })
     fireEvent.pointerUp(document)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '235px' })
-    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('235')
+    expect(document.querySelector('aside')).toHaveStyle({ width: '360px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
   })
 
   test('clamps sidebar resizing to the maximum width', () => {
@@ -1491,6 +1499,37 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(document.querySelector('aside')).toHaveStyle({ width: '240px' })
+  })
+
+  test('clamps older narrow stored sidebar widths to the new minimum', () => {
+    localStorage.setItem('wework.desktop.sidebar.width', '240')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(document.querySelector('aside')).toHaveStyle({ width: '240px' })
+  })
+
+  test('auto-collapses the sidebar in compact desktop windows and restores it when wide', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 920,
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '0px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('desktop-sidebar-hover-edge')).toBeInTheDocument()
+
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1200,
+    })
+    fireEvent.resize(window)
+
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '240px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'false')
   })
 
   test('collapses and expands the sidebar', async () => {
@@ -1544,8 +1583,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'max-w-[calc(100%_-_1.5rem)]'
     )
   })
 
@@ -2197,7 +2236,7 @@ describe('DesktopWorkbenchLayout', () => {
     try {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
-        value: 898,
+        value: 1024,
       })
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,
@@ -2756,18 +2795,22 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
-    expect(screen.queryByTestId('project-local-tasks-empty-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
     expect(screen.getByTestId('project-local-tasks-empty-1')).toHaveTextContent('暂无会话')
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(screen.queryByTestId('project-local-tasks-empty-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
     expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
@@ -3144,9 +3187,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(72rem,calc(100%_-_1.5rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]'
+      'max-w-[calc(100%_-_1.5rem)]'
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))

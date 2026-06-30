@@ -22,7 +22,9 @@ use wegent_executor::{
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    std::env::set_var("WEGENT_DISABLE_CODEX_APP_NOTIFY", "1");
+    guard
 }
 
 struct EnvGuard {
@@ -469,7 +471,20 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .display()
             .to_string(),
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
+    let codex_home = temp_path("wegent-app-runtime-store-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join(".codex-global-state.json"),
+        serde_json::to_vec_pretty(&json!({
+            "electron-saved-workspace-roots": ["/tmp/project"],
+            "project-order": ["/tmp/project"],
+            "thread-workspace-root-hints": {},
+            "projectless-thread-ids": ["thread-1"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let (_sqlite_home_guard, sqlite_home) =
         set_temp_codex_sqlite_home("wegent-app-runtime-store-sqlite");
     write_default_codex_state_db_thread(&sqlite_home, false);
@@ -513,6 +528,62 @@ async fn app_runtime_persists_local_task_thread_mapping() {
         restored["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"],
         "thread-1"
     );
+    let codex_state: Value = serde_json::from_str(
+        &fs::read_to_string(codex_home.join(".codex-global-state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        codex_state["thread-workspace-root-hints"]["thread-1"],
+        "/tmp/project"
+    );
+    assert_eq!(codex_state["projectless-thread-ids"], json!([]));
+}
+
+#[tokio::test]
+async fn app_runtime_create_standalone_chat_generates_default_workspace() {
+    let _lock = env_lock().await;
+    let home = temp_path("wegent-app-runtime-chat-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-chat-store-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-chat-codex-home");
+    let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-chat-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "standalone-chat-1",
+                "title": "Standalone chat",
+                "executionRequest": {
+                    "task_id": 1904,
+                    "subtask_id": 1905,
+                    "prompt": "ordinary device task",
+                    "bot": [{"shell_type": "Codex"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5",
+                        "api_format": "responses",
+                        "protocol": "openai-responses"
+                    },
+                    "project_id": 0,
+                    "standalone_chat_workspace": true
+                }
+            }
+        }))
+        .await
+        .expect("standalone chat create should be accepted");
+
+    assert_eq!(created["accepted"], true);
+    assert_eq!(created["localTaskId"], "standalone-chat-1");
+    let workspace_path = created["workspacePath"].as_str().unwrap();
+    assert!(workspace_path.contains("/Documents/Codex/"));
+    assert!(workspace_path.ends_with("/standalone-chat-1"));
 }
 
 #[tokio::test]

@@ -114,6 +114,9 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "user_name": sandbox.user_name,
                 "executor_namespace": sandbox.executor_namespace,
                 "metadata": sandbox.metadata,
+                "started_at": sandbox.started_at,
+                "last_activity_at": sandbox.last_activity_at,
+                "expires_at": sandbox.expires_at,
             }
 
             hash_key = f"{SESSION_HASH_PREFIX}{task_id}"

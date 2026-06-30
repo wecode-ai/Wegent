@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
-  type WorkbenchMessage,
+  type WorkbenchMessage
 } from './index'
 
 describe('reduceWorkbenchMessages', () => {
@@ -15,19 +15,19 @@ describe('reduceWorkbenchMessages', () => {
         role: 'user',
         content: 'hello',
         status: 'done',
-        createdAt: '2026-05-25T00:00:00.000Z',
-      },
+        createdAt: '2026-05-25T00:00:00.000Z'
+      }
     })
     const withStart = reduceWorkbenchMessages(withUser, {
       type: 'assistant_started',
       taskId: 1,
       turnId: 9,
-      shellType: 'ClaudeCode',
+      shellType: 'ClaudeCode'
     })
     const withChunk = reduceWorkbenchMessages(withStart, {
       type: 'assistant_chunk',
       turnId: 9,
-      content: 'hi',
+      content: 'hi'
     })
 
     expect(withChunk).toHaveLength(2)
@@ -36,7 +36,7 @@ describe('reduceWorkbenchMessages', () => {
       role: 'assistant',
       content: 'hi',
       status: 'streaming',
-      shellType: 'ClaudeCode',
+      shellType: 'ClaudeCode'
     })
   })
 
@@ -48,8 +48,8 @@ describe('reduceWorkbenchMessages', () => {
         turnId: 9,
         content: 'hello',
         status: 'done',
-        createdAt: '2026-05-25T00:00:00.000Z',
-      },
+        createdAt: '2026-05-25T00:00:00.000Z'
+      }
     ]
 
     const withTool = reduceWorkbenchMessages(state, {
@@ -61,31 +61,31 @@ describe('reduceWorkbenchMessages', () => {
         type: 'tool',
         toolName: 'bash',
         status: 'pending',
-        createdAt: 1770000000000,
-      },
+        createdAt: 1770000000000
+      }
     })
     const withChunk = reduceWorkbenchMessages(withTool, {
       type: 'assistant_chunk',
       turnId: 9,
-      content: 'Hi',
+      content: 'Hi'
     })
     const done = reduceWorkbenchMessages(withChunk, {
       type: 'assistant_done',
       turnId: 9,
-      content: 'Hi',
+      content: 'Hi'
     })
 
     expect(done).toHaveLength(2)
     expect(done[0]).toMatchObject({
       role: 'user',
       content: 'hello',
-      status: 'done',
+      status: 'done'
     })
     expect(done[1]).toMatchObject({
       role: 'assistant',
       content: 'Hi',
       status: 'done',
-      blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }],
+      blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }]
     })
   })
 
@@ -94,13 +94,13 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        turnId: 9,
+        turnId: 9
       }),
       {
         type: 'assistant_chunk',
         turnId: 9,
         content: '',
-        reasoningChunk: 'Running a command',
+        reasoningChunk: 'Running a command'
       }
     )
 
@@ -114,13 +114,13 @@ describe('reduceWorkbenchMessages', () => {
         toolName: 'bash',
         toolInput: { command: 'pwd' },
         status: 'pending',
-        createdAt: 1770000000000,
-      },
+        createdAt: 1770000000000
+      }
     })
 
     expect(withTool[0].blocks).toMatchObject([
       { type: 'thinking', status: 'done' },
-      { type: 'tool', toolName: 'bash', status: 'pending' },
+      { type: 'tool', toolName: 'bash', status: 'pending' }
     ])
   })
 
@@ -129,12 +129,12 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        turnId: 9,
+        turnId: 9
       }),
       {
         type: 'assistant_chunk',
         turnId: 9,
-        content: 'Let me inspect the repository first.',
+        content: 'Let me inspect the repository first.'
       }
     )
 
@@ -148,8 +148,8 @@ describe('reduceWorkbenchMessages', () => {
         toolName: 'bash',
         toolInput: { command: 'ls' },
         status: 'pending',
-        createdAt: 1770000000000,
-      },
+        createdAt: 1770000000000
+      }
     })
 
     expect(withTool[0].content).toBe('')
@@ -157,9 +157,9 @@ describe('reduceWorkbenchMessages', () => {
       {
         type: 'text',
         content: 'Let me inspect the repository first.',
-        status: 'done',
+        status: 'done'
       },
-      { type: 'tool', toolName: 'bash', status: 'pending' },
+      { type: 'tool', toolName: 'bash', status: 'pending' }
     ])
   })
 
@@ -167,7 +167,7 @@ describe('reduceWorkbenchMessages', () => {
     const state = reduceWorkbenchMessages([], {
       type: 'assistant_started',
       taskId: 1,
-      turnId: 9,
+      turnId: 9
     })
 
     const done = reduceWorkbenchMessages(state, {
@@ -181,7 +181,7 @@ describe('reduceWorkbenchMessages', () => {
           type: 'thinking',
           content: 'Drafting',
           status: 'streaming',
-          createdAt: 1770000000000,
+          createdAt: 1770000000000
         },
         {
           id: 'call_1',
@@ -189,7 +189,7 @@ describe('reduceWorkbenchMessages', () => {
           type: 'tool',
           toolName: 'bash',
           status: 'pending',
-          createdAt: 1770000001000,
+          createdAt: 1770000001000
         },
         {
           id: 'text-real',
@@ -197,16 +197,59 @@ describe('reduceWorkbenchMessages', () => {
           type: 'text',
           content: 'Final text',
           status: 'streaming',
-          createdAt: 1770000002000,
-        },
-      ],
+          createdAt: 1770000002000
+        }
+      ]
     })
 
     expect(done[0].blocks).toMatchObject([
       { id: 'thinking-real', type: 'thinking', status: 'done' },
       { id: 'call_1', type: 'tool', status: 'done' },
-      { id: 'text-real', type: 'text', status: 'done' },
+      { id: 'text-real', type: 'text', status: 'done' }
     ])
+  })
+
+  test('marks all streaming assistant messages cancelled when no turn is specified', () => {
+    const state = [
+      {
+        id: 'user-1',
+        role: 'user' as const,
+        content: 'stop',
+        status: 'done' as const,
+        createdAt: '2026-05-25T00:00:00.000Z'
+      },
+      {
+        id: 'assistant-old',
+        role: 'assistant' as const,
+        content: 'persisted streaming',
+        status: 'streaming' as const,
+        createdAt: '2026-05-25T00:00:00.000Z'
+      },
+      {
+        id: 'assistant-new',
+        role: 'assistant' as const,
+        content: '',
+        status: 'streaming' as const,
+        turnId: 9,
+        createdAt: '2026-05-25T00:00:01.000Z'
+      }
+    ]
+
+    const cancelled = reduceWorkbenchMessages(state, {
+      type: 'assistant_cancelled'
+    })
+
+    expect(cancelled[0]).toMatchObject({ role: 'user', status: 'done' })
+    expect(cancelled[1]).toMatchObject({
+      status: 'done',
+      runtimeStatus: 'cancelled',
+      stoppedNotice: true
+    })
+    expect(cancelled[2]).toMatchObject({
+      status: 'done',
+      runtimeStatus: 'cancelled',
+      stoppedNotice: true
+    })
   })
 
   test('clears stale stream error when an active block update arrives after disconnect', () => {
@@ -214,13 +257,13 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        turnId: 9,
+        turnId: 9
       }),
       {
         type: 'assistant_error',
         turnId: 9,
         error: 'Device disconnected',
-        errorType: 'container_error',
+        errorType: 'container_error'
       }
     )
 
@@ -233,8 +276,8 @@ describe('reduceWorkbenchMessages', () => {
         type: 'tool',
         toolName: 'bash',
         status: 'pending',
-        createdAt: 1770000000000,
-      },
+        createdAt: 1770000000000
+      }
     })
     const resumed = reduceWorkbenchMessages(withTool, {
       type: 'block_updated',
@@ -242,15 +285,20 @@ describe('reduceWorkbenchMessages', () => {
       blockId: 'call_1',
       updates: {
         status: 'streaming',
-        toolOutput: 'still running',
-      },
+        toolOutput: 'still running'
+      }
     })
 
     expect(resumed[0].status).toBe('streaming')
     expect(resumed[0].error).toBeUndefined()
     expect(resumed[0].errorType).toBeUndefined()
     expect(resumed[0].blocks).toMatchObject([
-      { id: 'call_1', type: 'tool', status: 'streaming', toolOutput: 'still running' },
+      {
+        id: 'call_1',
+        type: 'tool',
+        status: 'streaming',
+        toolOutput: 'still running'
+      }
     ])
   })
 
@@ -305,13 +353,13 @@ describe('reduceWorkbenchMessages', () => {
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
-        turnId: 9,
+        turnId: 9
       }),
       {
         type: 'assistant_error',
         turnId: 9,
         error: 'Codex CLI failed to resume thread: session not found',
-        errorType: 'execution_error',
+        errorType: 'execution_error'
       }
     )
 
@@ -319,13 +367,13 @@ describe('reduceWorkbenchMessages', () => {
       type: 'assistant_error',
       turnId: 9,
       error: 'Task failed with status: FAILED',
-      errorType: 'execution_error',
+      errorType: 'execution_error'
     })
 
     expect(next[0]).toMatchObject({
       status: 'failed',
       error: 'Codex CLI failed to resume thread: session not found',
-      errorType: 'execution_error',
+      errorType: 'execution_error'
     })
   })
 
@@ -336,14 +384,13 @@ describe('reduceWorkbenchMessages', () => {
         role: 'assistant',
         content: 'hello',
         status: 'done',
-        createdAt: '2026-05-25T00:00:00.000Z',
-      },
+        createdAt: '2026-05-25T00:00:00.000Z'
+      }
     ]
 
-    const next = reduceWorkbenchMessages(
-      state,
-      { type: 'unexpected' } as unknown as Parameters<typeof reduceWorkbenchMessages>[1]
-    )
+    const next = reduceWorkbenchMessages(state, {
+      type: 'unexpected'
+    } as unknown as Parameters<typeof reduceWorkbenchMessages>[1])
 
     expect(next).toBe(state)
   })

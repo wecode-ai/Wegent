@@ -684,6 +684,51 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('routes local project archive requests with decoded workspace path', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      requestedCount: 1,
+      acceptedCount: 1,
+      results: [],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.archiveProjectConversations({
+      runtimeProjectKey: 'local:/Users/me/project',
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.archived_conversations.archive_project', {
+      runtimeProjectKey: 'local:/Users/me/project',
+      workspacePath: '/Users/me/project',
+    })
+  })
+
+  test('passes non-local runtime project keys through for executor resolution', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      requestedCount: 1,
+      acceptedCount: 1,
+      results: [],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.archiveProjectConversations({
+      runtimeProjectKey: 'remote-project-1',
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.archived_conversations.archive_project', {
+      runtimeProjectKey: 'remote-project-1',
+    })
+  })
+
   test('normalizes app-shaped runtime task worktree fields', async () => {
     const request = vi.fn().mockResolvedValue({
       projects: [

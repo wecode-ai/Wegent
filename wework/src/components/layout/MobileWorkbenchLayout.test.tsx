@@ -1381,6 +1381,80 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
+  test('expands mobile project runtime tasks by ten and collapses back to five', async () => {
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                totalLocalTasks: 26,
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'local-device',
+                    deviceName: 'Local Mac',
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/repo/Wegent',
+                    localTasks: Array.from({ length: 26 }, (_, index) => ({
+                      localTaskId: `task-${index + 1}`,
+                      workspacePath: '/repo/Wegent',
+                      title: `Task ${index + 1}`,
+                      runtime: 'codex',
+                      updatedAt: '2026-06-20T06:00:00Z',
+                    })),
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalLocalTasks: 26,
+          },
+        }}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(15)
+    expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
+      '展开显示'
+    )
+    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
+      '折叠显示'
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(25)
+    expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(26)
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-expand-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
+    expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-collapse-1')).not.toBeInTheDocument()
+  })
+
   test('opens project actions on long press without expanding the project', async () => {
     const onSelectProject = vi.fn()
     const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)

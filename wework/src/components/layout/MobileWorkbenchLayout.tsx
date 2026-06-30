@@ -33,6 +33,7 @@ import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -66,7 +67,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     projectChat,
     upgradeDevice,
     retryFailedMessage,
-    pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -249,6 +249,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               </div>
               {currentRuntimeTask ? (
                 <div className="pointer-events-auto flex items-center gap-1">
+                  <SubagentStatusIndicator
+                    statuses={paneSession.subagentStatuses}
+                    availableWidth={0}
+                    compact
+                  />
                   <button
                     type="button"
                     data-testid="mobile-fork-runtime-task-button"
@@ -343,7 +348,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
-                    onPause={() => void pauseCurrentResponse(paneMessages)}
+                    onPause={() => void paneSession.pauseCurrentResponse()}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -432,7 +437,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
-                onPause={() => void pauseCurrentResponse(paneMessages)}
+                onPause={() => void paneSession.pauseCurrentResponse()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -489,7 +494,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         devices={state.devices}
         requiresStop={paneIsResponseStreaming}
         onOpenChange={setForkDialogOpen}
-        onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
+        onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

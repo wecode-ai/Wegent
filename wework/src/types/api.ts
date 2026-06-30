@@ -1495,6 +1495,21 @@ export interface ChatBlockUpdatedPayload {
   local_task_id?: string
 }
 
+export interface RuntimeSubagentActivityPayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  device_id?: string
+  local_task_id?: string
+  agent_path: string
+  agent_id?: string
+  agent_name?: string
+  agent_thread_id?: string
+  kind?: string
+  status?: string
+  occurred_at_ms?: number
+}
+
 export interface ChatGuidanceQueuedPayload {
   task_id: number
   subtask_id: number

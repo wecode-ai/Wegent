@@ -59,6 +59,32 @@ Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor
 
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
+### Backend Device Chat Task REST Entrypoint
+
+The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:
+
+```text
+POST /api/device-chat/tasks
+```
+
+This entrypoint writes central `TaskResource` and `Subtask` rows, and reuses the same `create_chat_task`, device resolution, and `trigger_ai_response_unified` path as the device chat page. The request does not include `workspacePath` or `localTaskId`: regular device chat tasks do not have a project workspace concept. If `projectId` is provided, Backend resolves the target device from the Project config. If `projectId` is omitted, Backend resolves the target from explicit `deviceId`, the existing task device, Wework defaults, or the user's default local device.
+
+Creating a task only requires `teamId` and `message`; callers may also send `deviceId`, `projectId`, model options, and context fields. Continuing a task sends `taskId`; Backend verifies that the current user can access the task and then reuses the existing task's `client_origin`. The response returns the central task and message identifiers:
+
+```json
+{
+  "taskId": 2267,
+  "userSubtaskId": 3332,
+  "assistantSubtaskId": 3333,
+  "messageId": 5,
+  "aiTriggered": true,
+  "deviceId": "device-de8f474294621dd5acfd1287",
+  "chatUrl": "/devices/chat?taskId=2267"
+}
+```
+
+The OpenAPI schema is generated automatically by FastAPI from `DeviceChatTaskRequest` and `DeviceChatTaskResponse`; no static `docs/api` file needs to be maintained.
+
 ### Communication Architecture
 
 The following diagram shows how local devices communicate with the Wegent system:

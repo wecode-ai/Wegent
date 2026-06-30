@@ -8,6 +8,7 @@ import type {
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
   TurnFileChangesSummary,
@@ -25,6 +26,7 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
+  onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
 }
 
 export function createRuntimeTaskStreamHandlers(
@@ -137,6 +139,15 @@ export function createRuntimeTaskStreamHandlers(
         },
       })
     },
+    onSubagentActivity: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      debugRuntimeStreamEvent('subagent:activity', address, payload, true, {
+        agentPath: payload.agent_path,
+        status: payload.status ?? null,
+        kind: payload.kind ?? null,
+      })
+      handlers.onSubagentActivity?.(payload)
+    },
   }
 }
 
@@ -203,6 +214,7 @@ function isRuntimeTaskStreamPayload(
     | ChatErrorPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
+    | RuntimeSubagentActivityPayload
 ): boolean {
   if (!payload.local_task_id) return false
   return (
@@ -219,6 +231,7 @@ function runtimeStreamMessageId(
     | ChatErrorPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
+    | RuntimeSubagentActivityPayload
 ): string {
   const rawMessageId = typeof payload.message_id === 'number' ? payload.message_id : null
   if (rawMessageId !== null) {
