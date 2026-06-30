@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::runtime_capabilities,
+    agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
@@ -934,11 +934,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
+    let mut env = runtime_proxy_env(&request.model_config);
+    env.extend(task_identity_env(request));
     let mut launch_config = CodexLaunchConfig {
         thread_config,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
-        env: runtime_proxy_env(&request.model_config),
+        env,
         ..CodexLaunchConfig::default()
     };
     launch_config

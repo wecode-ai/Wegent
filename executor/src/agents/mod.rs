@@ -14,6 +14,7 @@ mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
 mod runtime_capabilities;
+mod task_identity;
 
 use crate::{
     emitter::ResponsesEventBuilder,
