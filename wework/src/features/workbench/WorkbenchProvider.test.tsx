@@ -3348,6 +3348,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
   })
@@ -3994,6 +3995,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
     })
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
   })
@@ -4140,6 +4142,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:执行ls')
   })
@@ -4339,6 +4342,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
     expect(screen.getByTestId('guidance-messages')).toHaveTextContent('')
@@ -4589,6 +4593,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '执行ls',
+      modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
     expect(screen.getByTestId('queued-errors')).not.toHaveTextContent('当前回复缺少引导上下文')
@@ -4641,6 +4646,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
       attachmentIds: [45],
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
@@ -4689,6 +4695,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
       },
       message: '继续修',
+      modelOptions: { collaborationMode: 'default' },
       attachments: [
         expect.objectContaining({
           id: -45,
