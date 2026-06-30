@@ -94,6 +94,19 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
     return base_url, sandbox
 
 
+def _touch_sandbox_activity(sandbox) -> None:
+    """Refresh sandbox activity for proxied SDK calls."""
+    try:
+        sandbox.touch()
+        get_sandbox_manager()._repository.save_sandbox(sandbox)
+    except Exception as exc:
+        logger.warning(
+            "[SandboxProxy] Failed to refresh sandbox activity sandbox_id=%s error=%s",
+            getattr(sandbox, "sandbox_id", "unknown"),
+            exc,
+        )
+
+
 @router.api_route(
     "/{sandbox_id}/{port:int}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
@@ -129,6 +142,7 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     try:
         # Get sandbox info including metadata
         base_url, sandbox = await _get_sandbox_info(sandbox_id)
+        _touch_sandbox_activity(sandbox)
 
         # Check if this is a sandbox task
         task_type = sandbox.metadata.get("task_type")

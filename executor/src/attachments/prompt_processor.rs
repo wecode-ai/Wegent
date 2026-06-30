@@ -29,6 +29,7 @@ const TEXT_ATTACHMENT_EXTENSIONS: &[&str] = &[
 pub struct AttachmentRecord {
     pub id: i64,
     pub original_filename: String,
+    pub status: Option<String>,
     pub local_path: Option<String>,
     pub file_size: Option<u64>,
     pub mime_type: Option<String>,

@@ -46,7 +46,10 @@ impl EventSink for CallbackSink {
             }
 
             let fields = callback_fields(&callback_url, &event);
-            log_executor_event("callback request started", &fields);
+            let log_success = should_log_successful_callback(&event);
+            if log_success {
+                log_executor_event("callback request started", &fields);
+            }
 
             let response = client
                 .post(callback_url)
@@ -81,10 +84,19 @@ impl EventSink for CallbackSink {
 
             let mut success_fields = fields;
             success_fields.push(("status", status.as_u16().to_string()));
-            log_executor_event("callback request finished", &success_fields);
+            if log_success {
+                log_executor_event("callback request finished", &success_fields);
+            }
             Ok(())
         })
     }
+}
+
+fn should_log_successful_callback(event: &EventEnvelope) -> bool {
+    !matches!(
+        event.event_type.as_str(),
+        "response.output_text.delta" | "response.reasoning_summary_text.delta"
+    )
 }
 
 fn callback_fields(callback_url: &str, event: &EventEnvelope) -> Vec<(&'static str, String)> {
