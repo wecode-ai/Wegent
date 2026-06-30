@@ -574,10 +574,9 @@ async def create_runtime_task_endpoint(
     summary="Create a device-local runtime task",
     description=(
         "Create a LocalTask on an online device without writing central "
-        "TaskResource or Subtask rows. Use target.type=device_workspace with "
-        "deviceId + workspacePath for a direct device directory, or "
-        "target.type=project_device_workspace with projectId + "
-        "deviceWorkspaceId for a Project-bound device workspace."
+        "TaskResource or Subtask rows. Use target.type=device to create a "
+        "normal device chat task on the user's default local device, or "
+        "target.type=project with projectId to create a Project-bound task."
     ),
 )
 async def create_runtime_task_with_target_endpoint(

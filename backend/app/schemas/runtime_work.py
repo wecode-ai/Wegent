@@ -628,46 +628,24 @@ class RuntimeTaskCreateTarget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["device_workspace", "project_device_workspace"] = Field(
+    type: Literal["device", "project"] = Field(
         ...,
         description=(
-            "Creation target type. Use device_workspace with deviceId + "
-            "workspacePath, or project_device_workspace with projectId + "
-            "deviceWorkspaceId."
-        ),
-    )
-    device_id: Optional[str] = Field(
-        default=None,
-        alias="deviceId",
-        description="Target device ID. Required when type is device_workspace.",
-    )
-    workspace_path: Optional[str] = Field(
-        default=None,
-        alias="workspacePath",
-        description=(
-            "Target directory on the device. Required when type is " "device_workspace."
+            "Creation target type. Use device for the user's default local "
+            "device chat workspace, or project with projectId for a Project task."
         ),
     )
     project_id: Optional[int] = Field(
         default=None,
         alias="projectId",
         description=(
-            "Project ID that owns the device workspace. Required when type is "
-            "project_device_workspace."
+            "Project ID that owns the runtime task. Required when type is project."
         ),
         ge=1,
     )
-    device_workspace_id: Optional[int] = Field(
+    execution_workspace: Optional[dict[str, Any]] = Field(
         default=None,
-        alias="deviceWorkspaceId",
-        description=(
-            "DeviceWorkspace mapping ID. Required when type is "
-            "project_device_workspace."
-        ),
-        ge=1,
-    )
-    workspace: Optional[dict[str, Any]] = Field(
-        default=None,
+        alias="executionWorkspace",
         description=(
             "Execution workspace override, for example "
             "{'source': 'current_workspace'} or "
@@ -679,28 +657,15 @@ class RuntimeTaskCreateTarget(BaseModel):
     def validate_target_fields(self) -> "RuntimeTaskCreateTarget":
         """Require the identity fields that match the selected target type."""
 
-        if self.type == "device_workspace":
-            if not self.device_id or not self.workspace_path:
-                raise ValueError(
-                    "deviceId and workspacePath are required for device_workspace"
-                )
-            if self.project_id is not None or self.device_workspace_id is not None:
-                raise ValueError(
-                    "projectId and deviceWorkspaceId are not allowed for "
-                    "device_workspace"
-                )
+        if self.type == "device":
+            if self.project_id is not None:
+                raise ValueError("projectId is not allowed for device targets")
+            if self.execution_workspace is not None:
+                raise ValueError("executionWorkspace is not allowed for device targets")
             return self
 
-        if self.project_id is None or self.device_workspace_id is None:
-            raise ValueError(
-                "projectId and deviceWorkspaceId are required for "
-                "project_device_workspace"
-            )
-        if self.device_id or self.workspace_path:
-            raise ValueError(
-                "deviceId and workspacePath are not allowed for "
-                "project_device_workspace"
-            )
+        if self.project_id is None:
+            raise ValueError("projectId is required for project targets")
         return self
 
 
@@ -711,7 +676,7 @@ class RuntimeTaskCreateWithTargetRequest(BaseModel):
 
     target: RuntimeTaskCreateTarget = Field(
         ...,
-        description="Device or Project device workspace target.",
+        description="Device chat or Project target.",
     )
     local_task_id: Optional[str] = Field(
         default=None,
@@ -776,7 +741,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     accepted: bool
     device_id: str = Field(..., alias="deviceId")
     local_task_id: str = Field(..., alias="localTaskId")
-    workspace_path: str = Field(..., alias="workspacePath")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
 

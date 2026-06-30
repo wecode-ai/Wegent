@@ -4,13 +4,15 @@
 
 use std::{
     collections::HashSet,
+    env, fs,
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
+use chrono::Local;
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc};
 
@@ -57,6 +59,64 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+
+fn standalone_chat_workspace_path(
+    local_task_id: &str,
+    request: &ExecutionRequest,
+) -> Option<String> {
+    if !is_standalone_chat_workspace(request) {
+        return None;
+    }
+    let segment = workspace_segment(local_task_id);
+    let path = home_dir()
+        .join("Documents")
+        .join("Codex")
+        .join(Local::now().format("%Y-%m-%d").to_string())
+        .join(segment);
+    if let Err(error) = fs::create_dir_all(&path) {
+        log_executor_event(
+            "runtime work standalone workspace create failed",
+            &[("error", error.to_string())],
+        );
+        return None;
+    }
+    Some(path.display().to_string())
+}
+
+fn is_standalone_chat_workspace(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("standalone_chat_workspace")
+        .or_else(|| request.extra.get("standaloneChatWorkspace"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn workspace_segment(value: &str) -> String {
+    let segment = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if segment.is_empty() {
+        format!("chat-{}", now_ms())
+    } else {
+        segment
+    }
+}
+
+fn home_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+}
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
@@ -556,20 +616,26 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = string_field(&payload, "localTaskId")
             .or_else(|| string_field(&payload, "local_task_id"))
             .unwrap_or_else(|| format!("codex-local-{}", now_ms()));
-        let workspace_path = workspace_path(&payload)
-            .or_else(|| {
-                execution_request(&payload).and_then(|request| request.cwd().map(str::to_owned))
-            })
-            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        let payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = match execution_request(&payload) {
             Some(request) => request,
-            None => execution_request_from_payload(&payload, &workspace_path)
-                .map_err(|message| AppIpcError::new("bad_request", message))?,
+            None => execution_request_from_payload(
+                &payload,
+                payload_workspace_path.as_deref().unwrap_or_default(),
+            )
+            .map_err(|message| AppIpcError::new("bad_request", message))?,
         };
         apply_runtime_payload_metadata(&mut request, &payload);
+        let workspace_path = payload_workspace_path
+            .or_else(|| request.cwd().map(str::to_owned))
+            .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
+            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        if request.project_workspace_path.is_none() {
+            request.project_workspace_path = Some(workspace_path.clone());
+        }
 
         let mut link =
             RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path.clone(), title);
@@ -584,6 +650,7 @@ impl RuntimeWorkRpcHandler {
             "accepted": true,
             "deviceId": self.device_id,
             "localTaskId": local_task_id,
+            "workspacePath": workspace_path,
             "runtime": "codex",
         }))
     }

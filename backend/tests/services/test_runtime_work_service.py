@@ -14,6 +14,7 @@ from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.task import TaskResource
+from app.schemas.device import DeviceType
 
 
 def _project(test_db, user_id: int, name: str = "Wegent") -> Project:
@@ -106,6 +107,39 @@ def _git_project(test_db, user_id: int, name: str = "Wegent") -> Project:
     test_db.commit()
     test_db.refresh(project)
     return project
+
+
+def _local_device(
+    test_db,
+    user_id: int,
+    device_id: str = "device-1",
+    *,
+    is_default: bool = True,
+) -> Kind:
+    device = Kind(
+        user_id=user_id,
+        kind="Device",
+        name=device_id,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Device",
+            "metadata": {"name": device_id, "namespace": "default"},
+            "spec": {
+                "deviceId": device_id,
+                "displayName": device_id,
+                "deviceType": DeviceType.LOCAL.value,
+                "connectionMode": "websocket",
+                "isDefault": is_default,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    return device
 
 
 def _git_status_command(
@@ -2122,7 +2156,7 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
 
 
 @pytest.mark.asyncio
-async def test_create_runtime_task_with_target_maps_device_workspace_request(
+async def test_create_runtime_task_with_target_maps_default_device_request(
     test_db,
     test_user,
     monkeypatch,
@@ -2145,11 +2179,7 @@ async def test_create_runtime_task_with_target_maps_device_workspace_request(
         db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateWithTargetRequest(
-            target={
-                "type": "device_workspace",
-                "deviceId": "device-1",
-                "workspacePath": "/repo/Wegent",
-            },
+            target={"type": "device"},
             localTaskId="runtime-client-1",
             teamId=3,
             runtime="codex",
@@ -2160,12 +2190,73 @@ async def test_create_runtime_task_with_target_maps_device_workspace_request(
     )
 
     legacy_request = create_mock.await_args.kwargs["request"]
-    assert legacy_request.device_id == "device-1"
-    assert legacy_request.workspace_path == "/repo/Wegent"
+    assert legacy_request.device_id is None
+    assert legacy_request.workspace_path is None
     assert legacy_request.project_id is None
     assert legacy_request.device_workspace_id is None
     assert legacy_request.local_task_id == "runtime-client-1"
     assert legacy_request.model_id == "gpt-5.5"
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_with_target_uses_default_device_chat_workspace(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateWithTargetRequest
+    from app.services import runtime_work_service
+
+    _local_device(test_db, test_user.id, "device-1", is_default=True)
+    captured_target = {}
+
+    def build_execution_request(**kwargs):
+        captured_target["target"] = kwargs["target"]
+        return SimpleNamespace(
+            to_dict=lambda: {
+                "project_id": 0,
+                "standalone_chat_workspace": True,
+                "project_workspace_path": None,
+            }
+        )
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        build_execution_request,
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "deviceId": "device-1",
+            "localTaskId": "runtime-client-1",
+            "workspacePath": "/Users/alice/Documents/Codex/2026-06-30/runtime-client-1",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.create_runtime_task_with_target(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateWithTargetRequest(
+            target={"type": "device"},
+            localTaskId="runtime-client-1",
+            teamId=3,
+            runtime="codex",
+            message="create runtime task",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.device_id == "device-1"
+    assert captured_target["target"].project is None
+    assert captured_target["target"].workspace_path is None
+    payload = rpc.await_args.kwargs["payload"]
+    assert "workspacePath" not in payload
+    assert payload["executionRequest"]["project_id"] == 0
+    assert payload["executionRequest"]["standalone_chat_workspace"] is True
 
 
 @pytest.mark.asyncio
@@ -2193,10 +2284,9 @@ async def test_create_runtime_task_with_target_maps_project_workspace_request(
         user_id=test_user.id,
         request=RuntimeTaskCreateWithTargetRequest(
             target={
-                "type": "project_device_workspace",
+                "type": "project",
                 "projectId": 9,
-                "deviceWorkspaceId": 12,
-                "workspace": {
+                "executionWorkspace": {
                     "source": "git_worktree",
                     "branch": "feature/device-api",
                 },
@@ -2209,7 +2299,7 @@ async def test_create_runtime_task_with_target_maps_project_workspace_request(
 
     legacy_request = create_mock.await_args.kwargs["request"]
     assert legacy_request.project_id == 9
-    assert legacy_request.device_workspace_id == 12
+    assert legacy_request.device_workspace_id is None
     assert legacy_request.device_id is None
     assert legacy_request.workspace_path is None
     assert legacy_request.execution == {
@@ -2218,6 +2308,35 @@ async def test_create_runtime_task_with_target_maps_project_workspace_request(
             "branch": "feature/device-api",
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_with_project_id_does_not_fallback_to_default_device(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    _local_device(test_db, test_user.id, "device-1", is_default=True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.create_runtime_task(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskCreateRequest(
+                projectId=project.id,
+                teamId=3,
+                runtime="codex",
+                message="create project runtime task",
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert (
+        exc_info.value.detail == "Project is not configured for local runtime execution"
+    )
 
 
 @pytest.mark.asyncio
