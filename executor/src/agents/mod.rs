@@ -110,6 +110,7 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
+                    git_auth::setup_git_authentication(&request).await;
                     runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
