@@ -73,6 +73,30 @@ describe('toolBlockActivity', () => {
     ).toBe('已引导对话')
   })
 
+  test('classifies Claude multi-file edit tools as edit activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'edit-1',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'MultiEdit',
+          toolInput: {
+            file_path: '/workspace/src/config.ts',
+            edits: [
+              {
+                old_string: 'enabled: false',
+                new_string: 'enabled: true',
+              },
+            ],
+          },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已编辑 1 个文件')
+  })
+
   test('groups completed tools while preserving running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',

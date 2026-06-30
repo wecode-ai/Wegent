@@ -7,7 +7,16 @@ import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
-import { isCommandToolName, isGuidanceToolName, isWebSearchToolName } from './toolBlockActivity'
+import { isWebSearchToolName } from './toolBlockActivity'
+import {
+  getFileInputPath,
+  getInputField,
+  isCommandToolName,
+  isFileCreateToolName,
+  isFileEditToolName,
+  isGuidanceToolName,
+  isFileReadToolName,
+} from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 
@@ -526,17 +535,17 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
-  if (name === 'write' || name === 'create_file' || name === 'write_file') {
+  if (isFileCreateToolName(name)) {
     const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <FileIcon />, label: `${prefix.create} ${fileName}` }
   }
-  if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
+  if (isFileEditToolName(name)) {
     const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <EditIcon />, label: `${prefix.edit} ${fileName}` }
   }
-  if (name === 'read' || name === 'read_file') {
+  if (isFileReadToolName(name)) {
     const filePath = getFileInputPath(block)
     const fileName = filePath ? filePath.split('/').pop() : '文件'
     return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
@@ -667,10 +676,10 @@ function renderBlockDetail(block: ToolBlock) {
   if (isCommandToolName(name)) {
     return <BashBlockDetail block={block} />
   }
-  if (name === 'write' || name === 'create_file' || name === 'write_file') {
+  if (isFileCreateToolName(name)) {
     return <FileWriteDetail block={block} />
   }
-  if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
+  if (isFileEditToolName(name)) {
     return <FileEditDetail block={block} />
   }
   if (isWebSearchToolName(name)) {
@@ -687,12 +696,8 @@ function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
   return (
     isCommandToolName(name) ||
-    name === 'write' ||
-    name === 'create_file' ||
-    name === 'write_file' ||
-    name === 'edit' ||
-    name === 'str_replace_editor' ||
-    name === 'edit_file' ||
+    isFileCreateToolName(name) ||
+    isFileEditToolName(name) ||
     isWebSearchToolName(name)
   )
 }
@@ -711,16 +716,7 @@ function WebSearchBlockDetail({ block }: { block: ToolBlock }) {
 
 function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   const name = block.toolName.toLowerCase()
-  if (
-    name !== 'read' &&
-    name !== 'read_file' &&
-    name !== 'write' &&
-    name !== 'create_file' &&
-    name !== 'write_file' &&
-    name !== 'edit' &&
-    name !== 'str_replace_editor' &&
-    name !== 'edit_file'
-  ) {
+  if (!isFileReadToolName(name) && !isFileCreateToolName(name) && !isFileEditToolName(name)) {
     return undefined
   }
   return getFileInputPath(block)
@@ -834,46 +830,59 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
 
 function FileEditDetail({ block }: { block: ToolBlock }) {
   const filePath = getFileInputPath(block)
-  const oldStr = getInputField(block, 'old_string', 'old_str', 'oldString')
-  const newStr = getInputField(block, 'new_string', 'new_str', 'newString')
+  const previews = getEditPreviews(block)
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
       {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
-      {oldStr && (
-        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-          {oldStr.length > 300 ? oldStr.substring(0, 300) + '...' : oldStr}
-        </pre>
-      )}
-      {newStr && (
-        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
-          {newStr.length > 300 ? newStr.substring(0, 300) + '...' : newStr}
-        </pre>
-      )}
+      {previews.map((preview, index) => (
+        <div
+          key={`${index}:${preview.oldText ?? ''}:${preview.newText ?? ''}`}
+          className="space-y-1"
+        >
+          {preview.oldText && (
+            <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+              {truncate(preview.oldText, 300)}
+            </pre>
+          )}
+          {preview.newText && (
+            <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
+              {truncate(preview.newText, 300)}
+            </pre>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
 
-function getInputField(block: ToolBlock, ...keys: string[]): string | undefined {
-  if (!block.toolInput) return undefined
-  for (const key of keys) {
-    const val = block.toolInput[key]
-    if (typeof val === 'string') return val
+function getEditPreviews(block: ToolBlock): Array<{ oldText?: string; newText?: string }> {
+  const directOldText = getInputField(block, 'old_string', 'old_str', 'oldString')
+  const directNewText = getInputField(block, 'new_string', 'new_str', 'newString', 'new_source')
+  if (directOldText || directNewText) {
+    return [{ oldText: directOldText, newText: directNewText }]
   }
-  return undefined
+
+  const edits = block.toolInput?.edits
+  if (!Array.isArray(edits)) return []
+
+  return edits.flatMap(edit => {
+    if (!isRecord(edit)) return []
+    const oldText = getStringField(edit, 'old_string', 'old_str', 'oldString')
+    const newText = getStringField(edit, 'new_string', 'new_str', 'newString')
+    return oldText || newText ? [{ oldText, newText }] : []
+  })
 }
 
-function getFileInputPath(block: ToolBlock): string | undefined {
-  return getInputField(
-    block,
-    'file_path',
-    'filePath',
-    'filepath',
-    'path',
-    'file',
-    'filename',
-    'target_file',
-    'targetFile'
-  )
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function getStringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string') return value
+  }
+  return undefined
 }
 
 function truncate(str: string, maxLen: number): string {

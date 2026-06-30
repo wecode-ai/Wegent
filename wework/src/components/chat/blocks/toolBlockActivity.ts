@@ -1,4 +1,12 @@
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import {
+  getInputField,
+  isCommandToolName,
+  isFileCreateToolName,
+  isFileEditToolName,
+  isFileReadToolName,
+  isGuidanceToolName,
+} from './toolBlockKinds'
 
 export type ProcessingDisplayRow =
   | { type: 'block'; id: string; block: ProcessingBlock }
@@ -18,17 +26,6 @@ interface ActivityStats {
   failedTools: number
 }
 
-const COMMAND_TOOLS = new Set([
-  'bash',
-  'exec_command',
-  'execute_command',
-  'functions.exec_command',
-  'run_terminal_command',
-])
-const FILE_TOOLS = new Set(['read', 'read_file'])
-const CREATE_TOOLS = new Set(['write', 'create_file', 'write_file'])
-const EDIT_TOOLS = new Set(['edit', 'str_replace_editor', 'edit_file'])
-const GUIDANCE_TOOLS = new Set(['conversation_guidance', 'user_guidance'])
 const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
 const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'du', 'file'])
@@ -127,10 +124,10 @@ function getActivityStats(blocks: ToolBlock[]): ActivityStats {
 
 function getToolActivityKind(block: ToolBlock): ToolActivityKind {
   const name = block.toolName.toLowerCase()
-  if (FILE_TOOLS.has(name)) return 'file'
-  if (CREATE_TOOLS.has(name)) return 'create'
-  if (EDIT_TOOLS.has(name)) return 'edit'
-  if (GUIDANCE_TOOLS.has(name)) return 'guidance'
+  if (isFileReadToolName(name)) return 'file'
+  if (isFileCreateToolName(name)) return 'create'
+  if (isFileEditToolName(name)) return 'edit'
+  if (isGuidanceToolName(name)) return 'guidance'
   if (SEARCH_TOOL_HINTS.some(hint => name.includes(hint))) return 'search'
   if (isCommandToolName(name)) {
     return getCommandActivityKind(getInputField(block, 'command', 'cmd', 'commandLine'))
@@ -166,10 +163,6 @@ function isCompletedToolBlock(block: ToolBlock): boolean {
   return block.status === 'done' || block.status === 'error'
 }
 
-export function isCommandToolName(name: string): boolean {
-  return COMMAND_TOOLS.has(name.toLowerCase())
-}
-
 export function isWebSearchToolName(name: string): boolean {
   return name.toLowerCase() === 'web_search'
 }
@@ -182,23 +175,12 @@ export function isGuidanceActivityGroup(blocks: ToolBlock[]): boolean {
   return blocks.length > 0 && blocks.every(block => isGuidanceToolName(block.toolName))
 }
 
-export function isGuidanceToolName(name: string): boolean {
-  return GUIDANCE_TOOLS.has(name.toLowerCase())
-}
+export { isCommandToolName, isGuidanceToolName }
 
 function getToolGroupId(blocks: ToolBlock[]): string {
   const first = blocks[0]?.id ?? 'empty'
   const last = blocks[blocks.length - 1]?.id ?? first
   return `tool-group-${first}-${last}`
-}
-
-function getInputField(block: ToolBlock, ...keys: string[]): string | undefined {
-  if (!block.toolInput) return undefined
-  for (const key of keys) {
-    const val = block.toolInput[key]
-    if (typeof val === 'string') return val
-  }
-  return undefined
 }
 
 function formatCount(count: number, unit: string): string {
