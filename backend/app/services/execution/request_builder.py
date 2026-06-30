@@ -386,7 +386,7 @@ class TaskRequestBuilder:
         fork_runtime = self._extract_task_fork_runtime(task)
         inherited_sessions = self._extract_inherited_sessions(fork_runtime)
 
-        return ExecutionRequest(
+        execution_request = ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
             team_id=team.id,
@@ -452,6 +452,19 @@ class TaskRequestBuilder:
             executor_name=getattr(subtask, "executor_name", None),
             executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        logger.info(
+            "[TaskRequestBuilder] Execution request attachment diagnostics: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
+            "attachment_ids=%s, has_auth_token=%s, backend_url_present=%s",
+            execution_request.task_id,
+            execution_request.subtask_id,
+            bot_config[0].get("shell_type", "") if bot_config else "",
+            len(execution_request.attachments),
+            [attachment.get("id") for attachment in execution_request.attachments],
+            bool(execution_request.auth_token),
+            bool(execution_request.backend_url),
+        )
+        return execution_request
 
     @staticmethod
     def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:

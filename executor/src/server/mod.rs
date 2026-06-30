@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
+    agents::runtime_capabilities,
     agents::{AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
@@ -72,6 +73,7 @@ where
     Router::new()
         .route("/", get(health_check))
         .route("/v1/responses", post(openai_responses::<R>))
+        .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
         .route(
@@ -80,6 +82,39 @@ where
         )
         .route("/files", get(download_workspace_file))
         .with_state(state)
+}
+
+async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let attachment_count = request
+        .extra
+        .get("attachments")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    fields.push(("attachment_count", attachment_count.to_string()));
+    fields.push((
+        "has_auth_token",
+        request
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+            .to_string(),
+    ));
+    fields.push((
+        "backend_url_present",
+        request
+            .backend_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+            .to_string(),
+    ));
+    log_executor_event("attachment sync request received", &fields);
+    Ok(Json(
+        runtime_capabilities::sync_attachments_for_request(request).await,
+    ))
 }
 
 pub fn create_docker_router_from_env() -> Result<Router, String> {

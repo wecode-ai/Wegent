@@ -1426,6 +1426,33 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             generated_files: Vec::new(),
         };
     }
+    log_executor_event(
+        "codex attachment payload received",
+        &[
+            ("task_id", request.task_id.to_string()),
+            ("subtask_id", request.subtask_id.to_string()),
+            ("attachment_count", attachments.len().to_string()),
+            ("attachment_ids", attachment_ids(&attachments)),
+            (
+                "has_auth_token",
+                request
+                    .auth_token
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+            (
+                "backend_url_present",
+                request
+                    .backend_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                    .to_string(),
+            ),
+        ],
+    );
 
     let mut generated_files = Vec::new();
     let subtask_id = attachment_subtask_id(&attachments, request.subtask_id);
@@ -1490,6 +1517,14 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     }
 }
 
+fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
+    attachments
+        .iter()
+        .map(|attachment| attachment.id.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn attachment_records(request: &ExecutionRequest) -> Vec<AttachmentRecord> {
     request
         .extra
@@ -1511,6 +1546,7 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
             .or_else(|| value.get("name"))
             .and_then(value_string)
             .unwrap_or_else(|| "attachment".to_owned()),
+        status: value.get("status").and_then(value_string),
         local_path: value
             .get("local_path")
             .or_else(|| value.get("localPath"))
