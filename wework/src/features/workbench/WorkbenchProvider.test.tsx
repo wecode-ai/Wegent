@@ -696,6 +696,9 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-open-messages">
         {paneSession.messages.map(message => message.content).join('|')}
       </span>
+      <span data-testid="runtime-message-statuses">
+        {paneSession.messages.map(message => `${message.role}:${message.status}`).join('|')}
+      </span>
       <span data-testid="runtime-transcript-loading">
         {paneSession.transcriptLoading ? 'loading' : 'idle'}
       </span>
@@ -729,6 +732,9 @@ function RuntimeOpenProbe() {
           .join('|')}
       </span>
       <span data-testid="runtime-open-error">{workbench.state.error ?? ''}</span>
+      <span data-testid="current-runtime-task-running">
+        {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
+      </span>
       <span data-testid="runtime-file-changes-diff">{fileChangesDiff}</span>
       <span data-testid="runtime-file-changes-status">{fileChangesStatus}</span>
       <button
@@ -778,6 +784,9 @@ function RuntimeOpenProbe() {
         }
       >
         open runtime b
+      </button>
+      <button type="button" onClick={() => void paneSession.pauseCurrentResponse()}>
+        stop current response
       </button>
       <MessageList
         messages={paneSession.messages}
@@ -3760,7 +3769,15 @@ describe('WorkbenchProvider runtime tasks', () => {
         localTaskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
         runtime: 'claude_code',
-        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: 'working',
+            status: 'streaming',
+          },
+        ],
       }),
       sendRuntimeMessage,
       cancelRuntimeTask,
@@ -3814,6 +3831,151 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
     expect(screen.getByTestId('guidance-messages')).toHaveTextContent('')
+  })
+
+  test('refreshes runtime work after cancelling the active local task', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const runningRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              localTasks: [
+                {
+                  localTaskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalLocalTasks: 1,
+    })
+    const idleRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              localTasks: [
+                {
+                  localTaskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: false,
+                  status: 'cancelled',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalLocalTasks: 1,
+    })
+    let runtimeRunning = true
+    const listRuntimeWork = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(runtimeRunning ? runningRuntimeWork : idleRuntimeWork)
+      )
+    const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+      runtimeRunning = false
+      return Promise.resolve({
+        accepted: true,
+        localTaskId: 'runtime-a',
+      })
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork,
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: 'working',
+            status: 'streaming',
+          },
+        ],
+      }),
+      cancelRuntimeTask,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
+    )
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        message_id: 701,
+        task_id: 77,
+        subtask_id: 101,
+        shell_type: 'Chat',
+        device_id: 'device-1',
+        local_task_id: 'runtime-a',
+      })
+    })
+    const listCallsBeforeCancel = listRuntimeWork.mock.calls.length
+    await userEvent.click(screen.getByText('stop current response'))
+
+    await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(cancelRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      localTaskId: 'runtime-a',
+    })
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(listCallsBeforeCancel + 1))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-message-statuses')).not.toHaveTextContent(
+        'assistant:streaming'
+      )
+    )
   })
 
   test('pauses the active local task before sending queued guidance without DB task context', async () => {

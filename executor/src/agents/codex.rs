@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{mpsc, Mutex},
+    sync::{mpsc, oneshot, Mutex},
     time::timeout,
 };
 
@@ -38,6 +38,7 @@ use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
+pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
@@ -210,14 +211,13 @@ struct CodexAppServerProcess {
 
 impl CodexAppServerProcess {
     async fn shutdown(mut self) {
-        let _ = self.child.start_kill();
-        let _ = self.child.wait().await;
+        terminate_codex_app_server_child(&mut self.child).await;
     }
 }
 
 impl Drop for CodexAppServerProcess {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        signal_codex_app_server_child(&mut self.child);
     }
 }
 
@@ -254,8 +254,7 @@ async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServe
     match result {
         Ok(rpc) => Ok(CodexAppServerProcess { child, rpc }),
         Err(error) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
+            terminate_codex_app_server_child(&mut child).await;
             Err(error)
         }
     }
@@ -266,6 +265,17 @@ pub async fn run_codex_app_server_turn(
     request: ExecutionRequest,
     resume_thread_id: Option<String>,
     notifications: Option<CodexNotificationSender>,
+) -> Result<CodexAppServerTurn, String> {
+    run_codex_app_server_turn_with_cancel(binary, request, resume_thread_id, notifications, None)
+        .await
+}
+
+pub async fn run_codex_app_server_turn_with_cancel(
+    binary: &str,
+    request: ExecutionRequest,
+    resume_thread_id: Option<String>,
+    notifications: Option<CodexNotificationSender>,
+    mut cancellation: Option<oneshot::Receiver<()>>,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
     let launch_config = build_codex_launch_config(&prepared.request);
@@ -373,9 +383,15 @@ pub async fn run_codex_app_server_turn(
             ),
         )
         .await?;
-        let outcome = rpc
-            .read_turn(turn_request_id, &mut state, notifications)
-            .await?;
+        let outcome = if let Some(cancellation) = cancellation.as_mut() {
+            tokio::select! {
+                outcome = rpc.read_turn(turn_request_id, &mut state, notifications) => outcome?,
+                _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            }
+        } else {
+            rpc.read_turn(turn_request_id, &mut state, notifications)
+                .await?
+        };
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -386,8 +402,7 @@ pub async fn run_codex_app_server_turn(
     }
     .await;
 
-    let _ = child.start_kill();
-    let _ = child.wait().await;
+    terminate_codex_app_server_child(&mut child).await;
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
         failed_fields.push(("error", error.clone()));
@@ -428,12 +443,52 @@ fn spawn_codex_app_server(
             env::var("PATH").ok().as_deref().unwrap_or_default(),
         ),
     );
+    configure_codex_app_server_process_group(&mut command);
     command
+        .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+#[cfg(unix)]
+fn configure_codex_app_server_process_group(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_codex_app_server_process_group(_command: &mut Command) {}
+
+async fn terminate_codex_app_server_child(child: &mut Child) {
+    signal_codex_app_server_child(child);
+    let _ = child.wait().await;
+}
+
+fn signal_codex_app_server_child(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+
+    #[cfg(unix)]
+    if let Some(process_group_id) = child.id() {
+        unsafe {
+            let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
+            let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
+        }
+        return;
+    }
+
+    let _ = child.start_kill();
 }
 
 async fn with_rpc_timeout<T>(
