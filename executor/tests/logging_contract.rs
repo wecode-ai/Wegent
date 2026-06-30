@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use wegent_executor::logging::format_executor_log;
+use wegent_executor::logging::{format_executor_log, push_error_fields};
 
 #[test]
 fn executor_log_lines_include_event_and_fields() {
@@ -31,6 +31,18 @@ fn executor_log_lines_quote_values_with_spaces() {
 
     assert_log_timestamp(&line);
     assert!(line.ends_with(" process start program=claude cwd=\"/tmp/task dir\""));
+}
+
+#[test]
+fn executor_error_fields_include_message_and_length() {
+    let mut fields = vec![("skill", "imagegen".to_owned())];
+
+    push_error_fields(&mut fields, "backend download failed with HTTP 403");
+
+    let line = format_executor_log("skill deployment failed", &fields);
+    assert!(line.ends_with(
+        " skill deployment failed skill=imagegen error_len=37 error=\"backend download failed with HTTP 403\""
+    ));
 }
 
 fn assert_log_timestamp(line: &str) {

@@ -58,6 +58,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     assert result.skill_identity_token == "skill-jwt"
     assert result.executor_name == "executor-1"
     assert result.executor_namespace == "default"
+    assert result.backend_url == ""
 
 
 def test_generate_skill_identity_token_uses_sandbox_task_type(test_db):

@@ -25,7 +25,7 @@ use crate::{
             restore_enabled_claude_plugin_cache, CapabilityPackageProvider, SkillSyncSpec,
         },
     },
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions},
@@ -537,19 +537,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     ) else {
         return;
     };
-    let Some(backend_url) = request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            env::var("WEGENT_BACKEND_URL")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        })
-    else {
+    let Some(backend_url) = task_backend_url(request) else {
         return;
     };
 
@@ -574,11 +562,32 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
         match provider.stage_skill(&spec, &target).await {
             Ok(()) => log_executor_event("claude task skill deployed", &fields),
             Err(error) => {
-                fields.push(("error_len", error.to_string().len().to_string()));
+                push_error_fields(&mut fields, error);
                 log_executor_event("claude task skill deployment failed", &fields);
             }
         }
     }
+}
+
+fn task_backend_url(request: &ExecutionRequest) -> Option<String> {
+    request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            env::var("WEGENT_BACKEND_URL")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            env::var("TASK_API_DOMAIN")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn user_selected_skills(request: &ExecutionRequest) -> Vec<String> {
@@ -845,4 +854,51 @@ fn extra_string(request: &ExecutionRequest, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .and_then(|value| non_empty(Some(value)))
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EnvGuard {
+        key: &'static str,
+        old_value: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let old_value = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, old_value }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let old_value = env::var(key).ok();
+            env::remove_var(key);
+            Self { key, old_value }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.old_value {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn task_backend_url_falls_back_to_task_api_domain() {
+        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend.local:8000");
+
+        let request = ExecutionRequest::default();
+
+        assert_eq!(
+            task_backend_url(&request),
+            Some("http://backend.local:8000".to_owned())
+        );
+    }
 }

@@ -123,6 +123,12 @@ pub fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)>
     ]
 }
 
+pub fn push_error_fields(fields: &mut Vec<(&'static str, String)>, error: impl ToString) {
+    let error = error.to_string();
+    fields.push(("error_len", error.len().to_string()));
+    fields.push(("error", error));
+}
+
 pub fn format_executor_log(event: &str, fields: &[(&str, String)]) -> String {
     let mut line = format!("{} {event}", executor_log_timestamp());
     for (key, value) in fields {
