@@ -984,7 +984,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
-  test('polls runtime work after bootstrap so externally created tasks appear', async () => {
+  test('does not poll runtime work after bootstrap', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const emptyRuntimeWork = createRuntimeWork({
@@ -1033,12 +1033,14 @@ describe('WorkbenchProvider runtime tasks', () => {
       renderWorkbench(<BootstrapProbe />, services)
 
       await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('0'))
+      expect(listRuntimeWork).toHaveBeenCalledTimes(1)
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
 
-      await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('1'))
+      expect(listRuntimeWork).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     } finally {
       vi.useRealTimers()
     }
