@@ -1273,7 +1273,7 @@ describe('MobileWorkbenchLayout', () => {
     })
   })
 
-  test('limits mobile project runtime tasks to five rows and preserves append order', async () => {
+  test('limits mobile project runtime tasks to five newest rows', async () => {
     render(
       <MobileWorkbenchLayout
         state={{
@@ -1356,13 +1356,13 @@ describe('MobileWorkbenchLayout', () => {
     const collapsedRows = screen.getAllByTestId('mobile-runtime-task-button')
     expect(collapsedRows).toHaveLength(5)
     expect(collapsedRows.map(row => row.textContent)).toEqual([
-      expect.stringContaining('Oldest hidden task'),
-      expect.stringContaining('Third task'),
       expect.stringContaining('Newest task'),
-      expect.stringContaining('Fifth task'),
       expect.stringContaining('Second task'),
+      expect.stringContaining('Third task'),
+      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Fifth task'),
     ])
-    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
       '展开显示'
     )
@@ -1378,7 +1378,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
-    expect(screen.queryByText('Fourth task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
   test('opens project actions on long press without expanding the project', async () => {
