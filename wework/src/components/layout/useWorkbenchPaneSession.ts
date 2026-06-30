@@ -10,7 +10,7 @@ import {
 } from '@/features/workbench/runtimeModelSelection'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
-  insertUserMessageBeforeRequestUserInput,
+  applyRequestUserInputResponseToMessages,
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
 import type {
@@ -42,6 +42,11 @@ interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
+}
+
+interface SendRequestUserInputResponseOptions {
+  appendUserMessage?: boolean
+  forceDefaultCollaborationMode?: boolean
 }
 
 interface LoadedTranscriptRange {
@@ -359,15 +364,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [dispatchMessages, runtimeTaskLoadTarget]
   )
 
-  const getRuntimeModelFields = useCallback(() => {
-    const selectedModel =
-      projectChat.getSelectedModel?.() ??
-      projectChat.selectedModel ??
-      resolveAutomaticModel(projectChat.models)
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-    return selectedModelExecutionFields(selectedModel, selectedModelOptions)
-  }, [projectChat])
+  const getRuntimeModelFields = useCallback(
+    (modelOptionsOverride?: ModelOptions) => {
+      const selectedModel =
+        projectChat.getSelectedModel?.() ??
+        projectChat.selectedModel ??
+        resolveAutomaticModel(projectChat.models)
+      const selectedModelOptions =
+        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      return selectedModelExecutionFields(selectedModel, {
+        ...selectedModelOptions,
+        ...modelOptionsOverride,
+      })
+    },
+    [projectChat]
+  )
 
   const appendLocalUserMessage = useCallback(
     (content: string, attachments?: Attachment[]) => {
@@ -379,18 +390,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [dispatchMessages]
   )
 
-  const insertLocalRequestUserInputResponseMessage = useCallback(
-    (content: string, response: RequestUserInputResponse) => {
-      const message = createLocalUserMessage(content)
+  const applyLocalRequestUserInputResponse = useCallback(
+    (response: RequestUserInputResponse) => {
       setMessages(currentMessages => {
-        const nextMessages = insertUserMessageBeforeRequestUserInput(
-          currentMessages,
-          message,
-          response
-        )
+        const nextMessages = applyRequestUserInputResponseToMessages(currentMessages, response)
         if (currentRuntimeTask) {
           snapshotRuntimePaneMessages(currentRuntimeTask, nextMessages)
-          debugRuntimePaneMessageFlow('request-user-input-user-message-inserted', {
+          debugRuntimePaneMessageFlow('request-user-input-response-applied', {
             address: runtimeAddressDebug(currentRuntimeTask),
             requestUserInputKey: requestUserInputResponseKey(response),
             previousCount: currentMessages.length,
@@ -435,12 +441,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
 
   const sendRequestUserInputResponse = useCallback(
-    async (response: RequestUserInputResponse): Promise<boolean> => {
+    async (
+      response: RequestUserInputResponse,
+      options: SendRequestUserInputResponseOptions = {}
+    ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
       setWaitingForAssistant(true)
+      const runtimeModelOverride = options.forceDefaultCollaborationMode
+        ? { collaborationMode: 'default' }
+        : undefined
+      if (options.forceDefaultCollaborationMode) {
+        projectChat.setSelectedModelOption('collaborationMode', 'default')
+      }
+      if (options.appendUserMessage) {
+        appendLocalUserMessage(message)
+      }
       if (requestUserInputKey) {
         setAnsweredRequestUserInputIds(current => {
           if (current.has(requestUserInputKey)) return current
@@ -449,11 +467,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return next
         })
       }
-      insertLocalRequestUserInputResponseMessage(message, response)
+      applyLocalRequestUserInputResponse(response)
+      const runtimeModelFields = options.appendUserMessage
+        ? getRuntimeModelFields(runtimeModelOverride)
+        : {}
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message,
-        requestUserInputResponse: response,
+        ...runtimeModelFields,
+        ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
       })
       if (!sent) {
         setWaitingForAssistant(false)
@@ -468,7 +490,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
       return sent
     },
-    [currentRuntimeTask, insertLocalRequestUserInputResponseMessage, sendRuntimePaneMessage]
+    [
+      appendLocalUserMessage,
+      applyLocalRequestUserInputResponse,
+      currentRuntimeTask,
+      getRuntimeModelFields,
+      projectChat,
+      sendRuntimePaneMessage,
+    ]
   )
 
   useEffect(() => {

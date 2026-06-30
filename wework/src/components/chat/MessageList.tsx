@@ -11,7 +11,10 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   File as FileIcon,
+  ListChecks,
+  Maximize2,
   Package,
 } from 'lucide-react'
 import type {
@@ -59,6 +62,7 @@ interface MessageListProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
@@ -72,6 +76,8 @@ const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
+const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
   /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -102,6 +108,7 @@ export const MessageList = memo(function MessageList({
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
+  onOpenAssistantPlan,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
@@ -150,6 +157,7 @@ export const MessageList = memo(function MessageList({
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  onOpenAssistantPlan={onOpenAssistantPlan}
                   hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                   hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
@@ -542,6 +550,137 @@ function UserMessage({
   )
 }
 
+function AssistantPlanCard({
+  content,
+  onOpenPlan,
+}: {
+  content: string
+  onOpenPlan?: (content: string) => void
+}) {
+  const { t } = useTranslation('chat')
+
+  const handleDownload = () => {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'plan.md'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <section
+      data-testid="assistant-plan-card"
+      className="my-3 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+    >
+      <div className="flex min-h-10 items-center justify-between gap-3 px-4 py-2 text-text-muted">
+        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
+          <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+          <span>{t('plan_card.title')}</span>
+        </div>
+        <PlanCardActions
+          content={content}
+          onDownload={handleDownload}
+          onExpand={() => onOpenPlan?.(content)}
+        />
+      </div>
+      <div className="relative max-h-[360px] overflow-hidden px-4 pb-4 pt-3">
+        <div className="assistant-plan-card-content text-[15px] leading-7 text-text-primary">
+          <AssistantMarkdown content={content} />
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />
+      </div>
+    </section>
+  )
+}
+
+function PlanCardActions({
+  content,
+  onDownload,
+  onExpand,
+}: {
+  content: string
+  onDownload: () => void
+  onExpand: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1400)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const handleCopy = () => {
+    void copyText(content).then(() => setCopied(true))
+  }
+
+  const actions = [
+    {
+      key: 'download',
+      label: t('plan_card.download'),
+      icon: <Download className="h-4 w-4" aria-hidden="true" />,
+      onClick: onDownload,
+      testId: 'assistant-plan-download-button',
+    },
+    {
+      key: 'copy',
+      label: t('plan_card.copy'),
+      icon: <Copy className="h-4 w-4" aria-hidden="true" />,
+      onClick: handleCopy,
+      testId: 'assistant-plan-copy-button',
+    },
+    {
+      key: 'expand',
+      label: t('plan_card.expand'),
+      icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
+      onClick: onExpand,
+      testId: 'assistant-plan-expand-button',
+    },
+  ]
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      {copied ? (
+        <span
+          data-testid="assistant-plan-copy-success"
+          className="text-xs font-medium text-text-secondary"
+        >
+          {t('plan_card.copy_success')}
+        </span>
+      ) : null}
+      {actions.map(action => (
+        <button
+          key={action.key}
+          type="button"
+          data-testid={action.testId}
+          aria-label={action.label}
+          title={action.label}
+          onClick={action.onClick}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
+        >
+          {action.icon}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function normalizeAssistantPlanContent(content: string): string {
+  return content.replace(CODEX_PLAN_TAG_PATTERN, '').trim()
+}
+
+function isAssistantPlanContent(content: string): boolean {
+  const normalizedContent = normalizeAssistantPlanContent(content)
+  return (
+    normalizedContent !== content ||
+    (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
+  )
+}
+
 function parseCodexLocalFileMentions(content: string): {
   requestText: string
   images: Array<{ filename: string; path: string }>
@@ -924,6 +1063,7 @@ function AssistantMessage({
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
+  onOpenAssistantPlan,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
 }: {
@@ -944,6 +1084,7 @@ function AssistantMessage({
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
@@ -1028,9 +1169,16 @@ function AssistantMessage({
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}
           {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
-          {hasVisibleContent && (
-            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
-          )}
+          {hasVisibleContent ? (
+            isAssistantPlanContent(visibleContent) ? (
+              <AssistantPlanCard
+                content={normalizeAssistantPlanContent(visibleContent)}
+                onOpenPlan={onOpenAssistantPlan}
+              />
+            ) : (
+              <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
+            )
+          ) : null}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}

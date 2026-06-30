@@ -34,6 +34,19 @@ export function requestUserInputResponseKey(response: RequestUserInputResponse):
   return null
 }
 
+export function isImplementationPlanRequestUserInput(
+  payload: RequestUserInputPayload | null | undefined
+): boolean {
+  const questions = Array.isArray(payload?.questions) ? payload.questions : []
+  return questions.some(question => {
+    const id = question.id?.trim().toLowerCase()
+    const text = question.question?.trim()
+    if (id === 'implement') return true
+    if (text?.includes('实施此计划')) return true
+    return question.options?.some(option => option.label?.includes('实施此计划')) ?? false
+  })
+}
+
 export function isRequestUserInputBlock(block: ProcessingBlock): block is ToolBlock {
   if (block.type !== 'tool') return false
   return isRequestUserInputPayload(block.renderPayload)
@@ -44,8 +57,14 @@ export function isPendingRequestUserInputBlock(
   hiddenRequestUserInputIds: ReadonlySet<string> = EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
 ): block is ToolBlock {
   if (!isRequestUserInputBlock(block)) return false
-  if (block.status === 'done' || block.status === 'error') return false
+  if (block.status === 'error') return false
+  if (hasRequestUserInputResponse(block.renderPayload as RequestUserInputPayload)) return false
   return !isHiddenRequestUserInputBlock(block, hiddenRequestUserInputIds)
+}
+
+export function isAnsweredRequestUserInputBlock(block: ProcessingBlock): block is ToolBlock {
+  if (!isRequestUserInputBlock(block)) return false
+  return hasRequestUserInputResponse(block.renderPayload as RequestUserInputPayload)
 }
 
 export function isHiddenRequestUserInputBlock(
@@ -71,12 +90,49 @@ export function insertUserMessageBeforeRequestUserInput(
   return [...messages.slice(0, targetIndex), userMessage, ...messages.slice(targetIndex)]
 }
 
+export function applyRequestUserInputResponseToMessages(
+  messages: WorkbenchMessage[],
+  response: RequestUserInputResponse
+): WorkbenchMessage[] {
+  const responseKey = requestUserInputResponseKey(response)
+  let didUpdate = false
+
+  const nextMessages = messages.map(message => {
+    if (message.role !== 'assistant' || !message.blocks?.length) return message
+
+    let messageUpdated = false
+    const nextBlocks = message.blocks.map(block => {
+      if (!isMatchingRequestUserInputBlock(block, responseKey)) return block
+      didUpdate = true
+      messageUpdated = true
+      return {
+        ...block,
+        status: 'done' as const,
+        renderPayload: {
+          ...(block.renderPayload as RequestUserInputPayload),
+          response,
+        },
+      }
+    })
+
+    return messageUpdated ? { ...message, blocks: nextBlocks } : message
+  })
+
+  return didUpdate ? nextMessages : messages
+}
+
 function isRequestUserInputPayload(value: unknown): value is RequestUserInputPayload {
   return (
     Boolean(value) &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
     (value as { kind?: unknown }).kind === 'request_user_input'
+  )
+}
+
+function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
+  return Boolean(
+    payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
   )
 }
 

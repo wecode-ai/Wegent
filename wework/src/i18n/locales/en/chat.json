@@ -19,9 +19,18 @@
     "stopped_after": "You stopped after {{duration}}"
   },
   "request_user_input": {
+    "asked_count": "Asked {{count}} question(s)",
     "ignore": "Ignore",
     "submit": "Submit",
     "custom_placeholder": "Type your answer"
+  },
+  "plan_card": {
+    "title": "Plan",
+    "download": "Download plan",
+    "copy": "Copy plan",
+    "copy_success": "Copied",
+    "expand": "Open plan full screen",
+    "close": "Close plan"
   },
   "codex_context": {
     "compacting": "Compacting context",

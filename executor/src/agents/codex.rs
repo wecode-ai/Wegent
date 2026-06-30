@@ -836,6 +836,21 @@ impl CodexRunState {
             .unwrap_or("")
             .replace('_', "")
             .to_ascii_lowercase();
+        if item_type == "plan" {
+            if let Some(text) = extract_text(item) {
+                log_codex_run_state_text(
+                    "completed",
+                    "set_plan",
+                    phase.as_deref(),
+                    params,
+                    item,
+                    &text,
+                );
+                self.final_text = text;
+                self.saw_delta = true;
+            }
+            return;
+        }
         if !matches!(item_type.as_str(), "agentmessage" | "message") {
             log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
             return;
@@ -2446,6 +2461,42 @@ mod tests {
             outcome,
             ExecutionOutcome::Completed {
                 content: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_uses_completed_plan_as_final_content() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Execute the steps."
+                    }
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "# Plan\n\n- Execute the steps.".to_owned()
             }
         );
     }

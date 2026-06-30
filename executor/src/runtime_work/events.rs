@@ -18,7 +18,10 @@ use crate::{
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     transcript::{tool_block_from_notification, tool_update_from_notification},
-    util::{extract_text, now_ms, raw_string_field, reasoning_content, string_field},
+    util::{
+        completed_plan_item_text, extract_text, now_ms, raw_string_field, reasoning_content,
+        string_field,
+    },
 };
 
 pub(crate) fn emit_response_event(
@@ -179,6 +182,19 @@ impl CodexNotificationEventMapper {
                 self.observe_root_thread(notification.params);
                 if self.is_subagent_delta(notification.params) {
                     self.forget_subagent_item(notification.params);
+                    self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                if let Some(text) = completed_plan_item_text(notification.params) {
+                    self.reset_process_text();
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.output_text.delta",
+                        local_task_id,
+                        request,
+                        json!({"delta": text}),
+                    );
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
@@ -1337,6 +1353,40 @@ mod tests {
         let event = event_rx.try_recv().expect("event should be emitted");
         assert_eq!(event["event"], "response.output_text.delta");
         assert_eq!(event["payload"]["data"]["delta"], "Done.");
+    }
+
+    #[test]
+    fn maps_codex_completed_plan_items_to_output_text_delta() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(
+            event["payload"]["data"]["delta"],
+            "# Plan\n\n- Inspect the repo."
+        );
     }
 
     #[test]

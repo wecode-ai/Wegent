@@ -2,6 +2,9 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { isPendingRequestUserInputBlock } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
 
+const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
+
 export function pendingRequestUserInputPayload(
   messages: WorkbenchMessage[],
   hiddenRequestUserInputIds?: ReadonlySet<string>
@@ -12,5 +15,38 @@ export function pendingRequestUserInputPayload(
       return block.renderPayload as RequestUserInputPayload
     }
   }
-  return null
+  return pendingImplementationPlanPayload(messages)
+}
+
+function pendingImplementationPlanPayload(
+  messages: WorkbenchMessage[]
+): RequestUserInputPayload | null {
+  const lastMessage = messages[messages.length - 1]
+  if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.status === 'streaming') {
+    return null
+  }
+  if (!isAssistantPlanContent(lastMessage.content)) return null
+  return {
+    kind: 'request_user_input',
+    questions: [
+      {
+        id: 'implement',
+        question: '实施此计划?',
+        options: [{ label: '是，实施此计划' }],
+      },
+      {
+        id: 'adjustment',
+        question: '否，请告知 WeWork 如何调整',
+        is_other: true,
+      },
+    ],
+  }
+}
+
+function isAssistantPlanContent(content: string): boolean {
+  const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '').trim()
+  return (
+    normalizedContent !== content ||
+    (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
+  )
 }

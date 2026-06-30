@@ -937,6 +937,9 @@ function FollowUpProbe() {
       <span data-testid="follow-up-selected-model">
         {workbench.projectChat.selectedModel?.name ?? ''}
       </span>
+      <span data-testid="follow-up-collaboration-mode">
+        {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
       <span data-testid="guidance-messages">
         {paneSession.guidanceMessages
           .map(message => `${message.status}:${message.content}`)
@@ -982,6 +985,21 @@ function FollowUpProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send follow-up
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void paneSession.sendRequestUserInputResponse(
+            {
+              answers: {
+                implement: { answers: ['是，实施此计划'] },
+              },
+            },
+            { appendUserMessage: true, forceDefaultCollaborationMode: true }
+          )
+        }
+      >
+        submit implementation confirmation
       </button>
       <button type="button" onClick={() => void workbench.refreshWorkLists()}>
         refresh work lists
@@ -3602,6 +3620,88 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         message: '继续修',
         modelOptions: { collaborationMode: 'default' },
+      })
+    )
+  })
+
+  test('sends runtime model fields with implementation plan confirmations', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      localTaskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  localTasks: [
+                    {
+                      localTaskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalLocalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:assistant:1', role: 'assistant', content: 'plan' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: [] }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('plan')
+    )
+    await userEvent.click(screen.getByText('enable follow-up plan mode'))
+    expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('plan')
+    await userEvent.click(screen.getByText('submit implementation confirmation'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('default')
+    expect(sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '是，实施此计划',
+        modelOptions: { collaborationMode: 'default' },
+      })
+    )
+    expect(sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        requestUserInputResponse: expect.anything(),
       })
     )
   })

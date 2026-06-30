@@ -19,9 +19,18 @@
     "stopped_after": "你在 {{duration}} 后停止了"
   },
   "request_user_input": {
+    "asked_count": "已询问 {{count}} 个问题",
     "ignore": "忽略",
     "submit": "提交",
     "custom_placeholder": "输入你的回答"
+  },
+  "plan_card": {
+    "title": "计划",
+    "download": "下载计划",
+    "copy": "复制计划",
+    "copy_success": "已复制",
+    "expand": "全屏查看计划",
+    "close": "关闭计划"
   },
   "codex_context": {
     "compacting": "正在自动压缩上下文",
