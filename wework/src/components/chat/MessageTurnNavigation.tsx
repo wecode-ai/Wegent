@@ -283,7 +283,7 @@ export function MessageTurnNavigation({
       className="pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block"
       data-testid="message-turn-navigation"
       style={{
-        left: '8px',
+        left: '16px',
         width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
         height: `${navigationHeight}px`,
         maxHeight: `calc(100% - ${NAVIGATION_VIEWPORT_PADDING_PX}px)`,

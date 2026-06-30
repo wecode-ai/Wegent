@@ -3,8 +3,8 @@ import type { RuntimeDeviceWorkspace } from '@/types/api'
 import { getRuntimeSidebarTaskItems, getRuntimeTaskAddress } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
-  test('keeps runtime task items in workspace order', () => {
-    const workspace: RuntimeDeviceWorkspace = {
+  test('sorts runtime task items newest first across workspaces', () => {
+    const oldWorkspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
       available: true,
@@ -27,11 +27,26 @@ describe('runtimeTaskSidebarHelpers', () => {
         },
       ],
     }
+    const newWorkspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo/.worktrees/new-task',
+      workspaceKind: 'worktree',
+      available: true,
+      localTasks: [
+        {
+          localTaskId: 'new-worktree-task',
+          workspacePath: '/workspace/repo/.worktrees/new-task',
+          title: 'New worktree task',
+          runtime: 'codex',
+          running: true,
+          updatedAt: '2026-06-03T00:00:00.000Z',
+        },
+      ],
+    }
 
-    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.localTaskId)).toEqual([
-      'older-running',
-      'newer-idle',
-    ])
+    expect(
+      getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.localTaskId)
+    ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
   test('carries runtime handle into task addresses when present', () => {
