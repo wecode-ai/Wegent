@@ -22,7 +22,9 @@ use wegent_executor::{
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    std::env::set_var("WEGENT_DISABLE_CODEX_APP_NOTIFY", "1");
+    guard
 }
 
 struct EnvGuard {
@@ -469,7 +471,20 @@ async fn app_runtime_persists_local_task_thread_mapping() {
             .display()
             .to_string(),
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-store-codex-home");
+    let codex_home = temp_path("wegent-app-runtime-store-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join(".codex-global-state.json"),
+        serde_json::to_vec_pretty(&json!({
+            "electron-saved-workspace-roots": ["/tmp/project"],
+            "project-order": ["/tmp/project"],
+            "thread-workspace-root-hints": {},
+            "projectless-thread-ids": ["thread-1"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let (_sqlite_home_guard, sqlite_home) =
         set_temp_codex_sqlite_home("wegent-app-runtime-store-sqlite");
     write_default_codex_state_db_thread(&sqlite_home, false);
@@ -513,6 +528,15 @@ async fn app_runtime_persists_local_task_thread_mapping() {
         restored["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"],
         "thread-1"
     );
+    let codex_state: Value = serde_json::from_str(
+        &fs::read_to_string(codex_home.join(".codex-global-state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        codex_state["thread-workspace-root-hints"]["thread-1"],
+        "/tmp/project"
+    );
+    assert_eq!(codex_state["projectless-thread-ids"], json!([]));
 }
 
 #[tokio::test]
