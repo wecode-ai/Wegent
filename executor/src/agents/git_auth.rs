@@ -30,19 +30,36 @@ pub async fn setup_git_authentication(request: &ExecutionRequest) {
     set_git_environment(request);
     let fields = task_fields(request.task_id, request.subtask_id);
     let Some(git_domain) = request_git_domain(request) else {
-        return;
-    };
-    let Some(credentials) = git_credentials_for_domain(&git_domain, request) else {
         log_executor_event(
             "git cli authentication skipped",
-            &[("reason", "missing_token".to_owned())],
+            &[("reason", "missing_domain".to_owned())],
+        );
+        return;
+    };
+    let Some((credentials, token_source, token_encrypted)) =
+        git_credentials_with_metadata(&git_domain, request)
+    else {
+        let mut skipped_fields = fields;
+        skipped_fields.push(("reason", "missing_token".to_owned()));
+        skipped_fields.push(("git_domain", git_domain));
+        log_executor_event(
+            "git cli authentication skipped",
+            &skipped_fields,
         );
         return;
     };
 
-    let success = authenticate_cli(&git_domain, &credentials.token).await;
+    let mut start_fields = fields.clone();
+    start_fields.push(("git_domain", git_domain.clone()));
+    start_fields.push(("token_source", token_source.to_owned()));
+    start_fields.push(("token_encrypted", token_encrypted.to_string()));
+    log_executor_event("git cli authentication started", &start_fields);
+
+    let success = authenticate_cli(&git_domain, &credentials).await;
     let mut auth_fields = fields;
     auth_fields.push(("git_domain", git_domain));
+    auth_fields.push(("token_source", token_source.to_owned()));
+    auth_fields.push(("token_encrypted", token_encrypted.to_string()));
     auth_fields.push(("success", success.to_string()));
     log_executor_event("git cli authentication finished", &auth_fields);
 }
@@ -60,6 +77,7 @@ pub fn is_token_encrypted(token: &str) -> bool {
 
 pub fn request_git_domain(request: &ExecutionRequest) -> Option<String> {
     extra_string(request, "git_domain")
+        .or_else(|| user_git_domain(request))
         .or_else(|| request.git_url().and_then(|url| domain_from_url(&url)))
 }
 
@@ -88,13 +106,34 @@ fn git_credentials_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<GitCredentials> {
+    git_credentials_with_metadata(git_domain, request).map(|(credentials, _, _)| credentials)
+}
+
+fn git_credentials_with_metadata(
+    git_domain: &str,
+    request: &ExecutionRequest,
+) -> Option<(GitCredentials, &'static str, bool)> {
+    let (raw_token, token_source) = raw_git_token_for_domain(git_domain, request)?;
+    let token_encrypted = is_token_encrypted(raw_token.trim());
+    normalize_git_token(&raw_token).map(|token| {
+        (
+            GitCredentials {
+                username: user_git_login(request).unwrap_or_else(|| "token".to_owned()),
+                token,
+            },
+            token_source,
+            token_encrypted,
+        )
+    })
+}
+
+fn raw_git_token_for_domain(
+    git_domain: &str,
+    request: &ExecutionRequest,
+) -> Option<(String, &'static str)> {
     user_git_token(request)
-        .or_else(|| token_file(git_domain))
-        .and_then(|token| normalize_git_token(&token))
-        .map(|token| GitCredentials {
-            username: user_git_login(request).unwrap_or_else(|| "token".to_owned()),
-            token,
-        })
+        .map(|token| (token, "request_user"))
+        .or_else(|| token_file(git_domain).map(|token| (token, "home_ssh_domain_file")))
 }
 
 fn user_git_token(request: &ExecutionRequest) -> Option<String> {
@@ -103,6 +142,15 @@ fn user_git_token(request: &ExecutionRequest) -> Option<String> {
         .get("user")
         .and_then(Value::as_object)
         .and_then(|user| user.get("git_token").or_else(|| user.get("gitToken")))
+        .and_then(value_string)
+}
+
+fn user_git_domain(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("user")
+        .and_then(Value::as_object)
+        .and_then(|user| user.get("git_domain").or_else(|| user.get("gitDomain")))
         .and_then(value_string)
 }
 
@@ -154,38 +202,143 @@ fn normalize_git_token(token: &str) -> Option<String> {
     Some(token.to_owned())
 }
 
-async fn authenticate_cli(git_domain: &str, git_token: &str) -> bool {
+async fn authenticate_cli(git_domain: &str, credentials: &GitCredentials) -> bool {
     configure_repo_proxy(git_domain).await;
     if git_domain.to_ascii_lowercase().contains("github") {
-        return authenticate_github(git_token).await;
+        return authenticate_github(git_domain, credentials).await;
     }
-    authenticate_gitlab(git_domain, git_token).await
+    authenticate_gitlab(git_domain, &credentials.token).await
 }
 
-async fn authenticate_github(git_token: &str) -> bool {
+async fn authenticate_github(git_domain: &str, credentials: &GitCredentials) -> bool {
+    log_executor_event(
+        "git cli authentication command starting",
+        &[
+            ("provider", "github".to_owned()),
+            ("git_domain", git_domain.to_owned()),
+        ],
+    );
     let mut command = Command::new("gh");
     command
         .arg("auth")
         .arg("login")
+        .arg("--hostname")
+        .arg(git_domain)
         .arg("--with-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     let Ok(mut child) = command.spawn() else {
+        log_executor_event(
+            "git cli authentication command spawn failed",
+            &[
+                ("provider", "github".to_owned()),
+                ("git_domain", git_domain.to_owned()),
+            ],
+        );
         return false;
     };
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(git_token.as_bytes()).await;
+        let _ = stdin.write_all(credentials.token.as_bytes()).await;
         let _ = stdin.write_all(b"\n").await;
     }
     child
-        .wait()
+        .wait_with_output()
         .await
-        .map(|status| status.success())
+        .map(|output| {
+            let success = output.status.success();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log_executor_event(
+                "git cli authentication command finished",
+                &[
+                    ("provider", "github".to_owned()),
+                    ("git_domain", git_domain.to_owned()),
+                    ("success", success.to_string()),
+                    (
+                        "exit_code",
+                        output
+                            .status
+                            .code()
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| "signal".to_owned()),
+                    ),
+                    ("stderr", stderr_summary(&stderr)),
+                ],
+            );
+            if success {
+                return true;
+            }
+            if stderr.contains("missing required scope 'read:org'") {
+                return configure_github_cli_host(git_domain, credentials);
+            }
+            false
+        })
         .unwrap_or(false)
 }
 
+fn configure_github_cli_host(git_domain: &str, credentials: &GitCredentials) -> bool {
+    let Some(home) = home_dir() else {
+        log_executor_event(
+            "git cli authentication fallback failed",
+            &[
+                ("provider", "github".to_owned()),
+                ("git_domain", git_domain.to_owned()),
+                ("reason", "missing_home".to_owned()),
+            ],
+        );
+        return false;
+    };
+    let config_dir = home.join(".config").join("gh");
+    if fs::create_dir_all(&config_dir).is_err() {
+        log_executor_event(
+            "git cli authentication fallback failed",
+            &[
+                ("provider", "github".to_owned()),
+                ("git_domain", git_domain.to_owned()),
+                ("reason", "create_config_dir_failed".to_owned()),
+            ],
+        );
+        return false;
+    }
+
+    let user_line = if credentials.username.trim().is_empty() || credentials.username == "token" {
+        String::new()
+    } else {
+        format!("    user: {}\n", yaml_scalar(&credentials.username))
+    };
+    let content = format!(
+        "{}:\n    oauth_token: {}\n{}    git_protocol: https\n",
+        yaml_scalar(git_domain),
+        yaml_scalar(&credentials.token),
+        user_line
+    );
+    let path = config_dir.join("hosts.yml");
+    let success = fs::write(&path, content).is_ok();
+    log_executor_event(
+        if success {
+            "git cli authentication fallback configured"
+        } else {
+            "git cli authentication fallback failed"
+        },
+        &[
+            ("provider", "github".to_owned()),
+            ("git_domain", git_domain.to_owned()),
+            ("reason", "missing_read_org_scope".to_owned()),
+            ("path", path.display().to_string()),
+            ("success", success.to_string()),
+        ],
+    );
+    success
+}
+
 async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
+    log_executor_event(
+        "git cli authentication command starting",
+        &[
+            ("provider", "gitlab".to_owned()),
+            ("git_domain", git_domain.to_owned()),
+        ],
+    );
     Command::new("glab")
         .arg("auth")
         .arg("login")
@@ -194,10 +347,33 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
         .arg("--token")
         .arg(git_token)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .await
-        .map(|status| status.success())
+        .map(|output| {
+            let success = output.status.success();
+            log_executor_event(
+                "git cli authentication command finished",
+                &[
+                    ("provider", "gitlab".to_owned()),
+                    ("git_domain", git_domain.to_owned()),
+                    ("success", success.to_string()),
+                    (
+                        "exit_code",
+                        output
+                            .status
+                            .code()
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| "signal".to_owned()),
+                    ),
+                    (
+                        "stderr",
+                        stderr_summary(&String::from_utf8_lossy(&output.stderr)),
+                    ),
+                ],
+            );
+            success
+        })
         .unwrap_or(false)
 }
 
@@ -294,6 +470,40 @@ fn value_string(value: &Value) -> Option<String> {
         Value::Number(_) | Value::Bool(_) => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn stderr_summary(stderr: &str) -> String {
+    let sanitized = stderr
+        .split_whitespace()
+        .map(redact_auth_fragment)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if sanitized.len() > 240 {
+        format!("{}...", &sanitized[..240])
+    } else {
+        sanitized
+    }
+}
+
+fn redact_auth_fragment(fragment: &str) -> String {
+    if fragment.starts_with("ghp_")
+        || fragment.starts_with("github_pat_")
+        || fragment.starts_with("glpat-")
+        || fragment.starts_with("gloas-")
+    {
+        return "***".to_owned();
+    }
+    fragment.to_owned()
+}
+
+fn yaml_scalar(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ':'))
+    {
+        return value.to_owned();
+    }
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn non_empty(value: &str) -> Option<&str> {

@@ -13,7 +13,7 @@ use std::{
 mod config;
 
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -157,11 +157,15 @@ async fn download_workspace_file(
 
 async fn openai_responses<R>(
     State(state): State<AppState<R>>,
-    Json(payload): Json<Value>,
+    body: Bytes,
 ) -> Result<Json<OpenAIBackgroundResponse>, HttpError>
 where
     R: TaskRunner,
 {
+    let payload = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: error.to_string(),
+    })?;
     let request = OpenAIResponsesRequest::from_value(payload)?;
     let background = request.background();
     let execution_request = request.to_execution_request();
