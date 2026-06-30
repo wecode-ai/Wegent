@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
@@ -623,111 +623,6 @@ class RuntimeTaskCreateRequest(BaseModel):
     execution: Optional[dict[str, Any]] = None
 
 
-class RuntimeTaskCreateTarget(BaseModel):
-    """Explicit target for creating a device-local runtime task."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    type: Literal["device", "project"] = Field(
-        ...,
-        description=(
-            "Creation target type. Use device for the user's default local "
-            "device chat workspace, or project with projectId for a Project task."
-        ),
-    )
-    project_id: Optional[int] = Field(
-        default=None,
-        alias="projectId",
-        description=(
-            "Project ID that owns the runtime task. Required when type is project."
-        ),
-        ge=1,
-    )
-    execution_workspace: Optional[dict[str, Any]] = Field(
-        default=None,
-        alias="executionWorkspace",
-        description=(
-            "Execution workspace override, for example "
-            "{'source': 'current_workspace'} or "
-            "{'source': 'git_worktree', 'branch': 'feature/example'}."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def validate_target_fields(self) -> "RuntimeTaskCreateTarget":
-        """Require the identity fields that match the selected target type."""
-
-        if self.type == "device":
-            if self.project_id is not None:
-                raise ValueError("projectId is not allowed for device targets")
-            if self.execution_workspace is not None:
-                raise ValueError("executionWorkspace is not allowed for device targets")
-            return self
-
-        if self.project_id is None:
-            raise ValueError("projectId is required for project targets")
-        return self
-
-
-class RuntimeTaskCreateWithTargetRequest(BaseModel):
-    """Request to create a runtime task with an explicit target object."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    target: RuntimeTaskCreateTarget = Field(
-        ...,
-        description="Device chat or Project target.",
-    )
-    team_id: int = Field(
-        ...,
-        alias="teamId",
-        description="Team ID accessible to the current user.",
-        ge=1,
-    )
-    runtime: RuntimeName = Field(
-        ...,
-        description="Runtime provider used by the target device.",
-    )
-    message: str = Field(
-        ...,
-        description="User message used to start the runtime task.",
-        min_length=1,
-    )
-    title: Optional[str] = Field(
-        default=None,
-        description="Optional task title. Defaults to the first message line.",
-    )
-    model_id: Optional[str] = Field(
-        default=None,
-        alias="modelId",
-        description="Model ID selected for this turn.",
-    )
-    model_type: Optional[str] = Field(
-        default=None,
-        alias="modelType",
-        description="Model type selected for this turn, such as codex.",
-    )
-    model_options: dict[str, Any] = Field(
-        default_factory=dict,
-        alias="modelOptions",
-        description="Runtime model options for this turn.",
-    )
-    additional_skills: list[Any] = Field(
-        default_factory=list,
-        alias="additionalSkills",
-        description="Skills to preload into the execution request.",
-    )
-    attachment_ids: list[int] = Field(
-        default_factory=list,
-        alias="attachmentIds",
-        description="Uploaded ready attachment IDs available to the runtime.",
-    )
-    execution: Optional[dict[str, Any]] = Field(
-        default=None,
-        description="Additional execution options merged into the runtime request.",
-    )
-
-
 class RuntimeTaskCreateResponse(BaseModel):
     """Acknowledgement from device-local runtime task creation."""
 
@@ -736,7 +631,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     accepted: bool
     device_id: str = Field(..., alias="deviceId")
     local_task_id: str = Field(..., alias="localTaskId")
-    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
 

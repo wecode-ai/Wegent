@@ -174,26 +174,13 @@ Wework creates a new runtime task with:
 POST /api/runtime-work/create
 ```
 
-For new callers, Backend also exposes a recommended entrypoint with clearer target semantics:
+Backend resolves the target device and directory from either a Project mapping or a standalone device workspace, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
 
-```text
-POST /api/runtime-work/tasks
-```
-
-This request body uses `target.type` to distinguish the two creation targets:
-
-- `device`: omit `projectId` and create an independent device task in the current user's default local device conversation directory.
-- `project`: send only `projectId`; Backend resolves the target device and directory from the Project config. For an isolated worktree, `target.executionWorkspace` may include `source: git_worktree` and `branch`.
-
-`/api/runtime-work/tasks` only normalizes request semantics. Internally it converts to and reuses the same creation service behind `/api/runtime-work/create`; it does not write central `TaskResource` or `Subtask` rows.
-
-Backend resolves the target from `projectId` or the default local device, builds a transient execution request, and calls device RPC `runtime.tasks.create`. Plain device tasks do not expose `workspacePath` to callers; the executor generates the Codex conversation directory on the device. This flow does not `db.add()` any `TaskResource` or `Subtask`.
-
-In packaged Wework App `local-first` mode, task creation does not go through the Backend HTTP API. Wework builds the minimal `executionRequest` required by the executor inside the frontend local service, sends it through a Tauri command to the executor sidecar app IPC channel, and the executor directly runs `runtime.tasks.create`. Project task payloads must include `workspacePath`, the user message, runtime model configuration, and local user context. Plain conversation tasks may omit `workspacePath`, but must carry `standalone_chat_workspace=true` so the executor generates the default Codex conversation directory on the device. This path still uses only the app UI and executor as local processes and does not start a local Backend.
+In packaged Wework App `local-first` mode, task creation does not go through the Backend HTTP API. Wework builds the minimal `executionRequest` required by the executor inside the frontend local service from the selected `deviceId + workspacePath`, sends it through a Tauri command to the executor sidecar app IPC channel, and the executor directly runs `runtime.tasks.create`. The payload must include `workspacePath`, the user message, runtime model configuration, and local user context; if no workspace path is available, Wework must fail before calling the executor. This path still uses only the app UI and executor as local processes and does not start a local Backend.
 
 For Project-backed task creation, Wework has only two execution workspace sources: `current_workspace` uses the Project root, while `git_worktree` creates an isolated worktree under the local executor's managed directory. The worktree path is derived from the device workspace root, runtime task id, and Project directory name; the UI must not compose arbitrary target paths. A worktree create request may carry an explicit `branch`. When no branch is provided, the default branch must be the current Git branch of the Project root, not the Git default branch and not a `HEAD` label. The branch list is only a selectable display surface: the current branch should be first, and the remaining branches should preserve Git's returned order.
 
-When calling `/api/runtime-work/tasks`, Wework no longer sends `localTaskId` in the request body. The executor generates the device-local task id and Backend returns it as `localTaskId` in the response. The frontend opens the runtime URL with `deviceId + localTaskId` after the response arrives. If the frontend needs a waiting state before the request completes, it should use a local-only pending id and must not send it to Backend as an API parameter.
+Before calling create, Wework generates a client-side `localTaskId` and sends it to Backend as `localTaskId`. Backend only forwards that value to the target device; it does not write it to the central database. The frontend immediately opens the runtime URL from `deviceId + localTaskId`, renders the user message, and shows the waiting state. If the device returns a different `localTaskId`, the frontend switches to the device-confirmed address. This lets a newly created task appear before the Backend RPC completes or the next list refresh runs, and queued sends wait until the current waiting state becomes a real assistant turn before continuing.
 
 The runtime owns persistence for newly created tasks:
 

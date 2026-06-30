@@ -28,7 +28,6 @@ from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
-from app.schemas.device import DeviceType
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
     ArchivedConversationItem,
@@ -60,7 +59,6 @@ from app.schemas.runtime_work import (
     RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
-    RuntimeTaskCreateWithTargetRequest,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscription,
@@ -118,7 +116,7 @@ class RuntimeTaskTarget:
     """Resolved device and workspace path for a runtime-local task."""
 
     device_id: str
-    workspace_path: Optional[str]
+    workspace_path: str
     project: Optional[Project] = None
     workspace_source: str = "local_path"
 
@@ -1020,12 +1018,11 @@ async def create_runtime_task(
     )
     payload = {
         "runtime": request.runtime,
+        "workspacePath": target.workspace_path,
         "message": request.message,
         "title": _runtime_task_title(request),
         "executionRequest": execution_request.to_dict(),
     }
-    if target.workspace_path:
-        payload["workspacePath"] = target.workspace_path
     if request.local_task_id:
         payload["localTaskId"] = request.local_task_id
     try:
@@ -1046,22 +1043,6 @@ async def create_runtime_task(
         request.runtime,
         target.device_id,
         target.workspace_path,
-    )
-
-
-async def create_runtime_task_with_target(
-    *,
-    db: Session,
-    user_id: int,
-    request: RuntimeTaskCreateWithTargetRequest,
-) -> RuntimeTaskCreateResponse:
-    """Create a runtime task from the explicit target API shape."""
-
-    legacy_request = _target_create_request_to_runtime_request(request)
-    return await create_runtime_task(
-        db=db,
-        user_id=user_id,
-        request=legacy_request,
     )
 
 
@@ -1923,15 +1904,14 @@ def _runtime_create_response(
     result: dict[str, Any],
     runtime: str,
     device_id: str,
-    workspace_path: Optional[str],
+    workspace_path: str,
 ) -> RuntimeTaskCreateResponse:
-    result_workspace_path = result.get("workspacePath") or workspace_path
     if result.get("success") is False:
         return RuntimeTaskCreateResponse(
             accepted=False,
             deviceId=str(result.get("deviceId") or device_id),
             localTaskId=str(result.get("localTaskId") or ""),
-            workspacePath=result_workspace_path,
+            workspacePath=str(result.get("workspacePath") or workspace_path),
             runtime=result.get("runtime") or runtime,
             error=str(result.get("error") or "Runtime task creation failed"),
         )
@@ -1939,7 +1919,7 @@ def _runtime_create_response(
         accepted=bool(result.get("accepted", True)),
         deviceId=str(result.get("deviceId") or device_id),
         localTaskId=str(result.get("localTaskId") or ""),
-        workspacePath=result_workspace_path,
+        workspacePath=str(result.get("workspacePath") or workspace_path),
         runtime=result.get("runtime") or runtime,
         error=result.get("error"),
     )
@@ -3263,25 +3243,6 @@ def _device_workspace_runtime_target(
     )
 
 
-def _default_device_runtime_target(
-    db: Session,
-    user_id: int,
-) -> RuntimeTaskTarget:
-    device = device_service.get_default_device_for_type(db, user_id, DeviceType.LOCAL)
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Default local device is not configured",
-        )
-
-    return RuntimeTaskTarget(
-        device_id=_device_id_from_kind(device),
-        workspace_path=None,
-        project=None,
-        workspace_source="local_path",
-    )
-
-
 def _resolve_runtime_task_target(
     db: Session,
     user_id: int,
@@ -3304,10 +3265,6 @@ def _resolve_runtime_task_target(
         target = _project_runtime_target(project, strict=True)
         if target:
             return _apply_requested_workspace_source(target, request)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project is not configured for local runtime execution",
-        )
 
     if request.device_id and request.workspace_path:
         return RuntimeTaskTarget(
@@ -3317,62 +3274,10 @@ def _resolve_runtime_task_target(
             workspace_source="local_path",
         )
 
-    if request.device_id or request.workspace_path:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="deviceId and workspacePath must be provided together",
-        )
-
-    if request.device_workspace_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="projectId is required when deviceWorkspaceId is provided",
-        )
-
-    return _default_device_runtime_target(db, user_id)
-
-
-def _device_id_from_kind(device: Kind) -> str:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    device_id = spec.get("deviceId") if isinstance(spec, dict) else None
-    if isinstance(device_id, str) and device_id.strip():
-        return device_id.strip()
-    return device.name
-
-
-def _target_create_request_to_runtime_request(
-    request: RuntimeTaskCreateWithTargetRequest,
-) -> RuntimeTaskCreateRequest:
-    target = request.target
-    execution = _target_create_execution(request)
-    common_fields = {
-        "teamId": request.team_id,
-        "runtime": request.runtime,
-        "message": request.message,
-        "title": request.title,
-        "modelId": request.model_id,
-        "modelType": request.model_type,
-        "modelOptions": request.model_options,
-        "additionalSkills": request.additional_skills,
-        "attachmentIds": request.attachment_ids,
-        "execution": execution,
-    }
-    if target.type == "device":
-        return RuntimeTaskCreateRequest(**common_fields)
-
-    return RuntimeTaskCreateRequest(projectId=target.project_id, **common_fields)
-
-
-def _target_create_execution(
-    request: RuntimeTaskCreateWithTargetRequest,
-) -> Optional[dict[str, Any]]:
-    execution = dict(request.execution or {})
-    workspace = request.target.execution_workspace
-    if workspace is None:
-        return execution or None
-
-    execution["workspace"] = dict(workspace)
-    return execution
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
+    )
 
 
 def _runtime_task_title(request: RuntimeTaskCreateRequest) -> str:
@@ -3532,9 +3437,8 @@ def _runtime_workspace_spec(
 ) -> dict[str, Any]:
     workspace_spec: dict[str, Any] = {
         "source": target.workspace_source,
+        "path": target.workspace_path,
     }
-    if target.workspace_path:
-        workspace_spec["path"] = target.workspace_path
     requested_workspace = _request_execution_workspace(request)
     if requested_workspace:
         branch = requested_workspace.get("branch")
@@ -3571,13 +3475,6 @@ def _apply_runtime_task_target(
 ) -> None:
     execution_request.device_id = target.device_id
     execution_request.execution_target_type = "local"
-    if not target.workspace_path:
-        execution_request.project_id = 0
-        execution_request.standalone_chat_workspace = True
-        execution_request.workspace_source = target.workspace_source
-        execution_request.project_workspace_path = None
-        return
-
     execution_request.workspace_source = target.workspace_source
     execution_request.project_workspace_path = target.workspace_path
     project_workspace = dict((execution_request.workspace or {}).get("project") or {})

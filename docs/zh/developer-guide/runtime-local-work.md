@@ -174,26 +174,13 @@ Wework 打开 LocalTask 后，右侧文件、审查和终端工具使用当前 L
 POST /api/runtime-work/create
 ```
 
-面向新调用方，Backend 也提供目标语义更明确的推荐入口：
+Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
-```text
-POST /api/runtime-work/tasks
-```
-
-该入口的请求体使用 `target.type` 区分两类创建目标：
-
-- `device`：不传 `projectId`，在当前用户默认本地设备的普通对话任务目录创建独立设备任务。
-- `project`：只传 `projectId`，Backend 从项目配置解析目标设备和目录；如需独立工作树，可在 `target.executionWorkspace` 中携带 `source: git_worktree` 和 `branch`。
-
-`/api/runtime-work/tasks` 只做请求语义收敛，内部仍转换并复用 `/api/runtime-work/create` 对应的创建服务；它不会写入中心库 `TaskResource` 或 `Subtask`。
-
-Backend 根据 `projectId` 或默认本地设备解析目标，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。普通设备任务不会向调用方暴露 `workspacePath`，executor 会在设备侧生成 Codex 普通对话目录。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
-
-在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。项目任务 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；普通对话任务可以省略 `workspacePath`，但必须携带 `standalone_chat_workspace=true`，由 executor 在设备侧生成默认 Codex 对话目录。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
+在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
 
 项目模式创建任务时，Wework 的执行工作区只有两种来源：`current_workspace` 使用项目主目录，`git_worktree` 在本机 executor 管理目录下创建独立工作树。工作树路径由设备工作区根、运行时任务 id 和项目目录名稳定拼出，不能由 UI 拼接任意路径。工作树创建请求可以携带显式 `branch`；如果没有显式分支，默认分支必须读取项目主目录的当前 Git 分支，而不是 Git 默认分支或 `HEAD` 字样。分支列表只负责展示可选分支，当前分支应排在第一位，其余分支保持 Git 返回顺序。
 
-调用 `/api/runtime-work/tasks` 时，Wework 不再在请求体里传 `localTaskId`。executor 会在设备侧生成本地任务 id，并由 Backend 在响应的 `localTaskId` 中返回。前端拿到响应后用 `deviceId + localTaskId` 打开运行时 URL；如果前端需要请求完成前展示等待态，应使用仅本地有效的 pending id，不能把它作为 API 参数传给 Backend。
+Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体中作为 `localTaskId` 传给 Backend。Backend 只把这个值转发给目标设备，不把它写入中心数据库。前端会立即用 `deviceId + localTaskId` 打开运行时 URL、展示用户消息和等待态；如果设备返回了不同的 `localTaskId`，前端再切换到设备确认的地址。这样新建任务不需要等待 Backend RPC 完成或下一次列表刷新，队列发送也会等当前等待态进入真实 assistant turn 后再继续。
 
 运行时创建的持久化位置由具体 runtime 决定：
 

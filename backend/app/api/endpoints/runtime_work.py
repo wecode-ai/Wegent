@@ -33,7 +33,6 @@ from app.schemas.runtime_work import (
     RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
-    RuntimeTaskCreateWithTargetRequest,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
@@ -561,32 +560,6 @@ async def create_runtime_task_endpoint(
     """Create a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.create_runtime_task(
-        db=db,
-        user_id=current_user.id,
-        request=request,
-    )
-
-
-@router.post(
-    "/tasks",
-    response_model=RuntimeTaskCreateResponse,
-    response_model_by_alias=True,
-    summary="Create a device-local runtime task",
-    description=(
-        "Create a LocalTask on an online device without writing central "
-        "TaskResource or Subtask rows. Use target.type=device to create a "
-        "normal device chat task on the user's default local device, or "
-        "target.type=project with projectId to create a Project-bound task."
-    ),
-)
-async def create_runtime_task_with_target_endpoint(
-    request: RuntimeTaskCreateWithTargetRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Create a native runtime LocalTask with an explicit target object."""
-
-    return await runtime_work_service.create_runtime_task_with_target(
         db=db,
         user_id=current_user.id,
         request=request,
