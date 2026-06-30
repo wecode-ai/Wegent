@@ -59,6 +59,32 @@ Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sid
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### 后端设备对话任务 REST 入口
+
+网页版设备对话页仍然通过 WebSocket 发送消息。对于需要从外部系统或 curl 创建同类任务的场景，Backend 提供 REST 入口：
+
+```text
+POST /api/device-chat/tasks
+```
+
+该入口写入中心库 `TaskResource` 和 `Subtask`，并复用与设备对话页相同的 `create_chat_task`、设备解析和 `trigger_ai_response_unified` 链路。请求不包含 `workspacePath` 或 `localTaskId`：普通设备对话任务没有项目工作区概念；如果传入 `projectId`，Backend 根据项目配置解析目标设备；如果不传 `projectId`，Backend 按显式 `deviceId`、已有任务设备、Wework 默认设备或用户默认本地设备解析目标。
+
+新建任务时只需要传 `teamId` 和 `message`，可选传 `deviceId`、`projectId`、模型和上下文参数。续聊时传 `taskId`，Backend 会校验当前用户是否有任务访问权限，并沿用已有任务的 `client_origin`。响应返回中心库任务和消息 id：
+
+```json
+{
+  "taskId": 2267,
+  "userSubtaskId": 3332,
+  "assistantSubtaskId": 3333,
+  "messageId": 5,
+  "aiTriggered": true,
+  "deviceId": "device-de8f474294621dd5acfd1287",
+  "chatUrl": "/devices/chat?taskId=2267"
+}
+```
+
+OpenAPI schema 由 FastAPI 根据 `DeviceChatTaskRequest` 和 `DeviceChatTaskResponse` 自动生成，不需要维护静态 `docs/api` 文件。
+
 ### 通信架构
 
 下图展示了本地设备如何与 Wegent 系统通信：

@@ -8,6 +8,7 @@ from app.api.endpoints import (
     attachments_open,
     auth,
     deep_research,
+    device_chat_tasks,
     devices,
     dingtalk_docs,
     groups,
@@ -159,6 +160,9 @@ api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
+api_router.include_router(
+    device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]
+)
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
