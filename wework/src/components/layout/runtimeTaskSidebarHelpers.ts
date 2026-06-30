@@ -3,6 +3,7 @@ import type { LocalTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } fro
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
   task: LocalTaskSummary
+  pinned?: boolean
 }
 
 export const RUNTIME_PROJECT_TASK_PREVIEW_LIMIT = 5
@@ -56,7 +57,11 @@ export function getVisibleRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
   visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
 ) {
-  return items.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit))
+  const { pinnedItems, unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
+  return [
+    ...pinnedItems,
+    ...unpinnedItems.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)),
+  ]
 }
 
 export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {
@@ -70,7 +75,19 @@ export function hasHiddenRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
   visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
 ) {
-  return items.length > Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  const { unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
+  return unpinnedItems.length > Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+}
+
+export function hasExpandedRuntimeSidebarTaskItems(
+  items: RuntimeSidebarTaskItem[],
+  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+) {
+  const { unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
+  return (
+    unpinnedItems.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)).length >
+    RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  )
 }
 
 export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) {
@@ -134,6 +151,19 @@ function getWorktreeIdFromPath(path: string) {
   const index = parts.indexOf('worktrees')
   if (index < 0 || index + 1 >= parts.length) return null
   return parts[index + 1] || null
+}
+
+function partitionRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {
+  const pinnedItems: RuntimeSidebarTaskItem[] = []
+  const unpinnedItems: RuntimeSidebarTaskItem[] = []
+  for (const item of items) {
+    if (item.pinned) {
+      pinnedItems.push(item)
+    } else {
+      unpinnedItems.push(item)
+    }
+  }
+  return { pinnedItems, unpinnedItems }
 }
 
 export function isRuntimeTaskSelected(
