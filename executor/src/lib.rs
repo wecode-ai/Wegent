@@ -11,6 +11,7 @@ mod codex_phase;
 pub mod config;
 pub mod emitter;
 pub mod envd;
+pub mod heartbeat;
 pub mod hooks;
 pub mod image_preprocessor;
 pub mod local;

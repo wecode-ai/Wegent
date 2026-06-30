@@ -23,7 +23,7 @@ default = []
 dev-reload = ["dep:ctrlc", "dep:notify"]
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 aes = "0.8"
 base64 = "0.22"
 cbc = "0.1"

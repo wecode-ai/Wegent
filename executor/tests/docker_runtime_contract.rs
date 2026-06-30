@@ -23,7 +23,10 @@ use tokio::{
     time::{timeout, Duration},
 };
 use tower::ServiceExt;
-use wegent_executor::server::create_docker_router_from_env;
+use wegent_executor::{
+    heartbeat::{start_heartbeat, HeartbeatConfig},
+    server::create_docker_router_from_env,
+};
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -109,10 +112,95 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     );
 }
 
+#[tokio::test]
+async fn docker_heartbeat_posts_to_sandbox_endpoint_from_python_env_contract() {
+    let heartbeat = HeartbeatCapture::start().await;
+    let config = {
+        let _lock = env_lock();
+        let _enabled = EnvGuard::set("HEARTBEAT_ENABLED", "true");
+        let _id = EnvGuard::set("HEARTBEAT_ID", "sandbox-1385");
+        let _kind = EnvGuard::set("HEARTBEAT_TYPE", "sandbox");
+        let _base = EnvGuard::set("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL", &heartbeat.base_url);
+        let _interval = EnvGuard::set("HEARTBEAT_INTERVAL", "1");
+        HeartbeatConfig::from_env().unwrap()
+    };
+    let handle = start_heartbeat(config);
+
+    let calls = heartbeat.wait_for_calls(1).await;
+    handle.abort();
+
+    assert_eq!(calls[0]["heartbeat_id"], "sandbox-1385");
+    assert_eq!(calls[0]["heartbeat_type"], "sandbox");
+    assert_eq!(
+        heartbeat.paths.lock().unwrap()[0],
+        "/sandboxes/sandbox-1385/heartbeat"
+    );
+}
+
 struct CallbackCapture {
     url: String,
     events: Arc<Mutex<Vec<Value>>>,
     notify: Arc<tokio::sync::Notify>,
+}
+
+struct HeartbeatCapture {
+    base_url: String,
+    calls: Arc<Mutex<Vec<Value>>>,
+    paths: Arc<Mutex<Vec<String>>>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl HeartbeatCapture {
+    async fn start() -> Self {
+        let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/sandboxes/{sandbox_id}/heartbeat",
+            post({
+                let calls = calls.clone();
+                let paths = paths.clone();
+                let notify = notify.clone();
+                move |request: Request<Body>| async move {
+                    let path = request.uri().path().to_owned();
+                    let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+                        .await
+                        .unwrap();
+                    let payload: Value = serde_json::from_slice(&bytes).unwrap();
+                    paths.lock().unwrap().push(path);
+                    calls.lock().unwrap().push(payload);
+                    notify.notify_waiters();
+                    Json(json!({"status": "ok"}))
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        Self {
+            base_url,
+            calls,
+            paths,
+            notify,
+        }
+    }
+
+    async fn wait_for_calls(&self, count: usize) -> Vec<Value> {
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let calls = self.calls.lock().unwrap().clone();
+                if calls.len() >= count {
+                    return calls;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
 }
 
 impl CallbackCapture {

@@ -44,6 +44,11 @@ pub struct RestoreResult {
 pub enum ArchiveError {
     #[error("workspace not found: {0}")]
     MissingWorkspace(PathBuf),
+    #[error("no archive roots found: {workspace_path}, {home_path}")]
+    EmptyArchiveRoots {
+        workspace_path: PathBuf,
+        home_path: PathBuf,
+    },
     #[error("archive exceeds maximum size: {actual} > {max}")]
     TooLarge { actual: u64, max: u64 },
     #[error("{0}")]
@@ -51,27 +56,27 @@ pub enum ArchiveError {
 }
 
 pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive, ArchiveError> {
-    if !options.workspace_path.is_dir() {
+    if options.mode == ArchiveMode::Executor && !options.workspace_path.is_dir() {
         return Err(ArchiveError::MissingWorkspace(options.workspace_path));
+    }
+    if options.mode == ArchiveMode::Sandbox
+        && !options.workspace_path.is_dir()
+        && !options.home_path.is_dir()
+    {
+        return Err(ArchiveError::EmptyArchiveRoots {
+            workspace_path: options.workspace_path,
+            home_path: options.home_path,
+        });
     }
 
     let encoder = GzEncoder::new(Vec::new(), Compression::default());
     let mut builder = Builder::new(encoder);
     let mut session_file_included = false;
     let mut git_included = false;
-
-    append_tree(
-        &mut builder,
-        &options.workspace_path,
-        Path::new("workspace"),
-        TreeKind::Workspace,
-        options.mode,
-        &mut session_file_included,
-        &mut git_included,
-    )?;
+    let mut member_count = 0usize;
 
     if options.home_path.exists() {
-        append_tree(
+        member_count += append_tree(
             &mut builder,
             &options.home_path,
             Path::new("home"),
@@ -80,6 +85,24 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
             &mut session_file_included,
             &mut git_included,
         )?;
+    }
+
+    if options.workspace_path.is_dir() {
+        member_count += append_tree(
+            &mut builder,
+            &options.workspace_path,
+            Path::new("workspace"),
+            TreeKind::Workspace,
+            options.mode,
+            &mut session_file_included,
+            &mut git_included,
+        )?;
+    }
+    if options.mode == ArchiveMode::Sandbox && member_count == 0 {
+        return Err(ArchiveError::EmptyArchiveRoots {
+            workspace_path: options.workspace_path,
+            home_path: options.home_path,
+        });
     }
 
     let bytes = builder.into_inner()?.finish()?;
@@ -118,6 +141,12 @@ pub fn restore_runtime_archive(
         }
 
         let path = entry.path()?.to_path_buf();
+        if is_session_archive_member(&path) {
+            session_restored = true;
+        }
+        if has_component(&path, ".git") {
+            git_restored = true;
+        }
         let Some(destination) = destination_for_member(&path, mode, workspace_path, home_path)
         else {
             continue;
@@ -128,14 +157,7 @@ pub fn restore_runtime_archive(
         }
         entry.unpack(&destination.path)?;
 
-        if destination.kind == TreeKind::Workspace {
-            if destination.relative == Path::new(".claude_session_id") {
-                session_restored = true;
-            }
-            if starts_with_component(&destination.relative, ".git") {
-                git_restored = true;
-            }
-        }
+        let _ = destination;
     }
 
     Ok(RestoreResult {
@@ -152,8 +174,6 @@ enum TreeKind {
 }
 
 struct Destination {
-    kind: TreeKind,
-    relative: PathBuf,
     path: PathBuf,
 }
 
@@ -165,53 +185,68 @@ fn append_tree(
     mode: ArchiveMode,
     session_file_included: &mut bool,
     git_included: &mut bool,
-) -> Result<(), ArchiveError> {
-    for path in collect_files(source_root)? {
+) -> Result<usize, ArchiveError> {
+    let mut member_count = 0;
+    for path in collect_direct_children(source_root)? {
         let relative = path.strip_prefix(source_root).unwrap_or(&path);
-        if should_skip(kind, mode, relative) {
+        if should_skip_archive_member(kind, mode, relative) {
             continue;
         }
 
-        if kind == TreeKind::Workspace && relative == Path::new(".claude_session_id") {
+        if relative
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".claude_session_id"))
+        {
             *session_file_included = true;
         }
-        if kind == TreeKind::Workspace && starts_with_component(relative, ".git") {
+        if relative.file_name().is_some_and(|name| name == ".git") {
             *git_included = true;
         }
 
-        builder.append_path_with_name(&path, archive_root.join(relative))?;
+        member_count +=
+            append_path_recursive(builder, source_root, &path, archive_root, kind, mode)?;
     }
-    Ok(())
+    Ok(member_count)
 }
 
-fn collect_files(root: &Path) -> Result<Vec<PathBuf>, ArchiveError> {
-    let mut files = Vec::new();
-    collect_files_inner(root, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), ArchiveError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        return Ok(());
-    }
-    if metadata.is_file() {
-        files.push(path.to_owned());
-        return Ok(());
-    }
-    if !metadata.is_dir() {
-        return Ok(());
-    }
-
-    let mut children = fs::read_dir(path)?
+fn collect_direct_children(root: &Path) -> Result<Vec<PathBuf>, ArchiveError> {
+    let mut children = fs::read_dir(root)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     children.sort();
-    for child in children {
-        collect_files_inner(&child, files)?;
+    Ok(children)
+}
+
+fn append_path_recursive(
+    builder: &mut Builder<GzEncoder<Vec<u8>>>,
+    source_root: &Path,
+    path: &Path,
+    archive_root: &Path,
+    kind: TreeKind,
+    mode: ArchiveMode,
+) -> Result<usize, ArchiveError> {
+    let relative = path.strip_prefix(source_root).unwrap_or(path);
+    if should_skip_archive_member(kind, mode, relative) {
+        return Ok(0);
     }
-    Ok(())
+
+    let metadata = fs::symlink_metadata(path)?;
+    let archive_path = archive_root.join(relative);
+    if metadata.is_file() || metadata.file_type().is_symlink() {
+        builder.append_path_with_name(path, archive_path)?;
+        return Ok(1);
+    }
+    if !metadata.is_dir() {
+        return Ok(0);
+    }
+
+    builder.append_dir(&archive_path, path)?;
+    let mut member_count = 1;
+    for child in collect_direct_children(path)? {
+        member_count +=
+            append_path_recursive(builder, source_root, &child, archive_root, kind, mode)?;
+    }
+    Ok(member_count)
 }
 
 fn destination_for_member(
@@ -223,7 +258,7 @@ fn destination_for_member(
     let clean = clean_relative_path(member)?;
     let (kind, relative) = split_member(&clean);
 
-    if should_skip(kind, mode, &relative) {
+    if should_skip_restore_member(kind, mode, &relative) {
         return None;
     }
 
@@ -233,9 +268,7 @@ fn destination_for_member(
     };
 
     Some(Destination {
-        kind,
         path: base.join(&relative),
-        relative,
     })
 }
 
@@ -252,35 +285,64 @@ fn split_member(path: &Path) -> (TreeKind, PathBuf) {
     (TreeKind::Workspace, path.to_owned())
 }
 
-fn should_skip(kind: TreeKind, mode: ArchiveMode, relative: &Path) -> bool {
+fn should_skip_archive_member(kind: TreeKind, mode: ArchiveMode, relative: &Path) -> bool {
     if relative.as_os_str().is_empty() {
         return true;
     }
-
-    match kind {
-        TreeKind::Workspace => {
-            has_component(relative, "node_modules")
-                || has_component(relative, ".venv")
-                || has_component(relative, "target")
-        }
-        TreeKind::Home => match mode {
-            ArchiveMode::Executor => !is_executor_home_allowed(relative),
-            ArchiveMode::Sandbox => is_unsafe_home_path(relative),
-        },
+    if kind == TreeKind::Home
+        && mode == ArchiveMode::Executor
+        && !is_executor_home_allowed(relative)
+    {
+        return true;
     }
+    should_exclude_archive_path(relative)
+}
+
+fn should_skip_restore_member(kind: TreeKind, mode: ArchiveMode, relative: &Path) -> bool {
+    if relative.as_os_str().is_empty() || should_exclude_archive_path(relative) {
+        return true;
+    }
+    kind == TreeKind::Home && mode == ArchiveMode::Executor && !is_executor_home_allowed(relative)
 }
 
 fn is_executor_home_allowed(relative: &Path) -> bool {
-    relative == Path::new(".claude.json") || starts_with_component(relative, ".claude")
+    relative.components().next().is_some_and(|component| {
+        component.as_os_str() == ".claude" || component.as_os_str() == ".claude.json"
+    })
 }
 
-fn is_unsafe_home_path(relative: &Path) -> bool {
-    has_component(relative, ".cache")
-        || has_component(relative, ".ssh")
-        || has_component(relative, "node_modules")
-        || starts_with_component(relative, ".npm")
-        || relative == Path::new(".npmrc")
-        || relative.starts_with(Path::new(".local/share/code-server"))
+fn should_exclude_archive_path(relative: &Path) -> bool {
+    let normalized = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized == ".local/share/code-server"
+        || normalized.starts_with(".local/share/code-server/")
+    {
+        return true;
+    }
+    relative.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        matches!(
+            value.as_ref(),
+            "node_modules"
+                | "__pycache__"
+                | ".venv"
+                | "venv"
+                | "target"
+                | "build"
+                | "dist"
+                | ".next"
+                | ".nuxt"
+                | ".npm"
+                | ".pnpm-store"
+                | ".yarn"
+                | "vendor"
+                | ".cache"
+        ) || value.ends_with(".pyc")
+            || value.ends_with(".log")
+    })
 }
 
 fn clean_relative_path(path: &Path) -> Option<PathBuf> {
@@ -296,13 +358,12 @@ fn clean_relative_path(path: &Path) -> Option<PathBuf> {
 }
 
 fn is_restorable_entry(entry_type: EntryType) -> bool {
-    entry_type.is_file() || entry_type.is_dir()
+    entry_type.is_file() || entry_type.is_dir() || entry_type.is_symlink()
 }
 
-fn starts_with_component(path: &Path, component: &str) -> bool {
-    path.components()
-        .next()
-        .is_some_and(|value| value.as_os_str() == component)
+fn is_session_archive_member(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with(".claude_session_id"))
 }
 
 fn has_component(path: &Path, component: &str) -> bool {

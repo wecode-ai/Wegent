@@ -12,6 +12,9 @@ use std::{
 use axum::{
     body::Body,
     http::{header, Method, Request, StatusCode},
+    response::IntoResponse,
+    routing::{get, put},
+    Router,
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
@@ -154,7 +157,7 @@ async fn workspace_routes_list_and_download_task_files() {
                 .uri("/filesystem.Filesystem/ListDir")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"path": "/workspace/123", "depth": 1}).to_string(),
+                    json!({"path": workspace_root.join("123"), "depth": 1}).to_string(),
                 ))
                 .unwrap(),
         )
@@ -172,10 +175,53 @@ async fn workspace_routes_list_and_download_task_files() {
     .unwrap();
     assert_eq!(connect_body["entries"][0]["name"], json!("src"));
 
+    let stat_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/filesystem.Filesystem/Stat")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"path": workspace_root.join("123/README.md")}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stat_response.status(), StatusCode::OK);
+    let stat_body: Value = serde_json::from_slice(
+        &stat_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(stat_body["entry"]["name"], json!("README.md"));
+    assert_eq!(stat_body["entry"]["type"], json!("FILE_TYPE_FILE"));
+
+    let mkdir_target = workspace_root.join("123/generated/nested");
+    let mkdir_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/filesystem.Filesystem/MakeDir")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"path": mkdir_target}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mkdir_response.status(), StatusCode::OK);
+    assert!(workspace_root.join("123/generated/nested").is_dir());
+
     let file_response = app
         .oneshot(
             Request::builder()
-                .uri("/files?path=/workspace/123/README.md")
+                .uri("/filesystem/file?path=/workspace/123/README.md")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -217,14 +263,267 @@ async fn workspace_routes_reject_paths_outside_workspace() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn envd_compat_routes_report_health_metrics_and_envs() {
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let env_key = format!("WEGENT_TEST_ENVD_{}", unique_suffix());
+
+    let health = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::NO_CONTENT);
+
+    let metrics = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metrics.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&metrics.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(body["cpu_count"].as_u64().unwrap_or_default() >= 1);
+    assert!(body["disk_total"].as_u64().unwrap_or_default() > 0);
+
+    let init = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/init")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"envVars": {env_key.clone(): "present"}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(init.status(), StatusCode::NO_CONTENT);
+
+    let envs = app
+        .oneshot(Request::builder().uri("/envs").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let body: Value =
+        serde_json::from_slice(&envs.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body[env_key], json!("present"));
+}
+
+#[tokio::test]
+async fn envd_files_endpoint_accepts_multipart_uploads_under_home() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("executor-http-upload-workspace");
+    let home = unique_dir("executor-http-upload-home");
+    fs::create_dir_all(&workspace_root).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let target = home.join("123:executor:attachments/456/input.txt");
+    let boundary = "wegent-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.txt\"\r\nContent-Type: text/plain\r\n\r\nhello envd\r\n--{boundary}--\r\n"
+    );
+
+    let upload = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/files?path={}", target.display()))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(upload.status(), StatusCode::OK);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "hello envd");
+
+    let download = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/files?path={}", target.display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(
+        download.into_body().collect().await.unwrap().to_bytes(),
+        "hello envd"
+    );
+}
+
+#[tokio::test]
+async fn envd_files_endpoint_allows_absolute_paths_outside_home_like_python() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("executor-http-absolute-workspace");
+    let process_home = unique_dir("executor-http-process-home");
+    let outside_home = unique_dir("executor-http-outside-home");
+    fs::create_dir_all(&workspace_root).unwrap();
+    fs::create_dir_all(&process_home).unwrap();
+    fs::create_dir_all(&outside_home).unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", &process_home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let target = outside_home.join("123:executor:attachments/456/input.txt");
+    let boundary = "wegent-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.txt\"\r\nContent-Type: text/plain\r\n\r\nabsolute path\r\n--{boundary}--\r\n"
+    );
+
+    let upload = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/files?path={}", target.display()))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(upload.status(), StatusCode::OK);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "absolute path");
+}
+
+#[tokio::test]
+async fn envd_archive_routes_upload_and_restore_executor_runtime_snapshot() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("executor-http-archive-workspace");
+    let home = unique_dir("executor-http-archive-home");
+    let workspace = workspace_root.join("789");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::write(workspace.join("README.md"), "archive me").unwrap();
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::write(home.join(".claude/home-memory.md"), "home note").unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let stored_archive = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let storage_url = spawn_storage_server(Arc::clone(&stored_archive)).await;
+
+    let archive = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/archive")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "task_id": 789,
+                        "upload_url": format!("{storage_url}/upload"),
+                        "runtime_type": "executor"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archive.status(), StatusCode::OK);
+    assert!(!stored_archive.lock().unwrap().is_empty());
+
+    fs::remove_file(workspace.join("README.md")).unwrap();
+    fs::remove_file(home.join(".claude/home-memory.md")).unwrap();
+
+    let restore = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/restore")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "task_id": 789,
+                        "download_url": format!("{storage_url}/download"),
+                        "runtime_type": "executor"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restore.status(), StatusCode::OK);
+    assert_eq!(
+        fs::read_to_string(workspace.join("README.md")).unwrap(),
+        "archive me"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".claude/home-memory.md")).unwrap(),
+        "home note"
+    );
+}
+
 fn unique_dir(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("{name}-{}", unique_suffix()));
+    let _ = fs::remove_dir_all(&path);
+    path
+}
+
+fn unique_suffix() -> String {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!("{name}-{}-{suffix}", std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    path
+    format!("{}-{suffix}", std::process::id())
+}
+
+async fn spawn_storage_server(archive: Arc<Mutex<Vec<u8>>>) -> String {
+    let upload_archive = Arc::clone(&archive);
+    let download_archive = Arc::clone(&archive);
+    let app = Router::new()
+        .route(
+            "/upload",
+            put(move |body: Body| {
+                let upload_archive = Arc::clone(&upload_archive);
+                async move {
+                    let bytes = body.collect().await.unwrap().to_bytes().to_vec();
+                    *upload_archive.lock().unwrap() = bytes;
+                    StatusCode::OK
+                }
+            }),
+        )
+        .route(
+            "/download",
+            get(move || {
+                let download_archive = Arc::clone(&download_archive);
+                async move {
+                    let bytes = download_archive.lock().unwrap().clone();
+                    ([(header::CONTENT_TYPE, "application/gzip")], bytes).into_response()
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
 }
 
 struct EnvGuard {
