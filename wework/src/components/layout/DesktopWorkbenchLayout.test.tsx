@@ -22,7 +22,7 @@ import {
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
@@ -569,6 +569,7 @@ describe('DesktopWorkbenchLayout', () => {
     queuedMessages?: unknown[]
     guidanceMessages?: unknown[]
     codeCommentContexts?: unknown[]
+    subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
     currentRuntimeTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
@@ -857,6 +858,7 @@ describe('DesktopWorkbenchLayout', () => {
       transcriptLoading: Boolean(props.isRuntimeTranscriptLoading),
       transcriptHasMoreBefore: Boolean(props.runtimeTranscriptHasMoreBefore),
       transcriptLoadingMoreBefore: Boolean(props.isRuntimeTranscriptLoadingMore),
+      subagentStatuses: props.subagentStatuses ?? [],
       turnNavigation: [],
       loadMoreTranscriptBefore: vi.fn().mockResolvedValue(undefined),
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
@@ -1020,6 +1022,39 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('renders subagent status below the top bar without shifting messages', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        subagentStatuses={[
+          {
+            id: 'subagent-1',
+            agentId: 'thread:019f17ae-8295-7072-84e0-94ca0ffa96e5',
+            agentPath: 'thread:019f17ae-8295-7072-84e0-94ca0ffa96e5',
+            agentName: 'worker',
+            status: 'running',
+            updatedAtMs: 12345,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    const statusRow = screen.getByTestId('workbench-subagent-status-row')
+    expect(statusRow).toContainElement(screen.getByTestId('subagent-status-toggle-button'))
+    expect(statusRow).toHaveClass('right-3', 'top-14')
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {

@@ -652,6 +652,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </>
     ) : undefined
   const showPageTopBar = !isTauri || Boolean(topBarLeftContent)
+  const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
@@ -768,16 +769,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
             leftClassName="min-w-0 max-w-[calc(100%-12rem)] gap-2"
-            right={
-              (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
-                <SubagentStatusIndicator
-                  statuses={paneSession.subagentStatuses}
-                  availableWidth={rightPanelOpen ? rightSplitChatWidth : null}
-                />
-              ) : null
-            }
-            rightClassName="gap-2"
           />
+        )}
+        {showPageTopBar && hasSubagentStatuses && (
+          <div
+            data-testid="workbench-subagent-status-row"
+            className={cn(
+              'pointer-events-none absolute right-3 top-14 z-chrome flex items-start',
+              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+            )}
+          >
+            <SubagentStatusIndicator
+              statuses={paneSession.subagentStatuses}
+              availableWidth={rightPanelOpen ? rightSplitChatWidth : null}
+              className="pointer-events-auto"
+            />
+          </div>
         )}
       </WorkbenchPaneActiveOnly>
       <div
