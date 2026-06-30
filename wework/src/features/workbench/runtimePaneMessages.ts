@@ -394,6 +394,7 @@ function normalizeProcessingBlock(
       toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
       toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
       toolOutput: block.tool_output,
+      renderPayload: block.renderPayload ?? block.render_payload,
       status,
       createdAt: timestamp,
     }

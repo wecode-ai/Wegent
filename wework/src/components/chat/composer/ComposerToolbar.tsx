@@ -36,11 +36,41 @@ export function ComposerToolbar({
   onPause,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const collaborationMode = selectedModelOptions.collaborationMode ?? 'default'
+  const planModeEnabled = collaborationMode === 'plan'
 
   return (
     <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
       <div className="flex min-w-0 items-center gap-2">
         <AddContextMenu disabled={disabled} onFileSelect={onFileSelect} />
+        <button
+          type="button"
+          role="switch"
+          aria-checked={planModeEnabled}
+          data-testid="collaboration-mode-toggle"
+          disabled={disabled}
+          onClick={() =>
+            onSelectModelOption('collaborationMode', planModeEnabled ? 'default' : 'plan')
+          }
+          className="flex h-8 shrink-0 items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={t('workbench.collaboration_mode', '运行模式')}
+          title={t('workbench.collaboration_mode', '运行模式')}
+        >
+          <span
+            className={[
+              'relative h-4 w-7 rounded-full transition-colors',
+              planModeEnabled ? 'bg-primary' : 'bg-border',
+            ].join(' ')}
+          >
+            <span
+              className={[
+                'absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-background shadow-sm transition-transform',
+                planModeEnabled ? 'translate-x-3' : 'translate-x-0',
+              ].join(' ')}
+            />
+          </span>
+          <span>{t('workbench.plan_mode', '计划模式')}</span>
+        </button>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         {isModelSelectionReady ? (

@@ -132,6 +132,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                 "content": "continue from content",
                 "modelId": "gpt-4.1",
                 "modelOptions": {
+                    "collaborationMode": "default",
                     "reasoning": "extra_high",
                     "summary": "concise",
                     "speed": "fast"
@@ -173,6 +174,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
     assert_eq!(last_turn_start["params"]["effort"], "xhigh");
     assert_eq!(last_turn_start["params"]["summary"], "concise");
+    assert_eq!(
+        last_turn_start["params"]["collaborationMode"]["mode"],
+        "default"
+    );
     let input = last_turn_start["params"]["input"].as_array().unwrap();
     assert!(input.iter().any(|item| {
         item["type"] == "text"
@@ -303,6 +308,103 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-request-user-input-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-request-user-input-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-request-user-input-log", "jsonl");
+    let fake_codex = write_fake_codex_request_user_input(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-input",
+                "workspacePath": "/tmp/project",
+                "message": "ask me",
+                "executionRequest": {
+                    "task_id": 3001,
+                    "subtask_id": 4001,
+                    "prompt": "ask me",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    let request_events = recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_some()
+    })
+    .await;
+    let block_event = find_runtime_event(&request_events, "response.block.created", |event| {
+        event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+    })
+    .expect("request_user_input block should be emitted");
+    assert_eq!(
+        block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["id"],
+        "goal"
+    );
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "localTaskId": "local-task-input"
+                },
+                "message": "Work goal",
+                "requestUserInputResponse": {
+                    "requestId": 99,
+                    "answers": {
+                        "goal": { "answers": ["Work goal"] }
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("request_user_input answer should be accepted");
+
+    assert_eq!(sent["success"], true);
+    assert_eq!(sent["accepted"], true);
+    wait_until_task_idle(&handler, "local-task-input").await;
+
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| {
+        call["id"] == 99 && call["result"]["answers"]["goal"]["answers"][0] == "Work goal"
+    }));
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -331,24 +433,24 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
 
     handler
         .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.create",
-                "payload": {
-                    "localTaskId": "local-task-text",
-                    "workspacePath": "/tmp/project",
-                    "message": "first turn",
-                    "executionRequest": {
-                        "task_id": 1002,
-                        "subtask_id": 2002,
-                        "prompt": "first turn",
-                        "project_workspace_path": "/tmp/project",
-                        "bot": [{"shell_type": "ClaudeCode"}],
-                        "model_config": {
-                            "model": "openai",
-                            "model_id": "gpt-5.5",
-                            "api_format": "responses"
-                        }
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "local-task-text",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "prompt": "first turn",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
                     }
                 }
+            }
         }))
         .await
         .expect("create should be accepted");
@@ -773,6 +875,39 @@ while IFS= read -r line; do
       exit 0
       ;;
   esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_request_user_input(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-request-user-input", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  if printf '%s\n' "$line" | grep -q '"method":"initialize"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/list"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-input","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-input.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/start"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/name/set"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
+    printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+  elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
+    printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
+    printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
+    exit 0
+  fi
 done
 "#,
         log_path.display()

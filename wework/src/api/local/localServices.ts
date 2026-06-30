@@ -56,7 +56,7 @@ import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
-import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import { LOCAL_USER } from './localSession'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -365,10 +365,12 @@ function codexModelId(modelId?: string): string {
 }
 
 function normalizeLocalRuntimeSendRequest(data: RuntimeSendRequest): RuntimeSendRequest {
+  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
   return {
     ...data,
     message_id: data.message_id ?? createRuntimeMessageId(),
     ...(data.modelId ? { modelId: codexModelId(data.modelId) } : {}),
+    ...(collaborationMode ? { collaborationMode } : {}),
   }
 }
 
@@ -383,6 +385,10 @@ function runtimeReasoning(modelOptions?: Record<string, string>): Record<string,
 
 function runtimeServiceTier(modelOptions?: Record<string, string>): string | null {
   return modelOptions?.speed || modelOptions?.service_tier || null
+}
+
+function runtimeCollaborationMode(modelOptions?: Record<string, string>): string | null {
+  return modelOptions?.collaborationMode || modelOptions?.collaboration_mode || null
 }
 
 type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
@@ -619,6 +625,7 @@ function createLocalExecutionRequest(
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(data.modelOptions)
   if (serviceTier) modelConfig.service_tier = serviceTier
+  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
 
   const skillNames = (data.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
 
@@ -661,6 +668,7 @@ function createLocalExecutionRequest(
     new_session: true,
     is_group_chat: false,
     collaboration_model: 'single',
+    ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',
     attachments: localRuntimeAttachments(data.attachments, turnId),
@@ -767,9 +775,11 @@ async function createLocalRuntimeTaskPayload(
     workspacePath: runtimeWorkspace.workspacePath,
   }
   if (execution) normalizedData.execution = execution
+  const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
 
   return {
     ...normalizedData,
+    ...(collaborationMode ? { collaborationMode } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: createLocalExecutionRequest(normalizedData, localDeviceId, runtimeWorkspace),
   } as unknown as Record<string, unknown>
@@ -1108,6 +1118,7 @@ function createRuntimeWorkApi(
         localDeviceId,
         requestWithLocalDevice
       )
+      debugLocalRuntimeCreatePayload(data, payload)
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload
@@ -1125,6 +1136,37 @@ function createRuntimeWorkApi(
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
+  }
+}
+
+function debugLocalRuntimeCreatePayload(
+  request: RuntimeTaskCreateRequest,
+  payload: Record<string, unknown>
+) {
+  if (globalThis.localStorage?.getItem('wework:debug-runtime') !== '1') return
+  const executionRequest = recordValue(payload.executionRequest)
+  console.debug('[Wework] Local runtime create payload', {
+    localTaskId: request.localTaskId,
+    runtime: request.runtime,
+    requestModelOptions: summarizeLocalModelOptions(request.modelOptions),
+    payloadModelOptions: summarizeLocalModelOptions(recordValue(payload.modelOptions)),
+    payloadCollaborationMode: stringValue(payload.collaborationMode),
+    executionRequestCollaborationMode: stringValue(executionRequest.collaborationMode),
+    executionRequestModelId: stringValue(recordValue(executionRequest.model_config).model_id),
+  })
+}
+
+function summarizeLocalModelOptions(
+  modelOptions: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!modelOptions) return {}
+  return {
+    keys: Object.keys(modelOptions),
+    collaborationMode:
+      stringValue(modelOptions.collaborationMode) ?? stringValue(modelOptions.collaboration_mode),
+    reasoning: stringValue(modelOptions.reasoning),
+    summary: stringValue(modelOptions.summary),
+    speed: stringValue(modelOptions.speed) ?? stringValue(modelOptions.service_tier),
   }
 }
 
@@ -1291,10 +1333,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       runtimeWorkApi,
     }),
     userApi: {
-      updateCurrentUser: async (data: { preferences?: User['preferences'] }) =>
-        Object.prototype.hasOwnProperty.call(data, 'preferences')
-          ? saveLocalUserPreferences(data.preferences ?? {})
-          : getLocalUser(),
+      updateCurrentUser: async (data: { preferences?: User['preferences'] }) => ({
+        ...LOCAL_USER,
+        preferences: data.preferences ?? LOCAL_USER.preferences,
+      }),
       getRuntimeConfig: () => cloudConnectionRequired('getRuntimeConfig'),
       updateRuntimeConfig: () => cloudConnectionRequired('updateRuntimeConfig'),
       getProxyConfig: () => cloudConnectionRequired('getProxyConfig'),

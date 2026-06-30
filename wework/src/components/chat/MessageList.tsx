@@ -14,7 +14,12 @@ import {
   File as FileIcon,
   Package,
 } from 'lucide-react'
-import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  RequestUserInputResponse,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
@@ -25,6 +30,7 @@ import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
@@ -51,6 +57,10 @@ interface MessageListProps {
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -90,6 +100,10 @@ export const MessageList = memo(function MessageList({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
   renderGapAfterMessage,
 }: MessageListProps) {
   const visibleMessages = messages.filter(shouldRenderMessage)
@@ -134,6 +148,10 @@ export const MessageList = memo(function MessageList({
                   onRevertFileChanges={onRevertFileChanges}
                   onOpenFileChangesReview={onOpenFileChangesReview}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onRequestUserInputSubmit={onRequestUserInputSubmit}
+                  onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
               )}
             </article>
@@ -170,6 +188,18 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onOpenFileChangesReview'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
+      ? 'onRequestUserInputSubmit'
+      : null,
+    previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
+      ? 'onRequestUserInputIgnore'
+      : null,
+    previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
+      ? 'hideRequestUserInputBlocks'
+      : null,
+    previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
+      ? 'hiddenRequestUserInputIds'
+      : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
@@ -892,6 +922,10 @@ function AssistantMessage({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
@@ -908,6 +942,10 @@ function AssistantMessage({
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
@@ -982,6 +1020,10 @@ function AssistantMessage({
               showRunningPlaceholder={!hasVisibleContent}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onRequestUserInputSubmit={onRequestUserInputSubmit}
+              onRequestUserInputIgnore={onRequestUserInputIgnore}
+              hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+              hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}

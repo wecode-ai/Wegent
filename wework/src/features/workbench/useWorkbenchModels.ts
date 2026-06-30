@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type ModelCompatibilityFamily,
   areModelCompatibilityFamiliesCompatible,
@@ -54,6 +54,14 @@ function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSel
   return {
     modelName: model.name,
     modelType: model.type,
+    options,
+  }
+}
+
+function toDefaultModelSelectionConfig(options: ModelOptions): ModelSelectionConfig {
+  return {
+    modelName: '',
+    modelType: null,
     options,
   }
 }
@@ -165,6 +173,8 @@ export function useWorkbenchModels({
   )
   const [selectedModel, setSelectedModelState] = useState<UnifiedModel | null>(null)
   const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})
+  const selectedModelRef = useRef<UnifiedModel | null>(null)
+  const selectedModelOptionsRef = useRef<ModelOptions>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKey, setRestoredSelectionKey] = useState<string | null>(null)
@@ -198,7 +208,9 @@ export function useWorkbenchModels({
       const model = findConfiguredModel(availableModels, nextSelectionConfig)
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
-        : {}
+        : (nextSelectionConfig?.options ?? {})
+      selectedModelRef.current = model
+      selectedModelOptionsRef.current = nextOptions
       setSelectedModelState(current => (current === model ? current : model))
       setSelectedModelOptions(current =>
         areModelOptionsEqual(current, nextOptions) ? current : nextOptions
@@ -267,14 +279,17 @@ export function useWorkbenchModels({
         onSelectionBlocked?.(model.compatibilityDisabledReason ?? 'runtime_family_mismatch', model)
         return
       }
-      const currentFamily = selectedModel ? inferModelFamily(selectedModel) : null
+      const currentSelection = selectedModelRef.current
+      const currentFamily = currentSelection ? inferModelFamily(currentSelection) : null
       const nextFamily = model ? inferModelFamily(model) : null
+      selectedModelRef.current = model
       setSelectedModelState(model)
       setSelectedModelOptions(current => {
         const nextOptions =
           currentFamily === nextFamily
             ? normalizeModelOptions(model, current)
             : getDefaultModelOptions(model)
+        selectedModelOptionsRef.current = nextOptions
         if (model) {
           onSelectionChange?.(toSelectionConfig(model, nextOptions))
         }
@@ -287,16 +302,21 @@ export function useWorkbenchModels({
   const setSelectedModelOption = useCallback(
     (optionId: string, value: string) => {
       if (locked) return
-      setSelectedModelOptions(current => {
-        const nextOptions = { ...current, [optionId]: value }
-        if (selectedModel) {
-          onSelectionChange?.(toSelectionConfig(selectedModel, nextOptions))
-        }
-        return nextOptions
-      })
+      const nextOptions = { ...selectedModelOptionsRef.current, [optionId]: value }
+      const currentModel = selectedModelRef.current
+      selectedModelOptionsRef.current = nextOptions
+      setSelectedModelOptions(nextOptions)
+      if (currentModel) {
+        onSelectionChange?.(toSelectionConfig(currentModel, nextOptions))
+      } else {
+        onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
+      }
     },
-    [locked, onSelectionChange, selectedModel]
+    [locked, onSelectionChange]
   )
+
+  const getSelectedModel = useCallback(() => selectedModelRef.current, [])
+  const getSelectedModelOptions = useCallback(() => selectedModelOptionsRef.current, [])
 
   return {
     models,
@@ -305,6 +325,8 @@ export function useWorkbenchModels({
     isSelectionReady,
     setSelectedModel,
     setSelectedModelOption,
+    getSelectedModel,
+    getSelectedModelOptions,
     isLoading,
     error,
   }

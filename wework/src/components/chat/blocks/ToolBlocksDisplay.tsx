@@ -1,8 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
 import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
+import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import { isHiddenRequestUserInputBlock, isRequestUserInputBlock } from '../requestUserInputMessages'
 import { ToolBlockItem } from './ToolBlockItem'
+import { RequestUserInputCard, type RequestUserInputPayload } from '../RequestUserInputCard'
 import {
   buildProcessingDisplayRows,
   isCommandToolName,
@@ -13,6 +16,8 @@ import {
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+
+const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -29,6 +34,10 @@ interface ToolBlocksDisplayProps {
   showRunningPlaceholder?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
 }
 
 export function ToolBlocksDisplay({
@@ -41,6 +50,10 @@ export function ToolBlocksDisplay({
   showRunningPlaceholder = true,
   stateKey,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  hideRequestUserInputBlocks = false,
+  hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
@@ -75,7 +88,19 @@ export function ToolBlocksDisplay({
   }, [completedAt, hasRenderedRunning, isRunning])
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = useMemo(() => buildProcessingDisplayRows(blocks), [blocks])
+  const requestUserInputBlocks = useMemo(() => {
+    if (hideRequestUserInputBlocks) return []
+    const hiddenIds = hiddenRequestUserInputIds ?? EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
+    return blocks.filter(
+      (block): block is ToolBlock =>
+        isRequestUserInputBlock(block) && !isHiddenRequestUserInputBlock(block, hiddenIds)
+    )
+  }, [blocks, hiddenRequestUserInputIds, hideRequestUserInputBlocks])
+  const regularBlocks = useMemo(
+    () => blocks.filter(block => !isRequestUserInputBlock(block)),
+    [blocks]
+  )
+  const rows = useMemo(() => buildProcessingDisplayRows(regularBlocks), [regularBlocks])
   const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent)
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
@@ -150,6 +175,21 @@ export function ToolBlocksDisplay({
       <CollapsibleProcessingContent expanded={expanded} keepMounted>
         {processingContent}
       </CollapsibleProcessingContent>
+      {requestUserInputBlocks.length > 0 ? (
+        <div className="mt-3 flex flex-col gap-3">
+          {requestUserInputBlocks.map(block => (
+            <RequestUserInputCard
+              key={block.id}
+              payload={block.renderPayload as RequestUserInputPayload}
+              disabled={block.status === 'done' || block.status === 'error'}
+              onSubmit={onRequestUserInputSubmit}
+              onIgnore={() =>
+                onRequestUserInputIgnore?.(block.renderPayload as RequestUserInputPayload)
+              }
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

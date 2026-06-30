@@ -18,6 +18,11 @@
   "assistant_status": {
     "stopped_after": "You stopped after {{duration}}"
   },
+  "request_user_input": {
+    "ignore": "Ignore",
+    "submit": "Submit",
+    "custom_placeholder": "Type your answer"
+  },
   "codex_context": {
     "compacting": "Compacting context",
     "compacted": "Context compacted"
