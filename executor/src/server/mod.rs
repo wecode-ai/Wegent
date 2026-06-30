@@ -1349,7 +1349,7 @@ async fn cpu_used_pct() -> Option<f64> {
             return Some(0.0);
         }
         let idle = second.idle.saturating_sub(first.idle);
-        return Some(((total.saturating_sub(idle)) as f64 / total as f64) * 100.0);
+        Some(((total.saturating_sub(idle)) as f64 / total as f64) * 100.0)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1394,10 +1394,10 @@ fn memory_usage_bytes() -> Option<ByteUsage> {
         }
         let total = total_kb?.saturating_mul(1024);
         let available = available_kb.unwrap_or(0).saturating_mul(1024);
-        return Some(ByteUsage {
+        Some(ByteUsage {
             total,
             used: total.saturating_sub(available),
-        });
+        })
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1417,13 +1417,21 @@ fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
         return None;
     }
     let stat = unsafe { stat.assume_init() };
-    let block_size = stat.f_frsize;
-    let total = (stat.f_blocks as u64).saturating_mul(block_size);
-    let available = (stat.f_bavail as u64).saturating_mul(block_size);
+    let block_size = unsigned_to_u64(stat.f_frsize);
+    let total = unsigned_to_u64(stat.f_blocks).saturating_mul(block_size);
+    let available = unsigned_to_u64(stat.f_bavail).saturating_mul(block_size);
     Some(ByteUsage {
         total,
         used: total.saturating_sub(available),
     })
+}
+
+#[cfg(unix)]
+fn unsigned_to_u64<T>(value: T) -> u64
+where
+    T: Into<u64>,
+{
+    value.into()
 }
 
 #[cfg(not(unix))]
