@@ -1,7 +1,7 @@
 import { Paperclip, Plus } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import { useOutsideClick } from './useOutsideClick'
 
 interface AddContextMenuProps {
@@ -61,7 +61,7 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
         data-testid="add-context-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary/85 hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-label={t('workbench.add_context', '添加上下文')}
       >

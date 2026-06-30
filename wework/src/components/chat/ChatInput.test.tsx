@@ -167,12 +167,17 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
-      'min-h-[100px]',
-      'pb-4',
+      'min-h-[76px]',
+      'pb-1.5',
       'pt-2'
     )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass('min-h-8', 'max-h-[116px]')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass(
+      'min-h-[48px]',
+      'max-h-[112px]',
+      'pt-1',
+      'placeholder:text-text-muted/55'
+    )
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
