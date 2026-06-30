@@ -8,29 +8,6 @@ use wegent_executor::{
     runner::{AgentEngine, ExecutionOutcome},
 };
 
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            std::env::set_var(self.key, previous);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
-
 #[tokio::test]
 async fn process_engine_maps_success_stdout_to_completed_outcome() {
     let engine = ProcessEngine::new(CommandSpec::new("sh").arg("-c").arg("printf done"));
@@ -79,8 +56,8 @@ async fn process_engine_maps_nonzero_exit_to_failed_outcome() {
 
 #[tokio::test]
 async fn process_engine_times_out_hung_commands() {
-    let _timeout = EnvGuard::set("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS", "1");
-    let engine = ProcessEngine::new(CommandSpec::new("sh").arg("-c").arg("sleep 5"));
+    let engine =
+        ProcessEngine::new(CommandSpec::new("sh").arg("-c").arg("sleep 5")).with_timeout_seconds(1);
 
     let outcome = engine.run(ExecutionRequest::default()).await;
 
