@@ -1032,17 +1032,29 @@
       "load_failed": "Failed to load device list",
       "load_stats_failed": "Failed to load statistics",
       "upgrade_failed": "Failed to send upgrade command",
+      "upgrade_all_local_failed": "Failed to upgrade local devices",
       "restart_failed": "Failed to send restart command",
+      "restart_all_cloud_failed": "Failed to restart cloud devices",
       "migrate_failed": "Failed to send migrate command"
     },
     "actions": {
       "upgrade": "Upgrade",
+      "upgrade_all_local": "Upgrade All Local Devices",
       "upgrade_unsupported": "Version below {{version}}, online upgrade not supported",
       "restart": "Restart",
+      "restart_all_cloud": "Restart All Cloud Devices",
       "migrate": "Migrate",
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",
       "migrate_sent": "Migrate command sent"
+    },
+    "confirm": {
+      "upgrade_all_local_title": "Confirm Upgrade All Local Devices",
+      "upgrade_all_local_message": "This will send upgrade commands to all eligible local devices and may affect running tasks. Confirm before continuing.",
+      "upgrade_all_local_confirm": "Confirm Upgrade",
+      "restart_all_cloud_title": "Confirm Restart All Cloud Devices",
+      "restart_all_cloud_message": "This will send restart commands to all cloud devices and may interrupt running tasks. Confirm before continuing.",
+      "restart_all_cloud_confirm": "Confirm Restart"
     }
   },
   "templates": {

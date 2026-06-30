@@ -317,10 +317,10 @@ Local devices display device name, online status, and executor version. They do 
 
 Online cloud devices can open interactive sessions directly:
 
-| Action | Backend API | Description |
-|--------|-------------|-------------|
-| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
+| Action       | Backend API                                 | Description                                                                                                                                                                                           |
+| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal** | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
+| **IDE**      | `POST /api/devices/{device_id}/code-server` | Opens a code-server session                                                                                                                                                                           |
 
 Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
 
@@ -331,6 +331,19 @@ The more menu contains lower-frequency management actions:
 | **Rename**         | Click the device name or edit icon; the list refreshes after saving                              |
 | **Restart Device** | Requires confirmation; the device briefly goes offline and active connections may be interrupted |
 | **Delete Device**  | Requires confirmation; the cloud resources are released                                          |
+
+### System Administration Device Monitor
+
+Administrators can open **System Administration** -> **Device Monitor** to view devices across all users. The page supports filtering by status, device type, shell type, version, and keyword, and it includes single-device actions such as upgrade and cloud-device restart.
+
+The page header provides two bulk actions:
+
+| Action                        | Scope                                                                                               | Description                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Upgrade All Local Devices** | Online local devices with `bindShell=claudecode` and an executor version that supports auto-upgrade | Sends upgrade commands to eligible devices; offline, outdated, or task-running devices are skipped                                 |
+| **Restart All Cloud Devices** | All cloud devices                                                                                   | Triggers the deployment-specific cloud restart implementation in bulk; returns an unconfigured result if restart is not configured |
+
+After a bulk action is submitted, the API immediately returns a batch ID and the page polls batch status so long-running work does not occupy the HTTP request. When the batch completes, the page refreshes device statistics and the device list. The status response includes total, triggered, failed, skipped, and per-device error details so administrators can decide whether individual follow-up is needed.
 
 ### Device Information
 
