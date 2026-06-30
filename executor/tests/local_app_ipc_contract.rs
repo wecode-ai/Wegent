@@ -18,6 +18,24 @@ use wegent_executor::local::{
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
 
+const LOCAL_GIT_ENV_VARS: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
@@ -323,6 +341,129 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 }
 
 #[tokio::test]
+async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
+    let root = unique_dir("gitdir-worktree-source");
+    let source_worktree = root.join("source");
+    let source_gitdir = root.join("source.git");
+    let target_worktree = root.join("target");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&source_worktree).unwrap();
+
+    assert_command_success(
+        git_command()
+            .args([
+                "init",
+                "--separate-git-dir",
+                source_gitdir.to_str().unwrap(),
+            ])
+            .arg(&source_worktree)
+            .output()
+            .unwrap(),
+    );
+    assert_command_success(
+        git_command()
+            .args([
+                "-C",
+                source_worktree.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert_command_success(
+        git_command()
+            .args([
+                "-C",
+                source_worktree.to_str().unwrap(),
+                "config",
+                "user.name",
+                "Test User",
+            ])
+            .output()
+            .unwrap(),
+    );
+    fs::write(source_worktree.join("README.md"), "hello\n").unwrap();
+    assert_command_success(
+        git_command()
+            .args(["-C", source_worktree.to_str().unwrap(), "add", "README.md"])
+            .output()
+            .unwrap(),
+    );
+    assert_command_success(
+        git_command()
+            .args([
+                "-C",
+                source_worktree.to_str().unwrap(),
+                "commit",
+                "-m",
+                "init",
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert_command_success(
+        git_command()
+            .args([
+                "--git-dir",
+                source_gitdir.to_str().unwrap(),
+                "config",
+                "core.worktree",
+                source_worktree.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap(),
+    );
+
+    let server = AppIpcServer::new();
+    let check_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-gitdir-check",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_is_worktree",
+                    "args": [source_gitdir.display().to_string()]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(check_response["ok"], true);
+    assert_eq!(check_response["result"]["success"], true);
+    assert_eq!(check_response["result"]["stdout"], json!("true\n"));
+
+    let add_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-gitdir-add",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_worktree_add",
+                    "args": [
+                        source_gitdir.display().to_string(),
+                        target_worktree.display().to_string()
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(add_response["ok"], true);
+    assert_eq!(add_response["result"]["success"], true);
+    assert!(target_worktree.join("README.md").is_file());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn app_ipc_unknown_method_returns_protocol_error() {
     let server = AppIpcServer::new();
 
@@ -440,6 +581,24 @@ fn unique_dir(label: &str) -> std::path::PathBuf {
         "wegent-executor-local-app-ipc-{label}-{}",
         std::process::id()
     ))
+}
+
+fn git_command() -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for key in LOCAL_GIT_ENV_VARS {
+        command.env_remove(key);
+    }
+    command
+}
+
+fn assert_command_success(output: std::process::Output) {
+    assert!(
+        output.status.success(),
+        "command failed: status={} stdout={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 struct RuntimeHandler;

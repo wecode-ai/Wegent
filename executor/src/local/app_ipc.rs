@@ -691,8 +691,17 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_is_worktree" => Some(command_definition(
-            "sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --",
-            &["sh", "-c", "git -C \"$1\" rev-parse --is-inside-work-tree", "--"],
+            "sh -c <git_is_worktree>",
+            &[
+                "sh",
+                "-c",
+                concat!(
+                    "if [ \"$(git -C \"$1\" rev-parse --is-inside-work-tree 2>/dev/null)\" ",
+                    "= \"true\" ] || git -C \"$1\" rev-parse --git-dir >/dev/null 2>&1; then ",
+                    "printf 'true\\n'; else printf 'false\\n'; exit 1; fi"
+                ),
+                "--",
+            ],
             None,
         )),
         "git_worktree_add" => Some(command_definition(

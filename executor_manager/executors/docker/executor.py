@@ -990,6 +990,8 @@ class DockerExecutor(Executor):
                 "-e",
                 f"EXECUTOR_NAME={executor_name}",
                 "-e",
+                "EXECUTOR_MODE=docker",
+                "-e",
                 f"TZ={DEFAULT_TIMEZONE}",
                 "-e",
                 f"LANG={DEFAULT_LOCALE}",
