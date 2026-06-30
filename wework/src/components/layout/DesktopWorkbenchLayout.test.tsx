@@ -962,9 +962,9 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       '-translate-y-12'
     )
   })
@@ -995,9 +995,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       'px-0'
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
@@ -1583,8 +1583,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
-      'max-w-[calc(100%_-_1.5rem)]'
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
     )
   })
 
@@ -3236,9 +3236,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]'
+      'max-w-[calc(100%_-_2rem)]'
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -3273,17 +3273,14 @@ describe('DesktopWorkbenchLayout', () => {
       'ease-out'
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]'
-    )
-    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]'
+      'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       'px-0'
     )
   })

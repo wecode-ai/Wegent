@@ -71,9 +71,14 @@ impl From<crate::server::ServerConfigError> for AppError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupPlan {
+    pub http_server: Option<HttpServerPlan>,
+    pub socket_sidecar: Option<SocketSidecarPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpServerPlan {
     pub host: String,
     pub port: u16,
-    pub socket_sidecar: Option<SocketSidecarPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +87,7 @@ pub struct SocketSidecarPlan {
     pub device_id: String,
 }
 
-impl StartupPlan {
+impl HttpServerPlan {
     pub fn bind_addr(&self) -> Result<SocketAddr, AppError> {
         self.server_config().bind_addr().map_err(AppError::from)
     }
@@ -120,15 +125,25 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
     let plan = startup_plan_for_config(&config)?;
-    let server_config = plan.server_config();
-    let Some(socket_sidecar) = plan.socket_sidecar else {
-        return server::serve(server_config).await.map_err(AppError::Server);
-    };
 
-    let socket_sidecar_future = serve_socket_sidecar(config, socket_sidecar);
-    tokio::select! {
-        result = server::serve(server_config) => result.map_err(AppError::Server),
-        result = socket_sidecar_future => result.map_err(AppError::Server),
+    match (plan.http_server, plan.socket_sidecar) {
+        (Some(http_server), None) => server::serve(http_server.server_config())
+            .await
+            .map_err(AppError::Server),
+        (None, Some(socket_sidecar)) => serve_socket_sidecar(config, socket_sidecar)
+            .await
+            .map_err(AppError::Server),
+        (Some(http_server), Some(socket_sidecar)) => {
+            let server_config = http_server.server_config();
+            let socket_sidecar_future = serve_socket_sidecar(config, socket_sidecar);
+            tokio::select! {
+                result = server::serve(server_config) => result.map_err(AppError::Server),
+                result = socket_sidecar_future => result.map_err(AppError::Server),
+            }
+        }
+        (None, None) => Err(AppError::Server(
+            "startup plan has no runtime target".to_owned(),
+        )),
     }
 }
 
@@ -178,19 +193,22 @@ pub fn startup_plan(args: CliArgs) -> Result<StartupPlan, AppError> {
 fn startup_plan_for_config(
     config: &crate::config::device::DeviceConfig,
 ) -> Result<StartupPlan, AppError> {
-    let server = ServerConfig::from_env()?;
-    let socket_sidecar = if config.runtime_mode() == crate::config::device::RuntimeMode::Docker {
-        None
-    } else {
-        Some(SocketSidecarPlan {
-            backend_enabled: !config.connection.backend_url.trim().is_empty(),
-            device_id: normalize_device_id(config.device_id.clone()),
-        })
-    };
+    if config.runtime_mode() == crate::config::device::RuntimeMode::Docker {
+        let server = ServerConfig::from_env()?;
+        return Ok(StartupPlan {
+            http_server: Some(HttpServerPlan {
+                host: server.host,
+                port: server.port,
+            }),
+            socket_sidecar: None,
+        });
+    }
 
     Ok(StartupPlan {
-        host: server.host,
-        port: server.port,
-        socket_sidecar,
+        http_server: None,
+        socket_sidecar: Some(SocketSidecarPlan {
+            backend_enabled: !config.connection.backend_url.trim().is_empty(),
+            device_id: normalize_device_id(config.device_id.clone()),
+        }),
     })
 }

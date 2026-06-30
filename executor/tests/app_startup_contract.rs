@@ -8,7 +8,7 @@ use axum::{routing::get, Json, Router};
 use serde_json::json;
 use tokio::net::TcpListener;
 use wegent_executor::{
-    app::{cli::CliArgs, run, startup_plan, SocketSidecarPlan, StartupPlan},
+    app::{cli::CliArgs, run, startup_plan, HttpServerPlan, SocketSidecarPlan, StartupPlan},
     services::updater::binary_name_for,
     version::get_version,
 };
@@ -48,7 +48,7 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn default_startup_mode_plans_http_server_with_image_defaults() {
+fn default_startup_mode_plans_socket_sidecar_without_http_server() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
@@ -64,15 +64,13 @@ fn default_startup_mode_plans_http_server_with_image_defaults() {
     assert_eq!(
         plan,
         StartupPlan {
-            host: "0.0.0.0".to_owned(),
-            port: 10088,
+            http_server: None,
             socket_sidecar: Some(SocketSidecarPlan {
                 backend_enabled: false,
                 device_id: plan.socket_sidecar.as_ref().unwrap().device_id.clone(),
             }),
         }
     );
-    assert_eq!(plan.bind_addr().unwrap().to_string(), "0.0.0.0:10088");
     let socket_sidecar = plan.socket_sidecar.unwrap();
     assert!(!socket_sidecar.backend_enabled);
     assert!(socket_sidecar.device_id.starts_with("device-"));
@@ -80,7 +78,7 @@ fn default_startup_mode_plans_http_server_with_image_defaults() {
 }
 
 #[test]
-fn startup_plan_with_backend_keeps_http_and_enables_backend_sidecar() {
+fn startup_plan_with_backend_enables_backend_sidecar_without_http_server() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _port = EnvGuard::set("PORT", "10089");
@@ -95,8 +93,7 @@ fn startup_plan_with_backend_keeps_http_and_enables_backend_sidecar() {
     assert_eq!(
         plan,
         StartupPlan {
-            host: "0.0.0.0".to_owned(),
-            port: 10089,
+            http_server: None,
             socket_sidecar: Some(SocketSidecarPlan {
                 backend_enabled: true,
                 device_id: "device-1".to_owned(),
@@ -121,8 +118,10 @@ fn docker_executor_mode_plans_http_without_socket_sidecar() {
     assert_eq!(
         plan,
         StartupPlan {
-            host: "0.0.0.0".to_owned(),
-            port: 10090,
+            http_server: Some(HttpServerPlan {
+                host: "0.0.0.0".to_owned(),
+                port: 10090,
+            }),
             socket_sidecar: None,
         }
     );
