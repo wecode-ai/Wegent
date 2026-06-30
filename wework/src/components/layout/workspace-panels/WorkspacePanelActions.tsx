@@ -160,7 +160,7 @@ export function WorkspacePanelActions({
         />
       )}
       {showPanelToggles && canOpenCodeServer && localWorkspaceEnabled && (
-        <div className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+        <div className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-border bg-background">
           <button
             type="button"
             data-testid="open-code-server-titlebar-button"
@@ -168,7 +168,7 @@ export function WorkspacePanelActions({
             disabled={ideLoading}
             className={cn(
               DESKTOP_TOP_BAR_BUTTON_CLASS,
-              'h-7 w-8 rounded-none bg-[#f2f3f5] hover:bg-[#eceef0] active:bg-[#e4e6e8]',
+              'h-7 w-8 rounded-none bg-surface hover:bg-muted active:bg-border/50',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {
@@ -190,7 +190,7 @@ export function WorkspacePanelActions({
             disabled={ideLoading}
             buttonClassName={cn(
               DESKTOP_TOP_BAR_BUTTON_CLASS,
-              'h-7 w-6 rounded-none border-l border-[#e8eaed] bg-[#f7f8f9] hover:bg-[#f0f1f2] active:bg-[#e9ebed] [&_svg]:h-3.5 [&_svg]:w-3.5',
+              'h-7 w-6 rounded-none border-l border-border bg-background hover:bg-muted active:bg-border/50 [&_svg]:h-3.5 [&_svg]:w-3.5',
               ideLoading && 'cursor-wait opacity-70'
             )}
             onSelect={handleOpenLocalWorkspace}
