@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
@@ -767,12 +767,15 @@ describe('App plugins route', () => {
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
-    await userEvent.type(screen.getByTestId('custom-mcp-name-input'), 'local-docs')
-    await userEvent.type(screen.getByTestId('custom-mcp-display-name-input'), 'Local Docs')
-    await userEvent.type(
-      screen.getByTestId('custom-mcp-url-input'),
-      'https://mcp.example.com/local'
-    )
+    fireEvent.change(screen.getByTestId('custom-mcp-name-input'), {
+      target: { value: 'local-docs' },
+    })
+    fireEvent.change(screen.getByTestId('custom-mcp-display-name-input'), {
+      target: { value: 'Local Docs' },
+    })
+    fireEvent.change(screen.getByTestId('custom-mcp-url-input'), {
+      target: { value: 'https://mcp.example.com/local' },
+    })
     await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 2' }))
@@ -803,7 +806,9 @@ describe('App plugins route', () => {
 
     await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
     expect(screen.getByText('MCP Router')).toBeInTheDocument()
-    await userEvent.type(screen.getByTestId('mcp-provider-token-mcp_router'), 'token')
+    fireEvent.change(screen.getByTestId('mcp-provider-token-mcp_router'), {
+      target: { value: 'token' },
+    })
     await userEvent.click(screen.getByTestId('mcp-provider-save-token-mcp_router'))
 
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()

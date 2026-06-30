@@ -1,5 +1,5 @@
 import '@/i18n'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
@@ -95,25 +95,28 @@ describe('FileChangesReviewPanel', () => {
 
     expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
     await waitFor(() => {
-      expect(getRenderedDiffText()).toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
 
     const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
     expect(fileToggles).toHaveLength(2)
 
-    await userEvent.click(fileToggles[0])
+    fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
     await waitFor(() => {
-      expect(getRenderedDiffText()).not.toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).not.toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
 
-    await userEvent.click(fileToggles[0])
+    fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => {
-      expect(getRenderedDiffText()).toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
   })
 

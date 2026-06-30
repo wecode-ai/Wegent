@@ -214,6 +214,15 @@ wegent-executor
 
 安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。`EXECUTOR_MODE=remote` 会启动本机 socket，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后以远程设备模式连接 Backend。`EXECUTOR_STARTUP_MODE=socket` 仍兼容旧脚本，但新启动命令不再需要设置它。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 executor home 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
 
+#### Claude Code 执行超时
+
+本地 executor 启动 Claude Code 子进程时，默认最长等待 1 小时。长时间代码生成、依赖安装或文件处理任务可以在这个时间内继续运行。若需要为特定环境调整该限制，可在启动 executor 前设置 `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS`。该配置只影响 Claude Code 子进程，不影响 native Codex app-server；Codex RPC 超时由 `WEGENT_CODEX_RPC_TIMEOUT_SECONDS` 控制。
+
+```bash
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+wegent-executor
+```
+
 ### 获取 JWT Token
 
 1. 登录 Wegent Web 界面
