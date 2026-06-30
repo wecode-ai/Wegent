@@ -16,7 +16,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{claude_config_dir, claude_task_dir, extract_claude_options},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
@@ -327,13 +327,9 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             Ok(true) => success_count += 1,
             Ok(false) => {}
             Err(error) => {
-                log_executor_event(
-                    "skill deployment item skipped after error",
-                    &[
-                        ("skill", skill.clone()),
-                        ("error_len", error.len().to_string()),
-                    ],
-                );
+                let mut fields = vec![("skill", skill.clone())];
+                push_error_fields(&mut fields, error);
+                log_executor_event("skill deployment item skipped after error", &fields);
             }
         }
     }
