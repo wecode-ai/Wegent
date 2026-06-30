@@ -304,6 +304,41 @@ async fn codex_app_server_receives_normalized_developer_path() {
 }
 
 #[tokio::test]
+async fn codex_app_server_receives_task_identity_env() {
+    let _lock = env_lock().await;
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-task-identity-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(
+        &log_path,
+        &["WEGENT_TASK_ID", "WEGENT_SUBTASK_ID", "AUTH_TOKEN"],
+    );
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        task_id: 525,
+        subtask_id: 626,
+        auth_token: Some("task-jwt".to_owned()),
+        prompt: json!("inspect task env"),
+        bot: json!([{"shell_type": "Codex"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
+    let messages = read_json_lines(&log_path);
+    assert_eq!(messages[0]["env"]["WEGENT_TASK_ID"], "525");
+    assert_eq!(messages[0]["env"]["WEGENT_SUBTASK_ID"], "");
+    assert_eq!(messages[0]["env"]["AUTH_TOKEN"], "task-jwt");
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_does_not_override_user_runtime_home() {
     let _lock = env_lock().await;
     let home = unique_dir("codex-user-home");

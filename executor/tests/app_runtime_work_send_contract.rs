@@ -331,24 +331,24 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
 
     handler
         .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.create",
-            "payload": {
-                "localTaskId": "local-task-text",
-                "workspacePath": "/tmp/project",
-                "message": "first turn",
-                "executionRequest": {
-                    "task_id": 1002,
-                    "subtask_id": 2002,
-                    "prompt": "first turn",
-                    "project_workspace_path": "/tmp/project",
-                    "bot": [{"shell_type": "ClaudeCode"}],
-                    "model_config": {
-                        "model": "openai",
-                        "model_id": "gpt-5.5",
-                        "api_format": "responses"
+                "method": "runtime.tasks.create",
+                "payload": {
+                    "localTaskId": "local-task-text",
+                    "workspacePath": "/tmp/project",
+                    "message": "first turn",
+                    "executionRequest": {
+                        "task_id": 1002,
+                        "subtask_id": 2002,
+                        "prompt": "first turn",
+                        "project_workspace_path": "/tmp/project",
+                        "bot": [{"shell_type": "ClaudeCode"}],
+                        "model_config": {
+                            "model": "openai",
+                            "model_id": "gpt-5.5",
+                            "api_format": "responses"
+                        }
                     }
                 }
-            }
         }))
         .await
         .expect("create should be accepted");

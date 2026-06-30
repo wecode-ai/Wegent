@@ -88,6 +88,37 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_applies_claude_specific_process_timeout() {
+    let _lock = env_lock().lock().await;
+    let _legacy_timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");
+    let _timeout = EnvGuard::set("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS", "1");
+    let fake_claude = write_fake_executable(
+        "fake-claude-timeout",
+        r#"#!/bin/sh
+sleep 5
+"#,
+    );
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        prompt: json!("run"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "command timed out after 1s".to_owned()
+        }
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_saves_claude_session_id_for_follow_up_turns() {
     let _lock = env_lock().lock().await;
     let executor_home = unique_dir("claude-session-save-home");

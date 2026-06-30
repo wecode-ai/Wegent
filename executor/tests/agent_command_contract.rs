@@ -717,9 +717,12 @@ fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_
 fn claude_command_injects_task_identity_env() {
     let _lock = env_lock();
     let _auth = EnvGuard::remove("AUTH_TOKEN");
+    let _task_id = EnvGuard::remove("WEGENT_TASK_ID");
     let _identity = EnvGuard::remove("WEGENT_SKILL_IDENTITY_TOKEN");
     let _user = EnvGuard::remove("WEGENT_SKILL_USER_NAME");
     let request = ExecutionRequest {
+        task_id: 525,
+        subtask_id: 626,
         prompt: json!("use task scoped skills"),
         auth_token: Some("task-jwt".to_owned()),
         skill_identity_token: Some("skill-jwt".to_owned()),
@@ -731,12 +734,15 @@ fn claude_command_injects_task_identity_env() {
     let spec = build_claude_command(&request, "claude");
 
     assert_eq!(spec.envs().get("EXISTING_VAR").unwrap(), "value");
+    assert_eq!(spec.envs().get("WEGENT_TASK_ID").unwrap(), "525");
+    assert!(spec.envs().get("WEGENT_SUBTASK_ID").is_none());
     assert_eq!(spec.envs().get("AUTH_TOKEN").unwrap(), "task-jwt");
     assert_eq!(
         spec.envs().get("WEGENT_SKILL_IDENTITY_TOKEN").unwrap(),
         "skill-jwt"
     );
     assert_eq!(spec.envs().get("WEGENT_SKILL_USER_NAME").unwrap(), "alice");
+    assert!(std::env::var("WEGENT_TASK_ID").is_err());
     assert!(std::env::var("WEGENT_SKILL_IDENTITY_TOKEN").is_err());
 }
 

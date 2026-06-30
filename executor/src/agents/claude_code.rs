@@ -11,7 +11,9 @@ use std::{
 use serde_json::{json, Map, Value};
 
 use crate::{
-    agents::interactive_mcp::build_interactive_form_answer_query,
+    agents::{
+        interactive_mcp::build_interactive_form_answer_query, task_identity::task_identity_env,
+    },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
     },
@@ -377,14 +379,8 @@ fn apply_task_identity_environment(
     mut spec: CommandSpec,
     request: &ExecutionRequest,
 ) -> CommandSpec {
-    if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
-        spec = spec.env("AUTH_TOKEN", auth_token);
-    }
-    if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
-        spec = spec.env("WEGENT_SKILL_IDENTITY_TOKEN", token);
-    }
-    if let Some(user_name) = non_empty(request.user_name.as_deref()) {
-        spec = spec.env("WEGENT_SKILL_USER_NAME", user_name);
+    for (key, value) in task_identity_env(request) {
+        spec = spec.env(key, value);
     }
     spec
 }
