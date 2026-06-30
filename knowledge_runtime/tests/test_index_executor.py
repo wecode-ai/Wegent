@@ -68,7 +68,8 @@ class TestIndexExecutor:
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
-        mock_db = MagicMock()
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.return_value = mock_index_config
 
         mock_document_service.index_document_from_binary = AsyncMock(
             return_value={
@@ -97,10 +98,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor(db=mock_db)
-            executor._config_resolver.resolve_index_config = MagicMock(
-                return_value=mock_index_config
-            )
+            executor = IndexExecutor(config_loader=mock_config_loader)
 
             mock_response = MagicMock()
             mock_response.content = b"test content"
@@ -115,9 +113,8 @@ class TestIndexExecutor:
         assert result["doc_ref"] == "100"
         mock_document_service.index_document_from_binary.assert_called_once()
 
-        # Verify ConfigResolver was called with correct args
-        executor._config_resolver.resolve_index_config.assert_called_once_with(
-            db=mock_db,
+        # Verify RuntimeConfigLoader was called with correct args
+        mock_config_loader.resolve_index_config.assert_called_once_with(
             knowledge_base_id=1,
             user_id=42,
             document_id=100,
@@ -131,7 +128,8 @@ class TestIndexExecutor:
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
-        mock_db = MagicMock()
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.return_value = mock_index_config
 
         mock_document_service.index_document_from_binary = AsyncMock(
             return_value={
@@ -156,10 +154,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor(db=mock_db)
-            executor._config_resolver.resolve_index_config = MagicMock(
-                return_value=mock_index_config
-            )
+            executor = IndexExecutor(config_loader=mock_config_loader)
 
             mock_response = MagicMock()
             # Content from fetch has different filename
@@ -184,7 +179,8 @@ class TestIndexExecutor:
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
-        mock_db = MagicMock()
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.return_value = mock_index_config
 
         mock_document_service.index_document_from_binary = AsyncMock(
             return_value={"chunk_count": 1, "doc_ref": "100"}
@@ -206,10 +202,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor(db=mock_db)
-            executor._config_resolver.resolve_index_config = MagicMock(
-                return_value=mock_index_config
-            )
+            executor = IndexExecutor(config_loader=mock_config_loader)
 
             mock_response = MagicMock()
             mock_response.content = b"content"
@@ -241,16 +234,14 @@ class TestIndexExecutor:
         """Test that content fetch errors propagate correctly."""
         from knowledge_runtime.services.content_fetcher import ContentFetchError
 
-        mock_db = MagicMock()
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.return_value = mock_index_config
 
         with (
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor(db=mock_db)
-            executor._config_resolver.resolve_index_config = MagicMock(
-                return_value=mock_index_config
-            )
+            executor = IndexExecutor(config_loader=mock_config_loader)
 
             mock_client.return_value.__aenter__.return_value.get = AsyncMock(
                 side_effect=ContentFetchError("Fetch failed", retryable=True)
@@ -269,7 +260,8 @@ class TestIndexExecutor:
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
-        mock_db = MagicMock()
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.return_value = mock_index_config
 
         mock_document_service.index_document_from_binary = AsyncMock(
             side_effect=ValueError("Storage connection failed")
@@ -291,10 +283,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor(db=mock_db)
-            executor._config_resolver.resolve_index_config = MagicMock(
-                return_value=mock_index_config
-            )
+            executor = IndexExecutor(config_loader=mock_config_loader)
 
             mock_response = MagicMock()
             mock_response.content = b"content"
@@ -313,14 +302,12 @@ class TestIndexExecutor:
         """Test that config resolution errors propagate correctly."""
         from knowledge_runtime.services.config_resolver import ConfigResolutionError
 
-        mock_db = MagicMock()
-
-        executor = IndexExecutor(db=mock_db)
-        executor._config_resolver.resolve_index_config = MagicMock(
-            side_effect=ConfigResolutionError(
-                "config_not_found", "Knowledge base 1 not found"
-            )
+        mock_config_loader = MagicMock()
+        mock_config_loader.resolve_index_config.side_effect = ConfigResolutionError(
+            "config_not_found", "Knowledge base 1 not found"
         )
+
+        executor = IndexExecutor(config_loader=mock_config_loader)
 
         with pytest.raises(ConfigResolutionError) as exc_info:
             await executor.execute(index_request)
