@@ -22,4 +22,3 @@ def test_executor_container_images_start_in_docker_mode() -> None:
 
     for dockerfile in dockerfiles:
         assert "ENV EXECUTOR_MODE=docker" in dockerfile
-        assert "ENV EXECUTOR_STARTUP_MODE=http" in dockerfile

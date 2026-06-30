@@ -16,7 +16,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{claude_config_dir, claude_task_dir, extract_claude_options},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
@@ -132,6 +132,21 @@ pub async fn prepare_claude_runtime(
     deploy_request_skills(request, &skills_dir).await;
 
     let global_mcps = load_global_mcp_records();
+    log_runtime_event(
+        request,
+        "claude mcp input summary",
+        vec![
+            ("bot_mcp_headers", bot_mcp_headers_summary(request)),
+            (
+                "top_level_mcp_headers",
+                mcp_headers_summary_from_value(&Value::Array(request.mcp_servers.clone())),
+            ),
+            (
+                "global_mcp_headers",
+                global_mcp_headers_summary(&global_mcps),
+            ),
+        ],
+    );
     let claude_options = extract_claude_options(request, &global_mcps);
     if !claude_options.mcp_servers.is_empty() {
         let mcp_config_path = config_dir.join("mcp.json");
@@ -147,7 +162,16 @@ pub async fn prepare_claude_runtime(
             log_runtime_event(
                 request,
                 "claude mcp config prepared",
-                vec![("mcp_config", mcp_config_path.display().to_string())],
+                vec![
+                    ("mcp_config", mcp_config_path.display().to_string()),
+                    ("bot_mcp_count", bot_mcp_count(request).to_string()),
+                    ("top_level_mcp_count", request.mcp_servers.len().to_string()),
+                    ("global_mcp_count", global_mcps.len().to_string()),
+                    (
+                        "mcp_headers",
+                        mcp_server_headers_summary(&claude_options.mcp_servers),
+                    ),
+                ],
             );
         }
     }
@@ -303,13 +327,9 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             Ok(true) => success_count += 1,
             Ok(false) => {}
             Err(error) => {
-                log_executor_event(
-                    "skill deployment item skipped after error",
-                    &[
-                        ("skill", skill.clone()),
-                        ("error_len", error.len().to_string()),
-                    ],
-                );
+                let mut fields = vec![("skill", skill.clone())];
+                push_error_fields(&mut fields, error);
+                log_executor_event("skill deployment item skipped after error", &fields);
             }
         }
     }
@@ -879,6 +899,106 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     extract_claude_options(request, &BTreeMap::new()).mcp_servers
+}
+
+fn mcp_server_headers_summary(servers: &BTreeMap<String, Value>) -> String {
+    servers
+        .iter()
+        .map(|(name, server)| format!("{name}:headers={}", has_mcp_headers(server)))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn bot_mcp_headers_summary(request: &ExecutionRequest) -> String {
+    if request_mode(request).as_deref() == Some("coordinate") {
+        return request
+            .bot
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(index, bot)| {
+                let summary = bot
+                    .get("mcp_servers")
+                    .or_else(|| bot.get("mcpServers"))
+                    .map(mcp_headers_summary_from_value)
+                    .unwrap_or_default();
+                (!summary.is_empty()).then(|| format!("bot[{index}]={summary}"))
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+    }
+    primary_bot(request)
+        .and_then(|bot| bot.get("mcp_servers").or_else(|| bot.get("mcpServers")))
+        .map(mcp_headers_summary_from_value)
+        .unwrap_or_default()
+}
+
+fn global_mcp_headers_summary(global_mcps: &BTreeMap<String, Value>) -> String {
+    global_mcps
+        .iter()
+        .map(|(name, record)| {
+            let server = record.get("server").unwrap_or(record);
+            format!("{name}:headers={}", has_mcp_headers(server))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn mcp_headers_summary_from_value(value: &Value) -> String {
+    match value {
+        Value::Array(servers) => servers
+            .iter()
+            .filter_map(|server| {
+                let name = server.get("name")?.as_str()?;
+                Some(format!("{name}:headers={}", has_mcp_headers(server)))
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(object) => object
+            .iter()
+            .map(|(name, server)| format!("{name}:headers={}", has_mcp_headers(server)))
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => String::new(),
+    }
+}
+
+fn has_mcp_headers(server: &Value) -> bool {
+    server
+        .get("headers")
+        .and_then(Value::as_object)
+        .is_some_and(|headers| !headers.is_empty())
+}
+
+fn bot_mcp_count(request: &ExecutionRequest) -> usize {
+    if request_mode(request).as_deref() == Some("coordinate") {
+        return request
+            .bot
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(bot_mcp_count_from_value)
+            .sum();
+    }
+    primary_bot(request)
+        .map(bot_mcp_count_from_value)
+        .unwrap_or(0)
+}
+
+fn bot_mcp_count_from_value(bot: &Value) -> usize {
+    bot.get("mcp_servers")
+        .or_else(|| bot.get("mcpServers"))
+        .map(mcp_count_from_value)
+        .unwrap_or(0)
+}
+
+fn mcp_count_from_value(value: &Value) -> usize {
+    match value {
+        Value::Array(values) => values.len(),
+        Value::Object(object) => object.len(),
+        _ => 0,
+    }
 }
 
 fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {

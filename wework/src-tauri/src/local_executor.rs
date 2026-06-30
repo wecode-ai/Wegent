@@ -643,7 +643,6 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
     let socket_path = path_or_error(app_ipc_socket_path());
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
-        ("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string()),
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
         (LOCAL_EXECUTOR_SOCKET_ENV.to_string(), socket_path),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
@@ -1671,10 +1670,6 @@ mod tests {
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
         restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
 
-        assert_eq!(
-            envs.get("EXECUTOR_STARTUP_MODE").map(String::as_str),
-            Some("socket")
-        );
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")

@@ -823,8 +823,10 @@ describe('ConnectionsSettingsPage', () => {
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {
         DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
       },
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -840,10 +842,11 @@ describe('ConnectionsSettingsPage', () => {
       client_origin: window.location.origin,
     })
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('DEVICE_TYPE=remote')
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('EXECUTOR_MODE=local')
 
     await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest'
+      'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
     )
   })
 
@@ -855,8 +858,10 @@ describe('ConnectionsSettingsPage', () => {
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {
         DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
       },
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)

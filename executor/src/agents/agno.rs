@@ -4,7 +4,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::protocol::ExecutionRequest;
+use crate::{agents::task_identity::task_identity_env, protocol::ExecutionRequest};
 
 const VALID_OPTIONS: &[&str] = &[
     "model",
@@ -53,7 +53,7 @@ fn copy_valid_options(
 }
 
 fn inject_task_identity(request: &ExecutionRequest, options: &mut Map<String, Value>) {
-    let identity = task_identity_env(request);
+    let identity = task_identity_json_env(request);
     if identity.is_empty() {
         return;
     }
@@ -75,25 +75,10 @@ fn inject_task_identity(request: &ExecutionRequest, options: &mut Map<String, Va
     }
 }
 
-fn task_identity_env(request: &ExecutionRequest) -> Map<String, Value> {
+fn task_identity_json_env(request: &ExecutionRequest) -> Map<String, Value> {
     let mut env = Map::new();
-    if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
-        env.insert(
-            "AUTH_TOKEN".to_owned(),
-            Value::String(auth_token.to_owned()),
-        );
-    }
-    if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
-        env.insert(
-            "WEGENT_SKILL_IDENTITY_TOKEN".to_owned(),
-            Value::String(token.to_owned()),
-        );
-    }
-    if let Some(user_name) = non_empty(request.user_name.as_deref()) {
-        env.insert(
-            "WEGENT_SKILL_USER_NAME".to_owned(),
-            Value::String(user_name.to_owned()),
-        );
+    for (key, value) in task_identity_env(request) {
+        env.insert(key, Value::String(value));
     }
     env
 }
@@ -108,8 +93,4 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
     value
         .as_object_mut()
         .expect("value was normalized to object")
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }

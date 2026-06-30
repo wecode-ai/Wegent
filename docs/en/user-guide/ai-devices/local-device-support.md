@@ -140,6 +140,7 @@ docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
   -e DEVICE_TYPE=remote \
+  -e EXECUTOR_MODE=local \
   -e DEVICE_ID=<generated-device-id> \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
@@ -206,11 +207,19 @@ wegent-executor
 # Or temporarily override the connection settings with environment variables
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-export EXECUTOR_MODE=remote
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. `EXECUTOR_MODE=remote` starts the local socket and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend as a remote device. `EXECUTOR_STARTUP_MODE=socket` remains compatible for old scripts, but new startup commands no longer need it. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also starts the local socket and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
+
+#### Claude Code Execution Timeout
+
+When the local executor starts a Claude Code child process, it waits up to 1 hour by default. Long-running code generation, dependency installation, or file processing tasks can continue within that window. To tune the limit for a specific environment, set `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` before starting the executor. This setting only affects Claude Code child processes, not the native Codex app-server path; Codex RPC timeouts are controlled by `WEGENT_CODEX_RPC_TIMEOUT_SECONDS`.
+
+```bash
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+wegent-executor
+```
 
 ### Getting JWT Token
 

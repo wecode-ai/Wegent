@@ -393,14 +393,12 @@ function Show-Usage {
     Write-Host ""
     Write-Host "To run wegent-executor, use PowerShell:"
     Write-Host ""
-    Write-Host '  $env:EXECUTOR_MODE="remote"' -ForegroundColor Yellow
     Write-Host '  $env:WEGENT_BACKEND_URL="<your-backend-url>"' -ForegroundColor Yellow
     Write-Host '  $env:WEGENT_AUTH_TOKEN="<your-auth-token>"' -ForegroundColor Yellow
     Write-Host "  & `"$InstallDir\$BinaryName`"" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Or use Command Prompt (cmd):" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "  set EXECUTOR_MODE=remote" -ForegroundColor Yellow
     Write-Host "  set WEGENT_BACKEND_URL=<your-backend-url>" -ForegroundColor Yellow
     Write-Host "  set WEGENT_AUTH_TOKEN=<your-auth-token>" -ForegroundColor Yellow
     Write-Host "  wegent-executor" -ForegroundColor Yellow

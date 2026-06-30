@@ -84,14 +84,19 @@ impl RuntimeTaskLink {
         let local_terminal_status = local_link
             .as_ref()
             .and_then(|link| local_terminal_status_if_current(link, thread));
+        let local_running = local_link.as_ref().is_some_and(|link| link.running);
         let status = if local_archived {
             "archived".to_owned()
+        } else if local_running {
+            "running".to_owned()
         } else if let Some(status) = &local_terminal_status {
             status.clone()
         } else {
             thread_status(thread)
         };
-        let running = !local_archived && local_terminal_status.is_none() && thread_running(thread);
+        let running = !local_archived
+            && local_terminal_status.is_none()
+            && (local_running || thread_running(thread));
         Self {
             local_task_id: local_link
                 .as_ref()
