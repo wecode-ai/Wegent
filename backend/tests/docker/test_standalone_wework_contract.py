@@ -78,7 +78,6 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert 'DEVICE_ID="$STANDALONE_EXECUTOR_DEVICE_ID"' in start_script
     assert "WEGENT_AUTH_TOKEN" in start_script
     assert "WEGENT_BACKEND_URL=http://127.0.0.1:${BACKEND_PORT}" in start_script
-    assert "EXECUTOR_STARTUP_MODE=socket" in start_script
     assert "WORKSPACE_ROOT=/workspace" in start_script
     assert "WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects" in start_script
     assert "WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats" in start_script

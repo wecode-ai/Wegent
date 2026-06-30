@@ -95,7 +95,9 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .expect("create should be accepted");
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
+    wait_for_turn_count(&log_path, 1).await;
     wait_for_response_completed(&mut events).await;
+    wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
     let source = json!({
@@ -351,7 +353,9 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .await
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
+    wait_for_turn_count(&log_path, 1).await;
     wait_for_response_completed(&mut events).await;
+    wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
     let attachment_path = temp_path("runtime-send-pasted-text", "txt");
@@ -916,11 +920,27 @@ async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id:
     panic!("runtime task did not become running");
 }
 
-async fn wait_for_response_completed(events: &mut broadcast::Receiver<Value>) {
-    let _ = recv_events_until(events, |runtime_events| {
-        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
-    })
-    .await;
+async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &str) {
+    for _ in 0..50 {
+        let listed = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.list",
+                "payload": {}
+            }))
+            .await
+            .expect("list should succeed");
+        let idle = listed["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
+            .any(|task| task["localTaskId"] == local_task_id && task["running"] == false);
+        if idle {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("runtime task did not become idle");
 }
 
 async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
@@ -939,6 +959,13 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {
     while events.try_recv().is_ok() {}
+}
+
+async fn wait_for_response_completed(events: &mut broadcast::Receiver<Value>) {
+    recv_events_until(events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
+    })
+    .await;
 }
 
 async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done: F) -> Vec<Value>
