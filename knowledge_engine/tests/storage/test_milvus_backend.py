@@ -10,8 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
+from shared.models import RetrievalScope
 
 
 class TestMilvusBackendInit:
@@ -280,6 +282,154 @@ class TestRetrieve:
         assert len(result["records"]) == 1
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_vector_mode_adds_native_document_scope_expr(self, mock_milvus_vs):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        assert mock_store.query.call_args.kwargs["string_expr"] == (
+            'knowledge_id == \'kb_1\' and doc_ref in ["10", "11"]'
+        )
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_preserves_metadata_filter_expr_with_document_scope(
+        self, mock_milvus_vs
+    ):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10]),
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "tags", "operator": "contains", "value": "release"},
+                    {
+                        "key": "summary",
+                        "operator": "text_match",
+                        "value": "checklist",
+                    },
+                ],
+            },
+        )
+
+        string_expr = mock_store.query.call_args.kwargs["string_expr"]
+        assert "knowledge_id == 'kb_1'" in string_expr
+        assert "array_contains(tags, 'release')" in string_expr
+        assert "summary like 'checklist%'" in string_expr
+        assert 'doc_ref in ["10"]' in string_expr
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    def test_scoped_native_filter_expr_keeps_knowledge_id_outside_user_or(self):
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        metadata_filters = parse_metadata_filters(
+            "kb_1",
+            {
+                "operator": "or",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                    {"key": "source", "operator": "==", "value": "manual"},
+                ],
+            },
+        )
+
+        string_expr = backend._build_scoped_native_filter_expr(
+            scope=RetrievalScope(document_ids=[10]),
+            metadata_filters=metadata_filters,
+        )
+
+        assert string_expr == (
+            "(knowledge_id == 'kb_1' and (lang == 'zh' or source == 'manual')) "
+            'and doc_ref in ["10"]'
+        )
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_rejects_doc_ref_in_metadata_condition_with_scope(
+        self, mock_milvus_vs
+    ):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        mock_embed_model = MagicMock()
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        with pytest.raises(ValueError, match="RetrievalScope.document_ids"):
+            backend.retrieve(
+                knowledge_id="kb_1",
+                query="test query",
+                embed_model=mock_embed_model,
+                retrieval_setting={
+                    "top_k": 10,
+                    "score_threshold": 0.5,
+                    "retrieval_mode": "vector",
+                },
+                scope=RetrievalScope(document_ids=[10]),
+                metadata_condition={
+                    "operator": "and",
+                    "conditions": [
+                        {"key": "doc_ref", "operator": "in", "value": ["10"]}
+                    ],
+                },
+            )
+
+        mock_store.query.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_keyword_mode(self, mock_milvus_vs):

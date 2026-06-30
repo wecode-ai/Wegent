@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.endpoints.internal.rag import (
     InternalRetrieveRequest,
@@ -56,6 +57,11 @@ def test_validate_document_ids_against_scopes_rejects_out_of_scope_document():
     assert exc_info.value.detail["error_code"] == "document_scope_violation"
 
 
+def test_internal_retrieve_request_rejects_empty_document_ids():
+    with pytest.raises(ValidationError, match="document_ids must not be empty"):
+        InternalRetrieveRequest(query="q", document_ids=[])
+
+
 @pytest.mark.asyncio
 async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_total():
     request = InternalRetrieveRequest(
@@ -102,9 +108,9 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
     )
     runtime_spec = object()
 
-    def mock_build_query_runtime_spec(**kwargs):
+    def mock_build_query_runtime_spec(_self, **kwargs):
         assert kwargs["knowledge_base_ids"] == [1]
-        assert kwargs["document_ids"] == [101]
+        assert kwargs["scope"].document_ids == [101]
         return runtime_spec
 
     async def mock_execute_query_with_remote_fallback(spec, db):
@@ -116,7 +122,7 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         }
 
     monkeypatch.setattr(
-        "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+        "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
         mock_build_query_runtime_spec,
     )
     monkeypatch.setattr(
@@ -136,3 +142,52 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
 
     assert result["total"] == 1
     assert result["total_estimated_tokens"] == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeypatch):
+    request = InternalRetrieveRequest(
+        query="q",
+        max_results=2,
+        knowledge_base_scopes=[
+            KnowledgeBaseScopePayload(
+                knowledge_base_id=1,
+                scope_restricted=False,
+            )
+        ],
+    )
+    runtime_spec = object()
+
+    def mock_build_query_runtime_spec(_self, **kwargs):
+        assert kwargs["knowledge_base_ids"] == [1]
+        assert kwargs["scope"] is None
+        return runtime_spec
+
+    async def mock_execute_query_with_remote_fallback(spec, db):
+        assert spec is runtime_spec
+        return {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total_estimated_tokens": 0,
+        }
+
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+        mock_build_query_runtime_spec,
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag._execute_query_with_remote_fallback",
+        mock_execute_query_with_remote_fallback,
+    )
+
+    result = await _execute_scoped_retrieve(
+        request=request,
+        db=MagicMock(),
+        scopes=request.knowledge_base_scopes,
+        resolved_document_ids=[],
+        runtime_context=None,
+        restricted_mode=False,
+        persistence_context=None,
+    )
+
+    assert result["total"] == 0

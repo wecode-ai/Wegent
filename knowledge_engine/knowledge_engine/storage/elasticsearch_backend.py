@@ -29,8 +29,8 @@ from llama_index.core.vector_stores.types import (
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
 from knowledge_engine.retrieval.filters import (
+    build_elasticsearch_filters,
     filter_chunk_records,
-    parse_metadata_filters,
 )
 from knowledge_engine.retrieval.search_hints import (
     ResolvedSearchQueries,
@@ -39,6 +39,7 @@ from knowledge_engine.retrieval.search_hints import (
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from shared.models import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class ElasticsearchBackend(BaseStorageBackend):
     TEXT_FIELD: ClassVar[str] = "content"
     PHRASE_HINT_BOOST: ClassVar[float] = 3.0
     KEYWORD_HINT_BOOST: ClassVar[float] = 1.0
+    supports_retrieval_scope: ClassVar[bool] = True
 
     # Uses default INDEX_PREFIX = "index" from base class
 
@@ -211,6 +213,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -243,17 +246,22 @@ class ElasticsearchBackend(BaseStorageBackend):
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
+        metadata_filter_clauses = build_elasticsearch_filters(
+            knowledge_id,
+            metadata_condition,
+        )
+        scope_filter_clauses = self._build_scope_filters(scope)
+        native_filter_clauses = [*metadata_filter_clauses, *scope_filter_clauses]
+
         # Create vector store with appropriate retrieval strategy
         vector_store = self.create_vector_store(index_name, retrieval_mode)
 
-        # Build metadata filters
-        filters = self._build_metadata_filters(knowledge_id, metadata_condition)
-
         # Determine query mode and parameters
         resolved_queries = resolve_search_queries(query, retrieval_setting)
-        custom_query = self._build_search_hints_custom_query(
+        custom_query = self._build_custom_query(
             resolved_queries=resolved_queries,
             retrieval_mode=retrieval_mode,
+            native_filter_clauses=native_filter_clauses,
         )
         if retrieval_mode == "keyword":
             # Pure BM25 keyword search - no embedding needed
@@ -285,12 +293,12 @@ class ElasticsearchBackend(BaseStorageBackend):
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=query_mode,
-            filters=filters,
+            filters=None,
             alpha=alpha,
         )
 
         logger.info(
-            "[Elasticsearch] retrieve: index=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, alpha=%s, hints_applied=%s, phrase_count=%s, keyword_count=%s, dense_query=%s, sparse_query=%s",
+            "[Elasticsearch] retrieve: index=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, alpha=%s, hints_applied=%s, scope_filter_count=%s, phrase_count=%s, keyword_count=%s, dense_query=%s, sparse_query=%s",
             index_name,
             retrieval_mode,
             query_mode,
@@ -298,6 +306,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             score_threshold,
             alpha,
             custom_query is not None,
+            len(scope_filter_clauses),
             len(resolved_queries.phrases),
             len(resolved_queries.keywords),
             resolved_queries.dense_query,
@@ -335,36 +344,98 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         return float(retrieval_setting.get("alpha", 0.7))
 
-    def _build_search_hints_custom_query(
+    def _build_scope_filters(
+        self,
+        scope: Optional[RetrievalScope],
+    ) -> List[Dict[str, Any]]:
+        if not scope or not scope.document_ids:
+            return []
+
+        doc_refs = [str(doc_id) for doc_id in scope.document_ids]
+        return [{"terms": {"metadata.doc_ref.keyword": doc_refs}}]
+
+    def _build_custom_query(
         self,
         *,
         resolved_queries: ResolvedSearchQueries,
         retrieval_mode: str,
+        native_filter_clauses: List[Dict[str, Any]],
     ) -> Callable[[Dict[str, Any], Any], Dict[str, Any]] | None:
-        if retrieval_mode not in {"keyword", "hybrid"}:
-            return None
-
-        should_clauses = self._build_search_hint_should_clauses(resolved_queries)
-        if not should_clauses:
+        should_clauses = (
+            self._build_search_hint_should_clauses(resolved_queries)
+            if retrieval_mode in {"keyword", "hybrid"}
+            else []
+        )
+        if not should_clauses and not native_filter_clauses:
             return None
 
         def custom_query(
             query_body: Dict[str, Any],
             _: Any,
         ) -> Dict[str, Any]:
-            bool_query = query_body.get("query", {}).get("bool", {})
-            filter_clauses = list(bool_query.get("filter", []))
+            self._append_knn_filter_clauses(query_body, native_filter_clauses)
 
-            query_body["query"] = {
-                "bool": {
-                    "should": should_clauses,
-                    "minimum_should_match": 1,
-                    "filter": filter_clauses,
-                }
-            }
+            original_query = query_body.get("query")
+            if not original_query and not should_clauses:
+                return query_body
+
+            if isinstance(original_query, dict) and "bool" in original_query:
+                bool_query = dict(original_query["bool"])
+            elif original_query:
+                bool_query = {"must": [original_query]}
+            else:
+                bool_query = {}
+
+            filter_clauses = list(bool_query.get("filter", []))
+            filter_clauses.extend(native_filter_clauses)
+
+            if should_clauses:
+                bool_query["should"] = should_clauses
+                bool_query["minimum_should_match"] = 1
+
+            if filter_clauses:
+                bool_query["filter"] = filter_clauses
+
+            query_body["query"] = {"bool": bool_query}
             return query_body
 
         return custom_query
+
+    def _append_knn_filter_clauses(
+        self,
+        query_body: Dict[str, Any],
+        native_filter_clauses: List[Dict[str, Any]],
+    ) -> None:
+        if not native_filter_clauses:
+            return
+
+        knn_query = query_body.get("knn")
+        if isinstance(knn_query, dict):
+            knn_query["filter"] = self._merge_filter_clauses(
+                knn_query.get("filter"),
+                native_filter_clauses,
+            )
+            return
+
+        if isinstance(knn_query, list):
+            for item in knn_query:
+                if not isinstance(item, dict):
+                    continue
+                item["filter"] = self._merge_filter_clauses(
+                    item.get("filter"),
+                    native_filter_clauses,
+                )
+
+    @staticmethod
+    def _merge_filter_clauses(
+        existing_filter: Any,
+        native_filter_clauses: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if existing_filter is None:
+            return list(native_filter_clauses)
+        if isinstance(existing_filter, list):
+            return [*existing_filter, *native_filter_clauses]
+        return [existing_filter, *native_filter_clauses]
 
     def _build_search_hint_should_clauses(
         self, resolved_queries: ResolvedSearchQueries
@@ -396,21 +467,6 @@ class ElasticsearchBackend(BaseStorageBackend):
             )
 
         return should_clauses
-
-    def _build_metadata_filters(
-        self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Build metadata filters from condition dict.
-
-        Args:
-            knowledge_id: Knowledge base ID (always filtered)
-            metadata_condition: Optional additional metadata conditions
-
-        Returns:
-            MetadataFilters object
-        """
-        return parse_metadata_filters(knowledge_id, metadata_condition)
 
     def _process_query_results(
         self,

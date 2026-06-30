@@ -14,6 +14,7 @@ from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -104,6 +105,7 @@ class TestQueryExecutor:
                 "hint_source": "fallback",
             },
             retrieval_config=config.retrieval_config,
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )
@@ -156,12 +158,13 @@ class TestQueryExecutor:
                 "hint_source": "explicit_hints",
             },
             retrieval_config=config.retrieval_config,
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )
 
     @pytest.mark.asyncio
-    async def test_execute_combines_document_ids_into_metadata_condition(
+    async def test_execute_converts_compatible_document_ids_to_scope(
         self, query_request
     ) -> None:
         mock_storage_backend = MagicMock()
@@ -208,28 +211,50 @@ class TestQueryExecutor:
                 "hint_source": "fallback",
             },
             retrieval_config=config.retrieval_config,
+            scope=RetrievalScope(document_ids=[10, 11]),
             metadata_condition={
                 "operator": "and",
-                "conditions": [
-                    {
-                        "operator": "and",
-                        "conditions": [
-                            {
-                                "key": "doc_ref",
-                                "operator": "in",
-                                "value": ["10", "11"],
-                            }
-                        ],
-                    },
-                    {
-                        "operator": "and",
-                        "conditions": [
-                            {"key": "source", "operator": "==", "value": "kb"}
-                        ],
-                    },
-                ],
+                "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
             },
             user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_keeps_scope_when_compatible_document_ids_match(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.knowledge_base_ids = [1]
+            query_request.scope = RetrievalScope(document_ids=[20])
+            query_request.document_ids = [20]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[20]
         )
 
     @pytest.mark.asyncio
@@ -342,6 +367,7 @@ class TestQueryExecutor:
                 vector_weight=0.8,
                 keyword_weight=0.2,
             ),
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )

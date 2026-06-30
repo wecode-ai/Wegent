@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shared.models import RetrievalScope
+
 
 class TestHybridAlphaResolution:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
@@ -71,6 +73,233 @@ class TestHybridAlphaResolution:
 
 class TestRetrieveSearchHints:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_retrieve_rejects_doc_ref_in_metadata_condition(self, mock_client_class):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        with pytest.raises(ValueError, match="RetrievalScope.document_ids"):
+            backend.retrieve(
+                knowledge_id="kb_1",
+                query="release checklist",
+                embed_model=MagicMock(),
+                retrieval_setting={
+                    "top_k": 5,
+                    "score_threshold": 0.2,
+                    "retrieval_mode": "vector",
+                },
+                metadata_condition={
+                    "operator": "and",
+                    "conditions": [
+                        {"key": "doc_ref", "operator": "in", "value": ["10"]}
+                    ],
+                },
+            )
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_retrieve_vector_mode_adds_document_scope_terms_filter(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_store = MagicMock()
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_store)
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2, 0.3]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        custom_query = mock_store.query.call_args.kwargs["custom_query"]
+        query_body = custom_query({"query": {"match_all": {}}}, None)
+        assert query_body["query"]["bool"]["must"] == [{"match_all": {}}]
+        assert query_body["query"]["bool"]["filter"] == [
+            {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+            {"terms": {"metadata.doc_ref.keyword": ["10", "11"]}},
+        ]
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_retrieve_vector_mode_adds_document_scope_to_knn_filter(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_store = MagicMock()
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_store)
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2, 0.3]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        custom_query = mock_store.query.call_args.kwargs["custom_query"]
+        query_body = custom_query(
+            {
+                "knn": {
+                    "field": "embedding",
+                    "filter": [
+                        {"term": {"metadata.existing.keyword": "value"}},
+                    ],
+                }
+            },
+            None,
+        )
+        assert query_body["knn"]["filter"] == [
+            {"term": {"metadata.existing.keyword": "value"}},
+            {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+            {"terms": {"metadata.doc_ref.keyword": ["10", "11"]}},
+        ]
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_retrieve_vector_mode_scope_only_keeps_query_body_knn_only(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_store = MagicMock()
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_store)
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2, 0.3]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        custom_query = mock_store.query.call_args.kwargs["custom_query"]
+        query_body = custom_query({"knn": {"field": "embedding"}}, None)
+        assert "query" not in query_body
+        assert query_body["knn"]["filter"] == [
+            {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+            {"terms": {"metadata.doc_ref.keyword": ["10", "11"]}},
+        ]
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_retrieve_vector_mode_keeps_knowledge_id_outside_metadata_or(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_store = MagicMock()
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_store)
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2, 0.3]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "vector",
+            },
+            metadata_condition={
+                "operator": "or",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                    {"key": "source", "operator": "==", "value": "manual"},
+                ],
+            },
+        )
+
+        custom_query = mock_store.query.call_args.kwargs["custom_query"]
+        query_body = custom_query({"knn": {"field": "embedding"}}, None)
+        assert query_body["knn"]["filter"] == [
+            {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+            {
+                "bool": {
+                    "should": [
+                        {"term": {"metadata.lang.keyword": "zh"}},
+                        {"term": {"metadata.source.keyword": "manual"}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            },
+        ]
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_retrieve_hybrid_mode_uses_dense_and_sparse_hints(self, mock_client_class):
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 
@@ -122,7 +351,8 @@ class TestRetrieveSearchHints:
         )
         assert query_body["query"]["bool"]["minimum_should_match"] == 1
         assert query_body["query"]["bool"]["filter"] == [
-            {"term": {"metadata.knowledge_id": "kb_1"}}
+            {"term": {"metadata.knowledge_id": "kb_1"}},
+            {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
         ]
         assert query_body["query"]["bool"]["should"] == [
             {"match_phrase": {"content": {"query": "release checklist", "boost": 3.0}}},
