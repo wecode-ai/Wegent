@@ -1047,6 +1047,14 @@
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",
       "migrate_sent": "Migrate command sent"
+    },
+    "confirm": {
+      "upgrade_all_local_title": "Confirm Upgrade All Local Devices",
+      "upgrade_all_local_message": "This will send upgrade commands to all eligible local devices and may affect running tasks. Confirm before continuing.",
+      "upgrade_all_local_confirm": "Confirm Upgrade",
+      "restart_all_cloud_title": "Confirm Restart All Cloud Devices",
+      "restart_all_cloud_message": "This will send restart commands to all cloud devices and may interrupt running tasks. Confirm before continuing.",
+      "restart_all_cloud_confirm": "Confirm Restart"
     }
   },
   "templates": {

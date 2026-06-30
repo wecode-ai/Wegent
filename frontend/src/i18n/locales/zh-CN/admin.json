@@ -1047,6 +1047,14 @@
       "upgrade_sent": "升级命令已发送",
       "restart_sent": "重启命令已发送",
       "migrate_sent": "迁移命令已发送"
+    },
+    "confirm": {
+      "upgrade_all_local_title": "确认升级全部本地设备",
+      "upgrade_all_local_message": "将向所有符合条件的本地设备发送升级命令，可能影响正在运行的任务。请确认后继续。",
+      "upgrade_all_local_confirm": "确认升级",
+      "restart_all_cloud_title": "确认重启全部云设备",
+      "restart_all_cloud_message": "将向所有云设备发送重启命令，可能中断正在运行的任务。请确认后继续。",
+      "restart_all_cloud_confirm": "确认重启"
     }
   },
   "templates": {

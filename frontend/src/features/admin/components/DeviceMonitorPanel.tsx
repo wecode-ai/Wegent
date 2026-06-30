@@ -8,6 +8,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   adminApis,
+  restartAllCloudDevices,
+  upgradeAllLocalDevices,
   AdminDeviceInfo,
   AdminDeviceStats,
   DeviceStatus,
@@ -43,6 +45,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSocket } from '@/contexts/SocketContext'
 import { DeviceUpgradeStatusPayload, ServerEvents } from '@/types/socket'
@@ -109,11 +121,11 @@ function StatCard({ title, value, icon, variant = 'default' }: StatCardProps) {
 function getStatusTag(status: string, t: (key: string) => string) {
   switch (status) {
     case 'online':
-      return <Tag variant="success">{t('admin:device_monitor.status.online')}</Tag>
+      return <Tag variant="success">{t('device_monitor.status.online')}</Tag>
     case 'offline':
-      return <Tag variant="default">{t('admin:device_monitor.status.offline')}</Tag>
+      return <Tag variant="default">{t('device_monitor.status.offline')}</Tag>
     case 'busy':
-      return <Tag variant="warning">{t('admin:device_monitor.status.busy')}</Tag>
+      return <Tag variant="warning">{t('device_monitor.status.busy')}</Tag>
     default:
       return <Tag variant="default">{status}</Tag>
   }
@@ -125,14 +137,14 @@ function getDeviceTypeTag(deviceType: DeviceType, t: (key: string) => string) {
       return (
         <Tag variant="info" className="flex items-center gap-1">
           <HardDrive className="w-3 h-3" />
-          {t('admin:device_monitor.device_type.local')}
+          {t('device_monitor.device_type.local')}
         </Tag>
       )
     case 'cloud':
       return (
         <Tag variant="info" className="flex items-center gap-1">
           <Cloud className="w-3 h-3" />
-          {t('admin:device_monitor.device_type.cloud')}
+          {t('device_monitor.device_type.cloud')}
         </Tag>
       )
     default:
@@ -143,16 +155,16 @@ function getDeviceTypeTag(deviceType: DeviceType, t: (key: string) => string) {
 function getBindShellTag(bindShell: BindShell, t: (key: string) => string) {
   switch (bindShell) {
     case 'claudecode':
-      return <Tag variant="default">{t('admin:device_monitor.bind_shell.claudecode')}</Tag>
+      return <Tag variant="default">{t('device_monitor.bind_shell.claudecode')}</Tag>
     case 'openclaw':
-      return <Tag variant="default">{t('admin:device_monitor.bind_shell.openclaw')}</Tag>
+      return <Tag variant="default">{t('device_monitor.bind_shell.openclaw')}</Tag>
     default:
       return <Tag variant="default">{bindShell}</Tag>
   }
 }
 
 export function DeviceMonitorPanel() {
-  const { t } = useTranslation()
+  const { t } = useTranslation('admin')
   const { socket, isConnected } = useSocket()
   const [stats, setStats] = useState<AdminDeviceStats | null>(null)
   const [devices, setDevices] = useState<AdminDeviceInfo[]>([])
@@ -163,6 +175,8 @@ export function DeviceMonitorPanel() {
   const [isDevicesLoading, setIsDevicesLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
+  const [isUpgradeAllLocalConfirmOpen, setIsUpgradeAllLocalConfirmOpen] = useState(false)
+  const [isRestartAllCloudConfirmOpen, setIsRestartAllCloudConfirmOpen] = useState(false)
   const [activeBatches, setActiveBatches] = useState<Record<string, AdminDeviceBatchStartResponse>>(
     {}
   )
@@ -232,7 +246,7 @@ export function DeviceMonitorPanel() {
       setStats(data)
     } catch (error) {
       console.error('Failed to load device stats:', error)
-      toast.error(t('admin:device_monitor.errors.load_stats_failed'))
+      toast.error(t('device_monitor.errors.load_stats_failed'))
     } finally {
       setIsStatsLoading(false)
       setHasLoadedStats(true)
@@ -271,7 +285,7 @@ export function DeviceMonitorPanel() {
         return
       }
       console.error('Failed to load devices:', error)
-      toast.error(t('admin:device_monitor.errors.load_failed'))
+      toast.error(t('device_monitor.errors.load_failed'))
     } finally {
       if (requestId === latestDevicesRequestRef.current) {
         setIsDevicesLoading(false)
@@ -431,13 +445,13 @@ export function DeviceMonitorPanel() {
       try {
         const result = await adminApis.upgradeDevice(device.device_id, device.user_id)
         if (result.success) {
-          toast.success(t('admin:device_monitor.actions.upgrade_sent'))
+          toast.success(t('device_monitor.actions.upgrade_sent'))
         } else {
           toast.error(result.message)
         }
       } catch (error) {
         console.error('Failed to upgrade device:', error)
-        toast.error(t('admin:device_monitor.errors.upgrade_failed'))
+        toast.error(t('device_monitor.errors.upgrade_failed'))
       } finally {
         setActionLoading(prev => {
           const next = { ...prev }
@@ -458,13 +472,13 @@ export function DeviceMonitorPanel() {
       try {
         const result = await adminApis.restartDevice(device.device_id, device.user_id)
         if (result.success) {
-          toast.success(t('admin:device_monitor.actions.restart_sent'))
+          toast.success(t('device_monitor.actions.restart_sent'))
         } else {
           toast.info(result.message)
         }
       } catch (error) {
         console.error('Failed to restart device:', error)
-        toast.error(t('admin:device_monitor.errors.restart_failed'))
+        toast.error(t('device_monitor.errors.restart_failed'))
       } finally {
         setActionLoading(prev => {
           const next = { ...prev }
@@ -485,13 +499,13 @@ export function DeviceMonitorPanel() {
       try {
         const result = await adminApis.migrateDevice(device.device_id, device.user_id)
         if (result.success) {
-          toast.success(t('admin:device_monitor.actions.migrate_sent'))
+          toast.success(t('device_monitor.actions.migrate_sent'))
         } else {
           toast.info(result.message)
         }
       } catch (error) {
         console.error('Failed to migrate device:', error)
-        toast.error(t('admin:device_monitor.errors.migrate_failed'))
+        toast.error(t('device_monitor.errors.migrate_failed'))
       } finally {
         setActionLoading(prev => {
           const next = { ...prev }
@@ -509,7 +523,7 @@ export function DeviceMonitorPanel() {
 
     setActionLoading(prev => ({ ...prev, [key]: 'upgrade-all-local' }))
     try {
-      const result = await adminApis.upgradeAllLocalDevices()
+      const result = await upgradeAllLocalDevices()
       if (result.success) {
         setActiveBatches(prev => ({ ...prev, [result.batch_id]: result }))
         toast.success(result.message)
@@ -518,7 +532,7 @@ export function DeviceMonitorPanel() {
       }
     } catch (error) {
       console.error('Failed to upgrade local devices:', error)
-      toast.error(t('admin:device_monitor.errors.upgrade_all_local_failed'))
+      toast.error(t('device_monitor.errors.upgrade_all_local_failed'))
     } finally {
       setActionLoading(prev => {
         const next = { ...prev }
@@ -534,7 +548,7 @@ export function DeviceMonitorPanel() {
 
     setActionLoading(prev => ({ ...prev, [key]: 'restart-all-cloud' }))
     try {
-      const result = await adminApis.restartAllCloudDevices()
+      const result = await restartAllCloudDevices()
       if (result.success) {
         setActiveBatches(prev => ({ ...prev, [result.batch_id]: result }))
         toast.success(result.message)
@@ -543,7 +557,7 @@ export function DeviceMonitorPanel() {
       }
     } catch (error) {
       console.error('Failed to restart cloud devices:', error)
-      toast.error(t('admin:device_monitor.errors.restart_all_cloud_failed'))
+      toast.error(t('device_monitor.errors.restart_all_cloud_failed'))
     } finally {
       setActionLoading(prev => {
         const next = { ...prev }
@@ -552,6 +566,16 @@ export function DeviceMonitorPanel() {
       })
     }
   }, [actionLoading, t])
+
+  const confirmUpgradeAllLocalDevices = useCallback(() => {
+    setIsUpgradeAllLocalConfirmOpen(false)
+    void handleUpgradeAllLocalDevices()
+  }, [handleUpgradeAllLocalDevices])
+
+  const confirmRestartAllCloudDevices = useCallback(() => {
+    setIsRestartAllCloudConfirmOpen(false)
+    void handleRestartAllCloudDevices()
+  }, [handleRestartAllCloudDevices])
 
   if (isInitialLoading) {
     return (
@@ -571,16 +595,14 @@ export function DeviceMonitorPanel() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">
-            {t('admin:device_monitor.title')}
-          </h1>
-          <p className="text-text-muted text-sm">{t('admin:device_monitor.description')}</p>
+          <h1 className="text-2xl font-bold text-text-primary">{t('device_monitor.title')}</h1>
+          <p className="text-text-muted text-sm">{t('device_monitor.description')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void handleUpgradeAllLocalDevices()}
+            onClick={() => setIsUpgradeAllLocalConfirmOpen(true)}
             disabled={!!actionLoading['bulk-upgrade-local'] || hasActiveLocalUpgradeBatch}
             data-testid="upgrade-all-local-devices-button"
           >
@@ -591,12 +613,12 @@ export function DeviceMonitorPanel() {
                   'animate-pulse'
               )}
             />
-            {t('admin:device_monitor.actions.upgrade_all_local')}
+            {t('device_monitor.actions.upgrade_all_local')}
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void handleRestartAllCloudDevices()}
+            onClick={() => setIsRestartAllCloudConfirmOpen(true)}
             disabled={!!actionLoading['bulk-restart-cloud'] || hasActiveCloudRestartBatch}
             data-testid="restart-all-cloud-devices-button"
           >
@@ -607,7 +629,7 @@ export function DeviceMonitorPanel() {
                   'animate-spin'
               )}
             />
-            {t('admin:device_monitor.actions.restart_all_cloud')}
+            {t('device_monitor.actions.restart_all_cloud')}
           </Button>
           <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
             <RefreshCw
@@ -616,6 +638,68 @@ export function DeviceMonitorPanel() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog
+        open={isUpgradeAllLocalConfirmOpen}
+        onOpenChange={setIsUpgradeAllLocalConfirmOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('device_monitor.confirm.upgrade_all_local_title')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('device_monitor.confirm.upgrade_all_local_message')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="cancel-upgrade-all-local-devices-button">
+              {t('common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="primary"
+                onClick={confirmUpgradeAllLocalDevices}
+                disabled={!!actionLoading['bulk-upgrade-local'] || hasActiveLocalUpgradeBatch}
+                data-testid="confirm-upgrade-all-local-devices-button"
+              >
+                {t('device_monitor.confirm.upgrade_all_local_confirm')}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={isRestartAllCloudConfirmOpen}
+        onOpenChange={setIsRestartAllCloudConfirmOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('device_monitor.confirm.restart_all_cloud_title')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('device_monitor.confirm.restart_all_cloud_message')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="cancel-restart-all-cloud-devices-button">
+              {t('common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="primary"
+                onClick={confirmRestartAllCloudDevices}
+                disabled={!!actionLoading['bulk-restart-cloud'] || hasActiveCloudRestartBatch}
+                data-testid="confirm-restart-all-cloud-devices-button"
+              >
+                {t('device_monitor.confirm.restart_all_cloud_confirm')}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {activeBatchList.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -637,34 +721,34 @@ export function DeviceMonitorPanel() {
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
-            title={t('admin:device_monitor.stats.total')}
+            title={t('device_monitor.stats.total')}
             value={stats.total}
             icon={<Monitor className="h-5 w-5" />}
           />
           <StatCard
-            title={t('admin:device_monitor.stats.user_count')}
+            title={t('device_monitor.stats.user_count')}
             value={stats.user_count}
             icon={<Users className="h-5 w-5" />}
           />
           <StatCard
-            title={t('admin:device_monitor.stats.online')}
+            title={t('device_monitor.stats.online')}
             value={stats.by_status.online ?? 0}
             icon={<Wifi className="h-5 w-5" />}
             variant="success"
           />
           <StatCard
-            title={t('admin:device_monitor.stats.offline')}
+            title={t('device_monitor.stats.offline')}
             value={stats.by_status.offline ?? 0}
             icon={<WifiOff className="h-5 w-5" />}
             variant="error"
           />
           <StatCard
-            title={t('admin:device_monitor.stats.local')}
+            title={t('device_monitor.stats.local')}
             value={stats.by_device_type.local ?? 0}
             icon={<HardDrive className="h-5 w-5" />}
           />
           <StatCard
-            title={t('admin:device_monitor.stats.cloud')}
+            title={t('device_monitor.stats.cloud')}
             value={stats.by_device_type.cloud ?? 0}
             icon={<Cloud className="h-5 w-5" />}
           />
@@ -676,7 +760,7 @@ export function DeviceMonitorPanel() {
         <div className="relative flex-1 lg:min-w-[280px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
           <Input
-            placeholder={t('admin:device_monitor.search_placeholder')}
+            placeholder={t('device_monitor.search_placeholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-10"
@@ -694,10 +778,10 @@ export function DeviceMonitorPanel() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t('admin:device_monitor.filters.all_status')}</SelectItem>
-            <SelectItem value="online">{t('admin:device_monitor.status.online')}</SelectItem>
-            <SelectItem value="offline">{t('admin:device_monitor.status.offline')}</SelectItem>
-            <SelectItem value="busy">{t('admin:device_monitor.status.busy')}</SelectItem>
+            <SelectItem value="all">{t('device_monitor.filters.all_status')}</SelectItem>
+            <SelectItem value="online">{t('device_monitor.status.online')}</SelectItem>
+            <SelectItem value="offline">{t('device_monitor.status.offline')}</SelectItem>
+            <SelectItem value="busy">{t('device_monitor.status.busy')}</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -711,9 +795,9 @@ export function DeviceMonitorPanel() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t('admin:device_monitor.filters.all_device_type')}</SelectItem>
-            <SelectItem value="local">{t('admin:device_monitor.device_type.local')}</SelectItem>
-            <SelectItem value="cloud">{t('admin:device_monitor.device_type.cloud')}</SelectItem>
+            <SelectItem value="all">{t('device_monitor.filters.all_device_type')}</SelectItem>
+            <SelectItem value="local">{t('device_monitor.device_type.local')}</SelectItem>
+            <SelectItem value="cloud">{t('device_monitor.device_type.cloud')}</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -727,13 +811,9 @@ export function DeviceMonitorPanel() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t('admin:device_monitor.filters.all_bind_shell')}</SelectItem>
-            <SelectItem value="claudecode">
-              {t('admin:device_monitor.bind_shell.claudecode')}
-            </SelectItem>
-            <SelectItem value="openclaw">
-              {t('admin:device_monitor.bind_shell.openclaw')}
-            </SelectItem>
+            <SelectItem value="all">{t('device_monitor.filters.all_bind_shell')}</SelectItem>
+            <SelectItem value="claudecode">{t('device_monitor.bind_shell.claudecode')}</SelectItem>
+            <SelectItem value="openclaw">{t('device_monitor.bind_shell.openclaw')}</SelectItem>
           </SelectContent>
         </Select>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -753,24 +833,18 @@ export function DeviceMonitorPanel() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="gte">
-                {t('admin:device_monitor.version_filter.operators.gte')}
+                {t('device_monitor.version_filter.operators.gte')}
               </SelectItem>
-              <SelectItem value="gt">
-                {t('admin:device_monitor.version_filter.operators.gt')}
-              </SelectItem>
-              <SelectItem value="eq">
-                {t('admin:device_monitor.version_filter.operators.eq')}
-              </SelectItem>
-              <SelectItem value="lt">
-                {t('admin:device_monitor.version_filter.operators.lt')}
-              </SelectItem>
+              <SelectItem value="gt">{t('device_monitor.version_filter.operators.gt')}</SelectItem>
+              <SelectItem value="eq">{t('device_monitor.version_filter.operators.eq')}</SelectItem>
+              <SelectItem value="lt">{t('device_monitor.version_filter.operators.lt')}</SelectItem>
               <SelectItem value="lte">
-                {t('admin:device_monitor.version_filter.operators.lte')}
+                {t('device_monitor.version_filter.operators.lte')}
               </SelectItem>
             </SelectContent>
           </Select>
           <Input
-            placeholder={t('admin:device_monitor.version_filter.placeholder')}
+            placeholder={t('device_monitor.version_filter.placeholder')}
             value={versionFilter}
             onChange={e => setVersionFilter(e.target.value)}
             className="w-full sm:w-[220px]"
@@ -791,13 +865,13 @@ export function DeviceMonitorPanel() {
             data-testid="device-list-loading"
           >
             <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            <span>{t('admin:device_monitor.loading')}</span>
+            <span>{t('device_monitor.loading')}</span>
           </div>
         )}
         {devices.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <Monitor className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('admin:device_monitor.no_devices')}</p>
+            <p className="text-text-muted">{t('device_monitor.no_devices')}</p>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto space-y-2 p-1">
@@ -837,19 +911,19 @@ export function DeviceMonitorPanel() {
                       </div>
                       <div className="flex items-center gap-3 text-xs text-text-muted flex-wrap">
                         <span>
-                          {t('admin:device_monitor.columns.device_id')}: {device.device_id}
+                          {t('device_monitor.columns.device_id')}: {device.device_id}
                         </span>
                         <span>
-                          {t('admin:device_monitor.columns.user')}: {device.user_name}
+                          {t('device_monitor.columns.user')}: {device.user_name}
                         </span>
                         {device.client_ip && (
                           <span>
-                            {t('admin:device_monitor.columns.ip')}: {device.client_ip}
+                            {t('device_monitor.columns.ip')}: {device.client_ip}
                           </span>
                         )}
                         {device.created_at && (
                           <span>
-                            {t('admin:device_monitor.columns.created_at')}:{' '}
+                            {t('device_monitor.columns.created_at')}:{' '}
                             {new Date(device.created_at).toLocaleString()}
                           </span>
                         )}
@@ -899,8 +973,8 @@ export function DeviceMonitorPanel() {
                               {isUpgradeInProgress
                                 ? upgradeState.message
                                 : canUpgrade
-                                  ? t('admin:device_monitor.actions.upgrade')
-                                  : t('admin:device_monitor.actions.upgrade_unsupported', {
+                                  ? t('device_monitor.actions.upgrade')
+                                  : t('device_monitor.actions.upgrade_unsupported', {
                                       version: MIN_AUTO_UPGRADE_VERSION,
                                     })}
                             </TooltipContent>
@@ -927,9 +1001,7 @@ export function DeviceMonitorPanel() {
                                 />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>
-                              {t('admin:device_monitor.actions.restart')}
-                            </TooltipContent>
+                            <TooltipContent>{t('device_monitor.actions.restart')}</TooltipContent>
                           </Tooltip>
                         )}
 
@@ -953,9 +1025,7 @@ export function DeviceMonitorPanel() {
                                 />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>
-                              {t('admin:device_monitor.actions.migrate')}
-                            </TooltipContent>
+                            <TooltipContent>{t('device_monitor.actions.migrate')}</TooltipContent>
                           </Tooltip>
                         )}
                       </TooltipProvider>
@@ -972,7 +1042,7 @@ export function DeviceMonitorPanel() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-text-muted">
-            {t('admin:monitor.error_list.pagination', {
+            {t('monitor.error_list.pagination', {
               start: (page - 1) * limit + 1,
               end: Math.min(page * limit, total),
               total,

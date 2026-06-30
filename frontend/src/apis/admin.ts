@@ -596,11 +596,31 @@ export interface AdminTemplateUpdate {
   resources?: TemplateResources
 }
 
+/**
+ * Upgrade all eligible local devices (admin only)
+ */
+export async function upgradeAllLocalDevices(
+  forceStopTasks: boolean = false
+): Promise<AdminDeviceBatchStartResponse> {
+  return apiClient.post('/admin/device-monitor/devices/local/upgrade-all', {
+    force_stop_tasks: forceStopTasks,
+  })
+}
+
+/**
+ * Restart all cloud devices (admin only)
+ */
+export async function restartAllCloudDevices(): Promise<AdminDeviceBatchStartResponse> {
+  return apiClient.post('/admin/device-monitor/devices/cloud/restart-all')
+}
+
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
   getQuickLaunchFunctionsConfig,
   updateQuickLaunchFunctionsConfig,
+  upgradeAllLocalDevices,
+  restartAllCloudDevices,
 
   // ==================== User Management ====================
 
@@ -1159,30 +1179,12 @@ export const adminApis = {
   },
 
   /**
-   * Upgrade all eligible local devices (admin only)
-   */
-  async upgradeAllLocalDevices(
-    forceStopTasks: boolean = false
-  ): Promise<AdminDeviceBatchStartResponse> {
-    return apiClient.post('/admin/device-monitor/devices/local/upgrade-all', {
-      force_stop_tasks: forceStopTasks,
-    })
-  },
-
-  /**
    * Restart a cloud device (admin only)
    */
   async restartDevice(deviceId: string, userId: number): Promise<AdminDeviceActionResponse> {
     return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/restart`, {
       user_id: userId,
     })
-  },
-
-  /**
-   * Restart all cloud devices (admin only)
-   */
-  async restartAllCloudDevices(): Promise<AdminDeviceBatchStartResponse> {
-    return apiClient.post('/admin/device-monitor/devices/cloud/restart-all')
   },
 
   /**
