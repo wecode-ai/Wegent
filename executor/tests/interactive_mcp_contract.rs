@@ -160,6 +160,40 @@ fn proxy_request_targets_configured_mcp_server_and_normalizes_result() {
 }
 
 #[test]
+fn proxy_request_accepts_legacy_timeout_seconds_field() {
+    let request = build_deferred_mcp_proxy_request(
+        &deferred_tool_use(json!({})),
+        &json!({
+            "interactive_wegent-interactive-form-question": {
+                "type": "http",
+                "url": "http://backend/mcp/interactive-form-question/sse",
+                "timeout_seconds": 60
+            }
+        }),
+    )
+    .expect("configured MCP server should produce a proxy request");
+
+    assert_eq!(request.timeout_seconds, Some(60));
+}
+
+#[test]
+fn proxy_request_accepts_official_timeout_milliseconds_field() {
+    let request = build_deferred_mcp_proxy_request(
+        &deferred_tool_use(json!({})),
+        &json!({
+            "interactive_wegent-interactive-form-question": {
+                "type": "http",
+                "url": "http://backend/mcp/interactive-form-question/sse",
+                "timeout": 12000
+            }
+        }),
+    )
+    .expect("configured MCP server should produce a proxy request");
+
+    assert_eq!(request.timeout_seconds, Some(12));
+}
+
+#[test]
 fn proxy_request_resolves_nested_mcp_servers_and_normalized_server_names() {
     let request = build_deferred_mcp_proxy_request(
         &deferred_tool_use(json!({"questions": [{"id": "q", "question": "Q?"}]})),

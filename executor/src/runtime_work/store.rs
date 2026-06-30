@@ -8,6 +8,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -121,9 +122,26 @@ impl RuntimeWorkStore {
             workspaces: index.workspaces.clone(),
         });
         if let Ok(payload) = payload {
-            let _ = fs::write(&self.index_path, payload);
+            let temp_path = temporary_index_path(&self.index_path);
+            if fs::write(&temp_path, payload).is_ok()
+                && fs::rename(&temp_path, &self.index_path).is_err()
+            {
+                let _ = fs::remove_file(temp_path);
+            }
         }
     }
+}
+
+fn temporary_index_path(index_path: &Path) -> PathBuf {
+    let file_name = index_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("index.json");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    index_path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), nanos))
 }
 
 fn default_index_path() -> PathBuf {

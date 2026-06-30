@@ -142,7 +142,6 @@ RUN set -e; \
     && chown -R wegent:wegent /app /home/wegent
 
 ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/home/wegent/.local/bin:${PATH}"
-ENV EXECUTOR_STARTUP_MODE=socket
 ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
 ENV DEVICE_PUBLIC_BASE_URL=

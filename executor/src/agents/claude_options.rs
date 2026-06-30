@@ -95,28 +95,78 @@ fn append_mcp_servers(target: &mut Vec<Value>, mcp_servers: Option<&Value>) {
 
 fn convert_mcp_servers_to_dict(mcp_servers: &Value) -> BTreeMap<String, Value> {
     match mcp_servers {
-        Value::Object(object) => object
-            .iter()
-            .filter_map(|(name, config)| {
-                config
-                    .as_object()
-                    .map(|_| (name.clone(), normalize_mcp_server_for_claude(config)))
-            })
-            .collect(),
-        Value::Array(servers) => servers
-            .iter()
-            .filter_map(|server| {
-                let name = server.get("name")?.as_str()?.to_owned();
-                let mut object = server.as_object()?.clone();
+        Value::Object(object) => {
+            let mut normalized = BTreeMap::new();
+            for (name, config) in object {
+                if config.as_object().is_some() {
+                    merge_mcp_server(
+                        &mut normalized,
+                        name.clone(),
+                        normalize_mcp_server_for_claude(config),
+                    );
+                }
+            }
+            normalized
+        }
+        Value::Array(servers) => {
+            let mut normalized = BTreeMap::new();
+            for server in servers {
+                let Some(name) = server.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(server_object) = server.as_object() else {
+                    continue;
+                };
+                let mut object = server_object.clone();
                 object.remove("name");
-                Some((
-                    name,
+                merge_mcp_server(
+                    &mut normalized,
+                    name.to_owned(),
                     normalize_mcp_server_for_claude(&Value::Object(object)),
-                ))
-            })
-            .collect(),
+                );
+            }
+            normalized
+        }
         _ => BTreeMap::new(),
     }
+}
+
+fn merge_mcp_server(servers: &mut BTreeMap<String, Value>, name: String, mut incoming: Value) {
+    if let Some(existing) = servers.get(&name) {
+        preserve_existing_mcp_headers(existing, &mut incoming);
+        preserve_existing_mcp_timeout(existing, &mut incoming);
+    }
+    servers.insert(name, incoming);
+}
+
+fn preserve_existing_mcp_headers(existing: &Value, incoming: &mut Value) {
+    let Some(existing_headers) = existing.get("headers").cloned() else {
+        return;
+    };
+    let Some(incoming_object) = incoming.as_object_mut() else {
+        return;
+    };
+    if incoming_object
+        .get("headers")
+        .and_then(Value::as_object)
+        .is_some_and(|headers| !headers.is_empty())
+    {
+        return;
+    }
+    incoming_object.insert("headers".to_owned(), existing_headers);
+}
+
+fn preserve_existing_mcp_timeout(existing: &Value, incoming: &mut Value) {
+    let Some(existing_timeout) = existing.get("timeout").cloned() else {
+        return;
+    };
+    let Some(incoming_object) = incoming.as_object_mut() else {
+        return;
+    };
+    if incoming_object.get("timeout").is_some() {
+        return;
+    }
+    incoming_object.insert("timeout".to_owned(), existing_timeout);
 }
 
 fn normalize_mcp_server_for_claude(server: &Value) -> Value {
@@ -147,6 +197,9 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
             {
                 normalized.insert("headers".to_owned(), headers.clone());
             }
+            if let Some(timeout) = claude_mcp_timeout(config) {
+                normalized.insert("timeout".to_owned(), timeout.clone());
+            }
             for key in [
                 "bearer_token_env_var",
                 "bearerTokenEnvVar",
@@ -173,6 +226,34 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
         }
         _ => server.clone(),
     }
+}
+
+fn claude_mcp_timeout(config: &Map<String, Value>) -> Option<Value> {
+    if let Some(timeout) = config.get("timeout").and_then(Value::as_u64) {
+        return Some(Value::Number(
+            mcp_timeout_milliseconds(timeout, TimeoutUnit::Auto).into(),
+        ));
+    }
+    config
+        .get("timeout_seconds")
+        .or_else(|| config.get("timeoutSeconds"))
+        .and_then(Value::as_u64)
+        .map(|timeout| {
+            Value::Number(mcp_timeout_milliseconds(timeout, TimeoutUnit::Seconds).into())
+        })
+}
+
+fn mcp_timeout_milliseconds(timeout: u64, unit: TimeoutUnit) -> u64 {
+    match unit {
+        TimeoutUnit::Seconds => timeout.saturating_mul(1000),
+        TimeoutUnit::Auto if timeout < 1000 => timeout.saturating_mul(1000),
+        TimeoutUnit::Auto => timeout,
+    }
+}
+
+enum TimeoutUnit {
+    Auto,
+    Seconds,
 }
 
 fn claude_system_prompt(request: &ExecutionRequest, primary_bot: Option<&Value>) -> Option<String> {

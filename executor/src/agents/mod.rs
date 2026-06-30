@@ -14,6 +14,7 @@ mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
 pub(crate) mod runtime_capabilities;
+mod task_identity;
 
 use crate::{
     emitter::ResponsesEventBuilder,
@@ -32,11 +33,14 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    run_codex_app_server_turn, CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn,
-    CodexCancellationState, CodexNotificationSender, CodexTurnInterrupter,
+    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexAppServerClient,
+    CodexAppServerEngine, CodexAppServerTurn, CodexCancellationState, CodexNotificationSender,
+    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
+
+const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -86,6 +90,23 @@ fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_owned())
 }
 
+fn claude_code_process_timeout_seconds() -> u64 {
+    env::var("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS)
+}
+
+fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> StreamProcessEngine {
+    match agent_kind {
+        AgentKind::ClaudeCode => {
+            StreamProcessEngine::new(spec, claude_code_process_timeout_seconds())
+        }
+        agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentProcessEngine {
     planner: AgentCommandPlanner,
@@ -110,6 +131,7 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
+                    git_auth::setup_git_authentication(&request).await;
                     runtime_capabilities::prepare_codex_runtime(&request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
@@ -164,7 +186,9 @@ impl AgentEngine for AgentProcessEngine {
                                 git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;
                             }
-                            StreamProcessEngine::new(spec).run(request).await
+                            stream_process_engine_for(&agent_kind, spec)
+                                .run(request)
+                                .await
                         }
                         Err(message) => {
                             let mut failed_fields = fields;
@@ -250,7 +274,7 @@ impl AgentEngine for AgentProcessEngine {
                                 git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;
                             }
-                            StreamProcessEngine::new(spec)
+                            stream_process_engine_for(&agent_kind, spec)
                                 .run_with_events(request, sink, builder)
                                 .await
                         }
@@ -264,5 +288,66 @@ impl AgentEngine for AgentProcessEngine {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::*;
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn claude_code_process_timeout_uses_claude_specific_env_var() {
+        let _lock = env_lock();
+        let _old_timeout = EnvGuard::remove("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS");
+        let _timeout = EnvGuard::set("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS", "42");
+
+        assert_eq!(claude_code_process_timeout_seconds(), 42);
+    }
+
+    #[test]
+    fn claude_code_process_timeout_ignores_generic_process_env_var() {
+        let _lock = env_lock();
+        let _old_timeout = EnvGuard::set("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS", "1");
+        let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
+
+        assert_eq!(claude_code_process_timeout_seconds(), 3600);
     }
 }

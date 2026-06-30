@@ -2,10 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build stage: compile executor Rust binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder
-ARG APP_VERSION=dev
-
+# Build base stage: Rust toolchain and native build dependencies.
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder-base
 WORKDIR /app
 
 RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
@@ -16,15 +14,27 @@ RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
 
 ENV PATH=/root/.cargo/bin:${PATH}
 
-# Copy Rust manifest first for better Docker layer reuse.
-COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
-COPY executor/src /app/executor/src
-RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
+# Build dependency stage: compile third-party crates before copying app source.
+FROM builder-base AS builder-deps
 
-# Runtime stage: minimal image with only the binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+RUN mkdir -p /app/executor/src/bin \
+    && printf 'pub fn placeholder() {}\n' > /app/executor/src/lib.rs \
+    && printf 'fn main() {}\n' > /app/executor/src/bin/wegent-executor.rs \
+    && cd /app/executor \
+    && cargo build --release --locked --bin wegent-executor
+
+# Build stage: compile executor Rust binary.
+FROM builder-deps AS builder
 ARG APP_VERSION=dev
 
+COPY executor/src /app/executor/src
+RUN cd /app/executor \
+    && find src -type f -exec touch {} + \
+    && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor
+
+# Runtime base stage: slow-changing executor environment.
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS runtime-base
 WORKDIR /app
 
 # Install system packages for document generation (AlmaLinux uses dnf)
@@ -66,13 +76,15 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
+# Runtime stage: base environment plus the executor binary.
+FROM runtime-base
+ARG APP_VERSION=dev
 
 # Copy the Rust executor binary to the stable path expected by executor_manager.
 COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
-ENV EXECUTOR_STARTUP_MODE=http
 ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
     path::Path,
     pin::Pin,
@@ -12,10 +12,13 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{
-    agents::{run_codex_app_server_turn, CodexAppServerClient, CodexNotificationSender},
+    agents::{
+        run_codex_app_server_turn_with_cancel, CodexAppServerClient, CodexNotificationSender,
+        CODEX_APP_SERVER_TURN_CANCELLED,
+    },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
     protocol::ExecutionRequest,
@@ -65,9 +68,15 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
+    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
+}
+
+struct ActiveTurnCancellation {
+    cancel: oneshot::Sender<()>,
+    stopped: oneshot::Receiver<()>,
 }
 
 impl RuntimeWorkRpcHandler {
@@ -79,6 +88,7 @@ impl RuntimeWorkRpcHandler {
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
+            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
@@ -571,13 +581,16 @@ impl RuntimeWorkRpcHandler {
         };
         apply_runtime_payload_metadata(&mut request, &payload);
 
-        let mut link =
-            RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path.clone(), title);
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            workspace_path.clone(),
+            title.clone(),
+        );
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         self.upsert_local_task(link);
-        self.spawn_turn(local_task_id.clone(), request, None);
+        self.spawn_turn(local_task_id.clone(), request, None, Some(title));
 
         Ok(json!({
             "success": true,
@@ -594,7 +607,10 @@ impl RuntimeWorkRpcHandler {
         let existing_link = self.local_task_link(&local_task_id);
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
-        if existing_link.as_ref().is_some_and(|link| link.running) {
+        if existing_link
+            .as_ref()
+            .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
+        {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -656,7 +672,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        self.spawn_turn(local_task_id.clone(), request, Some(thread_id));
+        self.spawn_turn(local_task_id.clone(), request, Some(thread_id), None);
 
         Ok(json!({
             "success": true,
@@ -678,6 +694,16 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             })
             .or_else(|| self.local_task_link(&local_task_id));
+        if !self.abort_active_turn(&local_task_id).await {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "localTaskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime task did not stop within timeout",
+                "code": "cancel_timeout",
+            }));
+        }
 
         Ok(match link {
             Some(link) => task_action_success(&link),
@@ -876,6 +902,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         request: ExecutionRequest,
         resume_thread_id: Option<String>,
+        initial_thread_name: Option<String>,
     ) {
         let mut fields = task_fields(request.task_id, request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -889,38 +916,59 @@ impl RuntimeWorkRpcHandler {
         log_executor_event("runtime work turn spawning", &fields);
 
         self.mark_active_local_task(&local_task_id);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let (stopped_tx, stopped_rx) = oneshot::channel();
+        self.set_active_turn_cancellation(
+            local_task_id.clone(),
+            ActiveTurnCancellation {
+                cancel: cancel_tx,
+                stopped: stopped_rx,
+            },
+        );
         let handler = self.clone();
-        tokio::spawn(async move {
+        let turn_local_task_id = local_task_id.clone();
+        let turn_handle = tokio::spawn(async move {
             emit_response_event(
                 &handler.event_tx,
                 &handler.device_id,
                 "response.created",
-                &local_task_id,
+                &turn_local_task_id,
                 &request,
                 json!({"response": {"status": "in_progress"}}),
             );
 
             let (notifications, mapper_task) =
-                handler.spawn_notification_mapper(local_task_id.clone(), request.clone());
-            let result = run_codex_app_server_turn(
+                handler.spawn_notification_mapper(turn_local_task_id.clone(), request.clone());
+            let result = run_codex_app_server_turn_with_cancel(
                 &handler.codex_binary,
                 request.clone(),
                 resume_thread_id,
+                initial_thread_name,
                 notifications,
+                Some(cancel_rx),
             )
             .await;
             if let Err(error) = mapper_task.await {
                 log_executor_event(
                     "runtime work notification mapper failed",
                     &[
-                        ("local_task_id", local_task_id.clone()),
+                        ("local_task_id", turn_local_task_id.clone()),
                         ("error", error.to_string()),
                     ],
                 );
             }
 
-            handler.handle_turn_result(&local_task_id, &request, result);
+            if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                handler.clear_active_turn_cancellation(&turn_local_task_id);
+                handler.unmark_active_local_task(&turn_local_task_id);
+                let _ = stopped_tx.send(());
+                return;
+            }
+
+            handler.handle_turn_result(&turn_local_task_id, &request, result);
+            let _ = stopped_tx.send(());
         });
+        drop(turn_handle);
     }
 
     fn handle_turn_result(
@@ -1338,7 +1386,12 @@ impl RuntimeWorkRpcHandler {
 
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
         let thread_id = string_field(thread, "id")?;
-        let local_link = self.local_task_by_thread_id(&thread_id);
+        let mut local_link = self.local_task_by_thread_id(&thread_id);
+        if let Some(link) = &mut local_link {
+            if link.running && !self.is_active_local_task(&link.local_task_id) {
+                link.running = false;
+            }
+        }
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
@@ -1378,6 +1431,43 @@ impl RuntimeWorkRpcHandler {
             .remove(local_task_id);
     }
 
+    fn set_active_turn_cancellation(&self, local_task_id: String, control: ActiveTurnCancellation) {
+        if let Some(previous) = self
+            .active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .insert(local_task_id, control)
+        {
+            let _ = previous.cancel.send(());
+        }
+    }
+
+    fn clear_active_turn_cancellation(&self, local_task_id: &str) {
+        self.active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
+    async fn abort_active_turn(&self, local_task_id: &str) -> bool {
+        let control = {
+            self.active_turn_cancellations
+                .lock()
+                .expect("active turn cancellation map lock should not be poisoned")
+                .remove(local_task_id)
+        };
+        if let Some(control) = control {
+            let _ = control.cancel.send(());
+            let stopped =
+                tokio::time::timeout(std::time::Duration::from_secs(10), control.stopped).await;
+            if stopped.is_err() {
+                return false;
+            }
+        }
+        self.unmark_active_local_task(local_task_id);
+        true
+    }
+
     fn is_active_local_task(&self, local_task_id: &str) -> bool {
         self.active_local_tasks
             .lock()
@@ -1386,6 +1476,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn finish_local_task(&self, local_task_id: &str, thread_id: Option<String>, status: &str) {
+        self.clear_active_turn_cancellation(local_task_id);
         let invalidate_thread_id = thread_id.clone();
         self.store.update_task(local_task_id, |link| {
             if thread_id.is_some() {

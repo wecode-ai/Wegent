@@ -36,7 +36,6 @@ use crate::{
     },
 };
 
-const DEFAULT_PROCESS_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
 const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
@@ -106,11 +105,16 @@ impl CommandSpec {
 #[derive(Debug, Clone)]
 pub struct ProcessEngine {
     spec: CommandSpec,
+    timeout_seconds: u64,
 }
 
 impl ProcessEngine {
-    pub fn new(spec: CommandSpec) -> Self {
-        Self { spec }
+    pub fn new(spec: CommandSpec, timeout_seconds: u64) -> Self {
+        assert!(timeout_seconds > 0, "timeout_seconds must be positive");
+        Self {
+            spec,
+            timeout_seconds,
+        }
     }
 }
 
@@ -119,18 +123,24 @@ impl AgentEngine for ProcessEngine {
 
     fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
         let spec = self.spec.clone();
-        Box::pin(async move { run_command(spec).await })
+        let timeout_seconds = self.timeout_seconds;
+        Box::pin(async move { run_command(spec, timeout_seconds).await })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct StreamProcessEngine {
     spec: CommandSpec,
+    timeout_seconds: u64,
 }
 
 impl StreamProcessEngine {
-    pub fn new(spec: CommandSpec) -> Self {
-        Self { spec }
+    pub fn new(spec: CommandSpec, timeout_seconds: u64) -> Self {
+        assert!(timeout_seconds > 0, "timeout_seconds must be positive");
+        Self {
+            spec,
+            timeout_seconds,
+        }
     }
 }
 
@@ -139,17 +149,23 @@ impl AgentEngine for StreamProcessEngine {
 
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let spec = self.spec.clone();
+        let timeout_seconds = self.timeout_seconds;
         Box::pin(async move {
-            match run_command_output(spec.clone()).await {
+            match run_command_output(spec.clone(), timeout_seconds).await {
                 CommandOutcome::Success { stdout } => {
                     let summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
                         claude_session::save_session_id(&request, session_id);
                     }
-                    let summary =
-                        handle_retryable_api_errors(spec.clone(), &request, summary).await;
+                    let summary = handle_retryable_api_errors(
+                        spec.clone(),
+                        &request,
+                        summary,
+                        timeout_seconds,
+                    )
+                    .await;
                     if summary.deferred_tool_use.is_some() {
-                        handle_deferred_mcp_loop(spec, request, summary).await
+                        handle_deferred_mcp_loop(spec, request, summary, timeout_seconds).await
                     } else {
                         summary.outcome
                     }
@@ -171,9 +187,11 @@ impl AgentEngine for StreamProcessEngine {
         S: EventSink,
     {
         let spec = self.spec.clone();
+        let timeout_seconds = self.timeout_seconds;
         Box::pin(async move {
             match run_streaming_command_output(
                 spec.clone(),
+                timeout_seconds,
                 sink,
                 builder,
                 request.task_id,
@@ -186,10 +204,15 @@ impl AgentEngine for StreamProcessEngine {
                     if let Some(session_id) = &summary.session_id {
                         claude_session::save_session_id(&request, session_id);
                     }
-                    let summary =
-                        handle_retryable_api_errors(spec.clone(), &request, summary).await;
+                    let summary = handle_retryable_api_errors(
+                        spec.clone(),
+                        &request,
+                        summary,
+                        timeout_seconds,
+                    )
+                    .await;
                     if summary.deferred_tool_use.is_some() {
-                        handle_deferred_mcp_loop(spec, request, summary).await
+                        handle_deferred_mcp_loop(spec, request, summary, timeout_seconds).await
                     } else {
                         summary.outcome
                     }
@@ -206,6 +229,7 @@ async fn handle_retryable_api_errors(
     base_spec: CommandSpec,
     request: &ExecutionRequest,
     mut summary: crate::stream::ClaudeStreamSummary,
+    timeout_seconds: u64,
 ) -> crate::stream::ClaudeStreamSummary {
     let fields = task_fields(request.task_id, request.subtask_id);
     let mut retry_count = 0;
@@ -222,7 +246,7 @@ async fn handle_retryable_api_errors(
             &session_id,
             ClaudeFollowUpQuery::Prompt("Retry to proceed".to_owned()),
         );
-        match run_command_output(retry_spec).await {
+        match run_command_output(retry_spec, timeout_seconds).await {
             CommandOutcome::Success { stdout } => {
                 summary = collect_claude_stream_summary(&stdout);
                 if let Some(session_id) = &summary.session_id {
@@ -250,6 +274,7 @@ async fn handle_deferred_mcp_loop(
     base_spec: CommandSpec,
     request: ExecutionRequest,
     mut summary: crate::stream::ClaudeStreamSummary,
+    timeout_seconds: u64,
 ) -> ExecutionOutcome {
     let mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
     let mut retry_count = 0;
@@ -266,7 +291,7 @@ async fn handle_deferred_mcp_loop(
         {
             stale_answer_defer_drained = true;
             log_executor_event("draining stale answered interactive form defer", &fields);
-            match run_command_output(base_spec.clone()).await {
+            match run_command_output(base_spec.clone(), timeout_seconds).await {
                 CommandOutcome::Success { stdout } => {
                     summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
@@ -340,7 +365,7 @@ async fn handle_deferred_mcp_loop(
                     &session_id,
                     ClaudeFollowUpQuery::ToolResult(retry_query),
                 );
-                match run_command_output(retry_spec).await {
+                match run_command_output(retry_spec, timeout_seconds).await {
                     CommandOutcome::Success { stdout } => {
                         summary = collect_claude_stream_summary(&stdout);
                         if let Some(session_id) = &summary.session_id {
@@ -424,8 +449,8 @@ fn read_json_file(path: &str) -> Option<Value> {
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
 }
 
-async fn run_command(spec: CommandSpec) -> ExecutionOutcome {
-    match run_command_output(spec).await {
+async fn run_command(spec: CommandSpec, timeout_seconds: u64) -> ExecutionOutcome {
+    match run_command_output(spec, timeout_seconds).await {
         CommandOutcome::Success { stdout } => ExecutionOutcome::Completed { content: stdout },
         CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
             message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
@@ -444,7 +469,7 @@ enum CommandOutcome {
     },
 }
 
-async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
+async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
     let mut command = Command::new(&spec.program);
     command.args(&spec.args).envs(&spec.env);
     command.kill_on_drop(true);
@@ -459,7 +484,6 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
         command.current_dir(cwd);
     }
 
-    let timeout_seconds = process_timeout_seconds();
     let mut fields = command_log_fields(&spec);
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
     log_executor_event("process started", &fields);
@@ -485,6 +509,7 @@ async fn run_command_output(spec: CommandSpec) -> CommandOutcome {
 
 async fn run_streaming_command_output<S>(
     spec: CommandSpec,
+    timeout_seconds: u64,
     sink: S,
     builder: ResponsesEventBuilder,
     task_id: i64,
@@ -512,7 +537,6 @@ where
         command.current_dir(cwd);
     }
 
-    let timeout_seconds = process_timeout_seconds();
     let mut fields = command_log_fields(&spec);
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
     log_executor_event("process started", &fields);
@@ -921,14 +945,6 @@ fn command_outcome_fields(outcome: &CommandOutcome) -> Vec<(&'static str, String
             fields
         }
     }
-}
-
-fn process_timeout_seconds() -> u64 {
-    env::var("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_PROCESS_TIMEOUT_SECONDS)
 }
 
 fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
