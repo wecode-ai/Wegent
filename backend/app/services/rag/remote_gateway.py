@@ -158,7 +158,7 @@ class RemoteRagGateway:
             knowledge_base_retrieval_overrides=(
                 spec.knowledge_base_retrieval_overrides or None
             ),
-            document_ids=spec.document_ids,
+            scope=spec.scope,
             metadata_condition=spec.metadata_condition,
         )
         response_payload = await self._post_model("/internal/rag/query", payload)

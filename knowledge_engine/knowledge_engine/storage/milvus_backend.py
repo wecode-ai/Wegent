@@ -27,7 +27,7 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQueryMode,
 )
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.vector_stores.milvus.base import IndexManagement
+from llama_index.vector_stores.milvus.base import IndexManagement, _to_milvus_filter
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from knowledge_engine.retrieval.filters import (
@@ -37,6 +37,7 @@ from knowledge_engine.retrieval.filters import (
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from shared.models import RetrievalScope
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,7 @@ class MilvusBackend(BaseStorageBackend):
 
     # Milvus supports vector, keyword (BM25), and hybrid search
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    supports_retrieval_scope: ClassVar[bool] = True
 
     # Override INDEX_PREFIX for Milvus collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -448,6 +450,7 @@ class MilvusBackend(BaseStorageBackend):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -500,8 +503,12 @@ class MilvusBackend(BaseStorageBackend):
             retrieval_setting=retrieval_setting,
         )
 
-        # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
+        native_filter_expr = self._build_scoped_native_filter_expr(
+            scope=scope,
+            metadata_filters=filters,
+        )
+        query_filters = None if native_filter_expr else filters
 
         # Determine query mode and parameters
         resolved_queries = resolve_search_queries(query, retrieval_setting)
@@ -531,7 +538,7 @@ class MilvusBackend(BaseStorageBackend):
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=query_mode,
-            filters=filters,
+            filters=query_filters,
         )
 
         logger.info(
@@ -556,7 +563,8 @@ class MilvusBackend(BaseStorageBackend):
         )
 
         # Execute query
-        result = vector_store.query(vs_query)
+        query_kwargs = {"string_expr": native_filter_expr} if native_filter_expr else {}
+        result = vector_store.query(vs_query, **query_kwargs)
 
         logger.info(
             "[Milvus] query result: collection=%s, nodes_count=%d, top_scores=%s",
@@ -591,6 +599,37 @@ class MilvusBackend(BaseStorageBackend):
             MetadataFilters object
         """
         return parse_metadata_filters(knowledge_id, metadata_condition)
+
+    def _build_scoped_native_filter_expr(
+        self,
+        *,
+        scope: Optional[RetrievalScope],
+        metadata_filters: MetadataFilters,
+    ) -> str:
+        if not scope or not scope.document_ids:
+            return ""
+
+        metadata_expr = _to_milvus_filter(metadata_filters)
+        doc_refs = [
+            f'"{self._sanitize_filter_value(str(doc_id))}"'
+            for doc_id in scope.document_ids
+        ]
+        doc_scope_expr = f"doc_ref in [{', '.join(doc_refs)}]"
+
+        expressions = []
+        if metadata_expr:
+            expressions.append(self._parenthesize_filter_expr(metadata_expr))
+        expressions.append(doc_scope_expr)
+        return " and ".join(expressions)
+
+    @staticmethod
+    def _parenthesize_filter_expr(expression: str) -> str:
+        normalized = expression.strip()
+        if normalized.startswith("(") and normalized.endswith(")"):
+            return normalized
+        if " and " in normalized or " or " in normalized:
+            return f"({normalized})"
+        return normalized
 
     def _process_query_results(
         self,

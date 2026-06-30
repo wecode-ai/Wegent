@@ -986,13 +986,20 @@ class KnowledgeBaseTool(BaseTool):
 
                 from app.services.rag.retrieval_service import RetrievalService
 
+                from shared.models import RetrievalScope
+
                 retrieval_service = RetrievalService()
+                retrieval_scope = (
+                    RetrievalScope(document_ids=resolved_document_ids)
+                    if resolved_document_ids
+                    else None
+                )
                 result = await retrieval_service.retrieve_with_routing(
                     query=query,
                     knowledge_base_ids=self.knowledge_base_ids,
                     db=self.db_session,
                     max_results=max_results,
-                    document_ids=resolved_document_ids,
+                    scope=retrieval_scope,
                     user_name=self.user_name,
                     route_mode=route_mode,
                     user_id=self.user_id,
@@ -1102,6 +1109,8 @@ class KnowledgeBaseTool(BaseTool):
 
         from app.services.rag.retrieval_service import RetrievalService
 
+        from shared.models import RetrievalScope
+
         retrieval_service = RetrievalService()
         records: list[dict[str, Any]] = []
         total_estimated_tokens = 0
@@ -1131,12 +1140,17 @@ class KnowledgeBaseTool(BaseTool):
             }
 
         for kb_ids, scoped_document_ids in retrieve_groups:
+            retrieval_scope = (
+                RetrievalScope(document_ids=scoped_document_ids)
+                if scoped_document_ids
+                else None
+            )
             result = await retrieval_service.retrieve_with_routing(
                 query=query,
                 knowledge_base_ids=kb_ids,
                 db=self.db_session,
                 max_results=max_results,
-                document_ids=scoped_document_ids,
+                scope=retrieval_scope,
                 user_name=self.user_name,
                 route_mode=route_mode,
                 user_id=self.user_id,

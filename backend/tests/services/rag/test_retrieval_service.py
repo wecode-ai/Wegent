@@ -7,6 +7,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.models import RetrievalScope
+
 
 @pytest.fixture(autouse=True)
 def set_auto_direct_injection_enabled_by_default(monkeypatch):
@@ -62,6 +64,73 @@ async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     mock_get_context_map.assert_not_called()
     mock_create_context.assert_not_called()
     mock_update_context.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_with_routing_treats_empty_scope_as_unfiltered():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    service = RetrievalService()
+    service.retrieve_from_knowledge_base_internal = AsyncMock(
+        return_value={
+            "records": [
+                {
+                    "content": "retrieved chunk",
+                    "score": 0.9,
+                    "title": "doc.md",
+                    "metadata": {},
+                }
+            ]
+        }
+    )
+
+    scope = RetrievalScope()
+
+    result = await service.retrieve_with_routing(
+        query="test",
+        knowledge_base_ids=[1],
+        db=MagicMock(),
+        scope=scope,
+        route_mode="rag_retrieval",
+    )
+
+    assert result["records"] == [
+        {
+            "content": "retrieved chunk",
+            "score": 0.9,
+            "title": "doc.md",
+            "metadata": {},
+            "knowledge_base_id": 1,
+            "document_id": None,
+        }
+    ]
+    assert result["total"] == 1
+    service.retrieve_from_knowledge_base_internal.assert_awaited_once_with(
+        query="test",
+        search_hints=None,
+        knowledge_base_id=1,
+        db=ANY,
+        scope=scope,
+        metadata_condition=None,
+        user_name=None,
+        knowledge_base_config=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_original_documents_treats_empty_document_ids_as_empty_scope():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    db = MagicMock()
+
+    result = await RetrievalService().get_original_documents_from_knowledge_base(
+        knowledge_base_ids=[1],
+        db=db,
+        document_ids=[],
+    )
+
+    assert result == []
+    db.query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -367,7 +436,7 @@ class TestRetrieveForChatShell:
                 db=db,
                 max_results=5,
                 context_window=10000,
-                document_ids=[1],
+                scope=RetrievalScope(document_ids=[1]),
                 user_id=7,
             )
 
@@ -676,7 +745,9 @@ class TestRetrieveForChatShell:
             knowledge_base_ids=[1],
             document_names=["release.md"],
         )
-        assert mock_retrieve.await_args.kwargs["document_ids"] == [301]
+        assert mock_retrieve.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[301]
+        )
 
     @pytest.mark.asyncio
     async def test_force_rag_route_sorts_and_limits_results_globally(self):
@@ -800,7 +871,7 @@ class TestRetrieveForChatShell:
                 db=db,
                 max_results=5,
                 route_mode="rag_retrieval",
-                document_ids=[9],
+                scope=RetrievalScope(document_ids=[9]),
                 knowledge_base_configs=[kb_config],
             )
 
@@ -822,10 +893,8 @@ class TestRetrieveForChatShell:
             query="release checklist",
             search_hints=None,
             retrieval_config=kb_config.retrieval_config,
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "doc_ref", "operator": "in", "value": ["9"]}],
-            },
+            scope=RetrievalScope(document_ids=[9]),
+            metadata_condition=None,
             user_id=7,
         )
 
