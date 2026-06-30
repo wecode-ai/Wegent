@@ -191,6 +191,40 @@ describe('ToolBlockItem', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
 
+  test('renders Claude MultiEdit blocks as editable file activity', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'edit-1',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'MultiEdit',
+          toolInput: {
+            file_path: '/Users/crystal/src/config.ts',
+            edits: [
+              {
+                old_string: 'enabled: false',
+                new_string: 'enabled: true',
+              },
+            ],
+          },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('已编辑 config.ts')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByText('/Users/crystal/src/config.ts')).toBeInTheDocument()
+    expect(screen.getByText('enabled: false')).toBeInTheDocument()
+    expect(screen.getByText('enabled: true')).toBeInTheDocument()
+  })
+
   test('renders process text code blocks with shared syntax highlighting', () => {
     render(
       <ToolBlockItem
