@@ -23,6 +23,5 @@ RUN cd /workspace/src/executor \
 ENV NODE_PATH=/usr/lib/node_modules
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
-ENV EXECUTOR_STARTUP_MODE=http
 
 CMD ["/app/executor"]

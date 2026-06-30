@@ -95,6 +95,8 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .expect("create should be accepted");
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
+    wait_for_turn_count(&log_path, 1).await;
+    wait_for_response_completed(&mut events).await;
     wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
@@ -351,6 +353,8 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .await
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
+    wait_for_turn_count(&log_path, 1).await;
+    wait_for_response_completed(&mut events).await;
     wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
@@ -955,6 +959,13 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {
     while events.try_recv().is_ok() {}
+}
+
+async fn wait_for_response_completed(events: &mut broadcast::Receiver<Value>) {
+    recv_events_until(events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
+    })
+    .await;
 }
 
 async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done: F) -> Vec<Value>

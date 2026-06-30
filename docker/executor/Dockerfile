@@ -72,7 +72,6 @@ COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
 ENV EXECUTOR_MODE=docker
-ENV EXECUTOR_STARTUP_MODE=http
 ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 

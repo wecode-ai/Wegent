@@ -623,7 +623,6 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
     let mut envs = vec![
-        ("EXECUTOR_STARTUP_MODE".to_string(), "socket".to_string()),
         (
             "PATH".to_string(),
             process_environment::normalized_current_path(),
@@ -1564,10 +1563,6 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
 
-        assert_eq!(
-            envs.get("EXECUTOR_STARTUP_MODE").map(String::as_str),
-            Some("socket")
-        );
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")
