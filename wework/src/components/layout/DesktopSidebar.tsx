@@ -43,6 +43,7 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
@@ -1755,6 +1756,7 @@ export function DesktopSidebar({
     onResizeStateChange,
   })
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
+  const usesOverlayTitlebar = isTauriRuntime()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -2170,7 +2172,10 @@ export function DesktopSidebar({
     >
       <div className="h-full overflow-hidden">
         <div
-          className="relative flex h-full flex-col px-1.5 pb-4 pt-1.5"
+          className={cn(
+            'relative flex h-full flex-col px-1.5 pb-4',
+            usesOverlayTitlebar ? 'pt-[44px]' : 'pt-1.5'
+          )}
           style={{ width: sidebarWidth }}
         >
           <nav className="space-y-0.5">

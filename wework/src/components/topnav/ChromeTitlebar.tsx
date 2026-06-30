@@ -21,6 +21,8 @@ interface ChromeTitlebarProps {
   onNavigate: (appKey: string) => void
   beforeTabs?: ReactNode
   afterTabs?: ReactNode
+  className?: string
+  iconOnlyTabs?: boolean
 }
 
 export function ChromeTitlebar({
@@ -29,6 +31,8 @@ export function ChromeTitlebar({
   onNavigate,
   beforeTabs,
   afterTabs,
+  className,
+  iconOnlyTabs = false,
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
@@ -37,7 +41,10 @@ export function ChromeTitlebar({
     <div
       data-testid="chrome-titlebar"
       {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
-      className="z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none"
+      className={cn(
+        'z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none',
+        className
+      )}
     >
       {/* macOS: traffic light spacer (left) */}
       {isTauri && platform === 'mac' && (
@@ -55,29 +62,47 @@ export function ChromeTitlebar({
       )}
 
       {/* Tab strip */}
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            type="button"
-            data-testid={`chrome-tab-${tab.key}`}
-            onClick={() => onNavigate(tab.key)}
-            className={cn(
-              'flex h-7 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-[13px] leading-none font-medium transition-colors',
-              activeKey === tab.key
-                ? 'bg-black/[0.045] text-text-primary'
-                : 'text-text-secondary hover:bg-black/[0.04]'
-            )}
-          >
-            {tab.key === 'wework' && (
-              <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-            )}
-            {tab.key === 'apps' && (
-              <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-            )}
-            <span className="truncate">{tab.label}</span>
-          </button>
-        ))}
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-1',
+          iconOnlyTabs ? 'overflow-visible' : 'overflow-hidden'
+        )}
+      >
+        {tabs.map(tab => {
+          const tabSupportsIconOnly = tab.key === 'wework' || tab.key === 'apps'
+          const showIconOnly = iconOnlyTabs && tabSupportsIconOnly
+
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              data-testid={`chrome-tab-${tab.key}`}
+              onClick={() => onNavigate(tab.key)}
+              title={tab.label}
+              aria-label={tab.label}
+              className={cn(
+                'group relative flex h-7 items-center justify-center rounded-lg text-center text-[13px] font-medium leading-none transition-colors',
+                showIconOnly ? 'w-8 min-w-0 px-0' : 'max-w-[220px] min-w-24 gap-2.5 px-3',
+                activeKey === tab.key
+                  ? 'bg-black/[0.045] text-text-primary'
+                  : 'text-text-secondary hover:bg-black/[0.04]'
+              )}
+            >
+              {tab.key === 'wework' && (
+                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+              )}
+              {tab.key === 'apps' && (
+                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+              )}
+              <span className={showIconOnly ? 'sr-only' : 'truncate'}>{tab.label}</span>
+              {showIconOnly && (
+                <span className="pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100">
+                  {tab.label}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">

@@ -761,7 +761,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}

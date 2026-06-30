@@ -97,8 +97,8 @@ export const MessageList = memo(function MessageList({
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-11'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11'
+    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -471,7 +471,7 @@ function UserMessage({
             <div
               data-testid="user-message-content"
               className={[
-                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-3',
+                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
