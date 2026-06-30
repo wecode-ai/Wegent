@@ -1,8 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
-import { LOCAL_USER } from './localSession'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { getLocalUser, LOCAL_USER } from './localSession'
 import { createLocalAppServices } from './localServices'
 
 describe('createLocalAppServices', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   test('returns local bootstrap data without backend', async () => {
     const request = vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
     const ensure = vi.fn().mockResolvedValue({
@@ -51,6 +55,58 @@ describe('createLocalAppServices', () => {
       totalLocalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('persists local user preferences across local service instances', async () => {
+    const firstServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
+      subscribe: vi.fn(),
+    })
+
+    await firstServices.userApi?.updateCurrentUser({
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/alpha',
+          },
+        },
+      },
+    })
+
+    const secondServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
+      subscribe: vi.fn(),
+    })
+
+    await expect(secondServices.userApi?.updateCurrentUser({})).resolves.toMatchObject({
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/alpha',
+          },
+        },
+      },
+    })
+    expect(getLocalUser().preferences).toMatchObject({
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    })
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {
