@@ -221,7 +221,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
-  const formResetKeyRef = useRef<string | null>(null)
 
   // Load shells data on mount
   useEffect(() => {
@@ -291,17 +290,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
 
-  const formResetKey = open ? `${editingTeamId ?? 'none'}:${formTeam?.id ?? 'new'}` : 'closed'
-
-  // Reset form when a new dialog session starts.
+  // Reset form when dialog opens
   useEffect(() => {
-    if (!open) {
-      formResetKeyRef.current = null
-      return
-    }
-
-    if (formResetKeyRef.current === formResetKey) return
-    formResetKeyRef.current = formResetKey
+    if (!open) return
 
     if (formTeam) {
       setName(formTeam.name)
@@ -384,7 +375,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequiresWorkspace(true)
     }
     setUnsavedPrompts({})
-  }, [bots, formResetKey, formTeam, open])
+  }, [bots, formTeam, open])
 
   // Update bot selection when bots change
   useEffect(() => {

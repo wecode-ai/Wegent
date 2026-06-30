@@ -341,36 +341,6 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
   })
 
-  it('keeps new agent draft input when bots refresh after opening', async () => {
-    const baseProps = {
-      open: true,
-      onClose: jest.fn(),
-      teams: [],
-      setTeams: jest.fn(),
-      editingTeamId: 0,
-      setBots: jest.fn(),
-      toast: jest.fn(),
-    }
-
-    const { rerender } = render(<TeamEditDialog {...baseProps} bots={[]} />)
-
-    const nameInput = await screen.findByLabelText(/^Name/)
-    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
-    fireEvent.change(nameInput, { target: { value: 'draft-agent' } })
-    fireEvent.change(screen.getByTestId('team-display-name-input'), {
-      target: { value: 'Draft Agent' },
-    })
-    fireEvent.change(screen.getByTestId('simple-prompt-textarea'), {
-      target: { value: 'Stay focused.' },
-    })
-
-    rerender(<TeamEditDialog {...baseProps} bots={[makeBot()]} />)
-
-    expect(screen.getByLabelText(/^Name/)).toHaveValue('draft-agent')
-    expect(screen.getByTestId('team-display-name-input')).toHaveValue('Draft Agent')
-    expect(screen.getByTestId('simple-prompt-textarea')).toHaveValue('Stay focused.')
-  })
-
   it('uses settings-scoped text for the simple requires repository hint', async () => {
     render(
       <TeamEditDialog
