@@ -4,7 +4,6 @@
 
 export type WorkbenchMessageRole = 'user' | 'assistant' | 'system'
 export type WorkbenchMessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
-export type WorkbenchRuntimeMessageStatus = WorkbenchMessageStatus | 'cancelled'
 export type WorkbenchToolBlockStatus =
   | 'generating_arguments'
   | 'pending'
@@ -29,6 +28,7 @@ export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   toolName: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  renderPayload?: unknown
 }
 
 export interface WorkbenchThinkingBlock extends BaseWorkbenchProcessingBlock {
@@ -41,9 +41,8 @@ export interface WorkbenchTextBlock extends BaseWorkbenchProcessingBlock {
   content: string
 }
 
-export interface WorkbenchFileChangesBlock<
-  TFileChanges = unknown
-> extends BaseWorkbenchProcessingBlock {
+export interface WorkbenchFileChangesBlock<TFileChanges = unknown>
+  extends BaseWorkbenchProcessingBlock {
   type: 'file_changes'
   fileChanges: TFileChanges
 }
@@ -68,9 +67,6 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   blocks?: WorkbenchProcessingBlock<TFileChanges>[]
   fileChanges?: TFileChanges
   source?: MessageSource
-  runtimeStatus?: WorkbenchRuntimeMessageStatus | null
-  completedAt?: string | number | null
-  stoppedNotice?: boolean | null
   createdAt: string
 }
 
@@ -78,19 +74,14 @@ type ProcessingBlockUpdate = {
   content?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  renderPayload?: unknown
   status?: WorkbenchToolBlockStatus
 }
 
 export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown> =
   | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
   | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
-  | {
-      type: 'assistant_started'
-      messageId?: string
-      taskId?: number
-      turnId?: number
-      shellType?: string
-    }
+  | { type: 'assistant_started'; messageId?: string; taskId?: number; turnId?: number; shellType?: string }
   | {
       type: 'assistant_cached'
       messageId?: string
@@ -116,23 +107,11 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       fileChanges?: TFileChanges
     }
   | {
-      type: 'assistant_cancelled'
-      messageId?: string
-      turnId?: number
-      content?: string
-    }
-  | {
       type: 'file_changes_updated'
       turnId: number
       fileChanges: TFileChanges
     }
-  | {
-      type: 'assistant_error'
-      messageId?: string
-      turnId?: number
-      error: string
-      errorType?: string
-    }
+  | { type: 'assistant_error'; messageId?: string; turnId?: number; error: string; errorType?: string }
   | {
       type: 'block_created'
       messageId?: string
@@ -168,7 +147,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
                 shellType: action.shellType ?? message.shellType,
-                status: 'streaming' as const
+                status: 'streaming' as const,
               }
             : message
         )
@@ -179,8 +158,8 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           messageId: action.messageId,
           taskId: action.taskId,
           turnId: action.turnId,
-          shellType: action.shellType
-        })
+          shellType: action.shellType,
+        }),
       ]
     case 'assistant_cached':
       if (state.some(message => isAssistantMessageForAction(message, action))) {
@@ -191,7 +170,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 taskId: action.taskId ?? message.taskId,
                 content: action.content,
                 status: 'streaming' as const,
-                blocks: action.blocks ?? message.blocks
+                blocks: action.blocks ?? message.blocks,
               }
             : message
         )
@@ -203,22 +182,22 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           taskId: action.taskId,
           turnId: action.turnId,
           content: action.content,
-          blocks: action.blocks ?? []
-        })
+          blocks: action.blocks ?? [],
+        }),
       ]
     case 'assistant_chunk':
       if (!state.some(message => isAssistantMessageForAction(message, action))) {
         const message = createAssistantMessage<TAttachment, TFileChanges>({
           messageId: action.messageId,
           turnId: action.turnId,
-          content: action.content
+          content: action.content,
         })
         return [
           ...state,
           {
             ...message,
-            blocks: getChunkBlocks(message, action)
-          }
+            blocks: getChunkBlocks(message, action),
+          },
         ]
       }
       return state.map(message =>
@@ -227,7 +206,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               ...clearMessageError(message),
               content: message.content + action.content,
               status: 'streaming' as const,
-              blocks: getChunkBlocks(message, action)
+              blocks: getChunkBlocks(message, action),
             }
           : message
       )
@@ -241,8 +220,8 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
             content: action.content ?? '',
             status: 'done',
             blocks: finalizeProcessingBlocks(action.blocks, 'done'),
-            fileChanges: action.fileChanges
-          })
+            fileChanges: action.fileChanges,
+          }),
         ]
       }
       return state.map(message =>
@@ -252,45 +231,10 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               content: action.content ?? message.content,
               status: 'done' as const,
               blocks: finalizeProcessingBlocks(action.blocks ?? message.blocks, 'done'),
-              fileChanges: action.fileChanges ?? message.fileChanges
+              fileChanges: action.fileChanges ?? message.fileChanges,
             }
           : message
       )
-    case 'assistant_cancelled': {
-      const completedAt = new Date().toISOString()
-      const matches = state.some(message => isAssistantMessageForAction(message, action))
-        ? (message: WorkbenchMessage<TAttachment, TFileChanges>) =>
-            isAssistantMessageForAction(message, action)
-        : (message: WorkbenchMessage<TAttachment, TFileChanges>) =>
-            message.role === 'assistant' && message.status === 'streaming'
-      if (!state.some(matches)) {
-        return [
-          ...state,
-          createAssistantMessage<TAttachment, TFileChanges>({
-            messageId: action.messageId,
-            turnId: action.turnId,
-            content: action.content ?? '',
-            status: 'done',
-            runtimeStatus: 'cancelled',
-            completedAt,
-            stoppedNotice: true
-          })
-        ]
-      }
-      return state.map(message =>
-        matches(message)
-          ? {
-              ...clearMessageError(message),
-              content: action.content ?? message.content,
-              status: 'done' as const,
-              runtimeStatus: 'cancelled' as const,
-              completedAt,
-              stoppedNotice: true,
-              blocks: finalizeProcessingBlocks(message.blocks, 'done')
-            }
-          : message
-      )
-    }
     case 'file_changes_updated':
       return state.map(message =>
         isAssistantMessageForTurn(message, action.turnId)
@@ -307,8 +251,8 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
             status: 'failed',
             error: action.error,
             errorType: action.errorType,
-            blocks: finalizeProcessingBlocks(undefined, 'error')
-          })
+            blocks: finalizeProcessingBlocks(undefined, 'error'),
+          }),
         ]
       }
       return state.map(message =>
@@ -324,7 +268,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 message.error && isGenericTaskStatusError(action.error)
                   ? message.errorType
                   : action.errorType,
-              blocks: finalizeProcessingBlocks(message.blocks, 'error')
+              blocks: finalizeProcessingBlocks(message.blocks, 'error'),
             }
           : message
       )
@@ -332,7 +276,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       if (!state.some(message => isAssistantMessageForAction(message, action))) {
         const message = createAssistantMessage<TAttachment, TFileChanges>({
           messageId: action.messageId,
-          turnId: action.turnId
+          turnId: action.turnId,
         })
         return [...state, createBlockCreatedMessage(message, action)]
       }
@@ -348,12 +292,9 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               ...withActiveStreamState(message, isActiveBlockStatus(action.updates.status)),
               blocks: (message.blocks ?? []).map(block =>
                 block.id === action.blockId
-                  ? ({
-                      ...block,
-                      ...action.updates
-                    } as WorkbenchProcessingBlock<TFileChanges>)
+                  ? ({ ...block, ...action.updates } as WorkbenchProcessingBlock<TFileChanges>)
                   : block
-              )
+              ),
             }
           : message
       )
@@ -389,9 +330,6 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges,
   error,
   errorType,
-  runtimeStatus,
-  completedAt,
-  stoppedNotice
 }: {
   messageId?: string
   taskId?: number
@@ -403,9 +341,6 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   fileChanges?: TFileChanges
   error?: string
   errorType?: string
-  runtimeStatus?: WorkbenchRuntimeMessageStatus | null
-  completedAt?: string | number | null
-  stoppedNotice?: boolean | null
 }): WorkbenchMessage<TAttachment, TFileChanges> {
   return {
     id: messageId ?? `assistant-${turnId ?? Date.now()}`,
@@ -419,10 +354,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     fileChanges,
     error,
     errorType,
-    runtimeStatus,
-    completedAt,
-    stoppedNotice,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
   }
 }
 
@@ -443,12 +375,16 @@ function withActiveStreamState<TAttachment, TFileChanges>(
 
   return {
     ...clearMessageError(message),
-    status: 'streaming'
+    status: 'streaming',
   }
 }
 
 function isActiveBlockStatus(status?: WorkbenchToolBlockStatus): boolean {
-  return status === 'generating_arguments' || status === 'pending' || status === 'streaming'
+  return (
+    status === 'generating_arguments' ||
+    status === 'pending' ||
+    status === 'streaming'
+  )
 }
 
 function createBlockCreatedMessage<TAttachment, TFileChanges>(
@@ -459,19 +395,18 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
   const activeMessage = withActiveStreamState(message, isActiveBlockStatus(action.block.status))
   return {
     ...activeMessage,
-    content: shouldMovePendingContentBeforeBlock(message, action.block) ? '' : message.content,
+    content: shouldMovePendingContentBeforeBlock(message, action.block)
+      ? ''
+      : message.content,
     blocks: mergeProcessingBlock(
       getBlocksBeforeIncomingBlock(message, turnId, action.block),
       action.block
-    )
+    ),
   }
 }
 
 export function normalizeWorkbenchBlockStatus(status?: string): WorkbenchToolBlockStatus {
-  const normalizedStatus = status
-    ?.trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
+  const normalizedStatus = status?.trim().toLowerCase().replace(/[\s-]+/g, '_')
 
   switch (normalizedStatus) {
     case 'generating_arguments':
@@ -522,7 +457,7 @@ function appendThinkingChunk<TFileChanges>(
   if (lastBlock?.type === 'thinking' && lastBlock.status === 'streaming') {
     nextBlocks[nextBlocks.length - 1] = {
       ...lastBlock,
-      content: lastBlock.content + chunk
+      content: lastBlock.content + chunk,
     }
     return nextBlocks
   }
@@ -536,8 +471,8 @@ function appendThinkingChunk<TFileChanges>(
       type: 'thinking',
       content: chunk,
       status: 'streaming',
-      createdAt: Date.now()
-    }
+      createdAt: Date.now(),
+    },
   ]
 }
 
@@ -557,8 +492,8 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
       type: 'text',
       content: message.content,
       status: 'done',
-      createdAt: Date.now()
-    }
+      createdAt: Date.now(),
+    },
   ]
 }
 
@@ -577,7 +512,10 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
   blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map(block => {
-    if ((block.type === 'thinking' || block.type === 'text') && block.status === 'streaming') {
+    if (
+      (block.type === 'thinking' || block.type === 'text') &&
+      block.status === 'streaming'
+    ) {
       return { ...block, status: 'done' as const }
     }
 
@@ -598,10 +536,7 @@ function finalizeBlocks<TFileChanges>(
       return block
     }
 
-    return {
-      ...block,
-      status: finalStatus
-    } as WorkbenchProcessingBlock<TFileChanges>
+    return { ...block, status: finalStatus } as WorkbenchProcessingBlock<TFileChanges>
   })
 }
 
@@ -623,7 +558,7 @@ function mergeProcessingBlock<TFileChanges>(
   const nextBlocks = [...blocks]
   nextBlocks[index] = {
     ...nextBlocks[index],
-    ...incomingBlock
+    ...incomingBlock,
   } as WorkbenchProcessingBlock<TFileChanges>
   return nextBlocks
 }

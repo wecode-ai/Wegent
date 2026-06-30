@@ -180,6 +180,57 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
+  test('shows the plan mode switch next to the add context button', async () => {
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          selectedModelOptions: {},
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    const toggle = screen.getByTestId('collaboration-mode-toggle')
+    expect(toggle).toHaveAttribute('role', 'switch')
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).toHaveTextContent('计划模式')
+    expect(
+      screen.getByTestId('add-context-button').compareDocumentPosition(toggle) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await userEvent.click(toggle)
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+  })
+
+  test('shows the plan mode switch as checked when plan mode is selected', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          selectedModelOptions: { collaborationMode: 'plan' },
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('collaboration-mode-toggle')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('collaboration-mode-toggle').querySelector('span span')).toHaveClass(
+      'left-0.5',
+      'translate-x-3'
+    )
+  })
+
   test('shows desktop pause button while the assistant is streaming', async () => {
     const onPause = vi.fn()
 
@@ -1206,6 +1257,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-collaborationMode-default')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-collaborationMode-plan')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
@@ -1529,6 +1582,46 @@ describe('ChatInput', () => {
     })
   })
 
+  test('selects Codex plan mode from the desktop model menu', async () => {
+    const model: UnifiedModel = {
+      name: 'codex-gpt-5.5',
+      type: 'user',
+      displayName: 'Codex:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-control-collaborationMode-plan'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+    await waitFor(() => {
+      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    })
+  })
+
   test('keeps reasoning controls for the selected GPT model while hovering another family', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
@@ -1670,12 +1763,12 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('add-context-button'))
 
-    expect(screen.getByTestId('add-context-menu')).toBeInTheDocument()
-    expect(screen.getByText('添加照片和文件')).toBeInTheDocument()
-    expect(screen.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
-    expect(screen.queryByText('计划模式')).not.toBeInTheDocument()
-    expect(screen.queryByText('追求目标')).not.toBeInTheDocument()
-    expect(screen.queryByText('插件')).not.toBeInTheDocument()
+    const menu = within(screen.getByTestId('add-context-menu'))
+    expect(menu.getByText('添加照片和文件')).toBeInTheDocument()
+    expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
+    expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
+    expect(menu.queryByText('追求目标')).not.toBeInTheDocument()
+    expect(menu.queryByText('插件')).not.toBeInTheDocument()
   })
 
   test('renders attachment badges and removes an attachment', async () => {

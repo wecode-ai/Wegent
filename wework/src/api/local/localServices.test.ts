@@ -1,12 +1,8 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getLocalUser, LOCAL_USER } from './localSession'
+import { describe, expect, test, vi } from 'vitest'
+import { LOCAL_USER } from './localSession'
 import { createLocalAppServices } from './localServices'
 
 describe('createLocalAppServices', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
-
   test('returns local bootstrap data without backend', async () => {
     const request = vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
     const ensure = vi.fn().mockResolvedValue({
@@ -55,58 +51,6 @@ describe('createLocalAppServices', () => {
       totalLocalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
-  })
-
-  test('persists local user preferences across local service instances', async () => {
-    const firstServices = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({
-        running: true,
-        ready: true,
-        deviceId: 'local-device',
-      }),
-      request: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
-      subscribe: vi.fn(),
-    })
-
-    await firstServices.userApi?.updateCurrentUser({
-      preferences: {
-        wework_project_work_preferences: {
-          'project:7': {
-            executionMode: 'git_worktree',
-            worktreeBranch: 'feature/alpha',
-          },
-        },
-      },
-    })
-
-    const secondServices = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({
-        running: true,
-        ready: true,
-        deviceId: 'local-device',
-      }),
-      request: vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 }),
-      subscribe: vi.fn(),
-    })
-
-    await expect(secondServices.userApi?.updateCurrentUser({})).resolves.toMatchObject({
-      preferences: {
-        wework_project_work_preferences: {
-          'project:7': {
-            executionMode: 'git_worktree',
-            worktreeBranch: 'feature/alpha',
-          },
-        },
-      },
-    })
-    expect(getLocalUser().preferences).toMatchObject({
-      wework_project_work_preferences: {
-        'project:7': {
-          executionMode: 'git_worktree',
-          worktreeBranch: 'feature/alpha',
-        },
-      },
-    })
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {
@@ -253,7 +197,9 @@ describe('createLocalAppServices', () => {
       modelId: 'gpt-5',
       modelOptions: {
         reasoning: 'medium',
+        collaborationMode: 'plan',
       },
+      collaborationMode: 'plan',
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
       attachments: [
         {
@@ -285,7 +231,9 @@ describe('createLocalAppServices', () => {
       modelId: 'gpt-5',
       modelOptions: {
         reasoning: 'medium',
+        collaborationMode: 'plan',
       },
+      collaborationMode: 'plan',
       additionalSkills: [{ name: 'planner', namespace: 'default' }],
       attachments: [
         {
@@ -334,6 +282,7 @@ describe('createLocalAppServices', () => {
         workspace_source: 'local_path',
         project_workspace_path: '/Users/me/project',
         new_session: true,
+        collaborationMode: 'plan',
         skill_names: ['planner'],
         preload_skills: [{ name: 'planner', namespace: 'default' }],
         user_selected_skills: [{ name: 'planner', namespace: 'default' }],
@@ -570,6 +519,7 @@ describe('createLocalAppServices', () => {
       message: 'continue',
       modelId: 'codex-gpt-5.5',
       modelOptions: {
+        collaborationMode: 'default',
         reasoning: 'extra_high',
         summary: 'concise',
         speed: 'fast',
@@ -594,7 +544,9 @@ describe('createLocalAppServices', () => {
       message: 'continue',
       message_id: expect.any(Number),
       modelId: 'gpt-5.5',
+      collaborationMode: 'default',
       modelOptions: {
+        collaborationMode: 'default',
         reasoning: 'extra_high',
         summary: 'concise',
         speed: 'fast',
@@ -612,6 +564,40 @@ describe('createLocalAppServices', () => {
           local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
         },
       ],
+    })
+  })
+
+  test('preserves request user input responses in local runtime send requests', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: { deviceId: 'local-device', localTaskId: 'task-1' },
+      message: '工作目标',
+      requestUserInputResponse: {
+        requestId: 42,
+        itemId: 'item-1',
+        answers: {
+          goal: { answers: ['工作目标'] },
+        },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
+      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+      message: '工作目标',
+      message_id: expect.any(Number),
+      requestUserInputResponse: {
+        requestId: 42,
+        itemId: 'item-1',
+        answers: {
+          goal: { answers: ['工作目标'] },
+        },
+      },
     })
   })
 

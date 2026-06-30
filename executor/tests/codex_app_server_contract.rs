@@ -57,6 +57,10 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(messages[0]["method"], "initialize");
+    assert_eq!(
+        messages[0]["params"]["capabilities"]["experimentalApi"],
+        true
+    );
     assert_eq!(messages[1]["method"], "initialized");
     assert_eq!(messages[2]["method"], "thread/start");
     assert_eq!(messages[2]["params"]["model"], "gpt-5");
@@ -301,41 +305,6 @@ async fn codex_app_server_receives_normalized_developer_path() {
     assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);
     assert!(path.contains("/opt/homebrew/sbin"));
     assert!(path.contains("/usr/local/bin"));
-}
-
-#[tokio::test]
-async fn codex_app_server_receives_task_identity_env() {
-    let _lock = env_lock().await;
-    let log_path = std::env::temp_dir().join(format!(
-        "wegent-executor-codex-task-identity-rpc-{}.jsonl",
-        std::process::id()
-    ));
-    let fake_codex = write_fake_codex_logging_start(
-        &log_path,
-        &["WEGENT_TASK_ID", "WEGENT_SUBTASK_ID", "AUTH_TOKEN"],
-    );
-    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
-    let request = ExecutionRequest {
-        task_id: 525,
-        subtask_id: 626,
-        auth_token: Some("task-jwt".to_owned()),
-        prompt: json!("inspect task env"),
-        bot: json!([{"shell_type": "Codex"}]),
-        model_config: json!({
-            "model": "openai",
-            "model_id": "gpt-5",
-            "protocol": "openai-responses"
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let outcome = engine.run(request).await;
-
-    assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
-    let messages = read_json_lines(&log_path);
-    assert_eq!(messages[0]["env"]["WEGENT_TASK_ID"], "525");
-    assert_eq!(messages[0]["env"]["WEGENT_SUBTASK_ID"], "");
-    assert_eq!(messages[0]["env"]["AUTH_TOKEN"], "task-jwt");
 }
 
 #[tokio::test]

@@ -18,6 +18,11 @@
   "assistant_status": {
     "stopped_after": "你在 {{duration}} 后停止了"
   },
+  "request_user_input": {
+    "ignore": "忽略",
+    "submit": "提交",
+    "custom_placeholder": "输入你的回答"
+  },
   "codex_context": {
     "compacting": "正在自动压缩上下文",
     "compacted": "上下文已自动压缩"

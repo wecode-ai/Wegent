@@ -38,7 +38,11 @@ export function selectedModelExecutionFields(
   selectedModel: UnifiedModel | null,
   selectedModelOptions: ModelOptions
 ): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> {
-  if (!selectedModel) return {}
+  if (!selectedModel) {
+    return Object.keys(selectedModelOptions).length > 0
+      ? { modelOptions: { ...selectedModelOptions } }
+      : {}
+  }
   const executionModel = resolveModelExecutionSelection(selectedModel)
   return {
     modelId: executionModel.modelName,

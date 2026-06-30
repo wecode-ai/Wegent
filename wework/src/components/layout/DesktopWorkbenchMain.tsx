@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -38,6 +39,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   CachedWorkbenchPaneStack,
   getWorkbenchPaneKey,
@@ -127,6 +129,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     projectChat,
     upgradeDevice,
     retryFailedMessage,
+    pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -203,7 +206,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
-  const contentDockedChatContentWidth = rightPanelOpen
+  const useDockedChatContentWidth = !sidebarCollapsed || rightPanelOpen
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
   const workspaceTargetDevice = workspaceTarget?.deviceId
@@ -285,6 +288,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible?: boolean
   } | null>(null)
   const paneMessages = paneSession.messages
+  const pendingRequestUserInput = pendingRequestUserInputPayload(
+    paneMessages,
+    paneSession.answeredRequestUserInputIds
+  )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -807,7 +814,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
               messageListClassName={
-                contentDockedChatContentWidth
+                useDockedChatContentWidth
                   ? cn(DESKTOP_DOCKED_MESSAGE_LIST_CLASS, chatContentResizing && 'transition-none')
                   : cn(
                       DESKTOP_CENTERED_MESSAGE_LIST_CLASS,
@@ -841,6 +848,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 })
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+              onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+              hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
@@ -848,7 +858,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             />
             <div
               className={
-                contentDockedChatContentWidth
+                useDockedChatContentWidth
                   ? cn(
                       DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS,
                       chatContentResizing && 'transition-none'
@@ -883,29 +893,36 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     className="mb-2"
                   />
                 )}
-                <ChatInput
-                  value={paneSession.input}
-                  onChange={paneSession.setInput}
-                  onSubmit={paneSession.send}
-                  disabled={composerDisabled}
-                  error={errorMessage}
-                  disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                  variant="desktop"
-                  projectChat={projectChatWithModelSelectorSignal}
-                  projectWork={paneProjectWork}
-                  showProjectWorkBar={false}
-                  queuedMessages={paneQueuedMessages}
-                  guidanceMessages={paneGuidanceMessages}
-                  codeComments={paneSession.codeCommentContexts}
-                  isStreaming={paneIsResponseStreaming}
-                  onPause={() => void paneSession.pauseCurrentResponse()}
-                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                  onEditQueuedMessage={paneSession.editQueuedMessage}
-                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                  onClearCodeComments={paneSession.clearCodeComments}
-                />
+                {pendingRequestUserInput ? (
+                  <RequestUserInputCard
+                    payload={pendingRequestUserInput}
+                    onSubmit={paneSession.sendRequestUserInputResponse}
+                  />
+                ) : (
+                  <ChatInput
+                    value={paneSession.input}
+                    onChange={paneSession.setInput}
+                    onSubmit={paneSession.send}
+                    disabled={composerDisabled}
+                    error={errorMessage}
+                    disabledReason={inlineComposerDisabledReason}
+                    placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                    variant="desktop"
+                    projectChat={projectChatWithModelSelectorSignal}
+                    projectWork={paneProjectWork}
+                    showProjectWorkBar={false}
+                    queuedMessages={paneQueuedMessages}
+                    guidanceMessages={paneGuidanceMessages}
+                    codeComments={paneSession.codeCommentContexts}
+                    isStreaming={paneIsResponseStreaming}
+                    onPause={() => void pauseCurrentResponse(paneMessages)}
+                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                    onEditQueuedMessage={paneSession.editQueuedMessage}
+                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                    onClearCodeComments={paneSession.clearCodeComments}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -913,7 +930,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <div className="flex flex-1 items-center justify-center px-10">
             <div
               className={
-                contentDockedChatContentWidth
+                useDockedChatContentWidth
                   ? cn(
                       DESKTOP_DOCKED_COMPOSER_FRAME_CLASS,
                       chatContentResizing && 'transition-none'
@@ -953,7 +970,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
-                onPause={() => void paneSession.pauseCurrentResponse()}
+                onPause={() => void pauseCurrentResponse(paneMessages)}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1044,7 +1061,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           devices={devices}
           requiresStop={paneIsResponseStreaming}
           onOpenChange={setForkDialogOpen}
-          onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
+          onStopCurrentResponse={() => pauseCurrentResponse(paneMessages)}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}
           onDeleteDeviceWorkspace={deleteDeviceWorkspace}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}

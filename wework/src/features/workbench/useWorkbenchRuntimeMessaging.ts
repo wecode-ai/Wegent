@@ -66,6 +66,8 @@ interface RuntimeMessagingModelSelection {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  getSelectedModel?: () => UnifiedModel | null
+  getSelectedModelOptions?: () => ModelOptions
 }
 
 interface RuntimeMessagingSkillSelection {
@@ -143,10 +145,9 @@ export function useWorkbenchRuntimeMessaging({
         })
         return false
       }
-      await refreshWorkLists()
       return true
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [dispatch, executorClient]
   )
 
   const buildSendPayload = useCallback(
@@ -181,7 +182,11 @@ export function useWorkbenchRuntimeMessaging({
         message,
       }
       const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
+      const selectedModelOptions =
+        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
       if (
         activeProject &&
@@ -197,22 +202,21 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+      debugRuntimeCreateFlow('model-options-resolved', {
+        selectedModel: selectedModel?.name ?? null,
+        selectedModelType: selectedModel?.type ?? null,
+        selectedModelOptions: summarizeModelOptions(selectedModelOptions),
+        executionModelOptions: summarizeModelOptions(executionModel.modelOptions),
+      })
       if (selectedModel) {
-        const executionModel = selectedModelExecutionFields(
-          selectedModel,
-          modelSelection.selectedModelOptions
-        )
         payload.force_override_bot_model = executionModel.modelId
         if (executionModel.modelType) {
           payload.force_override_bot_model_type = executionModel.modelType
         }
-        if (
-          modelSelection.selectedModel &&
-          executionModel.modelOptions &&
-          Object.keys(executionModel.modelOptions).length > 0
-        ) {
-          payload.model_options = executionModel.modelOptions
-        }
+      }
+      if (executionModel.modelOptions && Object.keys(executionModel.modelOptions).length > 0) {
+        payload.model_options = executionModel.modelOptions
       }
 
       if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
@@ -261,7 +265,9 @@ export function useWorkbenchRuntimeMessaging({
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
       const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
       const runtime = inferRuntimeName(selectedModel)
       const localTaskId = createRuntimeLocalTaskId(runtime)
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
@@ -330,6 +336,13 @@ export function useWorkbenchRuntimeMessaging({
         attachments: payload.attachments ?? [],
         execution: payload.execution,
       }
+      debugRuntimeCreateFlow('create-request-built', {
+        localTaskId,
+        runtime,
+        modelId: createRequest.modelId ?? null,
+        modelType: createRequest.modelType ?? null,
+        modelOptions: summarizeModelOptions(createRequest.modelOptions),
+      })
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         workspacePath:
@@ -468,10 +481,14 @@ export function useWorkbenchRuntimeMessaging({
         trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
       const payloadMessage = appendCodeCommentContexts(message, effectiveCodeCommentContexts)
       const runtimeSelectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
+      const runtimeSelectedModelOptions =
+        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
       const runtimeModelFields = selectedModelExecutionFields(
         runtimeSelectedModel,
-        modelSelection.selectedModelOptions
+        runtimeSelectedModelOptions
       )
 
       if (state.currentRuntimeTask) {
@@ -601,14 +618,15 @@ export function useWorkbenchRuntimeMessaging({
         }
         try {
           const runtimeSelectedModel =
-            modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+            modelSelection.getSelectedModel?.() ??
+            modelSelection.selectedModel ??
+            resolveAutomaticModel(modelSelection.models)
+          const runtimeSelectedModelOptions =
+            modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
           const response = await executorClient.runtime.sendRuntimeMessage({
             address: state.currentRuntimeTask,
             message: previousUserMessage.content,
-            ...selectedModelExecutionFields(
-              runtimeSelectedModel,
-              modelSelection.selectedModelOptions
-            ),
+            ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           })
           if (!response.accepted) {
             throw new Error(response.error || '发送失败')
@@ -757,11 +775,9 @@ export function useWorkbenchRuntimeMessaging({
           type: 'error_set',
           error: normalizeGuidanceError(ack.error ?? '取消当前回复失败'),
         })
-        return
       }
-      await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists, state.currentRuntimeTask]
+    [dispatch, executorClient, state.currentRuntimeTask]
   )
 
   return {
@@ -843,6 +859,17 @@ function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>)
     event,
     ...details,
   })
+}
+
+function summarizeModelOptions(modelOptions: ModelOptions | undefined): Record<string, unknown> {
+  if (!modelOptions) return {}
+  return {
+    keys: Object.keys(modelOptions),
+    collaborationMode: modelOptions.collaborationMode ?? modelOptions.collaboration_mode ?? null,
+    reasoning: modelOptions.reasoning ?? null,
+    summary: modelOptions.summary ?? null,
+    speed: modelOptions.speed ?? modelOptions.service_tier ?? null,
+  }
 }
 
 function isRuntimeDebugEnabled(): boolean {

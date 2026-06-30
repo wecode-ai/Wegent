@@ -564,6 +564,8 @@ async def send_runtime_message(
         payload["attachments"] = attachments
     if request.source:
         payload["source"] = request.source.model_dump()
+    if request.request_user_input_response is not None:
+        payload["requestUserInputResponse"] = request.request_user_input_response
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,

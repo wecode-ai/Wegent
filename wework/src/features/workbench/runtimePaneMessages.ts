@@ -283,10 +283,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
   }
 }
 
-function getRuntimeMessageBlockTurnId(
-  message: NormalizedRuntimeMessage,
-  turnId?: number
-): number {
+function getRuntimeMessageBlockTurnId(message: NormalizedRuntimeMessage, turnId?: number): number {
   if (typeof turnId === 'number') return turnId
 
   let hash = 0
@@ -384,6 +381,7 @@ function normalizeProcessingBlock(
       toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
       toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
       toolOutput: block.tool_output,
+      renderPayload: block.renderPayload ?? block.render_payload,
       status,
       createdAt: timestamp,
     }

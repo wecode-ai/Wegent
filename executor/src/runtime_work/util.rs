@@ -120,6 +120,26 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(collaboration_mode) = payload
+        .get("collaborationMode")
+        .or_else(|| payload.get("collaboration_mode"))
+        .or_else(|| {
+            payload
+                .get("modelOptions")
+                .or_else(|| payload.get("model_options"))
+                .and_then(|options| {
+                    options
+                        .get("collaborationMode")
+                        .or_else(|| options.get("collaboration_mode"))
+                })
+        })
+        .filter(|value| value.is_string())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("collaborationMode".to_owned(), collaboration_mode);
+    }
     if let Some(message_id) = integer_field(payload, "message_id") {
         request.message_id = Some(message_id);
     }

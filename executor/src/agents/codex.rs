@@ -122,6 +122,8 @@ pub struct CodexAppServerTurn {
     pub outcome: ExecutionOutcome,
 }
 
+pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
+
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
     binary: String,
@@ -274,6 +276,7 @@ pub async fn run_codex_app_server_turn(
         initial_thread_name,
         notifications,
         None,
+        None,
     )
     .await
 }
@@ -285,6 +288,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
     initial_thread_name: Option<String>,
     notifications: Option<CodexNotificationSender>,
     mut cancellation: Option<oneshot::Receiver<()>>,
+    request_user_input_answers: Option<CodexRequestUserInputReceiver>,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
     let launch_config = build_codex_launch_config(&prepared.request);
@@ -410,12 +414,22 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {
-                outcome = rpc.read_turn(turn_request_id, &mut state, notifications) => outcome?,
+                outcome = rpc.read_turn(
+                    turn_request_id,
+                    &mut state,
+                    notifications,
+                    request_user_input_answers,
+                ) => outcome?,
                 _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
             }
         } else {
-            rpc.read_turn(turn_request_id, &mut state, notifications)
-                .await?
+            rpc.read_turn(
+                turn_request_id,
+                &mut state,
+                notifications,
+                request_user_input_answers,
+            )
+            .await?
         };
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
@@ -614,6 +628,7 @@ impl JsonRpcConnection {
         turn_request_id: u64,
         state: &mut CodexRunState,
         notifications: Option<CodexNotificationSender>,
+        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
         loop {
@@ -627,6 +642,15 @@ impl JsonRpcConnection {
             if let Some(sender) = &notifications {
                 let _ = sender.send(message.clone());
             }
+            if message
+                .get("method")
+                .and_then(Value::as_str)
+                .is_some_and(|method| method == "item/tool/requestUserInput")
+            {
+                self.answer_request_user_input(&message, &mut request_user_input_answers)
+                    .await?;
+                continue;
+            }
             if let Some(outcome) = state.handle_message(&message) {
                 return Ok(outcome);
             }
@@ -634,6 +658,27 @@ impl JsonRpcConnection {
                 continue;
             }
         }
+    }
+
+    async fn answer_request_user_input(
+        &mut self,
+        message: &Value,
+        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    ) -> Result<(), String> {
+        let request_id = response_id(message)
+            .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
+        let Some(receiver) = request_user_input_answers else {
+            return Err("request_user_input requires a runtime response channel".to_owned());
+        };
+        let response = receiver
+            .recv()
+            .await
+            .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
+        self.write_message(json!({
+            "id": request_id,
+            "result": request_user_input_result(response),
+        }))
+        .await
     }
 
     async fn write_message(&mut self, message: Value) -> Result<(), String> {
@@ -985,6 +1030,9 @@ fn initialize_params() -> Value {
             "name": "wegent_executor",
             "title": "Wegent Executor",
             "version": crate::version::get_version(),
+        },
+        "capabilities": {
+            "experimentalApi": true,
         }
     })
 }
@@ -2042,7 +2090,38 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
+    if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
+        params.insert("collaborationMode".to_owned(), collaboration_mode);
+    }
     Value::Object(params)
+}
+
+fn codex_collaboration_mode_payload(
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> Option<Value> {
+    let mode = match codex_collaboration_mode(request)? {
+        mode if mode.eq_ignore_ascii_case("plan") => "plan",
+        mode if mode.eq_ignore_ascii_case("default") => "default",
+        _ => return None,
+    };
+
+    Some(json!({
+        "mode": mode,
+        "settings": {
+            "model": model_id(request),
+            "reasoningEffort": launch_config.effort,
+            "developerInstructions": Value::Null,
+        }
+    }))
+}
+
+fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("collaborationMode")
+        .or_else(|| request.extra.get("collaboration_mode"))
+        .and_then(Value::as_str)
 }
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
@@ -2114,6 +2193,15 @@ fn response_result(message: Value) -> Result<Value, String> {
             .unwrap_or_else(|| error.to_string()));
     }
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
+}
+
+fn request_user_input_result(response: Value) -> Value {
+    if response.get("answers").is_some() {
+        return json!({
+            "answers": response.get("answers").cloned().unwrap_or_else(|| json!({})),
+        });
+    }
+    response
 }
 
 fn message_params(message: &Value) -> &Value {
@@ -2350,5 +2438,73 @@ mod tests {
                 content: "Current directory: /tmp/project".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("plan this".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5",
+            }),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "collaborationMode".to_owned(),
+            Value::String("plan".to_owned()),
+        );
+        let launch_config = CodexLaunchConfig {
+            effort: Some("high".to_owned()),
+            ..CodexLaunchConfig::default()
+        };
+
+        let params = turn_start_params(
+            "thread-1",
+            &request,
+            &launch_config,
+            vec![json!({"type": "text", "text": "plan this"})],
+        );
+
+        assert_eq!(params["collaborationMode"]["mode"], "plan");
+        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+        assert_eq!(
+            params["collaborationMode"]["settings"]["reasoningEffort"],
+            "high"
+        );
+        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn turn_start_params_includes_default_collaboration_mode_when_requested() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("continue this".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5",
+            }),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "collaborationMode".to_owned(),
+            Value::String("default".to_owned()),
+        );
+        let launch_config = CodexLaunchConfig {
+            effort: Some("medium".to_owned()),
+            ..CodexLaunchConfig::default()
+        };
+
+        let params = turn_start_params(
+            "thread-1",
+            &request,
+            &launch_config,
+            vec![json!({"type": "text", "text": "continue this"})],
+        );
+
+        assert_eq!(params["collaborationMode"]["mode"], "default");
+        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+        assert_eq!(
+            params["collaborationMode"]["settings"]["reasoningEffort"],
+            "medium"
+        );
+        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
     }
 }
