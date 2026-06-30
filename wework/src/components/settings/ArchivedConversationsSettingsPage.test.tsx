@@ -2,24 +2,15 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
-import { createHttpClient } from '@/api/http'
-import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createLocalAppServices } from '@/api/local/localServices'
 import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
 
-vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+vi.mock('@/api/local/localServices', () => ({
+  createLocalAppServices: vi.fn(),
 }))
 
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
-}))
-
-vi.mock('@/api/runtimeWork', () => ({
-  createRuntimeWorkApi: vi.fn(),
-}))
-
-const createRuntimeWorkApiMock = vi.mocked(createRuntimeWorkApi)
+const createLocalAppServicesMock = vi.mocked(createLocalAppServices)
 
 const archivedItem: ArchivedConversationItem = {
   id: 'conversation-1',
@@ -50,12 +41,14 @@ describe('ArchivedConversationsSettingsPage', () => {
     deleteArchivedConversation.mockResolvedValue({})
     deleteArchivedConversationsBulk.mockResolvedValue({})
     unarchiveConversation.mockResolvedValue({})
-    createRuntimeWorkApiMock.mockReturnValue({
-      listArchivedConversations,
-      deleteArchivedConversation,
-      deleteArchivedConversationsBulk,
-      unarchiveConversation,
-    } as unknown as ReturnType<typeof createRuntimeWorkApi>)
+    createLocalAppServicesMock.mockReturnValue({
+      runtimeWorkApi: {
+        listArchivedConversations,
+        deleteArchivedConversation,
+        deleteArchivedConversationsBulk,
+        unarchiveConversation,
+      },
+    } as unknown as ReturnType<typeof createLocalAppServices>)
   })
 
   afterEach(() => {
@@ -90,6 +83,6 @@ describe('ArchivedConversationsSettingsPage', () => {
     })
     expect(listArchivedConversations).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Greet user')).not.toBeInTheDocument()
-    expect(createHttpClient).toHaveBeenCalledWith({ baseUrl: '/api' })
+    expect(createLocalAppServices).toHaveBeenCalledTimes(1)
   })
 })

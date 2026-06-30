@@ -19,7 +19,11 @@ use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeW
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    std::env::set_var("WEGENT_DISABLE_CODEX_APP_NOTIFY", "1");
+    std::env::set_var("WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH", "1");
+    std::env::remove_var("WEGENT_DISABLE_CODEX_GLOBAL_STATE_OPLOG_FLUSH");
+    guard
 }
 
 struct EnvGuard {
@@ -102,6 +106,56 @@ async fn runtime_workspace_open_persists_empty_workspace_without_starting_thread
         .join("runtime-work")
         .join("index.json")
         .exists());
+}
+
+#[tokio::test]
+async fn runtime_workspace_open_backfills_saved_roots_into_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-workspace-open-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-workspace-open-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": [
+                "/repo/Unordered",
+                "/repo/Ordered"
+            ],
+            "project-order": ["/repo/Ordered"]
+        }),
+    );
+    let fake_codex = write_fake_codex_with_threads(
+        &temp_path("runtime-workspace-open-order-log", "jsonl"),
+        "[]",
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let opened = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "workspacePath": "/repo/New",
+                "label": "New"
+            }
+        }))
+        .await
+        .expect("workspace open should succeed");
+
+    assert_eq!(opened["accepted"], true);
+    let codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(
+        codex_state["electron-saved-workspace-roots"],
+        json!(["/repo/New", "/repo/Unordered", "/repo/Ordered"])
+    );
+    assert_eq!(
+        codex_state["project-order"],
+        json!(["/repo/New", "/repo/Ordered", "/repo/Unordered"])
+    );
 }
 
 #[tokio::test]
@@ -450,6 +504,392 @@ async fn runtime_task_list_preserves_codex_global_project_order() {
 }
 
 #[tokio::test]
+async fn runtime_task_list_keeps_new_project_first_when_old_roots_are_missing_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-global-saved-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-global-saved-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": [
+                "/repo/hello-33",
+                "/repo/hello-32",
+                "/repo/hello-31",
+                "/repo/Wegent"
+            ],
+            "remote-projects": [{
+                "id": "remote-project-1",
+                "hostId": "remote-ssh-discovered:10.201.3.200",
+                "remotePath": "/home/ubuntu/workspace/Wegent",
+                "label": "Remote Wegent"
+            }],
+            "project-order": [
+                "/repo/hello-33",
+                "remote-project-1",
+                "/repo/Wegent"
+            ]
+        }),
+    );
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-global-saved-order-log", "jsonl"), "[]");
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(listed["success"], true);
+    let workspaces = listed["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 5);
+    assert_eq!(workspaces[0]["workspacePath"], "/repo/hello-33");
+    assert_eq!(workspaces[1]["workspacePath"], "/repo/hello-32");
+    assert_eq!(workspaces[2]["workspacePath"], "/repo/hello-31");
+    assert_eq!(
+        workspaces[3]["workspacePath"],
+        "/home/ubuntu/workspace/Wegent"
+    );
+    assert_eq!(workspaces[4]["workspacePath"], "/repo/Wegent");
+}
+
+#[tokio::test]
+async fn runtime_task_list_matches_codex_saved_and_nested_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-global-nested-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-global-nested-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": [
+                "/repo/hello-11 2",
+                "/repo/Wegent/wework",
+                "/repo/Wegent"
+            ],
+            "remote-projects": [{
+                "id": "remote-project-1",
+                "hostId": "remote-ssh-discovered:10.201.3.200",
+                "remotePath": "/home/ubuntu/workspace/Wegent",
+                "label": "Remote Wegent"
+            }],
+            "project-order": [
+                "remote-project-1",
+                "/repo/Wegent",
+                "/repo/Wegent/wework"
+            ],
+            "electron-workspace-root-labels": {
+                "/repo/Wegent/wework": "wework"
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-hello",
+            "cwd": "/repo/hello-11 2",
+            "name": "Hello task",
+            "preview": "hello task",
+            "path": "/tmp/codex/thread-hello.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-parent",
+            "cwd": "/repo/Wegent/backend",
+            "name": "Parent task",
+            "preview": "parent task",
+            "path": "/tmp/codex/thread-parent.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-child",
+            "cwd": "/repo/Wegent/wework/src",
+            "name": "Child task",
+            "preview": "child task",
+            "path": "/tmp/codex/thread-child.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000300000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex = write_fake_codex_with_threads(
+        &temp_path("runtime-global-nested-order-log", "jsonl"),
+        &threads,
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(listed["success"], true);
+    let workspaces = listed["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 4);
+    assert_eq!(workspaces[0]["workspacePath"], "/repo/hello-11 2");
+    assert_eq!(
+        workspaces[1]["workspacePath"],
+        "/home/ubuntu/workspace/Wegent"
+    );
+    assert_eq!(workspaces[1]["workspaceSource"], "remote");
+    assert_eq!(workspaces[2]["workspacePath"], "/repo/Wegent");
+    assert_eq!(workspaces[3]["workspacePath"], "/repo/Wegent/wework");
+    assert_eq!(workspaces[3]["label"], "wework");
+    assert_eq!(
+        workspaces[0]["localTasks"][0]["localTaskId"],
+        "thread-hello"
+    );
+    assert_eq!(
+        workspaces[2]["localTasks"][0]["localTaskId"],
+        "thread-parent"
+    );
+    assert_eq!(
+        workspaces[3]["localTasks"][0]["localTaskId"],
+        "thread-child"
+    );
+}
+
+#[tokio::test]
+async fn runtime_task_list_preserves_remote_codex_projects() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-remote-project-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-remote-project-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "remote-projects": [{
+                "id": "remote-project-1",
+                "hostId": "remote-ssh-discovered:10.201.3.200",
+                "remotePath": "/home/ubuntu/workspace/Wegent",
+                "label": "Remote Wegent"
+            }],
+            "project-order": ["remote-project-1"]
+        }),
+    );
+    let threads = json!([{
+        "id": "thread-remote",
+        "cwd": "/home/ubuntu/workspace/Wegent",
+        "name": "Remote task",
+        "preview": "remote task",
+        "path": "/tmp/codex/thread-remote.jsonl",
+        "createdAt": 1780000000000_i64,
+        "updatedAt": 1780000060000_i64,
+        "status": "idle",
+        "turns": []
+    }])
+    .to_string();
+    let log_path = temp_path("runtime-remote-project-log", "jsonl");
+    let fake_codex = write_fake_codex_with_threads(&log_path, &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let workspace = &listed["workspaces"][0];
+    assert_eq!(workspace["workspacePath"], "/home/ubuntu/workspace/Wegent");
+    assert_eq!(workspace["label"], "Remote Wegent");
+    assert_eq!(workspace["workspaceSource"], "remote");
+    assert_eq!(
+        workspace["remoteHostId"],
+        "remote-ssh-discovered:10.201.3.200"
+    );
+    assert_eq!(workspace["localTasks"][0]["localTaskId"], "thread-remote");
+
+    let archived = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.archived_conversations.archive_project",
+            "payload": {
+                "runtimeProjectKey": "remote-project-1",
+                "workspacePath": "remote-project-1"
+            }
+        }))
+        .await
+        .expect("remote project archive should succeed");
+
+    assert_eq!(archived["accepted"], true);
+    assert_eq!(archived["requestedCount"], 1);
+    let archive_calls = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "thread/archive")
+        .collect::<Vec<_>>();
+    assert_eq!(archive_calls.len(), 1);
+    assert_eq!(archive_calls[0]["params"]["threadId"], "thread-remote");
+}
+
+#[tokio::test]
+async fn runtime_task_list_uses_thread_root_hints_and_skips_projectless_threads() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-thread-hints-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-thread-hints-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Wegent"],
+            "project-order": ["/repo/Wegent"],
+            "thread-workspace-root-hints": {
+                "thread-hinted": "/repo/Wegent"
+            },
+            "projectless-thread-ids": ["thread-projectless"]
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-hinted",
+            "cwd": "/tmp/outside",
+            "name": "Hinted task",
+            "preview": "hinted task",
+            "path": "/tmp/codex/thread-hinted.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-projectless",
+            "cwd": "/repo/Wegent",
+            "name": "Projectless task",
+            "preview": "projectless task",
+            "path": "/tmp/codex/thread-projectless.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000070000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-thread-hints-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let workspace = &listed["workspaces"][0];
+    assert_eq!(workspace["workspacePath"], "/repo/Wegent");
+    let tasks = workspace["localTasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["localTaskId"], "thread-hinted");
+}
+
+#[tokio::test]
+async fn runtime_archives_project_and_all_conversations() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-archive-project-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let codex_home = temp_path("runtime-archive-project-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Wegent", "/repo/Other"],
+            "project-order": ["/repo/Wegent", "/repo/Other"]
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-project",
+            "cwd": "/repo/Wegent",
+            "name": "Project task",
+            "preview": "project task",
+            "path": "/tmp/codex/thread-project.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-other",
+            "cwd": "/repo/Other",
+            "name": "Other task",
+            "preview": "other task",
+            "path": "/tmp/codex/thread-other.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000070000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let log_path = temp_path("runtime-archive-project-log", "jsonl");
+    let fake_codex = write_fake_codex_with_threads(&log_path, &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let archived_project = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.archived_conversations.archive_project",
+            "payload": {"runtimeProjectKey": "local:/repo/Wegent"}
+        }))
+        .await
+        .expect("project archive should succeed");
+    let archived_all = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.archived_conversations.archive_all",
+            "payload": {}
+        }))
+        .await
+        .expect("archive all should succeed");
+
+    assert_eq!(archived_project["accepted"], true);
+    assert_eq!(archived_project["requestedCount"], 1);
+    assert_eq!(archived_project["acceptedCount"], 1);
+    assert_eq!(archived_all["accepted"], true);
+    assert_eq!(archived_all["requestedCount"], 1);
+    assert_eq!(archived_all["acceptedCount"], 1);
+    let archive_calls = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "thread/archive")
+        .collect::<Vec<_>>();
+    assert_eq!(archive_calls.len(), 2);
+    assert_eq!(archive_calls[0]["params"]["threadId"], "thread-project");
+    assert_eq!(archive_calls[1]["params"]["threadId"], "thread-other");
+}
+
+#[tokio::test]
 async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -460,7 +900,24 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     );
     let codex_home = temp_path("runtime-workspace-manage-codex-home", "dir");
     let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
-    let fake_codex = write_fake_codex_empty(&temp_path("runtime-workspace-manage-log", "jsonl"));
+    let threads = json!([
+        {
+            "id": "thread-in-project",
+            "cwd": "/tmp/project",
+            "name": "Existing task",
+            "preview": "existing task",
+            "path": "/tmp/codex/thread-in-project.jsonl",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000060000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex = write_fake_codex_with_threads(
+        &temp_path("runtime-workspace-manage-log", "jsonl"),
+        &threads,
+    );
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     handler
@@ -492,6 +949,10 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
         }))
         .await
         .expect("task list should succeed");
+    let mut codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    codex_state["active-workspace-roots"] = json!(["/tmp/project"]);
+    codex_state["pinned-project-ids"] = json!(["/tmp/project", "remote-project"]);
+    write_codex_global_state(&codex_home, codex_state);
     let removed = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.workspaces.remove",
@@ -512,11 +973,111 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
 
     assert_eq!(renamed["success"], true);
     assert_eq!(listed["workspaces"][0]["label"], "New name");
+    assert_eq!(
+        listed["workspaces"][0]["localTasks"][0]["localTaskId"],
+        "thread-in-project"
+    );
     assert_eq!(removed["success"], true);
     assert_eq!(listed_after_remove["workspaces"], json!([]));
     let codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert_eq!(codex_state["electron-saved-workspace-roots"], json!([]));
     assert_eq!(codex_state["project-order"], json!([]));
+    assert_eq!(codex_state["active-workspace-roots"], json!([]));
+    assert_eq!(codex_state["pinned-project-ids"], json!(["remote-project"]));
+    assert_eq!(codex_state["electron-workspace-root-labels"], json!({}));
+}
+
+#[tokio::test]
+async fn runtime_workspace_oplog_overlays_project_changes_while_codex_is_running() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-workspace-oplog-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _disable_flush = EnvGuard::set("WEGENT_DISABLE_CODEX_GLOBAL_STATE_OPLOG_FLUSH", "1");
+    let codex_home = temp_path("runtime-workspace-oplog-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Other", "/repo/Old"],
+            "project-order": ["/repo/Other", "/repo/Old"],
+            "electron-workspace-root-labels": {
+                "/repo/Old": "Old name"
+            }
+        }),
+    );
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-workspace-oplog-log", "jsonl"), "[]");
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/New",
+                "label": "New project"
+            }
+        }))
+        .await
+        .expect("workspace open should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.rename",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Old",
+                "label": "Renamed old"
+            }
+        }))
+        .await
+        .expect("workspace rename should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.remove",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Other"
+            }
+        }))
+        .await
+        .expect("workspace remove should succeed");
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(listed["workspaces"][0]["workspacePath"], "/repo/New");
+    assert_eq!(listed["workspaces"][0]["label"], "New project");
+    assert_eq!(listed["workspaces"][1]["workspacePath"], "/repo/Old");
+    assert_eq!(listed["workspaces"][1]["label"], "Renamed old");
+    assert_eq!(listed["workspaces"].as_array().unwrap().len(), 2);
+
+    let codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(
+        codex_state["electron-saved-workspace-roots"],
+        json!(["/repo/Other", "/repo/Old"])
+    );
+    assert_eq!(
+        codex_state["project-order"],
+        json!(["/repo/Other", "/repo/Old"])
+    );
+    assert_eq!(
+        codex_state["electron-workspace-root-labels"]["/repo/Old"],
+        "Old name"
+    );
+
+    let oplog_path = executor_home
+        .join("runtime-work")
+        .join(".codex-global-state.oplog.jsonl");
+    let oplog = fs::read_to_string(oplog_path).expect("oplog should remain pending");
+    let ops = oplog.lines().collect::<Vec<_>>();
+    assert_eq!(ops.len(), 3);
+    assert!(ops[0].contains("\"kind\":\"upsert\""));
+    assert!(ops[1].contains("\"kind\":\"rename\""));
+    assert!(ops[2].contains("\"kind\":\"remove\""));
 }
 
 #[tokio::test]
@@ -730,6 +1291,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":{},"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/archive"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"success":true}}}}'
       ;;
   esac
 done

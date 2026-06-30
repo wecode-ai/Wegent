@@ -48,6 +48,7 @@ fn attachment(id: i64, filename: &str) -> AttachmentRecord {
     AttachmentRecord {
         id,
         original_filename: filename.to_owned(),
+        status: None,
         local_path: None,
         file_size: None,
         mime_type: None,

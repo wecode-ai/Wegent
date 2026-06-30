@@ -145,7 +145,11 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
 }
 
 fn default_index_path() -> PathBuf {
-    executor_home().join("runtime-work").join("index.json")
+    runtime_work_dir().join("index.json")
+}
+
+pub(crate) fn runtime_work_dir() -> PathBuf {
+    executor_home().join("runtime-work")
 }
 
 fn executor_home() -> PathBuf {

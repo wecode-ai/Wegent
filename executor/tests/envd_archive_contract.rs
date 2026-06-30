@@ -219,7 +219,7 @@ fn restore_skips_unsafe_home_members_from_old_archives() {
 
 #[cfg(unix)]
 #[test]
-fn archive_skips_symlinked_workspace_entries() {
+fn archive_includes_symlink_entries_without_following_targets() {
     let root = temp_root("archive-symlinks");
     let workspace = root.join("workspace").join("2490");
     let home = root.join("home");
@@ -243,7 +243,8 @@ fn archive_skips_symlinked_workspace_entries() {
     let names = archive_names(&archive.bytes);
 
     assert!(names.contains(&"workspace/keep.txt".to_owned()));
-    assert!(!names.contains(&"workspace/secret-link.txt".to_owned()));
+    assert!(names.contains(&"workspace/secret-link.txt".to_owned()));
+    assert!(names.contains(&"workspace/loop".to_owned()));
     assert!(!names.iter().any(|name| name.starts_with("workspace/loop/")));
 }
 

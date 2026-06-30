@@ -29,6 +29,11 @@ Block types for mixed content rendering:
 """
 
 from . import db
+from .attachment_sync import (
+    AttachmentSyncItem,
+    AttachmentSyncRequest,
+    AttachmentSyncResponse,
+)
 
 # Block types for mixed content rendering
 from .blocks import (
@@ -137,6 +142,9 @@ __all__ = [
     "EventType",
     "ExecutionEvent",
     "ExecutionRequest",
+    "AttachmentSyncItem",
+    "AttachmentSyncRequest",
+    "AttachmentSyncResponse",
     "KnowledgeBaseScope",
     "BackendAttachmentStreamContentRef",
     "ContentRef",

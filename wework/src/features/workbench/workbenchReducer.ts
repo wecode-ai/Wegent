@@ -74,6 +74,12 @@ export type WorkbenchAction =
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
+      type: 'runtime_workspace_opened'
+      deviceId: string
+      workspacePath: string
+      label?: string | null
+    }
+  | {
       type: 'project_workspace_selected'
       project: ProjectWithTasks
       deviceWorkspaceId: number | null
@@ -613,6 +619,134 @@ function runtimeWorkspaceFromMapping(
   }
 }
 
+function stableRuntimeProjectId(value: string): number {
+  let hash = 0
+  for (const char of value) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  }
+  return (hash % 1_000_000_000) + 1
+}
+
+function normalizeRuntimeWorkspacePath(path: string): string {
+  const trimmedPath = path.trim()
+  if (trimmedPath === '/') return trimmedPath
+  return trimmedPath.replace(/\/+$/, '')
+}
+
+function runtimeWorkspaceLabel(workspacePath: string, label?: string | null): string {
+  const trimmedLabel = label?.trim()
+  if (trimmedLabel) return trimmedLabel
+  return workspacePath.split('/').filter(Boolean).at(-1) || workspacePath
+}
+
+function runtimeWorkspaceFromOpenedWorkspace(
+  deviceId: string,
+  workspacePath: string,
+  label: string,
+  devices: DeviceInfo[]
+): RuntimeDeviceWorkspace {
+  const device = devices.find(item => item.device_id === deviceId)
+  return {
+    id: null,
+    projectId: null,
+    deviceId,
+    deviceName: device?.name ?? deviceId,
+    deviceStatus: device?.status ?? null,
+    available: device ? device.status !== 'offline' : true,
+    workspacePath,
+    workspaceKind: 'workspace',
+    label,
+    workspaceSource: 'local',
+    mapped: true,
+    localTasks: [],
+  }
+}
+
+function upsertOpenedRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  devices: DeviceInfo[],
+  deviceId: string,
+  workspacePath: string,
+  label?: string | null
+): RuntimeWorkListResponse {
+  const currentRuntimeWork = runtimeWork ?? {
+    projects: [],
+    chats: [],
+    totalLocalTasks: 0,
+  }
+  const normalizedDeviceId = deviceId.trim()
+  const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
+  const projectLabel = runtimeWorkspaceLabel(normalizedWorkspacePath, label)
+  const nextWorkspace = runtimeWorkspaceFromOpenedWorkspace(
+    normalizedDeviceId,
+    normalizedWorkspacePath,
+    projectLabel,
+    devices
+  )
+  const projectKey = `local:${normalizedWorkspacePath}`
+  const projectId = stableRuntimeProjectId(normalizedWorkspacePath)
+  const remainingProjects = currentRuntimeWork.projects
+    .map(projectWork => ({
+      ...projectWork,
+      deviceWorkspaces: projectWork.deviceWorkspaces.filter(
+        workspace =>
+          !(
+            workspace.deviceId === normalizedDeviceId &&
+            normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
+          )
+      ),
+    }))
+    .filter(projectWork => projectWork.deviceWorkspaces.length > 0)
+  const projects = [
+    {
+      project: {
+        key: projectKey,
+        id: projectId,
+        name: projectLabel,
+      },
+      deviceWorkspaces: [nextWorkspace],
+      totalLocalTasks: 0,
+    },
+    ...remainingProjects,
+  ]
+  const nextRuntimeWork = {
+    ...currentRuntimeWork,
+    projects,
+    chats: currentRuntimeWork.chats.filter(
+      workspace =>
+        !(
+          workspace.deviceId === normalizedDeviceId &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
+        )
+    ),
+  }
+
+  return {
+    ...nextRuntimeWork,
+    totalLocalTasks: countRuntimeWorkTasks(nextRuntimeWork),
+  }
+}
+
+function findRuntimeProjectByWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  deviceId: string,
+  workspacePath: string
+): RuntimeProjectWork | null {
+  const normalizedDeviceId = deviceId.trim()
+  const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
+  if (!normalizedDeviceId || !normalizedWorkspacePath) return null
+
+  return (
+    runtimeWork?.projects.find(projectWork =>
+      projectWork.deviceWorkspaces.some(
+        workspace =>
+          workspace.deviceId === normalizedDeviceId &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedWorkspacePath
+      )
+    ) ?? null
+  )
+}
+
 function upsertPreparedRuntimeWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projects: ProjectWithTasks[],
@@ -656,11 +790,11 @@ function upsertPreparedRuntimeWorkspace(
         }
       })
     : ([
-        ...currentRuntimeWork.projects,
         {
           project: projectRef,
           deviceWorkspaces: [nextWorkspace],
         },
+        ...currentRuntimeWork.projects,
       ] as RuntimeProjectWork[])
 
   return {
@@ -824,6 +958,30 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.mapping
         ),
       }
+    case 'runtime_workspace_opened': {
+      const runtimeWork = upsertOpenedRuntimeWorkspace(
+        state.runtimeWork,
+        state.devices,
+        action.deviceId,
+        action.workspacePath,
+        action.label
+      )
+      const runtimeProject = findRuntimeProjectByWorkspace(
+        runtimeWork,
+        action.deviceId,
+        action.workspacePath
+      )
+      return {
+        ...state,
+        runtimeWork,
+        currentProject: runtimeProject
+          ? runtimeProjectToProject(runtimeProject)
+          : state.currentProject,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
+        currentRuntimeTask: null,
+      }
+    }
     case 'project_workspace_selected':
       return {
         ...state,

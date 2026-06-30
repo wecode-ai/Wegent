@@ -33,6 +33,7 @@ import type {
 } from '@/types/api'
 import {
   getRuntimeChatSidebarTaskItems,
+  getNextRuntimeSidebarTaskVisibleLimit,
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
@@ -41,6 +42,7 @@ import {
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
+  RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
 
 const MOBILE_RUNNING_SPINNER_CLASS = 'h-3.5 w-3.5 shrink-0 animate-spin'
@@ -147,9 +149,9 @@ export function MobileDrawer({
   const longPressStartRef = useRef({ x: 0, y: 0 })
   const longPressTriggeredRef = useRef(false)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() => new Set())
-  const [expandedRuntimeProjectTaskIds, setExpandedRuntimeProjectTaskIds] = useState<Set<number>>(
-    () => new Set()
-  )
+  const [runtimeProjectTaskVisibleLimits, setRuntimeProjectTaskVisibleLimits] = useState<
+    Record<number, number>
+  >({})
   const runtimeWorkByProjectId = useMemo(() => {
     const items = runtimeWork?.projects ?? []
     return new Map(items.map(item => [runtimeProjectUiId(item.project), item]))
@@ -492,12 +494,20 @@ export function MobileDrawer({
                             )
                           }
 
-                          const runtimeTasksExpanded = expandedRuntimeProjectTaskIds.has(project.id)
+                          const runtimeTaskVisibleLimit =
+                            runtimeProjectTaskVisibleLimits[project.id] ??
+                            RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
                           const visibleTaskItems = getVisibleRuntimeSidebarTaskItems(
                             taskItems,
-                            runtimeTasksExpanded
+                            runtimeTaskVisibleLimit
                           )
-                          const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(taskItems)
+                          const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
+                            taskItems,
+                            runtimeTaskVisibleLimit
+                          )
+                          const canCollapseTasks =
+                            taskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT &&
+                            visibleTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
 
                           return (
                             <>
@@ -556,31 +566,43 @@ export function MobileDrawer({
                                   </button>
                                 )
                               })}
-                              {hasHiddenTasks && (
-                                <button
-                                  type="button"
-                                  data-testid={
-                                    runtimeTasksExpanded
-                                      ? `mobile-project-runtime-tasks-collapse-${project.id}`
-                                      : `mobile-project-runtime-tasks-expand-${project.id}`
-                                  }
-                                  onClick={() =>
-                                    setExpandedRuntimeProjectTaskIds(previous => {
-                                      const next = new Set(previous)
-                                      if (next.has(project.id)) {
-                                        next.delete(project.id)
-                                      } else {
-                                        next.add(project.id)
+                              {(hasHiddenTasks || canCollapseTasks) && (
+                                <div className="flex h-10 items-center gap-2">
+                                  {hasHiddenTasks && (
+                                    <button
+                                      type="button"
+                                      data-testid={`mobile-project-runtime-tasks-expand-${project.id}`}
+                                      onClick={() =>
+                                        setRuntimeProjectTaskVisibleLimits(previous => ({
+                                          ...previous,
+                                          [project.id]: getNextRuntimeSidebarTaskVisibleLimit(
+                                            runtimeTaskVisibleLimit,
+                                            taskItems.length
+                                          ),
+                                        }))
                                       }
-                                      return next
-                                    })
-                                  }
-                                  className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
-                                >
-                                  {runtimeTasksExpanded
-                                    ? t('workbench.collapse_display', '折叠显示')
-                                    : t('workbench.expand_display', '展开显示')}
-                                </button>
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                    >
+                                      {t('workbench.expand_display', '展开显示')}
+                                    </button>
+                                  )}
+                                  {canCollapseTasks && (
+                                    <button
+                                      type="button"
+                                      data-testid={`mobile-project-runtime-tasks-collapse-${project.id}`}
+                                      onClick={() =>
+                                        setRuntimeProjectTaskVisibleLimits(previous => {
+                                          const next = { ...previous }
+                                          delete next[project.id]
+                                          return next
+                                        })
+                                      }
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                    >
+                                      {t('workbench.collapse_display', '折叠显示')}
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </>
                           )
