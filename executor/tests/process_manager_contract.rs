@@ -148,7 +148,11 @@ fn spawn_restart_runs_restart_plan_command() {
     };
 
     assert!(manager.spawn_restart(&plan));
-    wait_until(|| marker.is_file());
+    wait_until(|| {
+        fs::read_to_string(&marker)
+            .map(|content| content == "started")
+            .unwrap_or(false)
+    });
     assert_eq!(fs::read_to_string(marker).unwrap(), "started");
 }
 

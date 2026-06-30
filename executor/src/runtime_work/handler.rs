@@ -4,13 +4,15 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    env, fs,
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
+use chrono::Local;
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -61,6 +63,64 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+
+fn standalone_chat_workspace_path(
+    local_task_id: &str,
+    request: &ExecutionRequest,
+) -> Option<String> {
+    if !is_standalone_chat_workspace(request) {
+        return None;
+    }
+    let segment = workspace_segment(local_task_id);
+    let path = home_dir()
+        .join("Documents")
+        .join("Codex")
+        .join(Local::now().format("%Y-%m-%d").to_string())
+        .join(segment);
+    if let Err(error) = fs::create_dir_all(&path) {
+        log_executor_event(
+            "runtime work standalone workspace create failed",
+            &[("error", error.to_string())],
+        );
+        return None;
+    }
+    Some(path.display().to_string())
+}
+
+fn is_standalone_chat_workspace(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("standalone_chat_workspace")
+        .or_else(|| request.extra.get("standaloneChatWorkspace"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn workspace_segment(value: &str) -> String {
+    let segment = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if segment.is_empty() {
+        format!("chat-{}", now_ms())
+    } else {
+        segment
+    }
+}
+
+fn home_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+}
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
@@ -330,6 +390,11 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .map(|link| merge_cached_messages(cached.messages.clone(), cached_messages(link)))
                 .unwrap_or_else(|| cached.messages.clone());
+            let running = transcript_running(
+                local_link.as_ref(),
+                running_hint || cached.running,
+                &messages,
+            );
             log_runtime_transcript_finished(RuntimeTranscriptLog {
                 started_at,
                 local_task_id: &local_task_id,
@@ -341,7 +406,7 @@ impl RuntimeWorkRpcHandler {
                 before_cursor: before_cursor.as_deref(),
                 after_cursor: after_cursor.as_deref(),
                 message_count: messages.len(),
-                running: cached.running,
+                running,
             });
             return Ok(transcript_response(
                 &local_task_id,
@@ -425,7 +490,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })
             .unwrap_or_else(|| transcript_messages(&transcript_thread, &self.device_id));
-        let running = running_hint || messages.iter().any(runtime_message_running);
+        let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
         self.transcript_cache.insert(
             thread_id.clone(),
@@ -624,20 +689,26 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = string_field(&payload, "localTaskId")
             .or_else(|| string_field(&payload, "local_task_id"))
             .unwrap_or_else(|| format!("codex-local-{}", now_ms()));
-        let workspace_path = workspace_path(&payload)
-            .or_else(|| {
-                execution_request(&payload).and_then(|request| request.cwd().map(str::to_owned))
-            })
-            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        let payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = match execution_request(&payload) {
             Some(request) => request,
-            None => execution_request_from_payload(&payload, &workspace_path)
-                .map_err(|message| AppIpcError::new("bad_request", message))?,
+            None => execution_request_from_payload(
+                &payload,
+                payload_workspace_path.as_deref().unwrap_or_default(),
+            )
+            .map_err(|message| AppIpcError::new("bad_request", message))?,
         };
         apply_runtime_payload_metadata(&mut request, &payload);
+        let workspace_path = payload_workspace_path
+            .or_else(|| request.cwd().map(str::to_owned))
+            .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
+            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        if request.project_workspace_path.is_none() {
+            request.project_workspace_path = Some(workspace_path.clone());
+        }
 
         let mut link = RuntimeTaskLink::new_pending(
             local_task_id.clone(),
@@ -655,6 +726,7 @@ impl RuntimeWorkRpcHandler {
             "accepted": true,
             "deviceId": self.device_id,
             "localTaskId": local_task_id,
+            "workspacePath": workspace_path,
             "runtime": "codex",
         }))
     }
@@ -1460,7 +1532,7 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                 )
             });
-        let running = running_hint || messages.iter().any(runtime_message_running);
+        let running = transcript_running(local_link, running_hint, &messages);
         Some(
             CachedTranscript::new(
                 workspace_path.to_owned(),
@@ -2049,6 +2121,28 @@ fn runtime_message_running(message: &Value) -> bool {
         .unwrap_or(false)
 }
 
+fn transcript_running(
+    local_link: Option<&RuntimeTaskLink>,
+    running_hint: bool,
+    messages: &[Value],
+) -> bool {
+    if local_link.is_some_and(local_task_finished) {
+        return false;
+    }
+    running_hint || messages.iter().any(runtime_message_running)
+}
+
+fn local_task_finished(link: &RuntimeTaskLink) -> bool {
+    !link.running
+        && matches!(
+            link.status
+                .replace(['_', '-'], "")
+                .to_ascii_lowercase()
+                .as_str(),
+            "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
+        )
+}
+
 fn transcript_source_signature(thread: &Value) -> Option<TranscriptSourceSignature> {
     string_field(thread, "path").and_then(|path| TranscriptSourceSignature::from_path(&path))
 }
@@ -2583,6 +2677,31 @@ mod tests {
         assert_eq!(messages[1]["id"], "assistant-turn-2");
         assert_eq!(messages[1]["content"], "fresh");
         assert_eq!(messages[1]["turnId"], "turn-2");
+    }
+
+    #[test]
+    fn terminal_local_task_prevents_transcript_running_state() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        let messages = vec![json!({
+            "id": "assistant-1",
+            "role": "assistant",
+            "status": "streaming",
+            "blocks": [
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "status": "pending"
+                }
+            ]
+        })];
+
+        assert!(!transcript_running(Some(&link), true, &messages));
     }
 
     #[test]

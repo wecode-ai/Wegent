@@ -540,6 +540,53 @@ async fn app_runtime_persists_local_task_thread_mapping() {
 }
 
 #[tokio::test]
+async fn app_runtime_create_standalone_chat_generates_default_workspace() {
+    let _lock = env_lock().await;
+    let home = temp_path("wegent-app-runtime-chat-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-chat-store-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-chat-codex-home");
+    let fake_codex = write_fake_codex(&temp_path("wegent-app-runtime-chat-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "localTaskId": "standalone-chat-1",
+                "title": "Standalone chat",
+                "executionRequest": {
+                    "task_id": 1904,
+                    "subtask_id": 1905,
+                    "prompt": "ordinary device task",
+                    "bot": [{"shell_type": "Codex"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5",
+                        "api_format": "responses",
+                        "protocol": "openai-responses"
+                    },
+                    "project_id": 0,
+                    "standalone_chat_workspace": true
+                }
+            }
+        }))
+        .await
+        .expect("standalone chat create should be accepted");
+
+    assert_eq!(created["accepted"], true);
+    assert_eq!(created["localTaskId"], "standalone-chat-1");
+    let workspace_path = created["workspacePath"].as_str().unwrap();
+    assert!(workspace_path.contains("/Documents/Codex/"));
+    assert!(workspace_path.ends_with("/standalone-chat-1"));
+}
+
+#[tokio::test]
 async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mapping() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

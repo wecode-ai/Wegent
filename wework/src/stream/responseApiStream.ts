@@ -37,6 +37,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'image_generation.partial_image',
   'response.block.created',
   'response.block.updated',
+  'response.subagent.activity',
   'response.status.updated',
   'error',
 ] as const
@@ -373,6 +374,26 @@ function emitResponseBlockUpdated(
   })
 }
 
+function emitSubagentActivity(
+  handlers: ChatStreamHandlers,
+  base: ReturnType<typeof eventBase>,
+  data: Record<string, unknown>
+): void {
+  const agentPath = stringField(data, 'agent_path') ?? stringField(data, 'agentPath')
+  if (!agentPath) return
+
+  handlers.onSubagentActivity?.({
+    ...base,
+    agent_path: agentPath,
+    agent_name: stringField(data, 'agent_name') ?? stringField(data, 'agentName'),
+    agent_thread_id: stringField(data, 'agent_thread_id') ?? stringField(data, 'agentThreadId'),
+    kind: stringField(data, 'kind'),
+    status: stringField(data, 'status'),
+    occurred_at_ms:
+      optionalNumberField(data, 'occurred_at_ms') ?? optionalNumberField(data, 'occurredAtMs'),
+  })
+}
+
 function errorMessage(payload: Record<string, unknown>, data: Record<string, unknown>): string {
   const error = data.error
   if (typeof error === 'string') return error
@@ -436,6 +457,11 @@ export function emitResponseApiEvent(
 
   if (eventName === 'response.block.updated') {
     emitResponseBlockUpdated(handlers, base, data)
+    return
+  }
+
+  if (eventName === 'response.subagent.activity') {
+    emitSubagentActivity(handlers, base, data)
     return
   }
 

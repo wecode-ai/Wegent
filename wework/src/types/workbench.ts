@@ -46,6 +46,18 @@ export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
 
 export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
 
+export type RuntimeSubagentStatusState = 'running' | 'done' | 'interrupted'
+
+export interface RuntimeSubagentStatus {
+  id: string
+  agentId: string
+  agentPath: string
+  agentName: string
+  status: RuntimeSubagentStatusState
+  kind?: string
+  updatedAtMs?: number | null
+}
+
 export type WorkbenchMessage = Omit<
   CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>,
   'blocks'

@@ -358,6 +358,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             .and_then(Value::as_str)
             .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
             .to_owned();
+        state.set_root_thread_id(thread_id.clone());
         thread_fields.push(("thread_id", thread_id.clone()));
         log_executor_event("codex thread request finished", &thread_fields);
         if let Some(sender) = &notifications {
@@ -670,27 +671,55 @@ struct CodexRunState {
     final_text: String,
     saw_delta: bool,
     agent_message_phases: CodexAgentMessagePhaseTracker,
+    root_thread_id: Option<String>,
 }
 
 impl CodexRunState {
+    fn set_root_thread_id(&mut self, thread_id: impl Into<String>) {
+        self.root_thread_id = Some(thread_id.into());
+    }
+
     fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
         match message.get("method").and_then(Value::as_str) {
+            Some("thread/started") => {
+                if self.root_thread_id.is_none() {
+                    if let Some(thread_id) = stream_thread_id(message_params(message)) {
+                        self.root_thread_id = Some(thread_id);
+                    }
+                }
+                None
+            }
             Some("item/started") => {
+                if self.is_subagent_message(message_params(message)) {
+                    return None;
+                }
                 self.agent_message_phases
                     .observe_item(message_params(message));
                 None
             }
             Some("item/agentMessage/delta") => {
+                if self.is_subagent_message(message_params(message)) {
+                    return None;
+                }
                 self.append_delta(message_params(message));
                 None
             }
             Some("item/completed") => {
                 let params = message_params(message);
+                if self.is_subagent_message(params) {
+                    return None;
+                }
                 self.append_completed_message(params);
                 self.agent_message_phases.forget_item(params);
                 None
             }
-            Some("turn/completed") => Some(self.completed(message_params(message))),
+            Some("turn/completed")
+                if !self.is_subagent_message(message_params(message))
+                    && is_root_codex_turn_event(message_params(message)) =>
+            {
+                Some(self.completed(message_params(message)))
+            }
+            Some("turn/completed") => None,
             Some("error") => {
                 let params = message_params(message);
                 log_codex_run_state_error(params);
@@ -700,6 +729,18 @@ impl CodexRunState {
             }
             _ => None,
         }
+    }
+
+    fn is_subagent_message(&self, params: &Value) -> bool {
+        codex_agent_path(params)
+            .or_else(|| params.get("item").and_then(codex_agent_path))
+            .is_some_and(|agent_path| agent_path != "/root")
+            || self
+                .root_thread_id
+                .as_deref()
+                .is_some_and(|root_thread_id| {
+                    stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
+                })
     }
 
     fn append_delta(&mut self, params: &Value) {
@@ -815,6 +856,39 @@ impl CodexRunState {
             },
         }
     }
+}
+
+fn is_root_codex_turn_event(params: &Value) -> bool {
+    let turn = params.get("turn").unwrap_or(params);
+    codex_agent_path(turn)
+        .or_else(|| codex_agent_path(params))
+        .map_or(true, |agent_path| agent_path == "/root")
+}
+
+fn stream_thread_id(value: &Value) -> Option<String> {
+    value
+        .get("threadId")
+        .or_else(|| value.get("thread_id"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .get("thread")
+                .and_then(|thread| thread.get("id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn codex_agent_path(value: &Value) -> Option<String> {
+    value
+        .get("agent_path")
+        .or_else(|| value.get("agentPath"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn log_codex_run_state_text(
@@ -2384,6 +2458,146 @@ mod tests {
             outcome,
             ExecutionOutcome::Completed {
                 content: "Current directory: /tmp/project".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_ignores_subagent_turn_completion() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "delta": "Still working"
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed",
+                        "agent_path": "/root/worker"
+                    }
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed",
+                        "agent_path": "/root"
+                    }
+                }
+            }))
+            .expect("root turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "Still working".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_ignores_cross_thread_final_deltas() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("root-thread");
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "child-thread",
+                    "turnId": "child-turn",
+                    "itemId": "msg-child",
+                    "delta": "child"
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "root-thread",
+                    "turnId": "root-turn",
+                    "itemId": "msg-root",
+                    "delta": "root"
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "root-thread",
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("root turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "root".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn codex_run_state_ignores_cross_thread_turn_completion() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("root-thread");
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "root-thread",
+                    "turnId": "root-turn",
+                    "itemId": "msg-root",
+                    "delta": "root"
+                }
+            }))
+            .is_none());
+        assert!(state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "child-thread",
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "root-thread",
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("root turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: "root".to_owned()
             }
         );
     }
