@@ -628,16 +628,52 @@ class RuntimeTaskCreateTarget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["device_workspace", "project_device_workspace"]
-    device_id: Optional[str] = Field(default=None, alias="deviceId")
-    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
-    project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+    type: Literal["device_workspace", "project_device_workspace"] = Field(
+        ...,
+        description=(
+            "Creation target type. Use device_workspace with deviceId + "
+            "workspacePath, or project_device_workspace with projectId + "
+            "deviceWorkspaceId."
+        ),
+    )
+    device_id: Optional[str] = Field(
+        default=None,
+        alias="deviceId",
+        description="Target device ID. Required when type is device_workspace.",
+    )
+    workspace_path: Optional[str] = Field(
+        default=None,
+        alias="workspacePath",
+        description=(
+            "Target directory on the device. Required when type is " "device_workspace."
+        ),
+    )
+    project_id: Optional[int] = Field(
+        default=None,
+        alias="projectId",
+        description=(
+            "Project ID that owns the device workspace. Required when type is "
+            "project_device_workspace."
+        ),
+        ge=1,
+    )
     device_workspace_id: Optional[int] = Field(
         default=None,
         alias="deviceWorkspaceId",
+        description=(
+            "DeviceWorkspace mapping ID. Required when type is "
+            "project_device_workspace."
+        ),
         ge=1,
     )
-    workspace: Optional[dict[str, Any]] = None
+    workspace: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Execution workspace override, for example "
+            "{'source': 'current_workspace'} or "
+            "{'source': 'git_worktree', 'branch': 'feature/example'}."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_target_fields(self) -> "RuntimeTaskCreateTarget":
@@ -673,24 +709,63 @@ class RuntimeTaskCreateWithTargetRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    target: RuntimeTaskCreateTarget
-    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
-    team_id: int = Field(..., alias="teamId", ge=1)
-    runtime: RuntimeName
-    message: str = Field(..., min_length=1)
-    title: Optional[str] = None
-    model_id: Optional[str] = Field(default=None, alias="modelId")
-    model_type: Optional[str] = Field(default=None, alias="modelType")
+    target: RuntimeTaskCreateTarget = Field(
+        ...,
+        description="Device or Project device workspace target.",
+    )
+    local_task_id: Optional[str] = Field(
+        default=None,
+        alias="localTaskId",
+        description="Caller-generated local task ID for optimistic task opening.",
+    )
+    team_id: int = Field(
+        ...,
+        alias="teamId",
+        description="Team ID accessible to the current user.",
+        ge=1,
+    )
+    runtime: RuntimeName = Field(
+        ...,
+        description="Runtime provider used by the target device.",
+    )
+    message: str = Field(
+        ...,
+        description="User message used to start the runtime task.",
+        min_length=1,
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Optional task title. Defaults to the first message line.",
+    )
+    model_id: Optional[str] = Field(
+        default=None,
+        alias="modelId",
+        description="Model ID selected for this turn.",
+    )
+    model_type: Optional[str] = Field(
+        default=None,
+        alias="modelType",
+        description="Model type selected for this turn, such as codex.",
+    )
     model_options: dict[str, Any] = Field(
         default_factory=dict,
         alias="modelOptions",
+        description="Runtime model options for this turn.",
     )
     additional_skills: list[Any] = Field(
         default_factory=list,
         alias="additionalSkills",
+        description="Skills to preload into the execution request.",
     )
-    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
-    execution: Optional[dict[str, Any]] = None
+    attachment_ids: list[int] = Field(
+        default_factory=list,
+        alias="attachmentIds",
+        description="Uploaded ready attachment IDs available to the runtime.",
+    )
+    execution: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Additional execution options merged into the runtime request.",
+    )
 
 
 class RuntimeTaskCreateResponse(BaseModel):
