@@ -9,15 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from knowledge_runtime.services.config_resolver import ConfigResolver
-from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
-from sqlalchemy.orm import Session
-
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.config_resolver import QueryConfig
+from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRecord,
@@ -39,9 +38,12 @@ class QueryExecutor:
     4. Aggregates and sorts results by score
     """
 
-    def __init__(self, db: Session, planner: QueryPlanner | None = None) -> None:
-        self._db = db
-        self._config_resolver = ConfigResolver()
+    def __init__(
+        self,
+        config_loader: RuntimeConfigLoader | None = None,
+        planner: QueryPlanner | None = None,
+    ) -> None:
+        self._config_loader = config_loader or RuntimeConfigLoader()
         self._planner = planner or QueryPlanner()
 
     async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
@@ -59,6 +61,10 @@ class QueryExecutor:
             request.knowledge_base_ids,
             request.knowledge_base_retrieval_overrides,
         )
+        configs_by_kb_id = self._config_loader.resolve_query_configs(
+            knowledge_base_ids=request.knowledge_base_ids,
+            user_id=request.user_id,
+        )
 
         if request.search_hints is None:
             search_hints: dict[str, Any] = {}
@@ -67,7 +73,9 @@ class QueryExecutor:
         else:
             search_hints = request.search_hints.model_dump(exclude_none=True)
         logger.info(
-            "Query request: hint_source=%s, normalized_query='%s...', dense_query='%s...', sparse_query='%s...', hints_present=%s, semantic_query=%s, keywords=%s, phrases=%s",
+            "Query request: hint_source=%s, normalized_query='%s...', "
+            "dense_query='%s...', sparse_query='%s...', hints_present=%s, "
+            "semantic_query=%s, keywords=%s, phrases=%s",
             plan.hint_source,
             plan.normalized_query[:50],
             plan.dense_query[:50],
@@ -78,11 +86,12 @@ class QueryExecutor:
             len(search_hints.get("phrases") or []),
         )
 
-        # Resolve configs for each knowledge base
+        # Query each knowledge base after config loading has closed its DB session.
         for knowledge_base_id in request.knowledge_base_ids:
             records = await self._query_knowledge_base(
                 request=request,
                 knowledge_base_id=knowledge_base_id,
+                config=configs_by_kb_id[knowledge_base_id],
                 plan=plan,
                 retrieval_override=retrieval_override_by_kb_id.get(knowledge_base_id),
             )
@@ -98,7 +107,8 @@ class QueryExecutor:
         )
 
         logger.info(
-            "Query complete: hint_source=%s, normalized_query='%s...', total_results=%d, returned=%d",
+            "Query complete: hint_source=%s, normalized_query='%s...', "
+            "total_results=%d, returned=%d",
             plan.hint_source,
             plan.normalized_query[:50],
             len(all_records),
@@ -115,6 +125,7 @@ class QueryExecutor:
         self,
         request: RemoteQueryRequest,
         knowledge_base_id: int,
+        config: QueryConfig,
         plan: QueryPlan,
         retrieval_override: RemoteKnowledgeBaseRetrievalOverride | None = None,
     ) -> list[RemoteQueryRecord]:
@@ -127,12 +138,6 @@ class QueryExecutor:
         Returns:
             List of records from this knowledge base.
         """
-        # Resolve config from database
-        config = self._config_resolver.resolve_query_config(
-            db=self._db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=request.user_id,
-        )
         if retrieval_override is not None:
             config = config.__class__(
                 knowledge_base_id=config.knowledge_base_id,
@@ -153,7 +158,9 @@ class QueryExecutor:
         storage_type = config.retriever_config.storage_config.get("type", "unknown")
 
         logger.info(
-            "Query KB config: knowledge_base_id=%d, config_source=%s, storage_type=%s, retrieval_mode=%s, top_k=%s, score_threshold=%s, vector_weight=%s, keyword_weight=%s",
+            "Query KB config: knowledge_base_id=%d, config_source=%s, "
+            "storage_type=%s, retrieval_mode=%s, top_k=%s, "
+            "score_threshold=%s, vector_weight=%s, keyword_weight=%s",
             knowledge_base_id,
             "request_override" if retrieval_override is not None else "database",
             storage_type,
@@ -223,11 +230,13 @@ class QueryExecutor:
         for override in retrieval_overrides or []:
             if override.knowledge_base_id not in allowed_ids:
                 raise ValueError(
-                    "knowledge_base_retrieval_overrides contains an unknown knowledge_base_id"
+                    "knowledge_base_retrieval_overrides contains an unknown "
+                    "knowledge_base_id"
                 )
             if override.knowledge_base_id in overrides_by_kb_id:
                 raise ValueError(
-                    "knowledge_base_retrieval_overrides contains duplicate knowledge_base_id entries"
+                    "knowledge_base_retrieval_overrides contains duplicate "
+                    "knowledge_base_id entries"
                 )
             overrides_by_kb_id[override.knowledge_base_id] = override
         return overrides_by_kb_id

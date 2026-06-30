@@ -296,7 +296,7 @@ export function useWorkbenchModels({
         return nextOptions
       })
     },
-    [locked, onSelectionBlocked, onSelectionChange, selectedModel]
+    [locked, onSelectionBlocked, onSelectionChange]
   )
 
   const setSelectedModelOption = useCallback(
