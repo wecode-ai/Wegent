@@ -1531,6 +1531,7 @@ export type ModelOptions = Record<string, string>
 export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
+  | 'unavailable'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

@@ -203,7 +203,10 @@ impl CodexAppServerClient {
 }
 
 fn codex_app_server_request_is_retryable(method: &str) -> bool {
-    matches!(method, "thread/list" | "thread/read")
+    matches!(
+        method,
+        "thread/list" | "thread/read" | "config/read" | "model/list"
+    )
 }
 
 struct CodexAppServerProcess {

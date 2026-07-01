@@ -725,6 +725,9 @@ export function ModelSelector({
         'This model is missing runtime.family'
       )
     }
+    if (reason === 'unavailable') {
+      return t('workbench.model_disabled_unavailable', 'This model is unavailable')
+    }
     return t(
       'workbench.model_disabled_runtime_family_mismatch',
       'Incompatible with the current model protocol'

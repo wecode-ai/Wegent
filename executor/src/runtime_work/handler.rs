@@ -52,9 +52,9 @@ use super::{
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request,
-        execution_request_from_payload, infer_workspace_kind, integer_field, normalize_device_id,
-        now_ms, prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
+        apply_runtime_payload_metadata, bool_field, execution_request, infer_workspace_kind,
+        integer_field, normalize_device_id, now_ms, prompt_text, runtime_task_id, string_field,
+        workspace_group_path, workspace_path,
     },
 };
 
@@ -63,6 +63,8 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
+const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
 fn standalone_chat_workspace_path(
     local_task_id: &str,
@@ -120,6 +122,92 @@ fn home_dir() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir)
+}
+
+#[derive(Clone)]
+struct CodexModelProviderInfo {
+    id: String,
+    display_name: String,
+    kind: &'static str,
+    current: bool,
+}
+
+fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let config = config_response
+        .get("config")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let current_provider = string_from_map(&config, "modelProvider")
+        .or_else(|| string_from_map(&config, "model_provider"))
+        .unwrap_or_else(|| CODEX_OFFICIAL_PROVIDER_ID.to_owned());
+    let display_name = config
+        .get("model_providers")
+        .or_else(|| config.get("modelProviders"))
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(&current_provider))
+        .and_then(Value::as_object)
+        .and_then(|provider| string_from_map(provider, "name"))
+        .unwrap_or_else(|| {
+            if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
+                CODEX_OFFICIAL_PROVIDER_NAME.to_owned()
+            } else {
+                current_provider.clone()
+            }
+        });
+    let kind = if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
+        "official"
+    } else {
+        "provider"
+    };
+    CodexModelProviderInfo {
+        id: current_provider,
+        display_name,
+        kind,
+        current: true,
+    }
+}
+
+fn codex_models_with_provider(response: &Value, provider: &CodexModelProviderInfo) -> Vec<Value> {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    let mut model = model.clone();
+                    let object = model.as_object_mut()?;
+                    object.insert("providerId".to_owned(), Value::String(provider.id.clone()));
+                    object.insert(
+                        "providerName".to_owned(),
+                        Value::String(provider.display_name.clone()),
+                    );
+                    object.insert(
+                        "providerType".to_owned(),
+                        Value::String(provider.kind.to_owned()),
+                    );
+                    object.insert("providerCurrent".to_owned(), Value::Bool(provider.current));
+                    Some(model)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn string_from_map(map: &Map<String, Value>, key: &str) -> Option<String> {
+    map.get(key)
+        .and_then(Value::as_str)
+        .and_then(non_empty_string)
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 #[derive(Clone)]
@@ -181,6 +269,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.archive" => self.archive_task(payload).await,
             "runtime.tasks.rename" => self.rename_task(payload).await,
             "runtime.tasks.cancel" => self.cancel_task(payload).await,
+            "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
@@ -201,6 +290,57 @@ impl RuntimeWorkRpcHandler {
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let include_hidden = bool_field(&payload, "includeHidden")
+            .or_else(|| bool_field(&payload, "include_hidden"));
+        let limit = integer_field(&payload, "limit")
+            .filter(|value| *value > 0)
+            .map(|value| value as u32);
+        let cursor = string_field(&payload, "cursor");
+        let model_list_params = json!({
+            "limit": limit,
+            "cursor": cursor,
+            "includeHidden": include_hidden,
+        });
+        let config = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
+        let provider = current_codex_model_provider_from_config(&config);
+        let (available, error, models) = match self
+            .codex_app_server
+            .request("model/list", model_list_params)
+            .await
+        {
+            Ok(response) => (
+                true,
+                Value::Null,
+                codex_models_with_provider(&response, &provider),
+            ),
+            Err(error) => (false, Value::String(error), Vec::new()),
+        };
+        let provider_results = vec![json!({
+            "id": provider.id,
+            "displayName": provider.display_name,
+            "type": provider.kind,
+            "current": provider.current,
+            "available": available,
+            "error": error,
+            "data": models.clone(),
+        })];
+        Ok(json!({
+            "data": models,
+            "providers": provider_results,
+        }))
     }
 
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
@@ -695,14 +835,8 @@ impl RuntimeWorkRpcHandler {
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
-        let mut request = match execution_request(&payload) {
-            Some(request) => request,
-            None => execution_request_from_payload(
-                &payload,
-                payload_workspace_path.as_deref().unwrap_or_default(),
-            )
-            .map_err(|message| AppIpcError::new("bad_request", message))?,
-        };
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
@@ -761,11 +895,8 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
-        let mut request = match payload_execution_request {
-            Some(request) => request,
-            None => execution_request_from_payload(&payload, &workspace_path)
-                .map_err(|message| AppIpcError::new("bad_request", message))?,
-        };
+        let mut request = payload_execution_request
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
@@ -2453,6 +2584,38 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_codex_model_provider_reads_configured_provider_name() {
+        let provider = current_codex_model_provider_from_config(&json!({
+            "config": {
+                "model_provider": "wecode-openai",
+                "model_providers": {
+                    "wecode-openai": {
+                        "name": "wecode openai"
+                    },
+                    "wecode-ark": {
+                        "name": "wecode ark"
+                    }
+                }
+            }
+        }));
+
+        assert_eq!(provider.id, "wecode-openai");
+        assert_eq!(provider.display_name, "wecode openai");
+        assert_eq!(provider.kind, "provider");
+        assert!(provider.current);
+    }
+
+    #[test]
+    fn current_codex_model_provider_defaults_to_official() {
+        let provider = current_codex_model_provider_from_config(&json!({"config": {}}));
+
+        assert_eq!(provider.id, "openai");
+        assert_eq!(provider.display_name, "CodeX");
+        assert_eq!(provider.kind, "official");
+        assert!(provider.current);
+    }
 
     #[test]
     fn cached_user_message_uses_explicit_payload_text() {

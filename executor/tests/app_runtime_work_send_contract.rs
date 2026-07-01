@@ -45,6 +45,34 @@ impl Drop for EnvGuard {
     }
 }
 
+fn codex_execution_request(prompt: &str, workspace_path: &str, model_id: &str) -> Value {
+    execution_request_with_model_config(
+        prompt,
+        workspace_path,
+        json!({
+            "model": "openai",
+            "model_id": model_id,
+            "api_format": "responses",
+            "protocol": "openai-responses"
+        }),
+    )
+}
+
+fn execution_request_with_model_config(
+    prompt: &str,
+    workspace_path: &str,
+    model_config: Value,
+) -> Value {
+    json!({
+        "task_id": 1001,
+        "subtask_id": 2001,
+        "prompt": prompt,
+        "project_workspace_path": workspace_path,
+        "bot": [{"shell_type": "ClaudeCode"}],
+        "model_config": model_config
+    })
+}
+
 #[tokio::test]
 async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _lock = env_lock().await;
@@ -130,13 +158,22 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "localTaskId": "local-task-1"
                 },
                 "content": "continue from content",
-                "modelId": "gpt-4.1",
-                "modelOptions": {
-                    "collaborationMode": "default",
-                    "reasoning": "extra_high",
-                    "summary": "concise",
-                    "speed": "fast"
-                },
+                "collaborationMode": "default",
+                "executionRequest": execution_request_with_model_config(
+                    "continue from content",
+                    "/tmp/project",
+                    json!({
+                        "model": "openai",
+                        "model_id": "gpt-4.1",
+                        "api_format": "responses",
+                        "protocol": "openai-responses",
+                        "reasoning": {
+                            "effort": "extra_high",
+                            "summary": "concise"
+                        },
+                        "service_tier": "fast"
+                    })
+                ),
                 "source": source,
                 "attachments": [attachment]
             }
@@ -238,7 +275,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .as_str()
         .expect("process block should have a generated id")
         .to_owned();
-    assert_eq!(process_block_id, "text-local-task-1-0-1");
+    assert_eq!(process_block_id, "text-local-task-1-2001-1");
     assert_eq!(process_created["payload"]["data"]["block"]["type"], "text");
     assert_eq!(
         process_created["payload"]["data"]["block"]["content"],
@@ -482,7 +519,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
                     "localTaskId": "local-task-text"
                 },
                 "content": "我贴的是啥",
-                "modelId": "gpt-4.1",
+                "executionRequest": codex_execution_request("我贴的是啥", "/tmp/project", "gpt-4.1"),
                 "attachments": [attachment]
             }
         }))
@@ -512,17 +549,51 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_missing_model_without_execution_request() {
+async fn runtime_tasks_create_rejects_missing_execution_request() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
-        &temp_path("runtime-send-missing-model-home", "dir")
+        &temp_path("runtime-create-missing-request-home", "dir")
             .display()
             .to_string(),
     );
     let _codex_home = EnvGuard::set(
         "CODEX_HOME",
-        &temp_path("runtime-send-missing-model-codex-home", "dir")
+        &temp_path("runtime-create-missing-request-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "localTaskId": "local-task-1",
+                "message": "first turn",
+                "modelId": "gpt-5.5"
+            }
+        }))
+        .await
+        .expect_err("create without executionRequest should fail fast");
+
+    assert_eq!(error.code, "bad_request");
+    assert_eq!(error.message, "executionRequest is required");
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_rejects_missing_execution_request() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-missing-request-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-missing-request-codex-home", "dir")
             .display()
             .to_string(),
     );
@@ -534,17 +605,15 @@ async fn runtime_tasks_send_rejects_missing_model_without_execution_request() {
             "payload": {
                 "workspacePath": "/tmp/project",
                 "localTaskId": "local-task-1",
-                "message": "second turn"
+                "message": "second turn",
+                "modelId": "gpt-5.5"
             }
         }))
         .await
-        .expect_err("send without executionRequest or modelId should fail fast");
+        .expect_err("send without executionRequest should fail fast");
 
     assert_eq!(error.code, "bad_request");
-    assert_eq!(
-        error.message,
-        "modelId is required when executionRequest is not provided"
-    );
+    assert_eq!(error.message, "executionRequest is required");
 }
 
 #[tokio::test]
@@ -572,7 +641,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
                 "localTaskId": "local-task-1",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
-                "modelId": "gpt-5.5"
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
             }
         }))
         .await
@@ -638,7 +707,7 @@ async fn runtime_tasks_cancel_terminates_running_codex_turn() {
                 "localTaskId": "local-task-cancel",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
-                "modelId": "gpt-5.5"
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
             }
         }))
         .await
@@ -686,7 +755,7 @@ async fn runtime_tasks_cancel_terminates_codex_turn_process_group() {
                 "localTaskId": "local-task-cancel-group",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
-                "modelId": "gpt-5.5"
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
             }
         }))
         .await
@@ -736,7 +805,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
                 "localTaskId": "local-visible-task",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
-                "modelId": "gpt-5.5"
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
             }
         }))
         .await
@@ -761,7 +830,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
                 "workspacePath": "/tmp/project",
                 "localTaskId": "local-visible-task",
                 "message": "second turn",
-                "modelId": "gpt-5.5"
+                "executionRequest": codex_execution_request("second turn", "/tmp/project", "gpt-5.5")
             }
         }))
         .await
@@ -810,7 +879,11 @@ async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_ind
                     }
                 },
                 "content": "continue from address handle",
-                "modelId": "gpt-4.1"
+                "executionRequest": codex_execution_request(
+                    "continue from address handle",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
             }
         }))
         .await

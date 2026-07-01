@@ -34,7 +34,6 @@ import type {
   UnifiedModelListResponse,
 } from '@/types/api'
 
-const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
 const LOCAL_DEVICE_ID = 'local-device'
 
 export interface HybridWorkbenchServicesOptions {
@@ -58,7 +57,16 @@ function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknow
 }
 
 function isRuntimeCodexModel(model: UnifiedModel): boolean {
-  return model.type === 'runtime' && model.name === CODEX_RUNTIME_MODEL_NAME
+  const config = recordValue(model.config)
+  const ui = recordValue(config.ui)
+  return (
+    model.type === 'runtime' &&
+    (config.weworkModelKind === 'codex-official' ||
+      config.weworkModelKind === 'codex-provider' ||
+      ui.family === 'codex-official' ||
+      ui.family === 'codex-provider' ||
+      (typeof ui.family === 'string' && ui.family.startsWith('codex-provider:')))
+  )
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -76,6 +84,8 @@ function annotateHybridModel(
 ): UnifiedModel {
   const config = recordValue(model.config)
   const ui = recordValue(config.ui)
+  const codexKind = isRuntimeCodexModel(model) ? config.weworkModelKind : null
+  const codexFamily = isRuntimeCodexModel(model) ? ui.family : null
   return withModelExecutionOverride(
     {
       ...model,
@@ -84,8 +94,10 @@ function annotateHybridModel(
       provider: source === 'local' ? 'local' : (model.provider ?? 'cloud'),
       config: {
         ...config,
+        ...(codexKind ? { weworkModelKind: codexKind } : {}),
         ui: {
           ...ui,
+          ...(codexFamily ? { family: codexFamily } : {}),
           modelLabel,
         },
       },
@@ -111,8 +123,8 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
       model,
       'local',
       `local:${model.type}:${model.name}`,
-      'GPT-5.5 (本机 Codex)',
-      'GPT-5.5 本机'
+      `${model.displayName || model.modelId || model.name} (本机)`,
+      `${model.displayName || model.modelId || model.name} 本机`
     )
   })
 }
@@ -131,8 +143,8 @@ function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
       model,
       'cloud',
       `cloud:${model.type}:${model.name}`,
-      'GPT-5.5 (云端同步 Codex)',
-      'GPT-5.5 云端同步'
+      `${model.displayName || model.modelId || model.name} (云端)`,
+      `${model.displayName || model.modelId || model.name} 云端`
     )
   })
 }
