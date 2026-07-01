@@ -172,7 +172,7 @@ fn write_claude_file_edit_hook_settings(
 
     let mut settings = read_claude_settings(settings_path);
     let hooks = object_field(&mut settings, "hooks");
-    ensure_file_edit_hook(hooks, "PreToolUse", command);
+    remove_file_edit_hook(hooks, "PreToolUse");
     ensure_file_edit_hook(hooks, "PostToolUse", command);
 
     let content = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
@@ -219,6 +219,17 @@ fn ensure_file_edit_hook(hooks: &mut Map<String, Value>, event: &str, command: &
             }
         ]
     }));
+}
+
+fn remove_file_edit_hook(hooks: &mut Map<String, Value>, event: &str) {
+    let Some(value) = hooks.get_mut(event) else {
+        return;
+    };
+    if !value.is_array() {
+        return;
+    }
+    let groups = value.as_array_mut().expect("event hooks initialized");
+    groups.retain(|group| !file_edit_hook_group_matches(group));
 }
 
 fn file_edit_hook_group_matches(group: &Value) -> bool {

@@ -95,6 +95,8 @@ spec:
           value: "1"
         - name: ENABLE_TOOL_SEARCH
           value: "false"
+        - name: WEGENT_FILE_EDIT_HOOK_COMMAND
+          value: "/app/executor file-change-sender"
         - name: CALLBACK_URL
           value: {{ callback_url }}
         {% endif %}
