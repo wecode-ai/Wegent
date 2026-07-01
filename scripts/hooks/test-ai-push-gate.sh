@@ -7,8 +7,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 CALL_LOG="$TMP_DIR/calls.log"
+ROOT_NODE_MODULES_CREATED=0
+WEWORK_NODE_MODULES_CREATED=0
 
 cleanup() {
+    if [ "$ROOT_NODE_MODULES_CREATED" = "1" ]; then
+        rmdir "$PROJECT_ROOT/node_modules" 2>/dev/null || true
+    fi
+    if [ "$WEWORK_NODE_MODULES_CREATED" = "1" ]; then
+        rmdir "$PROJECT_ROOT/wework/node_modules" 2>/dev/null || true
+    fi
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -27,17 +35,29 @@ STUB
     chmod +x "$path"
 }
 
-for cmd in uv black isort pytest npm npx; do
+for cmd in cargo uv black isort pytest npm npx pnpm; do
     create_stub "$cmd"
 done
 
 export CALL_LOG
 
-# This historical range changes only executor Python files. It exercises the
-# Python module branch without pulling frontend or backend-only auxiliary checks
-# into the regression test.
-REMOTE_SHA="e0cb1f2e0663fdc9a1d878e6952cacc27201f307"
-LOCAL_SHA="85d48d64437aefebe0c0fa156d2e403f35d3d103"
+ensure_wework_node_modules() {
+    if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+        mkdir "$PROJECT_ROOT/node_modules"
+        ROOT_NODE_MODULES_CREATED=1
+    fi
+
+    if [ ! -d "$PROJECT_ROOT/wework/node_modules" ]; then
+        mkdir "$PROJECT_ROOT/wework/node_modules"
+        WEWORK_NODE_MODULES_CREATED=1
+    fi
+}
+
+# This historical range changes only backend Python files. It exercises the
+# Python module branch without pulling frontend or executor checks into the
+# regression test.
+REMOTE_SHA="32219870e7b781dfaa4b0046db9e4ac5aeb02aa4"
+LOCAL_SHA="6342ce3b9624f3ce05f831d52b2b3b56edf2c36c"
 
 AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \
@@ -63,6 +83,28 @@ EOF
 
 if ! grep -qE '(^| )pytest tests/' "$CALL_LOG"; then
     echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Python pytest suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+> "$CALL_LOG"
+
+# This historical range changes only Wework files. It verifies the pre-push
+# gate runs Wework's project-reference TypeScript check when Wework changes.
+WEWORK_REMOTE_SHA="6e79ac169145a729973c9b7b231f47acba72b50c"
+WEWORK_LOCAL_SHA="2f77b34aae02d0e9d5254530b503655835072cc7"
+
+ensure_wework_node_modules
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >/tmp/ai-push-gate-test-wework.out 2>&1
+refs/heads/topic $WEWORK_LOCAL_SHA refs/heads/topic $WEWORK_REMOTE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
+    echo "Expected Wework changes to run the Wework TypeScript check."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
