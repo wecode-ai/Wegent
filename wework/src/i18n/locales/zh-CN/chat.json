@@ -20,7 +20,7 @@
   },
   "request_user_input": {
     "asked_count": "已询问 {{count}} 个问题",
-    "ignore": "忽略",
+    "ignore": "取消",
     "submit": "提交",
     "custom_placeholder": "输入你的回答"
   },

@@ -280,7 +280,7 @@ export function useWorkbenchRuntimeMessaging({
       displayMessage: string,
       payload: ChatSendPayload,
       activeDeviceId?: string,
-      options?: Pick<SendCurrentInputOptions, 'onRuntimeTaskOptimisticOpen'>
+      options?: Pick<SendCurrentInputOptions, 'initialGoal' | 'onRuntimeTaskOptimisticOpen'>
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
       const selectedModel =
@@ -362,6 +362,7 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
       }
       debugRuntimeCreateFlow('create-request-built', {
         localTaskId,
@@ -601,6 +602,7 @@ export function useWorkbenchRuntimeMessaging({
         prepared.payload,
         prepared.activeDeviceId,
         {
+          initialGoal: options?.initialGoal,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         }
       )

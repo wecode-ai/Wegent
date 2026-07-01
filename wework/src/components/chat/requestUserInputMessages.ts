@@ -144,7 +144,7 @@ function isRequestUserInputPayload(value: unknown): value is RequestUserInputPay
   )
 }
 
-function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
+export function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
   return Boolean(
     payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
   )

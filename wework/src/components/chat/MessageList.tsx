@@ -1,6 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
@@ -12,11 +11,9 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  Download,
   File as FileIcon,
-  ListChecks,
-  Maximize2,
   Package,
+  Target,
 } from 'lucide-react'
 import type {
   Attachment,
@@ -78,8 +75,6 @@ const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
-const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
-const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
 const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
@@ -205,6 +200,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
       ? 'onRequestUserInputIgnore'
       : null,
+    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -377,6 +373,7 @@ function UserMessage({
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string) => void
 }) {
+  const { t } = useTranslation('common')
   const [isExpanded, setIsExpanded] = useState(false)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
   const codexLocalFileMentions = useMemo(
@@ -416,6 +413,7 @@ function UserMessage({
     displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
+  const showGoalRequestBadge = message.runtimeGoalRequest === true
 
   return (
     <div
@@ -515,6 +513,17 @@ function UserMessage({
               ].join(' ')}
             >
               {renderUserContent(displayContent)}
+              {showGoalRequestBadge && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="user-message-goal-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <Target className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
               {shouldCollapse && !isExpanded && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
               )}
@@ -549,176 +558,6 @@ function UserMessage({
       <MessageHoverActions message={message} align="right" visible={areHoverActionsVisible} />
     </div>
   )
-}
-
-function AssistantPlanCard({
-  content,
-  onOpenPlan,
-}: {
-  content: string
-  onOpenPlan?: (content: string) => void
-}) {
-  const { t } = useTranslation('chat')
-
-  const handleDownload = () => {
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'plan.md'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-
-  const openPlan = () => {
-    onOpenPlan?.(content)
-  }
-
-  const handleCardClick = (event: ReactMouseEvent<HTMLElement>) => {
-    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
-    openPlan()
-  }
-
-  const handleCardKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
-    event.preventDefault()
-    openPlan()
-  }
-
-  return (
-    <section
-      data-testid="assistant-plan-card"
-      role={onOpenPlan ? 'button' : undefined}
-      tabIndex={onOpenPlan ? 0 : undefined}
-      aria-label={onOpenPlan ? t('plan_card.expand') : undefined}
-      onClick={onOpenPlan ? handleCardClick : undefined}
-      onKeyDown={onOpenPlan ? handleCardKeyDown : undefined}
-      className={cn(
-        'my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
-        onOpenPlan &&
-          'cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/70'
-      )}
-    >
-      <div className="flex min-h-9 items-center justify-between gap-3 px-4 py-1.5 text-text-muted">
-        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
-          <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-          <span>{t('plan_card.title')}</span>
-        </div>
-        <PlanCardActions content={content} onDownload={handleDownload} onExpand={openPlan} />
-      </div>
-      <div
-        data-testid="assistant-plan-card-preview"
-        className="relative max-h-[168px] overflow-hidden px-4 pb-3 pt-2"
-      >
-        <div
-          data-testid="assistant-plan-card-content"
-          className="assistant-plan-card-content text-sm leading-6 text-text-primary [&_.assistant-markdown_h1]:mb-3 [&_.assistant-markdown_h1]:mt-2 [&_.assistant-markdown_h2]:mb-2 [&_.assistant-markdown_h2]:mt-3 [&_.assistant-markdown_p]:mb-2 [&_.assistant-markdown_p]:leading-5 [&_.assistant-markdown_ul]:mb-2 [&_.assistant-markdown_ul]:space-y-1 [&_.assistant-markdown_li]:leading-5"
-        >
-          <AssistantMarkdown content={content} />
-        </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
-      </div>
-    </section>
-  )
-}
-
-function PlanCardActions({
-  content,
-  onDownload,
-  onExpand,
-}: {
-  content: string
-  onDownload: () => void
-  onExpand: () => void
-}) {
-  const { t } = useTranslation('chat')
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1400)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-
-  const handleCopy = () => {
-    void copyText(content).then(() => setCopied(true))
-  }
-
-  const actions = [
-    {
-      key: 'download',
-      label: t('plan_card.download'),
-      icon: <Download className="h-4 w-4" aria-hidden="true" />,
-      onClick: onDownload,
-      testId: 'assistant-plan-download-button',
-    },
-    {
-      key: 'copy',
-      label: t('plan_card.copy'),
-      icon: <Copy className="h-4 w-4" aria-hidden="true" />,
-      onClick: handleCopy,
-      testId: 'assistant-plan-copy-button',
-    },
-    {
-      key: 'expand',
-      label: t('plan_card.expand'),
-      icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
-      onClick: onExpand,
-      testId: 'assistant-plan-expand-button',
-    },
-  ]
-
-  return (
-    <div className="flex shrink-0 items-center gap-2">
-      {copied ? (
-        <span
-          data-testid="assistant-plan-copy-success"
-          className="text-xs font-medium text-text-secondary"
-        >
-          {t('plan_card.copy_success')}
-        </span>
-      ) : null}
-      {actions.map(action => (
-        <button
-          key={action.key}
-          type="button"
-          data-testid={action.testId}
-          aria-label={action.label}
-          title={action.label}
-          onClick={event => {
-            event.stopPropagation()
-            action.onClick()
-          }}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
-        >
-          {action.icon}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function normalizeAssistantPlanContent(content: string): string {
-  return content.replace(CODEX_PLAN_TAG_PATTERN, '').trim()
-}
-
-function isAssistantPlanContent(content: string): boolean {
-  const normalizedContent = normalizeAssistantPlanContent(content)
-  return (
-    normalizedContent !== content ||
-    (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
-  )
-}
-
-function isNestedInteractiveElement(
-  target: EventTarget | null,
-  currentTarget: HTMLElement
-): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  const interactiveTarget = target.closest('button,a,input,textarea,select')
-  return Boolean(interactiveTarget && interactiveTarget !== currentTarget)
 }
 
 function normalizeCodexUserMessageContent(content: string): string {
@@ -1188,7 +1027,7 @@ function AssistantMessage({
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
-              className="mb-3 border-b border-border pb-2 text-sm font-medium text-text-muted"
+              className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
             >
               {t('assistant_status.stopped_after', {
                 duration: getStoppedElapsedDuration(message),
@@ -1208,20 +1047,14 @@ function AssistantMessage({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
+              onOpenAssistantPlan={onOpenAssistantPlan}
               hideRequestUserInputBlocks={hideRequestUserInputBlocks}
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}
           {hasVisibleContent ? (
-            isAssistantPlanContent(visibleContent) ? (
-              <AssistantPlanCard
-                content={normalizeAssistantPlanContent(visibleContent)}
-                onOpenPlan={onOpenAssistantPlan}
-              />
-            ) : (
-              <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
-            )
+            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />

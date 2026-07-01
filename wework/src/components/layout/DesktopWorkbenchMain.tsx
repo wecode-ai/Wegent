@@ -313,7 +313,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible?: boolean
   } | null>(null)
   const paneMessages = paneSession.messages
-  const pendingRequestUserInput = pendingRequestUserInputPayload(paneMessages)
+  const pendingRequestUserInput = pendingRequestUserInputPayload(
+    paneMessages,
+    paneSession.answeredRequestUserInputIds
+  )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -342,6 +345,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
     })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const activeDeviceSupportsGoal = Boolean(
+    activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
+  )
+  const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const composerSupportsGoal = currentRuntimeTask
+    ? currentRuntimeTaskSupportsGoal
+    : activeDeviceSupportsGoal
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -388,6 +398,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
     setRightPanelView(tab)
   }, [])
+  const openAssistantPlan = useCallback(
+    (content: string) => {
+      setRightPanelPlanContent(content)
+      openRightPanelTab('plan')
+    },
+    [openRightPanelTab]
+  )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelTabs(current => {
@@ -510,13 +527,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectPlanView = useCallback(() => {
     openRightPanelTab('plan')
   }, [openRightPanelTab])
-  const openAssistantPlanInRightPanel = useCallback(
-    (content: string) => {
-      setRightPanelPlanContent(content)
-      openRightPanelTab('plan')
-    },
-    [openRightPanelTab]
-  )
 
   const openWorkspaceFileFromMessage = useCallback(
     (path: string) => {
@@ -896,7 +906,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-              onOpenAssistantPlan={openAssistantPlanInRightPanel}
+              onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+              onOpenAssistantPlan={openAssistantPlan}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
               hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
@@ -948,6 +959,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         forceDefaultCollaborationMode: shouldImplementPlan,
                       })
                     }}
+                    onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
                   />
                 ) : (
                   <ChatInput
@@ -967,6 +979,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
+                    goal={paneSession.goal}
+                    goalDraftActive={paneSession.goalDraftActive}
+                    onSetGoal={
+                      composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                    }
+                    onCancelGoalDraft={paneSession.cancelGoalDraft}
+                    onEditGoal={paneSession.editCurrentGoal}
+                    onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                    onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                    onClearGoal={() => void paneSession.clearCurrentGoal()}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1012,6 +1034,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
+                goal={paneSession.goal}
+                goalDraftActive={paneSession.goalDraftActive}
+                onSetGoal={
+                  composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                }
+                onCancelGoalDraft={paneSession.cancelGoalDraft}
+                onEditGoal={paneSession.editCurrentGoal}
+                onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                onClearGoal={() => void paneSession.clearCurrentGoal()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}

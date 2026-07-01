@@ -348,13 +348,9 @@ pub(crate) fn extract_text(item: &Value) -> Option<String> {
     }
 }
 
-pub(crate) fn completed_plan_item_text(params: &Value) -> Option<String> {
+pub(crate) fn is_completed_plan_item(params: &Value) -> bool {
     let item = params.get("item").unwrap_or(params);
-    if item_type(item).as_str() != "plan" {
-        return None;
-    }
-
-    extract_text(item)
+    item_type(item).as_str() == "plan"
 }
 
 pub(crate) fn reasoning_content(item: &Value) -> Option<String> {

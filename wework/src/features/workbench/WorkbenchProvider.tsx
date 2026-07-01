@@ -601,6 +601,11 @@ export function WorkbenchProvider({
   })
   const stableSelectProject = useStableEvent(selectProject)
   const stableSetProjectExecutionMode = useStableEvent(selectProjectExecutionMode)
+  const setWorkbenchError = useCallback(
+    (error: string | null) => dispatch({ type: 'error_set', error }),
+    [dispatch]
+  )
+  const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -622,6 +627,9 @@ export function WorkbenchProvider({
   )
   const stableArchiveChatConversations = useStableEvent(runtimeTasks.archiveChatConversations)
   const stableForkCurrentRuntimeTask = useStableEvent(runtimeTasks.forkCurrentRuntimeTask)
+  const stableGetRuntimeGoal = useStableEvent(runtimeTasks.getRuntimeGoal)
+  const stableSetRuntimeGoal = useStableEvent(runtimeTasks.setRuntimeGoal)
+  const stableClearRuntimeGoal = useStableEvent(runtimeTasks.clearRuntimeGoal)
   const stableListImPrivateSessions = useStableEvent(listImPrivateSessions)
   const stableBindRuntimeTaskToImSessions = useStableEvent(bindRuntimeTaskToImSessions)
   const stableGetImNotificationSettings = useStableEvent(getImNotificationSettings)
@@ -822,6 +830,7 @@ export function WorkbenchProvider({
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    setWorkbenchError,
     projectWorktreeBranch,
     setProjectWorktreeBranch,
     projectChat: projectChatValue,
@@ -842,6 +851,9 @@ export function WorkbenchProvider({
     archiveProjectsConversations: runtimeTasks.archiveProjectsConversations,
     archiveChatConversations: runtimeTasks.archiveChatConversations,
     forkCurrentRuntimeTask: runtimeTasks.forkCurrentRuntimeTask,
+    getRuntimeGoal: runtimeTasks.getRuntimeGoal,
+    setRuntimeGoal: runtimeTasks.setRuntimeGoal,
+    clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -888,6 +900,7 @@ export function WorkbenchProvider({
       upgradingDevices,
       projectExecutionMode,
       setProjectExecutionMode: stableSetProjectExecutionMode,
+      setWorkbenchError: stableSetWorkbenchError,
       projectWorktreeBranch,
       setProjectWorktreeBranch: stableSetProjectWorktreeBranch,
       selectProject: stableSelectProject,
@@ -907,6 +920,9 @@ export function WorkbenchProvider({
       archiveProjectsConversations: stableArchiveProjectsConversations,
       archiveChatConversations: stableArchiveChatConversations,
       forkCurrentRuntimeTask: stableForkCurrentRuntimeTask,
+      getRuntimeGoal: stableGetRuntimeGoal,
+      setRuntimeGoal: stableSetRuntimeGoal,
+      clearRuntimeGoal: stableClearRuntimeGoal,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -956,6 +972,7 @@ export function WorkbenchProvider({
       stableArchiveRuntimeLocalTask,
       stableBindRuntimeTaskToImSessions,
       stableCancelRuntimePaneTask,
+      stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
@@ -965,6 +982,7 @@ export function WorkbenchProvider({
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,
+      stableGetRuntimeGoal,
       stableGetImNotificationSettings,
       stableGetProjectWorkspaceRoot,
       stableGetRemoteDeviceStartupCommand,
@@ -994,7 +1012,9 @@ export function WorkbenchProvider({
       stableSelectStandaloneDevice,
       stableSendCurrentInput,
       stableSendRuntimePaneMessage,
+      stableSetRuntimeGoal,
       stableSetProjectExecutionMode,
+      stableSetWorkbenchError,
       stableSetProjectWorktreeBranch,
       stableStartNewChat,
       stableStartNewProjectChat,

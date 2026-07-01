@@ -6,6 +6,7 @@ import type {
   Attachment,
   DeviceInfo,
   LocalDeviceSkill,
+  RuntimeGoal,
   RuntimeWorkListResponse,
   UnifiedModel,
 } from '@/types/api'
@@ -169,8 +170,10 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
       'min-h-[76px]',
       'pb-1.5',
-      'pt-2'
+      'pt-2',
+      'bg-background'
     )
+    expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'min-h-[48px]',
@@ -185,7 +188,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
-  test('shows the plan mode switch next to the add context button', async () => {
+  test('selects plan mode from the add context menu', async () => {
     const setSelectedModelOption = vi.fn()
     render(
       <ChatInput
@@ -201,21 +204,17 @@ describe('ChatInput', () => {
       />
     )
 
-    const toggle = screen.getByTestId('collaboration-mode-toggle')
-    expect(toggle).toHaveAttribute('role', 'switch')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-    expect(toggle).toHaveTextContent('计划模式')
-    expect(
-      screen.getByTestId('add-context-button').compareDocumentPosition(toggle) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    expect(screen.queryByTestId('plan-mode-pill')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cancel-plan-mode-button')).not.toBeInTheDocument()
 
-    await userEvent.click(toggle)
+    await userEvent.click(screen.getByTestId('add-context-button'))
+    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
   })
 
-  test('shows the plan mode switch as checked when plan mode is selected', () => {
+  test('shows the plan mode pill when plan mode is selected', async () => {
+    const setSelectedModelOption = vi.fn()
     render(
       <ChatInput
         value=""
@@ -225,15 +224,38 @@ describe('ChatInput', () => {
         variant="desktop"
         projectChat={projectChatControls({
           selectedModelOptions: { collaborationMode: 'plan' },
+          setSelectedModelOption,
         })}
       />
     )
 
-    expect(screen.getByTestId('collaboration-mode-toggle')).toHaveAttribute('aria-checked', 'true')
-    expect(screen.getByTestId('collaboration-mode-toggle').querySelector('span span')).toHaveClass(
-      'left-0.5',
-      'translate-x-3'
+    const pill = screen.getByTestId('plan-mode-pill')
+    expect(pill).toHaveTextContent('计划模式')
+    expect(pill).toHaveClass('h-7')
+    expect(pill).toHaveClass('rounded-xl')
+    expect(pill).toHaveClass('bg-muted')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('w-0')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('group-hover:w-5')
+
+    await userEvent.click(screen.getByTestId('cancel-plan-mode-button'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'default')
+  })
+
+  test('hides the plan mode pill while goal draft mode is active', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goalDraftActive
+      />
     )
+
+    expect(screen.getByTestId('goal-draft-pill')).toHaveTextContent('目标')
+    expect(screen.queryByTestId('plan-mode-pill')).not.toBeInTheDocument()
   })
 
   test('shows desktop pause button while the assistant is streaming', async () => {
@@ -943,6 +965,39 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
   })
 
+  test('opens the compact context sheet with plan and goal actions', async () => {
+    const setSelectedModelOption = vi.fn()
+    const onSetGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ setSelectedModelOption })}
+        onSetGoal={onSetGoal}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-set-plan-mode-button')).toHaveTextContent('计划模式')
+    expect(screen.getByTestId('mobile-set-goal-button')).toHaveTextContent('追求目标')
+
+    await userEvent.click(screen.getByTestId('mobile-set-plan-mode-button'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+    await userEvent.click(screen.getByTestId('mobile-set-goal-button'))
+
+    expect(onSetGoal).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
   test('desktop file picker does not restrict attachment file types', async () => {
     render(
       <ChatInput
@@ -1191,7 +1246,11 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
     expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-input-button')).toHaveClass('absolute', 'right-3', 'top-3')
-    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass('h-full', 'pt-14')
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass(
+      'h-full',
+      'pt-14',
+      'bg-background'
+    )
     expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
       ['one', 'two', 'three', 'four', 'five'].join('\n')
     )
@@ -1842,7 +1901,9 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('skill-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop add context menu with only file upload', async () => {
+  test('opens the desktop add context menu with file upload, plan, and goal actions', async () => {
+    const setSelectedModelOption = vi.fn()
+    const onSetGoal = vi.fn()
     render(
       <ChatInput
         value=""
@@ -1850,6 +1911,8 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
+        projectChat={projectChatControls({ setSelectedModelOption })}
+        onSetGoal={onSetGoal}
       />
     )
 
@@ -1857,10 +1920,183 @@ describe('ChatInput', () => {
 
     const menu = within(screen.getByTestId('add-context-menu'))
     expect(menu.getByText('添加照片和文件')).toBeInTheDocument()
+    expect(menu.getByText('计划模式')).toBeInTheDocument()
+    expect(menu.getByText('开启计划模式')).toBeInTheDocument()
+    expect(menu.getByText('目标')).toBeInTheDocument()
+    expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
     expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
-    expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
-    expect(menu.queryByText('追求目标')).not.toBeInTheDocument()
     expect(menu.queryByText('插件')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+    await userEvent.click(screen.getByTestId('set-goal-button'))
+
+    expect(onSetGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders desktop goal status bar actions', async () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '实现 plan 里的功能',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 178,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+    const onEditGoal = vi.fn()
+    const onPauseGoal = vi.fn()
+    const onClearGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={goal}
+        onEditGoal={onEditGoal}
+        onPauseGoal={onPauseGoal}
+        onClearGoal={onClearGoal}
+      />
+    )
+
+    const bar = screen.getByTestId('goal-status-bar')
+    expect(bar).toHaveTextContent('进行中的目标')
+    expect(bar).toHaveTextContent('实现 plan 里的功能')
+    expect(bar).toHaveTextContent('2m 58s')
+
+    await userEvent.click(screen.getByTestId('edit-goal-button'))
+    await userEvent.click(screen.getByTestId('pause-goal-button'))
+    await userEvent.click(screen.getByTestId('clear-goal-button'))
+
+    expect(onEditGoal).toHaveBeenCalledTimes(1)
+    expect(onPauseGoal).toHaveBeenCalledTimes(1)
+    expect(onClearGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders a newly created active goal with a zero-second timer', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'pending',
+      objective: '立刻显示目标条',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={goal}
+      />
+    )
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('立刻显示目标条')
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('0s')
+  })
+
+  test('does not render the goal status bar after the goal is complete', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '已经达成的目标',
+      status: 'complete',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 300,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={goal}
+      />
+    )
+
+    expect(screen.queryByTestId('goal-status-bar')).not.toBeInTheDocument()
+  })
+
+  test('renders goal draft pill with a hover-only cancel affordance', () => {
+    const onCancelGoalDraft = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goalDraftActive
+        onCancelGoalDraft={onCancelGoalDraft}
+      />
+    )
+
+    const cancelButton = screen.getByTestId('cancel-goal-draft-button')
+    const pill = screen.getByTestId('goal-draft-pill')
+    expect(screen.getByPlaceholderText('WeWork 应该往哪个方向努力?')).toBeInTheDocument()
+    expect(pill).toHaveTextContent('目标')
+    expect(pill).toHaveClass('h-7')
+    expect(pill).toHaveClass('rounded-xl')
+    expect(pill).toHaveClass('justify-center')
+    expect(pill).toHaveClass('border')
+    expect(pill).toHaveClass('bg-muted')
+    expect(cancelButton).toHaveClass('opacity-0')
+    expect(cancelButton).toHaveClass('w-0')
+    expect(cancelButton).toHaveClass('group-hover:w-5')
+    expect(cancelButton).toHaveClass('group-hover:mr-1.5')
+    expect(cancelButton).toHaveClass('group-hover:opacity-100')
+    expect(cancelButton).toHaveClass('group-hover:bg-text-muted/15')
+    expect(cancelButton).toHaveClass('hover:bg-text-muted/30')
+
+    fireEvent.click(cancelButton)
+
+    expect(onCancelGoalDraft).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders compact goal status bar actions', async () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '实现新对话 goal',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+    const onEditGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        goal={goal}
+        onEditGoal={onEditGoal}
+      />
+    )
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('实现新对话 goal')
+    await userEvent.click(screen.getByTestId('edit-goal-button'))
+    expect(onEditGoal).toHaveBeenCalledTimes(1)
   })
 
   test('renders attachment badges and removes an attachment', async () => {

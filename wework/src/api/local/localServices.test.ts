@@ -982,6 +982,50 @@ describe('createLocalAppServices', () => {
     expect(payload).not.toHaveProperty('modelId')
   })
 
+  test('normalizes local runtime goal requests before IPC', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: {
+        threadId: 'thread-1',
+        objective: '实现 plan 里的功能',
+        status: 'active',
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1780000000000,
+        updatedAt: 1780000000000,
+      },
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.runtimeWorkApi?.setRuntimeGoal({
+        address: { deviceId: 'local-device', localTaskId: 'task-1' },
+        objective: '实现 plan 里的功能',
+        status: 'active',
+        tokenBudget: null,
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      goal: {
+        threadId: 'thread-1',
+        objective: '实现 plan 里的功能',
+        status: 'active',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith('runtime.tasks.goal.set', {
+      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+      objective: '实现 plan 里的功能',
+      status: 'active',
+      tokenBudget: null,
+    })
+  })
+
   test('adapts executor runtime workspace list to workbench shape', async () => {
     const request = vi.fn().mockResolvedValue({
       success: true,

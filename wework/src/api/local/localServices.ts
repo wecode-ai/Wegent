@@ -16,6 +16,12 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
+  RuntimeGoalClearRequest,
+  RuntimeGoalClearResponse,
+  RuntimeGoalGetRequest,
+  RuntimeGoalGetResponse,
+  RuntimeGoalSetRequest,
+  RuntimeGoalSetResponse,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
   RuntimeTaskCancelResponse,
@@ -1329,6 +1335,15 @@ function createRuntimeWorkApi(
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await getLocalDeviceId()
       return request('runtime.tasks.send', createLocalRuntimeSendPayload(data, localDeviceId))
+    },
+    getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
+      return requestWithLocalDevice('runtime.tasks.goal.get', data)
+    },
+    setRuntimeGoal(data: RuntimeGoalSetRequest): Promise<RuntimeGoalSetResponse> {
+      return requestWithLocalDevice('runtime.tasks.goal.set', data)
+    },
+    clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
+      return requestWithLocalDevice('runtime.tasks.goal.clear', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)

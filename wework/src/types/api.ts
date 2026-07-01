@@ -265,6 +265,8 @@ export interface NormalizedRuntimeMessage {
   completed_at?: string | number | null
   stoppedNotice?: boolean | null
   stopped_notice?: boolean | null
+  runtimeGoalRequest?: boolean | null
+  runtime_goal_request?: boolean | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
@@ -501,6 +503,67 @@ export interface RuntimeSendResponse {
   error?: string | null
 }
 
+export type RuntimeGoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'usageLimited'
+  | 'budgetLimited'
+  | 'complete'
+
+export interface RuntimeGoal {
+  threadId: string
+  objective: string
+  status: RuntimeGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface RuntimeGoalCreateInput {
+  objective: string
+  status?: RuntimeGoalStatus | null
+  tokenBudget?: number | null
+}
+
+export interface RuntimeGoalGetRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeGoalGetResponse {
+  accepted: boolean
+  localTaskId: string
+  goal: RuntimeGoal | null
+  error?: string | null
+}
+
+export interface RuntimeGoalSetRequest {
+  address: RuntimeTaskAddress
+  objective?: string | null
+  status?: RuntimeGoalStatus | null
+  tokenBudget?: number | null
+}
+
+export interface RuntimeGoalSetResponse {
+  accepted: boolean
+  localTaskId: string
+  goal: RuntimeGoal
+  error?: string | null
+}
+
+export interface RuntimeGoalClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeGoalClearResponse {
+  accepted: boolean
+  localTaskId: string
+  cleared: boolean
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceOpenRequest {
   deviceId: string
   workspacePath: string
@@ -680,6 +743,7 @@ export interface RuntimeTaskCreateRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
+  initialGoal?: RuntimeGoalCreateInput | null
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -1445,7 +1509,7 @@ export interface InstalledPluginUpdateRequest {
   description?: string
 }
 
-export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'plan' | 'error' | 'guidance'
 
 export interface ChatBlock {
   id: string
@@ -1498,6 +1562,16 @@ export interface RuntimeSubagentActivityPayload {
   kind?: string
   status?: string
   occurred_at_ms?: number
+}
+
+export interface RuntimeGoalEventPayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  device_id?: string
+  local_task_id?: string
+  thread_id?: string
+  goal?: RuntimeGoal | null
 }
 
 export interface ChatGuidanceQueuedPayload {
