@@ -6,6 +6,11 @@ import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
+import {
+  CloudConnectionContext,
+  DISCONNECTED_STATE,
+} from '@/features/cloud-connection/CloudConnectionContext'
+import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { openExternalUrl } from '@/lib/external-links'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import '@/i18n'
@@ -335,16 +340,16 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
   })
 
-  test('opens Codex auth settings under personal group without manual device sync', async () => {
+  test('opens model settings under personal group without manual device sync', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(screen.getByTestId('settings-category-personal')).toHaveTextContent('个人')
 
-    await userEvent.click(screen.getByTestId('settings-nav-codex-auth'))
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
-    expect(await screen.findByTestId('runtime-config-settings-page')).toBeInTheDocument()
+    expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
     expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
     expect(
       screen.getByText(
@@ -353,7 +358,7 @@ describe('ConnectionsSettingsPage', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
     const runtimeConfigButtons = Array.from(
-      screen.getByTestId('runtime-config-settings-page').querySelectorAll('button')
+      screen.getByTestId('model-settings-page').querySelectorAll('button')
     )
     expect(
       runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-import-button'))
@@ -372,6 +377,35 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('keeps cloud auth sync controls unavailable when cloud is disconnected', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithPassword: vi.fn(),
+      setupAdminPassword: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+
+    expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-config-cloud-required')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
+    expect(userApi.getRuntimeConfig).not.toHaveBeenCalled()
   })
 
   test('saves personal proxy then enables it for Codex auth', async () => {
@@ -419,7 +453,7 @@ describe('ConnectionsSettingsPage', () => {
     )
     expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('settings-nav-codex-auth'))
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     await userEvent.click(screen.getByTestId('runtime-config-proxy-toggle'))
 

@@ -52,9 +52,9 @@ use super::{
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request,
-        execution_request_from_payload, infer_workspace_kind, integer_field, normalize_device_id,
-        now_ms, prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
+        apply_runtime_payload_metadata, bool_field, execution_request, infer_workspace_kind,
+        integer_field, normalize_device_id, now_ms, prompt_text, runtime_task_id, string_field,
+        workspace_group_path, workspace_path,
     },
 };
 
@@ -695,14 +695,8 @@ impl RuntimeWorkRpcHandler {
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
-        let mut request = match execution_request(&payload) {
-            Some(request) => request,
-            None => execution_request_from_payload(
-                &payload,
-                payload_workspace_path.as_deref().unwrap_or_default(),
-            )
-            .map_err(|message| AppIpcError::new("bad_request", message))?,
-        };
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
@@ -761,11 +755,8 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
-        let mut request = match payload_execution_request {
-            Some(request) => request,
-            None => execution_request_from_payload(&payload, &workspace_path)
-                .map_err(|message| AppIpcError::new("bad_request", message))?,
-        };
+        let mut request = payload_execution_request
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {

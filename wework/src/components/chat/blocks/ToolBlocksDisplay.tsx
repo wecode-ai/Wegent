@@ -7,6 +7,7 @@ import {
   isAnsweredRequestUserInputBlock,
   isHiddenRequestUserInputBlock,
   isRequestUserInputBlock,
+  type RequestUserInputBlock,
 } from '../requestUserInputMessages'
 import { ToolBlockItem } from './ToolBlockItem'
 import {
@@ -32,7 +33,7 @@ type ProcessingDisplayItem =
   | {
       type: 'request_user_input'
       id: string
-      block: ToolBlock
+      block: RequestUserInputBlock
     }
 
 interface ToolBlocksDisplayProps {
@@ -168,19 +169,14 @@ export function ToolBlocksDisplay({
         {displayItems.map(item =>
           item.type === 'request_user_input' ? (
             isAnsweredRequestUserInputBlock(item.block) ? (
-              <RequestUserInputSummary
-                key={item.id}
-                payload={item.block.renderPayload as RequestUserInputPayload}
-              />
+              <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
             ) : (
               <RequestUserInputCard
                 key={item.id}
-                payload={item.block.renderPayload as RequestUserInputPayload}
+                payload={item.block.renderPayload}
                 disabled={item.block.status === 'error'}
                 onSubmit={onRequestUserInputSubmit}
-                onIgnore={() =>
-                  onRequestUserInputIgnore?.(item.block.renderPayload as RequestUserInputPayload)
-                }
+                onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
               />
             )
           ) : item.type === 'activity_group' ? (

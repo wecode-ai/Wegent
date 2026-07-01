@@ -1,9 +1,23 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from './localSession'
 import { createLocalAppServices } from './localServices'
+import {
+  clearLocalModelConfigs,
+  saveLocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 
 describe('createLocalAppServices', () => {
+  beforeEach(() => {
+    clearLocalModelConfigs()
+  })
+
   test('returns local bootstrap data without backend', async () => {
+    saveLocalModelConfig({
+      id: 'ollama',
+      displayName: 'Ollama GPT',
+      modelId: 'gpt-oss:20b',
+      baseUrl: 'http://localhost:11434/v1',
+    })
     const request = vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
     const ensure = vi.fn().mockResolvedValue({
       running: true,
@@ -28,6 +42,13 @@ describe('createLocalAppServices', () => {
           name: 'codex-gpt-5.5',
           type: 'runtime',
           modelId: 'gpt-5.5',
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+        expect.objectContaining({
+          name: 'local-model:ollama',
+          type: 'runtime',
+          displayName: 'Ollama GPT',
+          modelId: 'gpt-oss:20b',
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
       ],
@@ -506,7 +527,7 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('normalizes local runtime send requests before IPC', async () => {
+  test('builds the shared execution request for local runtime sends', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
@@ -515,7 +536,11 @@ describe('createLocalAppServices', () => {
     })
 
     await services.runtimeWorkApi?.sendRuntimeMessage({
-      address: { deviceId: 'local-device', localTaskId: 'task-1' },
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        localTaskId: 'task-1',
+      },
       message: 'continue',
       modelId: 'codex-gpt-5.5',
       modelOptions: {
@@ -539,32 +564,170 @@ describe('createLocalAppServices', () => {
       ],
     })
 
-    expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
-      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
-      message: 'continue',
-      message_id: expect.any(Number),
-      modelId: 'gpt-5.5',
-      collaborationMode: 'default',
-      modelOptions: {
-        collaborationMode: 'default',
-        reasoning: 'extra_high',
-        summary: 'concise',
-        speed: 'fast',
-      },
-      attachments: [
-        {
-          id: -46,
-          filename: 'follow-up.png',
-          file_size: 640,
-          mime_type: 'image/png',
-          status: 'ready',
-          file_extension: '.png',
-          created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(sendPayload).toEqual(
+      expect.objectContaining({
+        address: {
+          deviceId: 'device-uuid',
+          workspacePath: '/Users/me/project',
+          localTaskId: 'task-1',
         },
-      ],
+        message: 'continue',
+        message_id: expect.any(Number),
+        collaborationMode: 'default',
+        modelOptions: {
+          collaborationMode: 'default',
+          reasoning: 'extra_high',
+          summary: 'concise',
+          speed: 'fast',
+        },
+        attachments: [
+          {
+            id: -46,
+            filename: 'follow-up.png',
+            file_size: 640,
+            mime_type: 'image/png',
+            status: 'ready',
+            file_extension: '.png',
+            created_at: '2026-06-29T00:00:00.000Z',
+            local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          },
+        ],
+        executionRequest: expect.objectContaining({
+          prompt: 'continue',
+          model_config: expect.objectContaining({
+            model: 'openai',
+            model_id: 'gpt-5.5',
+            api_format: 'responses',
+            protocol: 'openai-responses',
+            runtime_config: {
+              codex: {
+                use_user_config: true,
+                configured: true,
+              },
+            },
+            reasoning: {
+              effort: 'extra_high',
+              summary: 'concise',
+            },
+            service_tier: 'fast',
+          }),
+          project_workspace_path: '/Users/me/project',
+          workspace: {
+            project: {
+              source: 'local_path',
+              path: '/Users/me/project',
+            },
+          },
+          device_id: 'device-uuid',
+          execution_target_type: 'local',
+          workspace_source: 'local_path',
+          new_session: false,
+          collaborationMode: 'default',
+          attachments: [
+            {
+              id: -46,
+              filename: 'follow-up.png',
+              original_filename: 'follow-up.png',
+              file_size: 640,
+              mime_type: 'image/png',
+              subtask_id: expect.any(Number),
+              file_extension: '.png',
+              local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+              local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+            },
+          ],
+        }),
+      })
+    )
+    expect(sendPayload).not.toHaveProperty('modelId')
+  })
+
+  test('uses local model settings for create and continue execution requests', async () => {
+    saveLocalModelConfig({
+      id: 'ollama',
+      displayName: 'Ollama GPT',
+      modelId: 'gpt-oss:20b',
+      baseUrl: 'http://localhost:11434/v1',
     })
+    saveLocalModelConfig({
+      id: 'lmstudio',
+      displayName: 'LM Studio',
+      modelId: 'qwen3-coder',
+      baseUrl: 'http://localhost:1234/v1',
+      apiKey: 'real-key',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'local-model:ollama',
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        localTaskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'local-model:ollama',
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        localTaskId: 'task-1',
+      },
+      message: 'secure continue',
+      modelId: 'local-model:lmstudio',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayloads = request.mock.calls
+      .filter(([method]) => method === 'runtime.tasks.send')
+      .map(([, payload]) => payload)
+    const createModelConfig = createPayload.executionRequest.model_config
+    const continueModelConfig = sendPayloads[0].executionRequest.model_config
+    const keyedModelConfig = sendPayloads[1].executionRequest.model_config
+
+    expect(continueModelConfig).toEqual(createModelConfig)
+    expect(createModelConfig).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'gpt-oss:20b',
+        api_format: 'responses',
+        protocol: 'openai-responses',
+        base_url: 'http://localhost:11434/v1',
+        api_key: 'dummy',
+        runtime_config: {
+          codex: {
+            use_user_config: false,
+            configured: false,
+          },
+        },
+      })
+    )
+    expect(keyedModelConfig).toEqual(
+      expect.objectContaining({
+        model_id: 'qwen3-coder',
+        base_url: 'http://localhost:1234/v1',
+        api_key: 'real-key',
+      })
+    )
   })
 
   test('preserves request user input responses in local runtime send requests', async () => {

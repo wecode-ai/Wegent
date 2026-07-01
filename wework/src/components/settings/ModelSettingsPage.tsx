@@ -4,9 +4,13 @@ import {
   KeyRound,
   Loader2,
   Network,
+  Pencil,
+  Plus,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
@@ -15,6 +19,13 @@ import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/loca
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import {
+  deleteLocalModelConfig,
+  listLocalModelConfigs,
+  LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  saveLocalModelConfig,
+  type LocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/devices'
@@ -173,11 +184,318 @@ function LocalCodexAuthStatusCard({
   )
 }
 
-interface RuntimeConfigSettingsPageProps {
-  runtime: UserRuntime
+interface LocalModelFormState {
+  displayName: string
+  modelId: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
 }
 
-export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPageProps) {
+const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
+  displayName: '',
+  modelId: '',
+  baseUrl: '',
+  apiKey: '',
+  enabled: true,
+}
+
+function LocalModelSettingsSection() {
+  const { t } = useTranslation('common')
+  const [models, setModels] = useState<LocalModelConfig[]>(() => listLocalModelConfigs())
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
+  const [error, setError] = useState<string | null>(null)
+
+  const refreshModels = useCallback(() => {
+    setModels(listLocalModelConfigs())
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
+    return () => window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
+  }, [refreshModels])
+
+  const editingModel = useMemo(
+    () => models.find(model => model.id === editingId) ?? null,
+    [editingId, models]
+  )
+
+  const resetForm = () => {
+    setEditingId(null)
+    setForm(EMPTY_LOCAL_MODEL_FORM)
+    setError(null)
+  }
+
+  const startEditing = (model: LocalModelConfig) => {
+    setEditingId(model.id)
+    setForm({
+      displayName: model.displayName,
+      modelId: model.modelId,
+      baseUrl: model.baseUrl,
+      apiKey: '',
+      enabled: model.enabled,
+    })
+    setError(null)
+  }
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError(null)
+    try {
+      saveLocalModelConfig({
+        id: editingId,
+        displayName: form.displayName,
+        modelId: form.modelId,
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+        enabled: form.enabled,
+      })
+      resetForm()
+    } catch (saveError) {
+      setError(
+        getErrorMessage(saveError, t('workbench.local_model_save_failed', '保存本地模型失败'))
+      )
+    }
+  }
+
+  const clearEditingApiKey = () => {
+    if (!editingModel) return
+    try {
+      saveLocalModelConfig({
+        id: editingModel.id,
+        displayName: editingModel.displayName,
+        modelId: editingModel.modelId,
+        baseUrl: editingModel.baseUrl,
+        apiKey: null,
+        enabled: editingModel.enabled,
+      })
+      startEditing({ ...editingModel, apiKey: undefined })
+    } catch (clearError) {
+      setError(
+        getErrorMessage(
+          clearError,
+          t('workbench.local_model_clear_key_failed', '清除 API Key 失败')
+        )
+      )
+    }
+  }
+
+  return (
+    <section
+      data-testid="local-model-settings"
+      className="rounded-lg border border-border bg-background p-5"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">
+            {t('workbench.local_model_settings_title', '本地模型')}
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-text-secondary">
+            {t(
+              'workbench.local_model_settings_description',
+              '添加 OpenAI Responses 兼容模型 URL。配置只保存在本机，不会同步云端。'
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          data-testid="local-model-add-button"
+          onClick={resetForm}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t('workbench.local_model_add_action', '新增')}
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="mt-5 grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            {t('workbench.local_model_url_label', '模型 URL')}
+            <input
+              data-testid="local-model-url-input"
+              value={form.baseUrl}
+              onChange={event => setForm(current => ({ ...current, baseUrl: event.target.value }))}
+              placeholder="http://localhost:11434/v1"
+              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            {t('workbench.local_model_id_label', '模型 ID')}
+            <input
+              data-testid="local-model-id-input"
+              value={form.modelId}
+              onChange={event => setForm(current => ({ ...current, modelId: event.target.value }))}
+              placeholder="gpt-oss:20b"
+              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+            />
+          </label>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            {t('workbench.local_model_display_name_label', '显示名')}
+            <input
+              data-testid="local-model-display-name-input"
+              value={form.displayName}
+              onChange={event =>
+                setForm(current => ({ ...current, displayName: event.target.value }))
+              }
+              placeholder="Ollama GPT"
+              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            {t('workbench.local_model_api_key_label', 'API Key')}
+            <input
+              data-testid="local-model-api-key-input"
+              value={form.apiKey}
+              onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
+              placeholder={
+                editingModel?.apiKey
+                  ? t('workbench.local_model_api_key_replace_placeholder', '留空则保留现有 Key')
+                  : t('workbench.local_model_api_key_placeholder', '可选')
+              }
+              type="password"
+              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+            />
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              data-testid="local-model-enabled-checkbox"
+              type="checkbox"
+              checked={form.enabled}
+              onChange={event =>
+                setForm(current => ({ ...current, enabled: event.target.checked }))
+              }
+              className="h-4 w-4 rounded border-border text-primary"
+            />
+            {t('workbench.local_model_enabled_label', '启用')}
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {editingModel?.apiKey && (
+              <button
+                type="button"
+                data-testid="local-model-clear-api-key-button"
+                onClick={clearEditingApiKey}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-3.5 w-3.5" />
+                {t('workbench.local_model_clear_api_key_action', '清除 Key')}
+              </button>
+            )}
+            {editingId && (
+              <button
+                type="button"
+                data-testid="local-model-cancel-edit-button"
+                onClick={resetForm}
+                className="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              >
+                {t('common.cancel', '取消')}
+              </button>
+            )}
+            <button
+              type="submit"
+              data-testid="local-model-save-button"
+              className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+            >
+              {editingId
+                ? t('workbench.local_model_update_action', '保存')
+                : t('workbench.local_model_save_action', '添加模型')}
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {error && (
+        <div
+          data-testid="local-model-error"
+          className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="mt-5 grid gap-2">
+        {models.length === 0 ? (
+          <div
+            data-testid="local-model-empty"
+            className="rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-sm text-text-muted"
+          >
+            {t('workbench.local_model_empty', '还没有本地模型配置')}
+          </div>
+        ) : (
+          models.map(model => (
+            <div
+              key={model.id}
+              data-testid={`local-model-row-${model.id}`}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-3"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold text-text-primary">
+                    {model.displayName}
+                  </h3>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      model.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+                    }`}
+                  >
+                    {model.enabled
+                      ? t('workbench.local_model_enabled', '已启用')
+                      : t('workbench.local_model_disabled', '已停用')}
+                  </span>
+                  {model.apiKey && (
+                    <span className="rounded-full bg-background px-2 py-0.5 text-xs text-text-muted">
+                      {t('workbench.local_model_api_key_saved', '已保存 Key')}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 break-all font-mono text-xs text-text-secondary">
+                  {model.modelId} · {model.baseUrl}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid={`local-model-edit-${model.id}`}
+                  onClick={() => startEditing(model)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
+                  aria-label={t('workbench.local_model_edit_action', '编辑')}
+                  title={t('workbench.local_model_edit_action', '编辑')}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  data-testid={`local-model-delete-${model.id}`}
+                  onClick={() => {
+                    deleteLocalModelConfig(model.id)
+                    if (editingId === model.id) resetForm()
+                  }}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
+                  aria-label={t('workbench.local_model_delete_action', '删除')}
+                  title={t('workbench.local_model_delete_action', '删除')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+interface ModelSettingsPageProps {
+  runtime?: UserRuntime
+}
+
+export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -377,19 +695,22 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
 
   if (!cloudConnection.isConnected) {
     return (
-      <div data-testid="runtime-config-settings-page" className="mx-auto w-full max-w-[820px]">
+      <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.runtime_config_title', 'Codex 认证')}
+            {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
             {t(
-              'workbench.runtime_config_cloud_required',
-              '本机 Codex 会继续使用本机 auth.json。连接云端后，才能上传或从设备导入 auth.json 并同步到云设备。'
+              'workbench.model_settings_subtitle',
+              '配置本机模型，并在连接云端后管理 Codex auth.json 同步。'
             )}
           </p>
         </div>
         <div className="mt-8">
+          <LocalModelSettingsSection />
+        </div>
+        <div className="mt-4">
           <LocalCodexAuthStatusCard
             status={localAuthStatus}
             loading={localAuthLoading}
@@ -423,14 +744,17 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
   }
 
   return (
-    <div data-testid="runtime-config-settings-page" className="mx-auto w-full max-w-[820px]">
+    <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.runtime_config_title', 'Codex 认证')}
+            {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.runtime_config_subtitle', '管理当前账号的 Codex auth.json')}
+            {t(
+              'workbench.model_settings_subtitle',
+              '配置本机模型，并在连接云端后管理 Codex auth.json 同步。'
+            )}
           </p>
         </div>
         <button
@@ -451,6 +775,10 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       </div>
 
       <div className="mt-8">
+        <LocalModelSettingsSection />
+      </div>
+
+      <div className="mt-4">
         <LocalCodexAuthStatusCard
           status={localAuthStatus}
           loading={localAuthLoading}

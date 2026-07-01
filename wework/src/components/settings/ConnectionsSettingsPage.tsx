@@ -60,7 +60,7 @@ import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
-import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
+import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -94,10 +94,10 @@ const settingsNavItems: SettingsNavItem[] = [
     fallback: '外观',
   },
   {
-    key: 'codex-auth',
+    key: 'model-settings',
     icon: UserRound,
-    label: 'settings_nav_codex_auth',
-    fallback: 'Codex 认证',
+    label: 'settings_nav_model_settings',
+    fallback: '模型设置',
     category: 'personal',
   },
   {
@@ -147,7 +147,7 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
 
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
-  if (normalizedPath === '/settings/personal') return 'codex-auth'
+  if (normalizedPath === '/settings/personal') return 'model-settings'
   const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
   if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
@@ -156,7 +156,7 @@ function getSettingsNavFromPath(path: string): string {
 }
 
 function getSettingsNavPath(key: string): string {
-  if (key === 'codex-auth') return '/settings/personal/codex'
+  if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
@@ -1472,8 +1472,8 @@ export function ConnectionsSettingsPage({
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
-        ) : activeNav === 'codex-auth' ? (
-          <RuntimeConfigSettingsPage runtime="codex" />
+        ) : activeNav === 'model-settings' ? (
+          <ModelSettingsPage />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
         ) : activeNav === 'skills' ? (
