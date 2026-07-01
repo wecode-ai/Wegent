@@ -54,6 +54,8 @@ cloud:runtime:codex-gpt-5.5
 
 执行前通过模型上的 `weworkExecution` 元数据映射回原始 `modelName` 和 `modelType`。本地 IPC 执行边界再把本机 Codex UI 模型名规范化为 Codex app-server 接受的真实模型 id，例如 `codex-gpt-5.5` 会在发送前转换为 `gpt-5.5`。用户配置的本地模型使用 `local-model:<config-id>`，只允许投递到本机 device；如果目标是云端任务，前端会阻止发送并提示用户切换设备或模型。云端 relay 仍按模型来源传递原始执行模型名。
 
+本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。
+
 ## 本地模型配置
 
 本地模型配置存储在浏览器本机存储中，不写 Backend，也不参与云端同步。配置字段包括：

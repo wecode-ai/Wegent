@@ -36,6 +36,7 @@ describe('localModelSettings', () => {
     const withoutKey = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
+      group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: ' http://localhost:11434/v1/ ',
       enabled: true,
@@ -51,6 +52,7 @@ describe('localModelSettings', () => {
     expect(withoutKey).toMatchObject({
       id: 'ollama',
       displayName: 'Ollama GPT',
+      group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
       enabled: true,

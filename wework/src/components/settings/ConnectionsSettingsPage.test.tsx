@@ -40,6 +40,25 @@ vi.mock('@/api/models', () => ({
   })),
 }))
 
+vi.mock('@/api/local/codexOfficialModels', () => ({
+  getLocalCodexOfficialModels: vi.fn().mockResolvedValue({
+    providers: [],
+    models: [],
+  }),
+}))
+
+vi.mock('@/api/local/runtimeAuthStatus', () => ({
+  getLocalCodexAuthStatus: vi.fn().mockResolvedValue({
+    runtime: 'codex',
+    targetPath: '/Users/me/.codex/auth.json',
+    exists: true,
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    sha256: 'abc123',
+    sizeBytes: 128,
+    error: null,
+  }),
+}))
+
 vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
@@ -352,19 +371,25 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('model-interface-settings')).toHaveTextContent('模型接口')
-    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('Codex 认证')
-    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
+    expect(
+      within(screen.getByTestId('model-interface-settings')).queryByRole('heading', {
+        name: '本机接口',
+      })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('Codex 设置')
+    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('认证信息')
+    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('模型')
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
     expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
-    expect(
-      screen.getByText('把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份认证。')
-    ).toBeInTheDocument()
+    expect(screen.getByText('共享认证')).toBeInTheDocument()
     expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
-    const runtimeConfigButtons = Array.from(
-      screen.getByTestId('model-settings-page').querySelectorAll('button')
+    expect(screen.getByTestId('runtime-config-sync-source-select')).toHaveTextContent('当前设备')
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent(
+      '同步到其他设备'
     )
-    expect(
-      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-import-button'))
-    ).toBeLessThan(runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-upload-button')))
+    expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('runtime-config-toggle'))
 
@@ -451,64 +476,40 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
     const cloudSyncSection = screen.getByTestId('runtime-config-cloud-sync')
-    expect(cloudSyncSection).toHaveClass('opacity-70')
+    expect(cloudSyncSection).toHaveClass('bg-background')
     expect(
       within(screen.getByTestId('model-interface-settings')).getByText('模型接口')
     ).toBeInTheDocument()
     expect(
       within(screen.getByTestId('cloud-models-section')).getByText('云端模型')
     ).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-models-configure-button')).toHaveTextContent('配置')
-    expect(within(cloudSyncSection).getByText('Codex 认证同步')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-models-configure-button')).toHaveTextContent('连接云端后可用')
+    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('Codex 设置')
     expect(screen.getByTestId('runtime-config-cloud-required')).toHaveTextContent('未连接云端')
-    expect(screen.getByTestId('runtime-config-toggle')).toBeDisabled()
-    expect(screen.getByTestId('runtime-config-proxy-toggle')).toBeDisabled()
-    expect(screen.getByTestId('runtime-config-import-device-select')).toBeDisabled()
-    expect(screen.getByTestId('runtime-config-import-button')).toBeDisabled()
-    expect(screen.getByTestId('runtime-config-upload-button')).toBeDisabled()
-    expect(screen.getByTestId('runtime-config-upload-button')).toHaveTextContent('同步本机 Codex')
-    expect(screen.getByTestId('runtime-config-cloud-configure-button')).toHaveTextContent('配置')
+    expect(screen.queryByTestId('runtime-config-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-import-device-select')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-cloud-configure-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-config-sync-source-select')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent(
+      '连接云端后可用'
+    )
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).not.toBeDisabled()
     expect(userApi.getRuntimeConfig).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('runtime-config-cloud-configure-button'))
+    await userEvent.click(screen.getByTestId('runtime-config-sync-auth-button'))
 
     expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-cloud-connect-button')).toHaveTextContent('连接云端')
     expect(window.location.pathname).toBe('/settings')
   })
 
-  test('saves personal proxy then enables it for Codex auth', async () => {
+  test('saves personal proxy from proxy settings', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
-    userApi.getRuntimeConfig.mockResolvedValueOnce({
-      runtime: 'codex',
-      display_name: 'Codex',
-      use_user_config: false,
-      use_proxy: false,
-      configured: true,
-      target_path: '~/.codex/auth.json',
-      auth_json_sha256: 'abc1234567890',
-      auth_json_updated_at: '2026-06-09T00:00:00Z',
-      proxy_configured: true,
-      proxy_url_masked: 'http://127.0.0.1:7890',
-      proxy_updated_at: '2026-06-09T00:00:02Z',
-      updated_at: '2026-06-09T00:00:00Z',
-    })
-    userApi.updateRuntimeConfig.mockResolvedValueOnce({
-      runtime: 'codex',
-      display_name: 'Codex',
-      use_user_config: false,
-      use_proxy: true,
-      configured: true,
-      target_path: '~/.codex/auth.json',
-      auth_json_sha256: 'abc1234567890',
-      auth_json_updated_at: '2026-06-09T00:00:00Z',
-      proxy_configured: true,
-      proxy_url_masked: 'http://127.0.0.1:7890',
-      proxy_updated_at: '2026-06-09T00:00:02Z',
-      updated_at: '2026-06-09T00:00:03Z',
-    })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
@@ -523,23 +524,7 @@ describe('ConnectionsSettingsPage', () => {
       expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890')
     )
     expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
-
-    await userEvent.click(screen.getByTestId('runtime-config-proxy-toggle'))
-
-    await waitFor(() =>
-      expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
-        use_user_config: false,
-        use_proxy: true,
-      })
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('runtime-config-proxy-toggle')).toHaveAttribute(
-        'aria-checked',
-        'true'
-      )
-    )
+    expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
   })
 
   test('opens worktree settings from the coding settings navigation', async () => {

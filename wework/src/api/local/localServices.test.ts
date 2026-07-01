@@ -15,10 +15,47 @@ describe('createLocalAppServices', () => {
     saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
+      group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
     })
-    const request = vi.fn().mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.models.list') {
+        return {
+          providers: [
+            {
+              id: 'openai',
+              displayName: 'CodeX',
+              type: 'official',
+              current: true,
+              available: true,
+              error: null,
+              data: [
+                {
+                  id: 'gpt-5.5',
+                  model: 'gpt-5.5',
+                  displayName: 'GPT 5.5',
+                  isDefault: true,
+                },
+              ],
+            },
+          ],
+          data: [
+            {
+              id: 'gpt-5.5',
+              model: 'gpt-5.5',
+              displayName: 'GPT 5.5',
+              isDefault: true,
+              providerId: 'openai',
+              providerName: 'CodeX',
+              providerType: 'official',
+              providerCurrent: true,
+            },
+          ],
+        }
+      }
+      return { projects: [], chats: [], totalLocalTasks: 0 }
+    })
     const ensure = vi.fn().mockResolvedValue({
       running: true,
       ready: true,
@@ -39,7 +76,7 @@ describe('createLocalAppServices', () => {
     await expect(services.modelApi.listModels()).resolves.toEqual({
       data: [
         expect.objectContaining({
-          name: 'codex-gpt-5.5',
+          name: 'gpt-5.5',
           type: 'runtime',
           modelId: 'gpt-5.5',
           runtime: { family: 'openai.openai-responses', provider: 'local' },
@@ -49,6 +86,12 @@ describe('createLocalAppServices', () => {
           type: 'runtime',
           displayName: 'Ollama GPT',
           modelId: 'gpt-oss:20b',
+          config: expect.objectContaining({
+            ui: expect.objectContaining({
+              family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
+              familyLabel: '本地推理',
+            }),
+          }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
       ],
@@ -72,6 +115,82 @@ describe('createLocalAppServices', () => {
       totalLocalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('returns Codex provider models in local model list', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.models.list') {
+        return {
+          providers: [
+            {
+              id: 'openai',
+              displayName: 'CodeX',
+              type: 'official',
+              current: false,
+              available: true,
+              error: null,
+              data: [],
+            },
+            {
+              id: 'wecode-openai',
+              displayName: 'wecode openai',
+              type: 'provider',
+              current: true,
+              available: true,
+              error: null,
+              data: [
+                {
+                  id: 'Doubao-Seed-2.0-pro-260215',
+                  model: 'Doubao-Seed-2.0-pro-260215',
+                  displayName: 'Doubao Seed',
+                  providerId: 'wecode-openai',
+                  providerName: 'wecode openai',
+                  providerType: 'provider',
+                  providerCurrent: true,
+                },
+              ],
+            },
+          ],
+          data: [
+            {
+              id: 'Doubao-Seed-2.0-pro-260215',
+              model: 'Doubao-Seed-2.0-pro-260215',
+              displayName: 'Doubao Seed',
+              providerId: 'wecode-openai',
+              providerName: 'wecode openai',
+              providerType: 'provider',
+              providerCurrent: true,
+            },
+          ],
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.modelApi.listModels()).resolves.toEqual({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Doubao-Seed-2.0-pro-260215',
+          type: 'runtime',
+          displayName: 'Doubao-Seed-2.0-pro-260215',
+          modelId: 'Doubao-Seed-2.0-pro-260215',
+          config: expect.objectContaining({
+            weworkModelKind: 'codex-provider',
+            codexProviderId: 'wecode-openai',
+            ui: expect.objectContaining({
+              family: 'codex-provider:wecode-openai',
+              familyLabel: 'wecode openai',
+            }),
+          }),
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+      ]),
+    })
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {
@@ -542,7 +661,7 @@ describe('createLocalAppServices', () => {
         localTaskId: 'task-1',
       },
       message: 'continue',
-      modelId: 'codex-gpt-5.5',
+      modelId: 'gpt-5.5',
       modelOptions: {
         collaborationMode: 'default',
         reasoning: 'extra_high',
@@ -727,6 +846,68 @@ describe('createLocalAppServices', () => {
         base_url: 'http://localhost:1234/v1',
         api_key: 'real-key',
       })
+    )
+  })
+
+  test('uses selected Codex provider for local runtime execution requests', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      localTaskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'Doubao-Seed-2.0-pro-260215',
+      modelOptions: {
+        codexProviderId: 'wecode-openai',
+        codexProviderName: 'wecode openai',
+      },
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        localTaskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'Doubao-Seed-2.0-pro-260215',
+      modelOptions: {
+        codexProviderId: 'wecode-openai',
+        codexProviderName: 'wecode openai',
+      },
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(createPayload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'Doubao-Seed-2.0-pro-260215',
+        api_format: 'responses',
+        protocol: 'openai-responses',
+        model_provider: 'wecode-openai',
+        runtime_config: {
+          codex: {
+            use_user_config: true,
+            configured: true,
+          },
+        },
+      })
+    )
+    expect(createPayload.executionRequest.model_config).not.toHaveProperty('base_url')
+    expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
+    expect(sendPayload.executionRequest.model_config).toEqual(
+      createPayload.executionRequest.model_config
     )
   })
 

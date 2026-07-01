@@ -54,6 +54,14 @@ import {
 } from '@/tauri/localExecutor'
 import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
+import { requestLocalCodexOfficialModels } from './codexOfficialModels'
+import {
+  codexOfficialModelIdFromModelName,
+  codexOfficialModelName,
+  CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
+  CODEX_RUNTIME_MODEL_ID,
+  type CodexOfficialModel,
+} from '@/features/model-settings/codexOfficialModels'
 import {
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
@@ -75,11 +83,10 @@ function isRuntimeDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
 }
 
-const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
-const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
+const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -90,30 +97,80 @@ export const LOCAL_WORKBENCH_TEAM = {
   recommended_mode: 'code',
 } satisfies Team
 
-const LOCAL_CODEX_MODEL = {
-  name: CODEX_RUNTIME_MODEL_NAME,
-  type: 'runtime',
-  displayName: 'GPT-5.5 (Codex)',
-  provider: 'local',
-  modelId: CODEX_RUNTIME_MODEL_ID,
-  config: {
-    protocol: OPENAI_RESPONSES_PROTOCOL,
-    apiFormat: RESPONSES_API_FORMAT,
-    ui: {
-      family: 'gpt',
-      modelLabel: 'GPT-5.5',
-      controls: ['speed'],
-      sortOrder: 10,
-    },
-  },
-  runtime: {
-    family: 'openai.openai-responses',
+function localCodexModelFamily(model: CodexOfficialModel): string {
+  if (model.providerType !== 'provider') return 'codex-official'
+  return `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
+}
+
+function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean): UnifiedModel {
+  const modelFamily = localCodexModelFamily(model)
+  const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
+  return {
+    name: codexOfficialModelName(model),
+    type: 'runtime',
+    displayName: model.modelId,
     provider: 'local',
-  },
-  isActive: true,
-} satisfies UnifiedModel
+    modelId: model.modelId,
+    config: {
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      apiFormat: RESPONSES_API_FORMAT,
+      weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
+      codexAuthConfigured,
+      codexOfficialModelId: model.id,
+      codexProviderId: model.providerId,
+      codexProviderName: model.providerName,
+      codexProviderType: model.providerType,
+      ui: {
+        family: modelFamily,
+        ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
+        modelLabel: model.modelId,
+        controls: ['speed'],
+        sortOrder: model.providerType === 'provider' ? 15 : 10,
+      },
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'local',
+    },
+    isActive: true,
+  }
+}
+
+function unavailableCodexModel(message: string): UnifiedModel {
+  return {
+    name: CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
+    type: 'runtime',
+    displayName: 'CodeX 模型不可用',
+    provider: 'local',
+    modelId: null,
+    config: {
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      apiFormat: RESPONSES_API_FORMAT,
+      weworkModelKind: 'codex-official',
+      codexAuthConfigured: false,
+      unavailableReason: message,
+      ui: {
+        family: 'codex-official',
+        modelLabel: 'CodeX 模型不可用',
+        controls: [],
+        sortOrder: 10,
+      },
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'local',
+    },
+    isActive: false,
+    compatibilityDisabled: true,
+    compatibilityDisabledReason: 'unavailable',
+  }
+}
 
 function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel {
+  const group = config.group?.trim()
+  const family = group
+    ? `model-interface:${encodeURIComponent(group.toLowerCase())}`
+    : 'model-interface'
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -124,11 +181,13 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: RESPONSES_API_FORMAT,
       ui: {
-        family: 'gpt',
+        family,
+        ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
         controls: ['speed'],
         sortOrder: 20,
       },
+      weworkModelKind: 'model-interface',
     },
     runtime: {
       family: 'openai.openai-responses',
@@ -138,9 +197,22 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
   }
 }
 
-function localRuntimeModels(): UnifiedModel[] {
+function localRuntimeModels(
+  codexOfficialModels: CodexOfficialModel[] = [],
+  codexOfficialError: string | null = null,
+  codexAuthConfigured = false
+): UnifiedModel[] {
+  const officialModels =
+    codexOfficialError || codexOfficialModels.length === 0
+      ? [
+          unavailableCodexModel(
+            codexOfficialError || 'Codex model list returned no available models'
+          ),
+        ]
+      : codexOfficialModels.map(model => localCodexModel(model, codexAuthConfigured))
+
   return [
-    LOCAL_CODEX_MODEL,
+    ...officialModels,
     ...listLocalModelConfigs()
       .filter(config => config.enabled)
       .map(localModelConfigToUnifiedModel),
@@ -403,10 +475,10 @@ function requiredRuntimeWorkspacePath(data: RuntimeTaskCreateRequest): string {
 }
 
 function builtInCodexModelId(modelId?: string): string {
-  if (!modelId || modelId === CODEX_RUNTIME_MODEL_NAME) {
-    return CODEX_RUNTIME_MODEL_ID
+  if (modelId === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) {
+    throw new Error('Codex model list is unavailable')
   }
-  return modelId
+  return codexOfficialModelIdFromModelName(modelId) ?? modelId ?? CODEX_RUNTIME_MODEL_ID
 }
 
 function runtimeReasoning(modelOptions?: Record<string, string>): Record<string, string> | null {
@@ -430,7 +502,10 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
-function localRuntimeModelConfig(modelName?: string): Record<string, unknown> {
+function localRuntimeModelConfig(
+  modelName?: string,
+  modelOptions?: Record<string, string>
+): Record<string, unknown> {
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
@@ -459,11 +534,19 @@ function localRuntimeModelConfig(modelName?: string): Record<string, unknown> {
     throw new Error('Local model is no longer configured')
   }
 
+  if (modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
+    throw new Error('Codex config.toml provider is no longer configured')
+  }
+
+  const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
+  const codexProviderName = modelOptions?.codexProviderName || modelOptions?.codex_provider_name
   return {
     model: 'openai',
     model_id: builtInCodexModelId(modelName),
     api_format: RESPONSES_API_FORMAT,
     protocol: OPENAI_RESPONSES_PROTOCOL,
+    ...(codexProviderId ? { model_provider: codexProviderId } : {}),
+    ...(codexProviderName ? { provider_name: codexProviderName } : {}),
     runtime_config: {
       codex: {
         use_user_config: true,
@@ -721,7 +804,7 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.messageId}`
   )
   const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(input.modelId),
+    localRuntimeModelConfig(input.modelId, input.modelOptions),
     input.modelOptions
   )
   const reasoning = runtimeReasoning(input.modelOptions)
@@ -804,6 +887,22 @@ async function executeLocalDeviceCommand(
   )
   assertCommandSuccess(response, fallback)
   return response
+}
+
+async function loadLocalCodexAuthConfigured(
+  request: LocalAppServicesDeps['request']
+): Promise<boolean> {
+  if (!request) return false
+  try {
+    const response = await request<DeviceCommandResponse>('device.execute_command', {
+      command_key: 'runtime_auth_status',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    return response.success === true && recordValue(response.stdout).exists === true
+  } catch {
+    return false
+  }
 }
 
 async function prepareLocalRuntimeWorkspace(
@@ -1497,7 +1596,34 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
     },
     modelApi: {
-      listModels: async () => ({ data: localRuntimeModels() }),
+      listModels: async () => {
+        let codexOfficialModels: CodexOfficialModel[]
+        let codexOfficialError: string | null
+        let codexAuthConfigured: boolean
+        try {
+          await ensureStatus()
+          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+            requestLocalCodexOfficialModels(request).then(
+              value => ({ value, error: null }),
+              error => ({
+                value: null,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            ),
+            loadLocalCodexAuthConfigured(request),
+          ])
+          codexOfficialModels = codexOfficialResult.value?.models ?? []
+          codexOfficialError = codexOfficialResult.error
+          codexAuthConfigured = nextCodexAuthConfigured
+        } catch (error) {
+          codexOfficialModels = []
+          codexOfficialError = error instanceof Error ? error.message : String(error)
+          codexAuthConfigured = false
+        }
+        return {
+          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+        }
+      },
     },
     skillApi: {
       listSkills: async () => [],

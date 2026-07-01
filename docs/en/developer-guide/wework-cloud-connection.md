@@ -54,6 +54,8 @@ cloud:runtime:codex-gpt-5.5
 
 Before execution, `weworkExecution` metadata on the selected model maps the UI name back to the original `modelName` and `modelType`. The local IPC execution boundary then normalizes local Codex UI model names to the real model id accepted by Codex app-server; for example, `codex-gpt-5.5` is converted to `gpt-5.5` before sending. User-configured local models use `local-model:<config-id>` and can only be sent to a local device; if the target is a cloud task, the frontend blocks sending and asks the user to switch device or model. Cloud relay paths continue to pass the original execution model name for their source.
 
+The local Codex model catalog follows only the active provider in the current Codex configuration. executor reads `config/read` once through Codex app-server to get the active `model_provider` and display name, then calls `model/list` once for that provider's catalog. Even when `config.toml` contains multiple `[model_providers.*]` entries, Wework does not enumerate them as parallel model groups because Codex `model/list` does not expose a stable provider-scoped query protocol. Use the local model config flow below when Wework needs to show multiple model interfaces.
+
 ## Local Model Configs
 
 Local model configs are stored in local browser storage. They are not written to Backend and are not cloud-synced. Each config includes:

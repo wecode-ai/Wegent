@@ -130,6 +130,87 @@ describe('model-ui', () => {
     ])
   })
 
+  test('separates Codex official, provider, and interface models from GPT', () => {
+    const codexModel: UnifiedModel = {
+      name: 'gpt-5.5',
+      type: 'runtime',
+      displayName: 'gpt-5.5',
+      config: {
+        ui: { family: 'codex-official', modelLabel: 'gpt-5.5' },
+      },
+    }
+    const providerModel: UnifiedModel = {
+      name: 'Doubao-Seed-2.0-pro-260215',
+      type: 'runtime',
+      displayName: 'Doubao-Seed-2.0-pro-260215',
+      config: {
+        ui: {
+          family: 'codex-provider:wecode-openai',
+          familyLabel: 'wecode openai',
+          modelLabel: 'Doubao-Seed-2.0-pro-260215',
+        },
+      },
+    }
+    const interfaceModel: UnifiedModel = {
+      name: 'local-model:ollama',
+      type: 'runtime',
+      displayName: 'Ollama GPT',
+      config: {
+        ui: { family: 'model-interface', modelLabel: 'Ollama GPT' },
+      },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5',
+      type: 'public',
+      displayName: 'GPT-5',
+    }
+
+    expect(inferModelFamily(codexModel)).toBe('codex-official')
+    expect(inferModelFamily(providerModel)).toBe('codex-provider:wecode-openai')
+    expect(inferModelFamily(interfaceModel)).toBe('model-interface')
+    expect(inferModelFamily(gptModel)).toBe('gpt')
+
+    const groups = groupModelsByFamily([gptModel, providerModel, interfaceModel, codexModel])
+    expect(groups.map(group => group.config.id)).toEqual([
+      'codex-official',
+      'codex-provider:wecode-openai',
+      'model-interface',
+      'gpt',
+    ])
+    expect(groups.map(group => group.config.label)).toEqual([
+      'CodeX',
+      'wecode openai',
+      '接口模型',
+      'GPT',
+    ])
+  })
+
+  test('uses custom group labels for local interface model families', () => {
+    const localModel: UnifiedModel = {
+      name: 'local-model:ollama',
+      type: 'runtime',
+      displayName: 'Ollama GPT',
+      config: {
+        ui: {
+          family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
+          familyLabel: '本地推理',
+          modelLabel: 'Ollama GPT',
+          controls: ['speed'],
+        },
+      },
+    }
+
+    const group = groupModelsByFamily([localModel])[0]
+
+    expect(group.config.id).toBe('model-interface:%e6%9c%ac%e5%9c%b0%e6%8e%a8%e7%90%86')
+    expect(group.config.label).toBe('本地推理')
+    expect(getControlsForModel(localModel).map(control => control.id)).toEqual([
+      'reasoning',
+      'collaborationMode',
+      'speed',
+    ])
+  })
+
   test('detects runtime family compatibility without changing display families', () => {
     const claudeCompatibleDeepseek: UnifiedModel = {
       name: 'ali-deepseek-v4-flash',

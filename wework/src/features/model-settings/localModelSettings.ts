@@ -1,6 +1,7 @@
 export interface LocalModelConfig {
   id: string
   displayName: string
+  group?: string
   modelId: string
   baseUrl: string
   apiKey?: string
@@ -11,6 +12,7 @@ export interface LocalModelConfig {
 export interface SaveLocalModelConfigInput {
   id?: string | null
   displayName?: string | null
+  group?: string | null
   modelId: string
   baseUrl: string
   apiKey?: string | null
@@ -43,6 +45,7 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
   return (
     typeof record.id === 'string' &&
     typeof record.displayName === 'string' &&
+    (record.group === undefined || typeof record.group === 'string') &&
     typeof record.modelId === 'string' &&
     typeof record.baseUrl === 'string' &&
     typeof record.enabled === 'boolean' &&
@@ -101,6 +104,11 @@ export function normalizeLocalModelId(value: string): string {
   return trimmed
 }
 
+export function normalizeLocalModelGroup(value?: string | null): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed || undefined
+}
+
 function nextConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
 }
@@ -113,6 +121,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const modelId = normalizeLocalModelId(input.modelId)
   const baseUrl = normalizeLocalModelBaseUrl(input.baseUrl)
   const displayName = input.displayName?.trim() || modelId
+  const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const id = input.id?.trim() || nextConfigId()
   const existing = readStoredConfigs()
@@ -120,6 +129,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const next: LocalModelConfig = {
     id,
     displayName,
+    ...(group ? { group } : {}),
     modelId,
     baseUrl,
     apiKey,
