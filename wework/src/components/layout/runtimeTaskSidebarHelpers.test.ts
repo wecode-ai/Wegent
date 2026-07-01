@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeDeviceWorkspace } from '@/types/api'
 import {
+  hasExpandedRuntimeSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
   getRuntimeSidebarTaskItems,
   getRuntimeTaskAddress,
@@ -127,5 +128,35 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(finalExpandedLimit).toBe(26)
     expect(getVisibleRuntimeSidebarTaskItems(items, finalExpandedLimit)).toHaveLength(26)
     expect(hasHiddenRuntimeSidebarTaskItems(items, finalExpandedLimit)).toBe(false)
+  })
+
+  test('keeps pinned project runtime tasks out of the collapsed task count', () => {
+    const items = Array.from({ length: 7 }, (_, index) => ({
+      workspace: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        available: true,
+        localTasks: [],
+      },
+      task: {
+        localTaskId: `task-${index + 1}`,
+        workspacePath: '/workspace/repo',
+        title: `Task ${index + 1}`,
+        runtime: 'codex',
+      },
+      pinned: index < 2,
+    }))
+
+    expect(getVisibleRuntimeSidebarTaskItems(items).map(item => item.task.localTaskId)).toEqual([
+      'task-1',
+      'task-2',
+      'task-3',
+      'task-4',
+      'task-5',
+      'task-6',
+      'task-7',
+    ])
+    expect(hasHiddenRuntimeSidebarTaskItems(items)).toBe(false)
+    expect(hasExpandedRuntimeSidebarTaskItems(items)).toBe(false)
   })
 })

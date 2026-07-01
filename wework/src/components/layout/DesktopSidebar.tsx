@@ -72,6 +72,7 @@ import {
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
+  hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
@@ -659,7 +660,7 @@ function prioritizePinnedRuntimeTaskItems(
   const unpinnedItems: RuntimeSidebarTaskItem[] = []
   for (const item of items) {
     if (pinnedTaskKeys.has(getRuntimeTaskPinKey(item.workspace, item.task))) {
-      pinnedItems.push(item)
+      pinnedItems.push({ ...item, pinned: true })
     } else {
       unpinnedItems.push(item)
     }
@@ -1419,9 +1420,10 @@ function ProjectItem({
     prioritizedRuntimeTaskItems,
     runtimeTaskVisibleLimit
   )
-  const canCollapseRuntimeTasks =
-    prioritizedRuntimeTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT &&
-    visibleRuntimeTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  const canCollapseRuntimeTasks = hasExpandedRuntimeSidebarTaskItems(
+    prioritizedRuntimeTaskItems,
+    runtimeTaskVisibleLimit
+  )
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
     getSidebarDeviceState(getProjectDeviceId(project), devices)
