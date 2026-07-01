@@ -15,6 +15,11 @@ const mockTabs: AppTab[] = [
   },
 ]
 
+const appTabs: AppTab[] = [
+  { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
+  { key: 'apps', label: '应用', mode: 'native', requiresAuth: true },
+]
+
 function mockUserAgent(ua: string) {
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
@@ -61,6 +66,20 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('titlebar-actions')).toBeInTheDocument()
   })
 
+  test('renders app tabs as icon-only controls with hover labels', () => {
+    render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
+
+    const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const appsTab = screen.getByTestId('chrome-tab-apps')
+
+    expect(weworkTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(appsTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(weworkTab).toHaveAttribute('title', 'WeWork')
+    expect(appsTab).toHaveAttribute('title', '应用')
+    expect(weworkTab.querySelector('.sr-only')).toHaveTextContent('WeWork')
+    expect(appsTab.querySelector('.sr-only')).toHaveTextContent('应用')
+  })
+
   test('renders after-tabs content between tabs and titlebar actions', () => {
     render(
       <ChromeTitlebar
@@ -81,6 +100,31 @@ describe('ChromeTitlebar', () => {
     expect(
       afterTabs.compareDocumentPosition(titlebarActions) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  test('renders before-tabs content between traffic lights and tabs', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(
+      <ChromeTitlebar
+        tabs={mockTabs}
+        activeKey="wework"
+        onNavigate={vi.fn()}
+        beforeTabs={<button type="button">Toggle sidebar</button>}
+      />
+    )
+
+    const spacer = screen.getByTestId('macos-traffic-light-spacer')
+    const beforeTabs = screen.getByTestId('chrome-titlebar-before-tabs')
+    const activeTab = screen.getByTestId('chrome-tab-wework')
+    expect(beforeTabs).toHaveTextContent('Toggle sidebar')
+    expect(
+      spacer.compareDocumentPosition(beforeTabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      beforeTabs.compareDocumentPosition(activeTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    disableTauri()
   })
 
   test('calls onNavigate on tab click', async () => {

@@ -6,6 +6,14 @@ interface AppIframeProps {
   title: string
 }
 
+const APP_IFRAME_SANDBOX = [
+  'allow-scripts',
+  'allow-same-origin',
+  'allow-forms',
+  'allow-popups',
+  'allow-popups-to-escape-sandbox',
+].join(' ')
+
 export function AppIframe({ src, title }: AppIframeProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -23,7 +31,10 @@ export function AppIframe({ src, title }: AppIframeProps) {
           <span className="text-sm text-text-secondary">Failed to load {title}</span>
           <button
             type="button"
-            onClick={() => { setError(false); setLoading(true) }}
+            onClick={() => {
+              setError(false)
+              setLoading(true)
+            }}
             className="text-sm text-primary hover:underline"
           >
             Retry
@@ -36,7 +47,7 @@ export function AppIframe({ src, title }: AppIframeProps) {
         className="w-full h-full border-none"
         onLoad={() => setLoading(false)}
         onError={() => setError(true)}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        sandbox={APP_IFRAME_SANDBOX}
         data-testid={`app-iframe-${title.toLowerCase()}`}
       />
     </div>

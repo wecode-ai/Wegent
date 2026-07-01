@@ -12,6 +12,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export function PluginsPage() {
   const { t } = useTranslation('common')
@@ -19,6 +20,7 @@ export function PluginsPage() {
   const isMobile = useIsMobile()
   const {
     state,
+    cloudWorkStatus,
     selectProject,
     startNewChat,
     startStandaloneChat,
@@ -29,7 +31,9 @@ export function PluginsPage() {
     archiveProjectConversations,
     archiveProjectsConversations,
     archiveChatConversations,
+    selectStandaloneDevice,
     openStandaloneWorkspace,
+    getRemoteDeviceStartupCommand,
     refreshDevices,
     refreshWorkLists,
     createProject,
@@ -48,6 +52,7 @@ export function PluginsPage() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const isTauri = isTauriRuntime()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -89,20 +94,21 @@ export function PluginsPage() {
 
   return (
     <div className="flex h-full overflow-hidden bg-background text-text-primary">
-      {!isMobile && !sidebarCollapsed && (
+      {!isMobile && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          cloudWorkStatus={cloudWorkStatus}
           standaloneDeviceId={state.standaloneDeviceId}
           standaloneWorkspacePath={state.standaloneWorkspacePath}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           activeItem="plugins"
-          onCollapse={() => setSidebarCollapsed(true)}
+          collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
@@ -112,6 +118,8 @@ export function PluginsPage() {
           onArchiveProjectsConversations={archiveProjectsConversations}
           onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
+          onSelectStandaloneDevice={selectStandaloneDevice}
+          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
@@ -170,11 +178,16 @@ export function PluginsPage() {
       <PluginsWorkspace
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
-          sidebarCollapsed && !isMobile ? (
+          !isMobile && sidebarCollapsed && !isTauri ? (
             <DesktopWindowControls
               sidebarCollapsed
               onToggleSidebar={() => setSidebarCollapsed(false)}
               onNewChat={handleNewChat}
+            />
+          ) : !isMobile && !isTauri ? (
+            <DesktopWindowControls
+              sidebarCollapsed={false}
+              onToggleSidebar={() => setSidebarCollapsed(true)}
             />
           ) : undefined
         }

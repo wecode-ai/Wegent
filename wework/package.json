@@ -14,10 +14,10 @@
     "build:ios": "bash scripts/build-ios-app.sh",
     "tauri:build": "tauri build",
     "lint": "eslint .",
+    "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "prepare": "cd .. && husky wework/.husky"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@headless-tree/core": "^1.7.0",
@@ -44,6 +44,7 @@
     "react-dom": "^19.2.6",
     "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^15.6.6",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.6.0"
   },
@@ -56,6 +57,7 @@
     "@types/node": "^24.12.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",
@@ -63,7 +65,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
-    "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "lint-staged": "^16.4.0",
     "postcss": "^8.5.15",

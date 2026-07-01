@@ -1,8 +1,11 @@
+export type RuntimeMode = 'local-first' | 'backend'
+
 export interface RuntimeConfig {
   appBasePath: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
+  runtimeMode: RuntimeMode
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
   cloudDeviceScalingWikiUrl: string
@@ -59,6 +62,24 @@ function resolveRuntimeString(
 
 function isValidLoginMode(value: string): value is RuntimeConfig['loginMode'] {
   return value === 'password' || value === 'oidc' || value === 'all'
+}
+
+function isValidRuntimeMode(value: string): value is RuntimeMode {
+  return value === 'local-first' || value === 'backend'
+}
+
+function resolveRuntimeMode(overrides: RuntimeConfigOverrides): RuntimeMode {
+  const runtimeValue = runtimeString(overrides, 'runtimeMode')
+  if (runtimeValue && isValidRuntimeMode(runtimeValue)) {
+    return runtimeValue
+  }
+
+  const envValue = import.meta.env.VITE_WEWORK_RUNTIME_MODE
+  if (envValue && isValidRuntimeMode(envValue)) {
+    return envValue
+  }
+
+  return 'local-first'
 }
 
 function resolveLoginMode(overrides: RuntimeConfigOverrides): RuntimeConfig['loginMode'] {
@@ -146,6 +167,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
+    runtimeMode: resolveRuntimeMode(overrides),
     loginMode: resolveLoginMode(overrides),
     oidcLoginText: resolveRuntimeString(
       overrides,

@@ -6,6 +6,7 @@ import pytest
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -113,7 +114,7 @@ def test_build_query_runtime_spec_maps_runtime_budget():
     assert spec.query == "release checklist"
     assert spec.max_results == 3
     assert spec.route_mode == "auto"
-    assert spec.document_ids == [10]
+    assert spec.scope == RetrievalScope(document_ids=[10])
     assert spec.user_id == 5
     assert spec.user_name == "alice"
     assert spec.restricted_mode is True

@@ -6,6 +6,7 @@ import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
+import { openExternalUrl } from '@/lib/external-links'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -27,6 +28,12 @@ vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn(() => ({})),
 }))
 
+vi.mock('@/api/models', () => ({
+  createModelApi: vi.fn(() => ({
+    listModels: vi.fn().mockResolvedValue({ data: [] }),
+  })),
+}))
+
 vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
@@ -44,6 +51,10 @@ vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn(),
+}))
+
 vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ sessionId, active }: { sessionId: string; active: boolean }) => (
     <div
@@ -57,6 +68,7 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 
@@ -142,6 +154,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -156,6 +169,7 @@ describe('ConnectionsSettingsPage', () => {
     window.history.pushState({}, '', '/')
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
+    openExternalUrlMock.mockResolvedValue(true)
     api.openLocalTerminal.mockResolvedValue(undefined)
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
@@ -259,6 +273,19 @@ describe('ConnectionsSettingsPage', () => {
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
+  })
+
+  test('adds titlebar clearance for the settings back button in Tauri', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
+    expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -774,6 +801,34 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
   })
 
+  test('groups the current app backend registration with local devices', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'local-claude',
+        name: 'Current App Backend Registration',
+        device_type: 'app',
+        app_device_id: 'local-claude',
+        status: 'online',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    const localSection = screen.getByText('本地设备').closest('section')
+    expect(localSection).not.toBeNull()
+    expect(
+      within(localSection as HTMLElement).getByText('Current App Backend Registration')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('远程设备')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/在线云设备.*0/)
+
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
+
+    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
+    expect(api.startTerminal).not.toHaveBeenCalled()
+  })
+
   test('generates and copies a remote Docker device command from the add device dialog', async () => {
     api.getAllDevices.mockResolvedValue([cloudDevice()])
     api.createDockerRemoteDeviceCommand.mockResolvedValue({
@@ -782,8 +837,10 @@ describe('ConnectionsSettingsPage', () => {
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {
         DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
       },
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -799,10 +856,11 @@ describe('ConnectionsSettingsPage', () => {
       client_origin: window.location.origin,
     })
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('DEVICE_TYPE=remote')
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('EXECUTOR_MODE=local')
 
     await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest'
+      'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
     )
   })
 
@@ -814,8 +872,10 @@ describe('ConnectionsSettingsPage', () => {
       image: 'ghcr.io/wecode-ai/wegent-device:latest',
       env: {
         DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
       },
-      command: 'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest',
+      command:
+        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -899,6 +959,27 @@ describe('ConnectionsSettingsPage', () => {
       'data-session-id',
       'terminal-1'
     )
+  })
+
+  test('opens URL-based terminal sessions through the external URL helper', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.startTerminal.mockResolvedValue({
+      session_id: 'terminal-1',
+      device_id: 'device-1',
+      type: 'terminal',
+      path: '/workspace',
+      url: 'http://localhost/terminal',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-device-1'))
+
+    await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1'))
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/terminal')
+    expect(openSpy).not.toHaveBeenCalled()
   })
 
   test('keeps local device terminal hidden outside the WeWork macOS app', async () => {

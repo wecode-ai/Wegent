@@ -299,13 +299,13 @@ show_usage() {
     echo "  --help           Show this help message"
     echo ""
     echo "Arguments:"
-    echo "  URL              Target URL to test (default: https://wegent.intra.weibo.com)"
+    echo "  URL              Target URL to test (default: http://localhost:3000)"
     echo ""
     echo "Environment Variables:"
     echo "  TEST_BASE_URL    Alternative way to set target URL"
     echo ""
     echo "Examples:"
-    echo "  $0                                 # Run tests against https://wegent.intra.weibo.com"
+    echo "  $0                                 # Run tests against http://localhost:3000"
     echo "  $0 -h                              # Run with browser visible"
     echo "  $0 http://localhost:3000           # Test specific URL (localhost)"
     echo "  $0 -h http://localhost:3000        # Test localhost with browser visible"
@@ -325,7 +325,7 @@ main() {
     local force_install=false
     local test_pattern=""
     local workers=""
-    local test_url="${TEST_BASE_URL:-https://wegent.intra.weibo.com}"
+    local test_url="${TEST_BASE_URL:-http://localhost:3000}"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do

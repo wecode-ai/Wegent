@@ -2,18 +2,23 @@ import { useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 export const TITLEBAR_ACTIONS_PORTAL_ID = 'titlebar-actions-portal'
+export const TITLEBAR_RIGHT_PANEL_PORTAL_ID = 'titlebar-right-panel-portal'
 
 interface TitlebarActionsPortalProps {
   children: ReactNode
 }
 
-export function TitlebarActionsPortal({
-  children,
-}: TitlebarActionsPortalProps) {
+export function TitlebarActionsPortal({ children }: TitlebarActionsPortalProps) {
+  const portalTarget = useSyncExternalStore(subscribeToPortalTarget, getPortalTarget, () => null)
+
+  return portalTarget ? createPortal(children, portalTarget) : null
+}
+
+export function TitlebarRightPanelPortal({ children }: TitlebarActionsPortalProps) {
   const portalTarget = useSyncExternalStore(
     subscribeToPortalTarget,
-    getPortalTarget,
-    () => null,
+    () => document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID),
+    () => null
   )
 
   return portalTarget ? createPortal(children, portalTarget) : null

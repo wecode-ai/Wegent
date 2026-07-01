@@ -52,8 +52,8 @@ import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
-import { isTextBlock } from './thinking/types'
-import type { MessageBlock } from './thinking/types'
+import { isTextBlock, isThinkingBlock } from './thinking/types'
+import type { MessageBlock, ThinkingBlock, ThinkingStep } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
@@ -68,16 +68,7 @@ export interface Message {
   botName?: string
   subtaskStatus?: string
   subtaskId?: number
-  thinking?: Array<{
-    title: string
-    next_action: string
-    details?: Record<string, unknown>
-    action?: string
-    result?: string
-    reasoning?: string
-    confidence?: number
-    value?: unknown
-  }> | null
+  thinking?: ThinkingStep[] | null
   /** Full result data from backend (for code executor with workbench, or chat with shell_type) */
   result?: {
     value?: string
@@ -513,10 +504,44 @@ const MessageBubble = memo(
       return hasClarificationMarker || hasFinalPromptMarker
     }, [msg.content, msg.type, msg.result?.blocks])
 
-    const hasInlineThinkingBlocks = React.useMemo(
-      () => msg.result?.blocks?.some(block => block.type === 'thinking') ?? false,
+    const inlineThinkingBlocks = React.useMemo(
+      () =>
+        msg.result?.blocks?.filter(
+          (block): block is ThinkingBlock => isThinkingBlock(block) && Boolean(block.content.trim())
+        ) ?? [],
       [msg.result?.blocks]
     )
+    const inlineThinkingContent = React.useMemo(
+      () => inlineThinkingBlocks.map(block => block.content.trim()).join('\n\n'),
+      [inlineThinkingBlocks]
+    )
+    const mixedContentBlocks = React.useMemo(
+      () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
+      [msg.result?.blocks]
+    )
+    const hasToolBlocks = React.useMemo(
+      () => msg.result?.blocks?.some(block => block.type === 'tool') ?? false,
+      [msg.result?.blocks]
+    )
+    const hasThinkingToolSteps = React.useMemo(
+      () =>
+        msg.thinking?.some(
+          step => step.details?.type === 'tool_use' || step.details?.type === 'tool_result'
+        ) ?? false,
+      [msg.thinking]
+    )
+    const explicitReasoningContent =
+      msg.reasoningContent || msg.result?.reasoning_content || inlineThinkingContent
+    const waitingReasoningContent =
+      !explicitReasoningContent && !isUserTypeMessage && (isWaiting || msg.isWaiting)
+        ? waitingMessage || t('tasks:streaming_wait.thinking') || '正在思考'
+        : ''
+    const displayReasoningContent = explicitReasoningContent || waitingReasoningContent
+    const isUsingReasoningWaitDisplay = Boolean(waitingReasoningContent)
+    const isDisplayReasoningStreaming =
+      Boolean(msg.isReasoningStreaming) ||
+      inlineThinkingBlocks.some(block => block.status === 'streaming') ||
+      isUsingReasoningWaitDisplay
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
@@ -1384,19 +1409,18 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
-              {!isUserTypeMessage &&
-                !hasInlineThinkingBlocks &&
-                (msg.reasoningContent || msg.result?.reasoning_content) && (
-                  <ReasoningDisplay
-                    reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-                    isStreaming={!!msg.isReasoningStreaming}
-                  />
-                )}
-              {/* Show tool blocks for messages with thinking but no blocks */}
+              {!isUserTypeMessage && displayReasoningContent && (
+                <ReasoningDisplay
+                  reasoningContent={displayReasoningContent}
+                  isStreaming={isDisplayReasoningStreaming}
+                />
+              )}
+              {/* Show tool blocks from thinking unless block rendering already includes tools */}
               {!isUserTypeMessage &&
                 msg.thinking &&
                 msg.thinking.length > 0 &&
-                (!msg.result?.blocks || msg.result.blocks.length === 0) && (
+                (!msg.result?.blocks || msg.result.blocks.length === 0 || hasThinkingToolSteps) &&
+                !hasToolBlocks && (
                   <ThinkingDisplay
                     thinking={msg.thinking}
                     taskStatus={msg.subtaskStatus}
@@ -1448,7 +1472,9 @@ const MessageBubble = memo(
               />
               {/* Show waiting indicator when streaming but no content yet */}
               {isWaiting || msg.isWaiting ? (
-                <StreamingWaitIndicator isWaiting={true} message={waitingMessage} />
+                isUsingReasoningWaitDisplay ? null : (
+                  <StreamingWaitIndicator isWaiting={true} message={waitingMessage} />
+                )
               ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
                 /* Show inline edit component when editing a user message */
                 <InlineMessageEdit
@@ -1462,7 +1488,7 @@ const MessageBubble = memo(
                   {/* MixedContentView handles both streaming and completed states, including tool blocks */}
                   {!isUserTypeMessage &&
                   msg.result?.blocks &&
-                  msg.result.blocks.length > 0 &&
+                  mixedContentBlocks.length > 0 &&
                   // IMPORTANT: If content contains clarification or final prompt format,
                   // use renderMessageBody instead to properly render the interactive form.
                   // hasSpecialFormat is a quick check using keyword detection.
@@ -1474,7 +1500,7 @@ const MessageBubble = memo(
                         content={msg.recoveredContent || msg.content || ''}
                         taskStatus={msg.subtaskStatus}
                         theme={theme}
-                        blocks={msg.result.blocks}
+                        blocks={mixedContentBlocks}
                         annotations={msg.result?.annotations}
                         processingMessage={waitingMessage}
                         onUseAsReference={onUseAsReference}

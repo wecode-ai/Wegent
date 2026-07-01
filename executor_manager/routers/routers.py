@@ -33,6 +33,7 @@ from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
+from shared.models.attachment_sync import AttachmentSyncRequest, AttachmentSyncResponse
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
@@ -1277,6 +1278,124 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
             f"[executors/prepare] Error preparing executor for task {request.task_id}: {e}"
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/tasks/{task_id}/attachments/sync")
+async def sync_task_attachments(
+    task_id: int, payload: Dict[str, Any], http_request: Request
+):
+    """Prepare task attachments inside the target executor runtime."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    sync_request = AttachmentSyncRequest.from_dict({**payload, "task_id": task_id})
+    logger.info(
+        "[attachments/sync] Received request: task_id=%s, subtask_id=%s, "
+        "attachments=%d, executor_name=%s from %s",
+        sync_request.task_id,
+        sync_request.subtask_id,
+        len(sync_request.attachments),
+        sync_request.executor_name,
+        client_ip,
+    )
+
+    set_task_context(task_id=sync_request.task_id, subtask_id=sync_request.subtask_id)
+
+    if not sync_request.attachments:
+        return AttachmentSyncResponse(
+            task_id=sync_request.task_id,
+            subtask_id=sync_request.subtask_id,
+            executor_name=sync_request.executor_name,
+            executor_namespace=sync_request.executor_namespace,
+        ).to_dict()
+
+    executor_type = sync_request.executor_type or EXECUTOR_DISPATCHER_MODE
+    executor = ExecutorDispatcher.get_executor(executor_type)
+    task_dict = sync_request.to_dict()
+    task_dict["prepare_only"] = True
+
+    try:
+        prepare_result = await asyncio.to_thread(
+            executor.submit_executor,
+            task_dict,
+            None,
+        )
+        if not prepare_result or prepare_result.get("status") != "success":
+            error = (
+                prepare_result.get("error_msg", "Failed to prepare executor")
+                if prepare_result
+                else "No executor prepare result returned"
+            )
+            logger.error(
+                "[attachments/sync] Executor prepare failed: task_id=%s, error=%s",
+                sync_request.task_id,
+                error,
+            )
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, error
+            ).to_dict()
+
+        executor_name = (
+            prepare_result.get("executor_name") or sync_request.executor_name
+        )
+        executor_namespace = (
+            prepare_result.get("executor_namespace") or sync_request.executor_namespace
+        )
+        sync_request.executor_name = executor_name
+        sync_request.executor_namespace = executor_namespace
+        if not executor_name:
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, "Executor name is unavailable after prepare"
+            ).to_dict()
+
+        if not hasattr(executor, "get_container_address"):
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, "Executor address lookup is not supported"
+            ).to_dict()
+
+        address = await asyncio.to_thread(
+            executor.get_container_address,
+            executor_name,
+            executor_namespace,
+        )
+        if address.get("status") != "success" or not address.get("base_url"):
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request,
+                address.get("error_msg") or "Executor runtime is unavailable",
+            ).to_dict()
+
+        endpoint = f"{str(address['base_url']).rstrip('/')}/v1/attachments/sync"
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                endpoint,
+                json=sync_request.to_dict(),
+                headers={"Content-Type": "application/json"},
+            )
+        if response.status_code >= 400:
+            body_preview = response.text[:200]
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request,
+                f"Executor sync failed: HTTP {response.status_code}; body={body_preview}",
+            ).to_dict()
+
+        data = response.json()
+        data["executor_name"] = executor_name
+        data["executor_namespace"] = executor_namespace
+        logger.info(
+            "[attachments/sync] Completed: task_id=%s, subtask_id=%s, "
+            "executor_name=%s, success_count=%s, failed_count=%s",
+            sync_request.task_id,
+            sync_request.subtask_id,
+            executor_name,
+            data.get("success_count"),
+            data.get("failed_count"),
+        )
+        return data
+    except Exception as e:
+        logger.exception(
+            "[attachments/sync] Error syncing attachments: task_id=%s, subtask_id=%s",
+            sync_request.task_id,
+            sync_request.subtask_id,
+        )
+        return AttachmentSyncResponse.failed_for_request(sync_request, str(e)).to_dict()
 
 
 async def _cleanup_task_heartbeat(task_id: int) -> None:

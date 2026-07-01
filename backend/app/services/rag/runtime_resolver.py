@@ -29,7 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
-from shared.models import SearchHints
+from shared.models import RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
 
@@ -95,6 +95,7 @@ class RagRuntimeResolver:
         query: str,
         max_results: int,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
+        scope: RetrievalScope | None = None,
         document_ids: list[int] | None = None,
         metadata_condition: dict | None = None,
         restricted_mode: bool = False,
@@ -139,7 +140,8 @@ class RagRuntimeResolver:
             query=query,
             max_results=max_results,
             route_mode=route_mode,
-            document_ids=document_ids,
+            scope=scope
+            or (RetrievalScope(document_ids=document_ids) if document_ids else None),
             metadata_condition=metadata_condition,
             restricted_mode=restricted_mode,
             user_id=user_id,

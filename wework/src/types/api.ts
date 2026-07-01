@@ -19,6 +19,7 @@ export interface UserPreferences {
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
   wework_project_execution_mode?: ProjectExecutionMode | null
+  wework_project_work_preferences?: Record<string, ProjectWorkPreference> | null
   runtime_configs?: Record<
     string,
     {
@@ -26,6 +27,11 @@ export interface UserPreferences {
       use_proxy?: boolean
     }
   > | null
+}
+
+export interface ProjectWorkPreference {
+  executionMode?: ProjectExecutionMode | null
+  worktreeBranch?: string | null
 }
 
 export interface Team {
@@ -98,7 +104,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type?: 'local' | 'cloud' | string
+  device_type?: 'local' | 'app' | 'cloud' | 'remote' | string
   capabilities?: string[] | null
   slot_used?: number
   slot_max?: number
@@ -107,9 +113,11 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  error?: string | null
   bind_shell?: 'claudecode' | 'openclaw' | string
   client_ip?: string | null
   runtime_transfer_host?: string | null
+  app_device_id?: string | null
 }
 
 export interface DeviceRunningTask {
@@ -229,6 +237,7 @@ export interface RuntimeTaskAddress {
   deviceId: string
   workspacePath?: string | null
   localTaskId: string
+  runtimeHandle?: Record<string, unknown> | null
 }
 
 export interface RuntimeMessageSource {
@@ -246,15 +255,69 @@ export interface NormalizedRuntimeMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | string
   content: string
-  subtaskId?: number | null
+  messageIndex?: number | null
+  message_index?: number | null
+  turnId?: number | null
   subtask_id?: number | null
   status?: string | null
   createdAt?: string | null
+  completedAt?: string | number | null
+  completed_at?: string | number | null
+  stoppedNotice?: boolean | null
+  stopped_notice?: boolean | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
   fileChanges?: TurnFileChangesSummary | null
   file_changes?: TurnFileChangesSummary | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+  memory_citations?: CodexMemoryCitation[] | null
+  memoryCitation?: CodexMemoryCitation | null
+  memory_citation?: CodexMemoryCitation | null
+  contextEvents?: CodexContextEvent[] | null
+  context_events?: CodexContextEvent[] | null
+}
+
+export interface RuntimeTurnNavigationItem {
+  id: string
+  turnIndex: number
+  messageIndex: number
+  cursor?: string | null
+  promptPreview: string
+  responsePreview?: string | null
+}
+
+export interface CodexReference {
+  path: string
+  title?: string | null
+  lineStart?: number | null
+  lineEnd?: number | null
+}
+
+export interface CodexMemoryCitationEntry {
+  path: string
+  lineStart?: number | null
+  line_start?: number | null
+  lineEnd?: number | null
+  line_end?: number | null
+  note?: string | null
+}
+
+export interface CodexMemoryCitation {
+  entries?: CodexMemoryCitationEntry[]
+  rolloutIds?: string[]
+  rollout_ids?: string[]
+  threadIds?: string[]
+  thread_ids?: string[]
+}
+
+export interface CodexContextEvent {
+  id: string
+  type: 'context_compaction' | 'contextCompaction' | string
+  status?: 'pending' | 'streaming' | 'done' | 'error' | string | null
+  createdAt?: number | string | null
+  created_at?: number | string | null
 }
 
 export interface LocalTaskSummary {
@@ -265,10 +328,11 @@ export interface LocalTaskSummary {
   gitInfo?: Record<string, unknown> | null
   title: string
   runtime: RuntimeName
-  createdAt?: string | null
-  updatedAt?: string | null
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
   running?: boolean
   status?: string | null
+  runtimeHandle?: Record<string, unknown> | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
 }
@@ -397,21 +461,48 @@ export interface RuntimeTranscriptResponse {
   runtime: RuntimeName
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
+  rangeStart?: number | null
+  rangeEnd?: number | null
   hasMoreBefore?: boolean
   beforeCursor?: string | null
+  hasMoreAfter?: boolean
+  afterCursor?: string | null
   parseError?: string | null
 }
 
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number
   beforeCursor?: string | null
+  afterCursor?: string | null
+  refresh?: boolean
 }
 
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  message_id?: number
+  modelId?: string
+  modelType?: ModelType | null
+  modelOptions?: ModelOptions
+  collaborationMode?: string
   attachmentIds?: number[]
+  attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  requestUserInputResponse?: RequestUserInputResponse
+  request_user_input_response?: RequestUserInputResponse
+}
+
+export interface RequestUserInputResponseAnswer {
+  answers: string[]
+}
+
+export interface RequestUserInputResponse {
+  requestId?: number | string
+  request_id?: number | string
+  itemId?: string
+  item_id?: string
+  answers: Record<string, RequestUserInputResponseAnswer>
 }
 
 export interface RuntimeSendResponse {
@@ -590,12 +681,14 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
+  message_id?: number
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
+  attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
 }
 
@@ -902,6 +995,7 @@ export interface ChatSendPayload {
   force_override_bot_model_type?: ModelType
   model_options?: ModelOptions
   attachment_ids?: number[]
+  attachments?: Attachment[]
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
@@ -964,6 +1058,7 @@ export type ChatResultPayload = Record<string, unknown> & {
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   content: string
   offset: number
   result?: ChatResultPayload
@@ -1370,6 +1465,8 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  render_payload?: unknown
+  renderPayload?: unknown
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
   timestamp?: number | string | null
   created_at?: number | string | null
@@ -1379,6 +1476,7 @@ export interface ChatBlock {
 export interface ChatBlockCreatedPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   block: ChatBlock
   device_id?: string
   local_task_id?: string
@@ -1387,6 +1485,7 @@ export interface ChatBlockCreatedPayload {
 export interface ChatBlockUpdatedPayload {
   task_id?: number
   subtask_id: number
+  message_id?: number
   block_id: string
   content?: string
   tool_output?: unknown
@@ -1394,6 +1493,21 @@ export interface ChatBlockUpdatedPayload {
   status?: ChatBlock['status'] | 'running'
   device_id?: string
   local_task_id?: string
+}
+
+export interface RuntimeSubagentActivityPayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  device_id?: string
+  local_task_id?: string
+  agent_path: string
+  agent_id?: string
+  agent_name?: string
+  agent_thread_id?: string
+  kind?: string
+  status?: string
+  occurred_at_ms?: number
 }
 
 export interface ChatGuidanceQueuedPayload {
@@ -1491,6 +1605,7 @@ export interface Attachment {
   file_extension: string
   created_at: string
   local_preview_url?: string
+  local_path?: string
 }
 
 export interface AttachmentUploadProgress {

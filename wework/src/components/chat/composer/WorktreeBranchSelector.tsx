@@ -15,7 +15,7 @@ interface WorktreeBranchSelectorProps {
   selectedBranch?: string | null
   loading?: boolean
   onListBranches: () => Promise<string[]>
-  onSelectBranch: (branchName: string) => void
+  onSelectBranch: (branchName: string | null) => void
 }
 
 const WORKTREE_BRANCH_MENU_MAX_HEIGHT = 360
@@ -59,10 +59,11 @@ export function WorktreeBranchSelector({
     placement: 'below',
     maxHeight: WORKTREE_BRANCH_MENU_MAX_HEIGHT,
   })
-  const effectiveBranch = selectedBranch?.trim() || currentBranch?.trim() || ''
+  const normalizedCurrentBranch = currentBranch?.trim() || ''
+  const effectiveBranch = selectedBranch?.trim() || normalizedCurrentBranch
   const branchLabel = loading
-    ? t('workbench.project_worktree_branch_loading')
-    : effectiveBranch || t('workbench.project_worktree_branch_empty')
+    ? t('workbench.project_worktree_branch_loading', '加载中')
+    : effectiveBranch || t('workbench.project_worktree_branch_empty', '选择分支')
   const filteredBranches = useMemo(
     () => branches.filter(branch => branchMatchesQuery(branch, query)),
     [branches, query]
@@ -111,7 +112,7 @@ export function WorktreeBranchSelector({
         setError(
           loadError instanceof Error
             ? loadError.message
-            : t('workbench.project_worktree_branch_load_failed')
+            : t('workbench.project_worktree_branch_load_failed', '分支加载失败')
         )
       } finally {
         if (!cancelled) setBranchesLoading(false)
@@ -157,7 +158,7 @@ export function WorktreeBranchSelector({
   }, [close, open])
 
   const handleSelectBranch = (branch: string) => {
-    onSelectBranch(branch)
+    onSelectBranch(branch === normalizedCurrentBranch ? null : branch)
     close()
     triggerRef.current?.focus()
   }
@@ -183,14 +184,14 @@ export function WorktreeBranchSelector({
               <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
                 <div className="min-w-0">
                   <h2 className="text-lg font-semibold text-text-primary">
-                    {t('workbench.project_worktree_branch_title')}
+                    {t('workbench.project_worktree_branch_title', '启动分支')}
                   </h2>
                   <p className="mt-1 truncate text-xs text-text-muted">{branchLabel}</p>
                 </div>
                 <button
                   type="button"
                   data-testid="project-worktree-branch-mobile-close-button"
-                  aria-label={t('workbench.close_menu')}
+                  aria-label={t('workbench.close_menu', '关闭菜单')}
                   onClick={close}
                   className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
                 >
@@ -212,7 +213,7 @@ export function WorktreeBranchSelector({
                 data-testid="project-worktree-branch-search-input"
                 value={query}
                 onChange={event => setQuery(event.target.value)}
-                placeholder={t('workbench.project_worktree_branch_search')}
+                placeholder={t('workbench.project_worktree_branch_search', '搜索分支')}
                 className={cn(
                   'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
                   isMobile && 'text-base leading-5'
@@ -220,7 +221,7 @@ export function WorktreeBranchSelector({
               />
             </label>
             <div className="mt-2 shrink-0 px-2 text-xs font-medium leading-5 text-text-muted">
-              {t('workbench.project_worktree_branch_title')}
+              {t('workbench.project_worktree_branch_title', '启动分支')}
             </div>
             <div
               data-testid="project-worktree-branch-list"
@@ -231,7 +232,7 @@ export function WorktreeBranchSelector({
             >
               {branchesLoading && (
                 <p className="px-2 py-3 text-[13px] text-text-muted">
-                  {t('workbench.project_worktree_branch_loading')}
+                  {t('workbench.project_worktree_branch_loading', '加载中')}
                 </p>
               )}
               {!branchesLoading && error && (
@@ -259,7 +260,7 @@ export function WorktreeBranchSelector({
                   data-testid="project-worktree-branch-empty"
                   className="px-2 py-3 text-[13px] text-text-muted"
                 >
-                  {t('workbench.project_worktree_branch_empty_results')}
+                  {t('workbench.project_worktree_branch_empty_results', '没有匹配的分支')}
                 </p>
               )}
             </div>
@@ -276,7 +277,7 @@ export function WorktreeBranchSelector({
           open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
         )}
         aria-expanded={open}
-        aria-label={t('workbench.project_worktree_branch_title')}
+        aria-label={t('workbench.project_worktree_branch_title', '启动分支')}
       >
         <GitBranch className="h-4 w-4 shrink-0" />
         <span className="max-w-[8rem] truncate">{branchLabel}</span>

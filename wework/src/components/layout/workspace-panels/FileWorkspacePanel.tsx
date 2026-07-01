@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
+  WorkspaceFileApi,
   WorkspaceFileOpenRequest,
   WorkspaceFileEntry,
   WorkspaceTarget,
@@ -15,13 +13,9 @@ import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 interface FileWorkspacePanelProps {
   target: WorkspaceTarget | null
+  workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   onAddCodeComment: (context: CodeCommentContext) => void
-}
-
-function createWorkspaceDeviceApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
@@ -44,11 +38,11 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
 
 export function FileWorkspacePanel({
   target,
+  workspaceFileApi,
   openFileRequest,
   onAddCodeComment,
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const api = useMemo(() => createWorkspaceDeviceApi(), [])
   const rootPath = target?.path ?? ''
   const [activeDirectoryPath, setActiveDirectoryPath] = useState(target?.path ?? '')
   const [entriesByPath, setEntriesByPath] = useState<Record<string, WorkspaceFileEntry[]>>({})
@@ -78,7 +72,7 @@ export function FileWorkspacePanel({
       setTreeError(null)
       setTreeRetryPath(null)
       try {
-        const result = await api.listWorkspaceEntries(target.deviceId, path)
+        const result = await workspaceFileApi.listWorkspaceEntries(target.deviceId, path)
         if (latestTreeRequestByPath.current.get(path) !== requestId) return
         const resolvedPath = result.path || path
         setEntriesByPath(previous => ({
@@ -109,7 +103,7 @@ export function FileWorkspacePanel({
         }
       }
     },
-    [api, target, t]
+    [target, t, workspaceFileApi]
   )
 
   const openDirectory = useCallback(
@@ -135,7 +129,7 @@ export function FileWorkspacePanel({
       setPreviewLoading(true)
       setPreviewError(null)
       try {
-        const file = await api.readWorkspaceTextFile(target.deviceId, entry.path)
+        const file = await workspaceFileApi.readWorkspaceTextFile(target.deviceId, entry.path)
         if (fileRequestSequence.current !== requestId) return
         setPreview(file)
       } catch (error) {
@@ -152,7 +146,7 @@ export function FileWorkspacePanel({
         }
       }
     },
-    [api, target, t]
+    [target, t, workspaceFileApi]
   )
 
   const openFilePath = useCallback(

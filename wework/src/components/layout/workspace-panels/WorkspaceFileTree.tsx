@@ -1,4 +1,5 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
+import type { FileTreeDirectoryHandle, FileTreeItemHandle } from '@pierre/trees'
 import { RefreshCw, Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { useEffect, useMemo, useState } from 'react'
@@ -189,6 +190,19 @@ function getEntryByTreePath(entries: Map<string, WorkspaceFileEntry>, treePath: 
   return null
 }
 
+function isDirectoryHandle(item: FileTreeItemHandle | null): item is FileTreeDirectoryHandle {
+  if (!item) return false
+
+  const candidate = item as FileTreeItemHandle & {
+    expand?: unknown
+    isDirectory?: unknown
+  }
+  if (typeof candidate.isDirectory === 'function') {
+    return candidate.isDirectory()
+  }
+  return typeof candidate.expand === 'function'
+}
+
 function WorkspacePierreFileTree({
   modelKey,
   treeModel,
@@ -217,9 +231,10 @@ function WorkspacePierreFileTree({
       if (!entry) return
 
       if (entry.isDirectory) {
-        // getItem returns a file|folder handle union; only folders expose expand.
         const item = model.getItem(nextPath)
-        if (item && 'expand' in item) item.expand()
+        if (isDirectoryHandle(item)) {
+          item.expand()
+        }
         onOpenDirectory(entry)
       } else {
         onOpenFile(entry)
@@ -241,10 +256,11 @@ function WorkspacePierreFileTree({
   }, [model, treeModel.selectedTreePath])
 
   useEffect(() => {
-    // getItem returns a file|folder handle union; only folders expose expand.
     treeModel.expandedTreePaths.forEach(path => {
       const item = model.getItem(path)
-      if (item && 'expand' in item) item.expand()
+      if (isDirectoryHandle(item)) {
+        item.expand()
+      }
     })
   }, [model, treeModel.expandedTreePaths])
 

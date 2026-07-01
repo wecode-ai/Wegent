@@ -22,31 +22,25 @@ function hasTextTypeSteps(thinking: ThinkingDisplayProps['thinking']): boolean {
  * Main thinking display component that routes to the appropriate view
  * based on the shell type.
  *
- * - Chat shell type: Only shows ToolBlocksView (no detailed timeline)
+ * - Default: Shows ToolBlocksView (ChatShell-style compact tool blocks)
  *   - Exception: Shows DetailedThinkingView if thinking contains deep_research steps
- * - ClaudeCode/Agno/Other: Uses DetailedThinkingView (full thinking process)
  */
 const ThinkingDisplay = memo(function ThinkingDisplay({
   thinking,
   taskStatus,
-  shellType,
+  shellType: _shellType,
 }: ThinkingDisplayProps) {
   // Early return if no thinking data
   if (!thinking || thinking.length === 0) {
     return null
   }
 
-  // Chat shell: Show detailed view for text-type steps (e.g. deep research), otherwise show tool blocks
-  if (shellType === 'Chat') {
-    // If thinking contains text-type steps, show detailed view
-    if (hasTextTypeSteps(thinking)) {
-      return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />
-    }
-    return <ToolBlocksView thinking={thinking} taskStatus={taskStatus} />
+  // Text-type steps (e.g. deep research) need the detailed renderer.
+  if (hasTextTypeSteps(thinking)) {
+    return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />
   }
 
-  // Default to detailed view for ClaudeCode, Agno, and other shell types
-  return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />
+  return <ToolBlocksView thinking={thinking} taskStatus={taskStatus} />
 })
 
 export default ThinkingDisplay
