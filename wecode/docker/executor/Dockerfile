@@ -6,9 +6,26 @@
 FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-add-go AS builder-base
 WORKDIR /app
 
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
+ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
+
 RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    && curl --proto '=https' --tlsv1.2 -sSf https://rsproxy.cn/rustup-init.sh \
         | sh -s -- -y --profile minimal --default-toolchain stable \
+    && mkdir -p /root/.cargo \
+    && printf '%s\n' \
+        '[source.crates-io]' \
+        'replace-with = "rsproxy-sparse"' \
+        '' \
+        '[source.rsproxy-sparse]' \
+        'registry = "sparse+https://rsproxy.cn/index/"' \
+        '' \
+        '[registries.rsproxy]' \
+        'index = "https://rsproxy.cn/crates.io-index"' \
+        '' \
+        '[net]' \
+        'git-fetch-with-cli = true' \
+        > /root/.cargo/config.toml \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

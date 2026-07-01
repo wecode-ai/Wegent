@@ -88,6 +88,11 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let wecode_executor_dockerfile =
         fs::read_to_string("../wecode/docker/executor/Dockerfile").unwrap();
+    assert!(wecode_executor_dockerfile.contains("https://rsproxy.cn/rustup-init.sh"));
+    assert!(wecode_executor_dockerfile.contains("ENV RUSTUP_DIST_SERVER=https://rsproxy.cn"));
+    assert!(wecode_executor_dockerfile.contains("ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup"));
+    assert!(wecode_executor_dockerfile.contains("replace-with = \"rsproxy-sparse\""));
+    assert!(wecode_executor_dockerfile.contains("sparse+https://rsproxy.cn/index/"));
     assert!(
         wecode_executor_dockerfile.contains("cargo build --release --locked --bin wegent-executor")
     );
