@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::env;
+
 use serde_json::{json, Value};
 use wegent_executor::{
     mcp_utils::{
@@ -17,6 +19,35 @@ fn request(value: Value) -> ExecutionRequest {
 
 fn source(request: &ExecutionRequest) -> Value {
     request.variable_context()
+}
+
+struct EnvGuard {
+    key: &'static str,
+    old_value: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let old_value = env::var(key).ok();
+        env::set_var(key, value);
+        Self { key, old_value }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let old_value = env::var(key).ok();
+        env::remove_var(key);
+        Self { key, old_value }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.old_value {
+            env::set_var(self.key, value);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
 }
 
 #[test]
@@ -339,6 +370,36 @@ fn mcp_variables_replace_backend_url_and_task_token_alias() {
     assert_eq!(
         result["wegent-knowledge"]["headers"]["Authorization"],
         "Bearer test-token-"
+    );
+}
+
+#[test]
+fn mcp_variables_replace_empty_backend_url_from_task_api_domain() {
+    let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _local_backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000");
+    let servers = json!({
+        "wegent-knowledge": {
+            "type": "streamable-http",
+            "url": "${{backend_url}}/mcp/knowledge/sse",
+            "headers": {"Authorization": "Bearer ${{task_token}}"},
+            "timeout": 300
+        }
+    });
+    let task = request(json!({
+        "backend_url": "",
+        "auth_token": "test-token"
+    }));
+
+    let result = replace_mcp_server_variables(&servers, Some(&task));
+
+    assert_eq!(
+        result["wegent-knowledge"]["url"],
+        "http://backend:8000/mcp/knowledge/sse"
+    );
+    assert_eq!(
+        result["wegent-knowledge"]["headers"]["Authorization"],
+        "Bearer test-token"
     );
 }
 

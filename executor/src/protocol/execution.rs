@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::env;
 
 pub const FULL_KB_TOOL_ACCESS_MODE: &str = "full";
 
@@ -135,6 +136,9 @@ impl ExecutionRequest {
         let Value::Object(object) = &mut value else {
             return Value::Object(Map::new());
         };
+        if let Some(backend_url) = backend_url_for_variable_context(self) {
+            object.insert("backend_url".to_owned(), Value::String(backend_url));
+        }
         if let Some(task_type) = &self.task_type {
             object.insert("type".to_owned(), Value::String(task_type.clone()));
         }
@@ -152,6 +156,37 @@ impl ExecutionRequest {
             .or_else(|| value_path_string(&self.extra, &["repository", "gitUrl"]))
             .or_else(|| value_path_string(&self.extra, &["repository", "git_url"]))
     }
+}
+
+fn backend_url_for_variable_context(request: &ExecutionRequest) -> Option<String> {
+    request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            if !is_local_mode() {
+                return None;
+            }
+            env::var("WEGENT_BACKEND_URL")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            env::var("TASK_API_DOMAIN")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| Some("http://wegent-backend:8000".to_owned()))
+}
+
+fn is_local_mode() -> bool {
+    env::var("EXECUTOR_MODE")
+        .ok()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("local"))
 }
 
 fn extract_shell_type(bot: &Value) -> Option<String> {
