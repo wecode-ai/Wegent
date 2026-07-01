@@ -83,6 +83,8 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelOption: (optionId: string, value: string) => void
+    getSelectedModel?: () => UnifiedModel | null
+    getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void

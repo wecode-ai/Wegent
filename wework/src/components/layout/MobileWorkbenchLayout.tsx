@@ -2,6 +2,7 @@ import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -25,12 +26,17 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  isImplementationPlanRequestUserInput,
+  requestUserInputPayloadKey,
+} from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
 import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 export function MobileWorkbenchLayout() {
@@ -103,6 +109,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
+  const pendingRequestUserInput = pendingRequestUserInputPayload(paneMessages)
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -295,6 +302,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
               onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
+              onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+              hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
             <div
               data-testid="mobile-chat-input-dock"
@@ -319,27 +329,44 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     className="mb-2"
                   />
                 )}
-                <ChatInput
-                  value={paneSession.input}
-                  onChange={paneSession.setInput}
-                  onSubmit={paneSession.send}
-                  disabled={composerDisabled}
-                  error={state.error}
-                  disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                  projectChat={projectChatWithModelSelectorSignal}
-                  projectWork={effectiveProjectWork}
-                  queuedMessages={paneQueuedMessages}
-                  guidanceMessages={paneGuidanceMessages}
-                  codeComments={paneSession.codeCommentContexts}
-                  isStreaming={paneIsResponseStreaming}
-                  onPause={() => void paneSession.pauseCurrentResponse()}
-                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                  onEditQueuedMessage={paneSession.editQueuedMessage}
-                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                  onClearCodeComments={paneSession.clearCodeComments}
-                />
+                {pendingRequestUserInput ? (
+                  <RequestUserInputCard
+                    key={
+                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                    }
+                    payload={pendingRequestUserInput}
+                    onSubmit={response => {
+                      const shouldImplementPlan =
+                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                      return paneSession.sendRequestUserInputResponse(response, {
+                        appendUserMessage: shouldImplementPlan,
+                        forceDefaultCollaborationMode: shouldImplementPlan,
+                      })
+                    }}
+                  />
+                ) : (
+                  <ChatInput
+                    value={paneSession.input}
+                    onChange={paneSession.setInput}
+                    onSubmit={paneSession.send}
+                    disabled={composerDisabled}
+                    error={state.error}
+                    disabledReason={inlineComposerDisabledReason}
+                    placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                    projectChat={projectChatWithModelSelectorSignal}
+                    projectWork={effectiveProjectWork}
+                    queuedMessages={paneQueuedMessages}
+                    guidanceMessages={paneGuidanceMessages}
+                    codeComments={paneSession.codeCommentContexts}
+                    isStreaming={paneIsResponseStreaming}
+                    onPause={() => void paneSession.pauseCurrentResponse()}
+                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                    onEditQueuedMessage={paneSession.editQueuedMessage}
+                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                    onClearCodeComments={paneSession.clearCodeComments}
+                  />
+                )}
               </div>
             </div>
           </div>

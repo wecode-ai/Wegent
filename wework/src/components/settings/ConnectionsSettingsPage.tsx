@@ -37,6 +37,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
@@ -1383,6 +1384,7 @@ export function ConnectionsSettingsPage({
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const usesOverlayTitlebar = isTauriRuntime()
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
   useEffect(() => {
@@ -1404,7 +1406,10 @@ export function ConnectionsSettingsPage({
       >
         <DesktopTopBar
           testId="settings-sidebar-topbar"
-          className={cn('-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2', 'pl-2')}
+          className={cn(
+            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] bg-transparent pr-2 pl-2',
+            usesOverlayTitlebar && 'h-[76px] pt-6'
+          )}
           left={
             <button
               type="button"

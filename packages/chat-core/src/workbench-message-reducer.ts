@@ -29,6 +29,7 @@ export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   toolName: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  renderPayload?: unknown
 }
 
 export interface WorkbenchThinkingBlock extends BaseWorkbenchProcessingBlock {
@@ -78,6 +79,7 @@ type ProcessingBlockUpdate = {
   content?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  renderPayload?: unknown
   status?: WorkbenchToolBlockStatus
 }
 

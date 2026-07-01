@@ -474,4 +474,148 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-text-block')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
+
+  test('renders request user input blocks as interactive cards', () => {
+    const onSubmit = vi.fn()
+    const block: ProcessingBlock = {
+      id: 'request-1',
+      turnId: 9,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'pending',
+      createdAt: 1770000000000,
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 42,
+        questions: [
+          {
+            id: 'goal',
+            question: '你希望我接下来问你哪些问题？',
+            options: [{ label: '工作目标', description: '聚焦具体事情。' }],
+          },
+        ],
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay blocks={[block]} isStreaming={true} onRequestUserInputSubmit={onSubmit} />
+    )
+
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent(
+      '你希望我接下来问你哪些问题？'
+    )
+    fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 42,
+      itemId: undefined,
+      answers: {
+        goal: { answers: ['工作目标'] },
+      },
+    })
+  })
+
+  test('can hide request user input blocks when the composer owns them', () => {
+    const block: ProcessingBlock = {
+      id: 'request-1',
+      turnId: 9,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'pending',
+      createdAt: 1770000000000,
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 42,
+        questions: [
+          {
+            id: 'goal',
+            question: '你希望我接下来问你哪些问题？',
+            options: [{ label: '工作目标', description: '聚焦具体事情。' }],
+          },
+        ],
+      },
+    }
+
+    render(<ToolBlocksDisplay blocks={[block]} isStreaming={true} hideRequestUserInputBlocks />)
+
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+  })
+
+  test('shows answered request user input blocks as summaries while hiding pending blocks', () => {
+    const pendingBlock: ProcessingBlock = {
+      id: 'request-pending',
+      turnId: 9,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'done',
+      createdAt: 1770000000000,
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 42,
+        questions: [{ id: 'goal', question: '你希望我接下来问你哪些问题？' }],
+      },
+    }
+    const answeredBlock: ProcessingBlock = {
+      id: 'request-answered',
+      turnId: 10,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'done',
+      createdAt: 1770000000001,
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 43,
+        questions: [{ id: 'goal', question: '这次计划优先解决哪个问题？' }],
+        response: {
+          requestId: 43,
+          answers: {
+            goal: { answers: ['任务启动更顺'] },
+          },
+        },
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[pendingBlock, answeredBlock]}
+        isStreaming={true}
+        hideRequestUserInputBlocks
+      />
+    )
+
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('任务启动更顺')
+  })
+
+  test('can hide pending request user input blocks by request id', () => {
+    const block: ProcessingBlock = {
+      id: 'request-1',
+      turnId: 9,
+      type: 'tool',
+      toolName: 'request_user_input',
+      status: 'pending',
+      createdAt: 1770000000000,
+      renderPayload: {
+        kind: 'request_user_input',
+        request_id: 42,
+        questions: [
+          {
+            id: 'goal',
+            question: '你希望我接下来问你哪些问题？',
+            options: [{ label: '工作目标', description: '聚焦具体事情。' }],
+          },
+        ],
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[block]}
+        isStreaming={true}
+        hiddenRequestUserInputIds={new Set(['request:42'])}
+      />
+    )
+
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+  })
 })

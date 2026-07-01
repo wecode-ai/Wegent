@@ -23,6 +23,7 @@ import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecu
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -104,6 +105,7 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
+  const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
 
@@ -148,21 +150,50 @@ function AppShell() {
   return (
     <LocalRuntimeInitializer startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}>
       <LocalExecutorCloudBridge />
-      <div className="flex h-dvh flex-col overflow-hidden bg-surface">
+      <div
+        className={cn(
+          'h-dvh overflow-hidden bg-surface',
+          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
+        )}
+      >
         {isTauri && (
           <ChromeTitlebar
             tabs={tabs}
             activeKey={activeAppKey}
             onNavigate={navigateToApp}
-            beforeTabs={activeAppKey === 'wework' ? <TitlebarSidebarToggle /> : undefined}
+            beforeTabs={
+              activeAppKey === 'wework' ? (
+                <TitlebarSidebarToggle />
+              ) : (
+                <TitlebarSidebarTogglePlaceholder />
+              )
+            }
             afterTabs={<AppUpdateTitlebarButton />}
+            iconOnlyTabs={isTauri}
+            className={
+              titlebarOverlaysContent
+                ? 'absolute inset-x-0 top-0 z-system bg-transparent'
+                : undefined
+            }
           />
         )}
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div
+          className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
+        >
           <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
         </div>
       </div>
     </LocalRuntimeInitializer>
+  )
+}
+
+function TitlebarSidebarTogglePlaceholder() {
+  return (
+    <div
+      data-testid="titlebar-sidebar-toggle-placeholder"
+      aria-hidden="true"
+      className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, 'invisible pointer-events-none')}
+    />
   )
 }
 

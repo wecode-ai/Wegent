@@ -364,6 +364,17 @@ function normalizeChatBlock(turnId: number, block: ChatBlock): ProcessingBlock |
   return normalizeProcessingBlock(turnId, block, 0)
 }
 
+function normalizeToolRenderPayload(block: Record<string, unknown>): unknown {
+  const payload = block.renderPayload ?? block.render_payload
+  const response = block.requestUserInputResponse ?? block.request_user_input_response
+  if (!isRecord(payload) || response === undefined) return payload
+  if (payload.kind !== 'request_user_input') return payload
+  return {
+    ...payload,
+    response,
+  }
+}
+
 function normalizeProcessingBlock(
   turnId: number,
   block: unknown,
@@ -394,6 +405,7 @@ function normalizeProcessingBlock(
       toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
       toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
       toolOutput: block.tool_output,
+      renderPayload: normalizeToolRenderPayload(block),
       status,
       createdAt: timestamp,
     }

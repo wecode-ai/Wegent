@@ -157,6 +157,121 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('renders Codex proposed plan content from tagged plan mode output', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan',
+            role: 'assistant',
+            content:
+              '<proposed_plan>\n1. Inspect the desktop chat width.\n2. Match the reference task.\n</proposed_plan>',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
+    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
+  })
+
+  test('renders answered request user input as an assistant question summary', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-question',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'request-1',
+                turnId: 11,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+                renderPayload: {
+                  kind: 'request_user_input',
+                  request_id: 42,
+                  questions: [
+                    {
+                      id: 'direction',
+                      question: '这个计划想落在哪个方向?',
+                    },
+                  ],
+                  response: {
+                    requestId: 42,
+                    answers: {
+                      direction: { answers: ['随便，我就想看看样式'] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('已询问 1 个问题')
+    expect(screen.getByText('这个计划想落在哪个方向?')).toBeInTheDocument()
+    expect(screen.getByText('随便，我就想看看样式')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-user')).not.toBeInTheDocument()
+  })
+
+  test('renders plan output as a card and expands it into a reading panel', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+    const onOpenAssistantPlan = vi.fn()
+    render(
+      <MessageList
+        onOpenAssistantPlan={onOpenAssistantPlan}
+        messages={[
+          {
+            id: 'assistant-plan-card',
+            role: 'assistant',
+            content: [
+              '# Wegent 代码质量与前端一致性巡检计划',
+              '',
+              '## Summary',
+              '- 目标：做一轮低风险工程改进。',
+              '',
+              '## Key Changes',
+              '- 扫描前端直接导入。',
+              '',
+              '## Test Plan',
+              '- 运行 lint。',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('计划')
+    expect(screen.queryByText('套餐')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-like-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-dislike-button')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('assistant-plan-copy-button'))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
+    await user.click(screen.getByTestId('assistant-plan-expand-button'))
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
+  })
+
   test('shows stopped duration from completed time and keeps partial assistant content', () => {
     render(
       <MessageList
@@ -353,7 +468,8 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-11', 'pb-2')
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-8', 'pb-2')
+    expect(screen.getByTestId('user-message-content')).toHaveClass('py-1.5')
     expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
   })
 

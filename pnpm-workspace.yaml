@@ -2,6 +2,7 @@ packages:
   - frontend
   - wework
   - packages/*
+confirmModulesPurge: false
 allowBuilds:
   core-js: true
   esbuild: true

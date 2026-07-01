@@ -38,13 +38,17 @@ export function selectedModelExecutionFields(
   selectedModel: UnifiedModel | null,
   selectedModelOptions: ModelOptions
 ): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> {
-  if (!selectedModel) return {}
+  const modelOptions = {
+    ...selectedModelOptions,
+    collaborationMode: selectedModelOptions.collaborationMode ?? 'default',
+  }
+  if (!selectedModel) {
+    return { modelOptions }
+  }
   const executionModel = resolveModelExecutionSelection(selectedModel)
   return {
     modelId: executionModel.modelName,
     modelType: executionModel.modelType,
-    ...(Object.keys(selectedModelOptions).length > 0
-      ? { modelOptions: { ...selectedModelOptions } }
-      : {}),
+    modelOptions,
   }
 }

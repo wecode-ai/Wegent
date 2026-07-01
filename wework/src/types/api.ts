@@ -485,9 +485,24 @@ export interface RuntimeSendRequest {
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: ModelOptions
+  collaborationMode?: string
   attachmentIds?: number[]
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  requestUserInputResponse?: RequestUserInputResponse
+  request_user_input_response?: RequestUserInputResponse
+}
+
+export interface RequestUserInputResponseAnswer {
+  answers: string[]
+}
+
+export interface RequestUserInputResponse {
+  requestId?: number | string
+  request_id?: number | string
+  itemId?: string
+  item_id?: string
+  answers: Record<string, RequestUserInputResponseAnswer>
 }
 
 export interface RuntimeSendResponse {
@@ -1450,6 +1465,8 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  render_payload?: unknown
+  renderPayload?: unknown
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
   timestamp?: number | string | null
   created_at?: number | string | null
