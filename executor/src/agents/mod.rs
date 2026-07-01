@@ -28,8 +28,8 @@ pub use agno::build_agno_options;
 pub use claude_code::build_claude_command;
 pub(crate) use claude_code::{claude_config_dir, claude_task_dir, model_id, prompt_text};
 use claude_code::{
-    configure_claude_file_edit_hooks, deploy_claude_task_skills, restore_claude_plugin_cache,
-    run_pre_execute_hook,
+    configure_claude_default_settings, configure_claude_file_edit_hooks, deploy_claude_task_skills,
+    restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
@@ -182,6 +182,7 @@ impl AgentEngine for AgentProcessEngine {
                                     });
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
+                                configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;
@@ -270,6 +271,7 @@ impl AgentEngine for AgentProcessEngine {
                                     });
                                 restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
+                                configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
                                 git_auth::setup_git_authentication(&request).await;
                                 run_pre_execute_hook(&request, &spec).await;

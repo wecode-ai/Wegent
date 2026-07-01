@@ -132,6 +132,46 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
 }
 
 #[test]
+fn claude_command_uses_model_config_default_haiku_model_when_set() {
+    let _lock = env_lock();
+    let _default_haiku = EnvGuard::set("ANTHROPIC_DEFAULT_HAIKU_MODEL", "process-haiku");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "model": "anthropic",
+            "model_id": "claude-sonnet-4",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-custom"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
+        "claude-haiku-custom"
+    );
+}
+
+#[test]
+fn claude_command_defaults_haiku_model_to_model_id() {
+    let _lock = env_lock();
+    let _default_haiku = EnvGuard::remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
+        "claude-sonnet-4"
+    );
+}
+
+#[test]
 fn claude_command_maps_git_fields_to_process_environment() {
     let request = ExecutionRequest {
         prompt: json!("open a pull request"),
