@@ -24,6 +24,7 @@ import {
   deleteLocalModelConfig,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  normalizeLocalModelBaseUrl,
   saveLocalModelConfig,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
@@ -211,6 +212,15 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   enabled: true,
 }
 
+function localModelResponsesUrl(baseUrl: string): string | null {
+  if (!baseUrl.trim()) return null
+  try {
+    return `${normalizeLocalModelBaseUrl(baseUrl)}/responses`
+  } catch {
+    return null
+  }
+}
+
 interface LocalCodexModelRowProps {
   status: LocalRuntimeAuthStatus | null
   loading: boolean
@@ -241,6 +251,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
     () => models.find(model => model.id === editingId) ?? null,
     [editingId, models]
   )
+  const testRequestUrl = useMemo(() => localModelResponsesUrl(form.baseUrl), [form.baseUrl])
 
   const resetForm = () => {
     setEditingId(null)
@@ -388,6 +399,20 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
                 placeholder="http://localhost:11434/v1"
                 className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
               />
+              <span
+                data-testid="local-model-request-url"
+                className="break-all font-mono text-[11px] font-normal leading-5 text-text-muted"
+              >
+                {testRequestUrl
+                  ? t('workbench.local_model_request_url', {
+                      defaultValue: '请求地址：{{url}}',
+                      url: testRequestUrl,
+                    })
+                  : t(
+                      'workbench.local_model_request_url_empty',
+                      '请求地址会在模型 URL 后追加 /responses'
+                    )}
+              </span>
             </label>
             <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
               {t('workbench.local_model_id_label', '模型 ID')}

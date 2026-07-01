@@ -734,6 +734,8 @@
     "local_model_settings_description": "Manage local Codex and other OpenAI Responses-compatible models.",
     "local_model_add_action": "Add model",
     "local_model_url_label": "Model URL",
+    "local_model_request_url": "Request URL: {{url}}",
+    "local_model_request_url_empty": "The request URL appends /responses to the model URL",
     "local_model_id_label": "Model ID",
     "local_model_display_name_label": "Display name",
     "local_model_api_key_label": "API Key",

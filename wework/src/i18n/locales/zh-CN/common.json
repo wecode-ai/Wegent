@@ -734,6 +734,8 @@
     "local_model_settings_description": "管理本机 Codex 和其他 OpenAI Responses 兼容模型。",
     "local_model_add_action": "添加模型",
     "local_model_url_label": "模型 URL",
+    "local_model_request_url": "请求地址：{{url}}",
+    "local_model_request_url_empty": "请求地址会在模型 URL 后追加 /responses",
     "local_model_id_label": "模型 ID",
     "local_model_display_name_label": "显示名",
     "local_model_api_key_label": "API Key",

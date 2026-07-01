@@ -399,7 +399,13 @@ describe('ConnectionsSettingsPage', () => {
       await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
+      expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
+        '请求地址会在模型 URL 后追加 /responses'
+      )
       await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+      expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
+        '请求地址：http://localhost:11434/v1/responses'
+      )
       await userEvent.type(screen.getByTestId('local-model-id-input'), 'gpt-oss:20b')
       await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
       await userEvent.click(screen.getByTestId('local-model-test-button'))
