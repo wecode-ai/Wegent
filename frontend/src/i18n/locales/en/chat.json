@@ -741,8 +741,8 @@
     "crawlingHint": "Crawling may take a few minutes. Keep this page open until it finishes.",
     "added": "External video added",
     "videoCount": "{{count}} videos",
-    "videoMetadataOnlyTitle": "The current model does not support visual video understanding",
-    "videoMetadataOnlyDescription": "Switch to a video-understanding model for visual analysis.",
+    "videoMetadataOnlyTitle": "The current model does not support video understanding",
+    "videoMetadataOnlyDescription": "If no video-understanding skill or tool is enabled, switch to a video-understanding model.",
     "errors": {
       "urlRequired": "Enter a web page URL",
       "duplicate": "This URL has already been added",

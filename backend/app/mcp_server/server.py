@@ -65,6 +65,8 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+MEDIA_UNDERSTANDING_MCP_MOUNT_PATH = "/mcp/media-understanding"
+MEDIA_UNDERSTANDING_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -521,6 +523,48 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+# ============== Media Understanding MCP Server ==============
+# Provides media understanding via fixed multimodal model
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+media_understanding_mcp_server = FastMCP(
+    "wegent-media-understanding-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+_media_understanding_request_token_info: contextvars.ContextVar[
+    Optional[TaskTokenInfo]
+] = contextvars.ContextVar("_media_understanding_request_token_info", default=None)
+
+_media_understanding_tools_registered = False
+
+
+def _register_media_understanding_tools() -> None:
+    """Register media understanding tools from @mcp_tool decorated endpoints."""
+    global _media_understanding_tools_registered
+    if _media_understanding_tools_registered:
+        return
+
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import media_understanding  # noqa: F401
+
+    count = register_tools_to_server(media_understanding_mcp_server, "media")
+    logger.info(
+        f"[MCP:MediaUnderstanding] Registered {count} tools from decorated endpoints"
+    )
+
+    _media_understanding_tools_registered = True
+
+
+def ensure_media_understanding_tools_registered() -> None:
+    """Ensure media understanding MCP tools are registered."""
+    _register_media_understanding_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -578,12 +622,24 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_MEDIA_UNDERSTANDING_MCP_SPEC = McpAppSpec(
+    name="media",
+    service_name="wegent-media-understanding-mcp",
+    mount_path=MEDIA_UNDERSTANDING_MCP_MOUNT_PATH,
+    transport_path=MEDIA_UNDERSTANDING_MCP_TRANSPORT_PATH,
+    server=media_understanding_mcp_server,
+    token_context=_media_understanding_request_token_info,
+    log_prefix="MediaUnderstanding",
+    include_root_metadata=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _MEDIA_UNDERSTANDING_MCP_SPEC,
 )
 
 
@@ -617,6 +673,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "media":
+        ensure_media_understanding_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -663,6 +721,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     "interactive_form_question",
                     "prompt_optimization",
                     "subscription",
+                    "media",
                 ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
@@ -895,4 +954,27 @@ def get_mcp_subscription_config(backend_url: str, auth_token: str) -> Dict[str, 
         url=f"{backend_url}{SUBSCRIPTION_MCP_MOUNT_PATH}{SUBSCRIPTION_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=60,
+    )
+
+
+def get_mcp_media_understanding_config(
+    backend_url: str, auth_token: str
+) -> Dict[str, Any]:
+    """Get media understanding MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-media-understanding",
+        url=(
+            f"{backend_url}{MEDIA_UNDERSTANDING_MCP_MOUNT_PATH}"
+            f"{MEDIA_UNDERSTANDING_MCP_TRANSPORT_PATH}"
+        ),
+        auth_token=auth_token,
+        timeout=180,
     )

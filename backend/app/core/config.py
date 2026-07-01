@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     WEB_CONTENT_CRAWL_TIMEOUT_SECONDS: int = 180
     WEB_CONTENT_CRAWL_POLL_INTERVAL_SECONDS: float = 2.0
     WEB_CONTENT_MAX_VIDEOS_PER_CONTEXT: int = 10
+
+    # Public Model CRD id used by the media-understanding MCP tool.
+    MEDIA_UNDERSTANDING_MODEL_KIND_ID: int = 237555
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development

@@ -19,13 +19,17 @@ from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.main import _get_mcp_lifespan_servers, create_app
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
+    _MEDIA_UNDERSTANDING_MCP_SPEC,
     ExternalKnowledgeUser,
     _build_external_knowledge_mcp_app,
+    _build_mcp_app,
     _create_knowledge_mcp_app,
     _default_external_auth_handler,
     external_knowledge_mcp_server,
     get_mcp_knowledge_config,
+    get_mcp_media_understanding_config,
     knowledge_mcp_server,
+    media_understanding_mcp_server,
     set_external_knowledge_auth_handler,
 )
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
@@ -179,6 +183,75 @@ def test_get_mcp_knowledge_config_uses_sse_endpoint():
     assert (
         config["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
     )
+
+
+def test_media_understanding_mcp_root_returns_metadata_json():
+    app = _build_mcp_app(_MEDIA_UNDERSTANDING_MCP_SPEC)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "wegent-media-understanding-mcp",
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": "/mcp/media-understanding/sse",
+            "health": "/mcp/media-understanding/health",
+        },
+    }
+
+
+def test_get_mcp_media_understanding_config_uses_sse_endpoint():
+    config = get_mcp_media_understanding_config(
+        backend_url="http://localhost:8000",
+        auth_token="test-token",
+    )
+
+    assert config["wegent-media-understanding"] == {
+        "type": "streamable-http",
+        "url": "http://localhost:8000/mcp/media-understanding/sse",
+        "headers": {"Authorization": "Bearer test-token"},
+        "timeout": 180,
+    }
+
+
+def test_media_understanding_mcp_sse_without_trailing_slash_does_not_redirect():
+    fake_streamable_app = Starlette(
+        routes=[Route("/", lambda request: PlainTextResponse("ok"), methods=["GET"])]
+    )
+
+    with patch.object(
+        media_understanding_mcp_server,
+        "streamable_http_app",
+        return_value=fake_streamable_app,
+    ):
+        app = _build_mcp_app(_MEDIA_UNDERSTANDING_MCP_SPEC)
+
+    client = TestClient(app)
+    response = client.get("/sse", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_understand_media_tool_schema_hides_token_info():
+    from app.mcp_server.tools import media_understanding  # noqa: F401
+    from app.mcp_server.tools.decorator import get_registered_mcp_tools
+
+    tools = get_registered_mcp_tools(server="media")
+    params = tools["understand_media"]["parameters"]
+
+    assert "token_info" not in {param["name"] for param in params}
+    assert {param["name"] for param in params} == {
+        "context_id",
+        "attachment_id",
+        "media_url",
+        "media_type",
+        "question",
+        "instruction",
+        "context",
+    }
 
 
 def test_knowledge_mcp_sse_without_trailing_slash_does_not_redirect():
@@ -1203,6 +1276,10 @@ def test_main_lifespan_skips_external_knowledge_mcp_by_default():
     with patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False):
         mcp_lifespan_servers = _get_mcp_lifespan_servers()
 
+    assert any(
+        mcp_server is media_understanding_mcp_server
+        for _, mcp_server in mcp_lifespan_servers
+    )
     assert not any(
         mcp_server is external_knowledge_mcp_server
         for _, mcp_server in mcp_lifespan_servers
