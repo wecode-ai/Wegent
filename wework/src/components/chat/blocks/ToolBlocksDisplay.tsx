@@ -7,6 +7,7 @@ import {
   isAnsweredRequestUserInputBlock,
   isHiddenRequestUserInputBlock,
   isRequestUserInputBlock,
+  type RequestUserInputBlock,
 } from '../requestUserInputMessages'
 import { ToolBlockItem } from './ToolBlockItem'
 import {
@@ -32,7 +33,7 @@ type ProcessingDisplayItem =
   | {
       type: 'request_user_input'
       id: string
-      block: ToolBlock
+      block: RequestUserInputBlock
     }
 
 interface ToolBlocksDisplayProps {
