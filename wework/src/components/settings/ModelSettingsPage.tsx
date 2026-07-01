@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Code2,
   Download,
   KeyRound,
   Loader2,
@@ -16,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
+import { createModelApi } from '@/api/models'
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -30,6 +32,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
+import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 
 interface CloudRuntimeSettingsConnection {
@@ -49,6 +52,7 @@ function createRuntimeSettingsApis(connection: CloudRuntimeSettingsConnection) {
   })
   return {
     deviceApi: createDeviceApi(client),
+    modelApi: createModelApi(client),
     userApi: createUserApi(client),
   }
 }
@@ -88,6 +92,14 @@ function validateAuthJsonContent(content: string, invalidMessage: string) {
   }
 }
 
+function modelLabel(model: UnifiedModel): string {
+  return model.displayName || model.name
+}
+
+function modelMeta(model: UnifiedModel): string {
+  return [model.provider, model.runtime?.family, model.type].filter(Boolean).join(' · ')
+}
+
 function LocalCodexModelRow({
   status,
   loading,
@@ -114,7 +126,7 @@ function LocalCodexModelRow({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-primary">
-                {t('workbench.local_codex_model_title', '本机 Codex')}
+                {t('workbench.local_codex_model_title', '本机 Codex 认证')}
               </h3>
               <span
                 data-testid="local-codex-model-status-pill"
@@ -130,7 +142,7 @@ function LocalCodexModelRow({
             <p className="mt-1 text-xs leading-5 text-text-secondary">
               {t(
                 'workbench.local_codex_model_description',
-                '使用本机 ~/.codex/auth.json，在本机 device 上运行。'
+                '读取本机 ~/.codex/auth.json，在本机 device 上运行。'
               )}
             </p>
           </div>
@@ -221,14 +233,7 @@ function localModelResponsesUrl(baseUrl: string): string | null {
   }
 }
 
-interface LocalCodexModelRowProps {
-  status: LocalRuntimeAuthStatus | null
-  loading: boolean
-  error: string | null
-  onRefresh: () => void
-}
-
-function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
+function LocalModelSettingsSection() {
   const { t } = useTranslation('common')
   const [models, setModels] = useState<LocalModelConfig[]>(() => listLocalModelConfigs())
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -367,13 +372,10 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-text-primary">
-            {t('workbench.local_model_settings_title', '本机模型')}
+            {t('workbench.local_model_settings_title', '本机接口')}
           </h2>
           <p className="mt-1 text-sm leading-6 text-text-secondary">
-            {t(
-              'workbench.local_model_settings_description',
-              '管理本机 Codex 和其他 OpenAI Responses 兼容模型。'
-            )}
+            {t('workbench.local_model_settings_description', '添加本机可访问的模型服务。')}
           </p>
         </div>
         <button
@@ -542,7 +544,6 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
       )}
 
       <div className="mt-5 grid gap-2">
-        <LocalCodexModelRow {...localCodexModel} />
         {models.map(model => (
           <div
             key={model.id}
@@ -615,6 +616,162 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
   )
 }
 
+function CloudModelsSection({
+  cloudConnection,
+}: {
+  cloudConnection: CloudRuntimeSettingsConnection
+}) {
+  const { t } = useTranslation('common')
+  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!cloudConnection.isConnected) return undefined
+
+    let cancelled = false
+    Promise.resolve()
+      .then(() => {
+        if (cancelled) return null
+        setLoading(true)
+        setError(null)
+        return createRuntimeSettingsApis(cloudConnection).modelApi.listModels()
+      })
+      .then(response => {
+        if (!cancelled && response) setModels(response.data)
+      })
+      .catch(loadError => {
+        if (!cancelled) {
+          setError(
+            getErrorMessage(loadError, t('workbench.cloud_models_error', '云端模型加载失败'))
+          )
+          setModels([])
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cloudConnection, t])
+
+  return (
+    <section
+      data-testid="cloud-models-section"
+      className="rounded-lg border border-border bg-background p-5"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-text-primary">
+            {t('workbench.cloud_models_title', '云端模型')}
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t('workbench.cloud_models_desc', '服务端模型会出现在工作台模型选择器里。')}
+          </p>
+        </div>
+        {!loading && (
+          <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">
+            {models.length}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="py-6 text-sm text-text-secondary">
+          {t('workbench.cloud_models_loading', '正在加载云端模型...')}
+        </div>
+      ) : error ? (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+          {error}
+        </div>
+      ) : models.length === 0 ? (
+        <div className="py-6 text-sm text-text-secondary">
+          {t('workbench.cloud_models_empty', '暂无云端模型')}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {models.slice(0, 8).map(model => (
+            <div
+              key={`${model.type}:${model.name}:${model.namespace ?? ''}`}
+              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+            >
+              <Code2 className="h-4 w-4 shrink-0 text-text-secondary" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-text-primary">
+                  {modelLabel(model)}
+                </div>
+                <div className="truncate text-xs text-text-secondary">
+                  {modelMeta(model) || model.name}
+                </div>
+              </div>
+              {model.isActive === false && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted">
+                  {t('workbench.plugin_detail_disabled', '已停用')}
+                </span>
+              )}
+            </div>
+          ))}
+          {models.length > 8 && (
+            <div className="px-1 pt-1 text-xs text-text-secondary">
+              {t('workbench.cloud_models_more', {
+                defaultValue: '还有 {{count}} 个模型',
+                count: models.length - 8,
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function DisconnectedCloudModelsSection({
+  onOpenCloudSettings,
+}: {
+  onOpenCloudSettings?: () => void
+}) {
+  const { t } = useTranslation('common')
+
+  return (
+    <section
+      data-testid="cloud-models-section"
+      className="relative rounded-lg border border-dashed border-border bg-surface p-5 opacity-70"
+    >
+      {onOpenCloudSettings && (
+        <button
+          type="button"
+          data-testid="cloud-models-configure-button"
+          onClick={onOpenCloudSettings}
+          className="absolute right-5 top-5 inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+        >
+          <Network className="h-3.5 w-3.5" />
+          {t('workbench.runtime_config_cloud_configure_action', '配置')}
+        </button>
+      )}
+      <div className="flex min-w-0 items-start gap-3 pr-24">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+          <Code2 className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-text-primary">
+              {t('workbench.cloud_models_title', '云端模型')}
+            </h3>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted">
+              {t('workbench.runtime_config_cloud_disconnected', '未连接云端')}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t('workbench.cloud_models_disconnected_desc', '连接云端后查看服务端可用模型。')}
+          </p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function DisconnectedCloudCodexSyncSection({
   onOpenCloudSettings,
 }: {
@@ -646,7 +803,7 @@ function DisconnectedCloudCodexSyncSection({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-text-primary">
-                {t('workbench.runtime_config_cloud_sync_title', '云端 Codex 同步')}
+                {t('workbench.runtime_config_cloud_sync_title', 'Codex 认证同步')}
               </h2>
               <span
                 data-testid="runtime-config-cloud-required"
@@ -658,7 +815,7 @@ function DisconnectedCloudCodexSyncSection({
             <p className="mt-1 text-sm leading-6 text-text-secondary">
               {t(
                 'workbench.runtime_config_cloud_sync_description',
-                '连接云端后，可以把本机 Codex auth.json 同步到云端设备，或从在线设备导入一份云端 Codex 模型。'
+                '连接云端后，可以把本机 Codex auth.json 同步到云端设备，或从在线设备导入认证。'
               )}
             </p>
           </div>
@@ -713,7 +870,7 @@ function DisconnectedCloudCodexSyncSection({
           <p className="mt-1 text-xs leading-5 text-text-secondary">
             {t(
               'workbench.runtime_config_device_description',
-              '从一台在线设备读取 auth.json，并保存为云端 Codex 模型。'
+              '从一台在线设备读取 auth.json，并保存为云端 Codex 认证。'
             )}
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -760,6 +917,61 @@ function DisconnectedCloudCodexSyncSection({
           </button>
         </div>
       </div>
+    </section>
+  )
+}
+
+function ModelInterfaceSettingsSection({
+  cloudConnection,
+  onOpenCloudSettings,
+}: {
+  cloudConnection: CloudRuntimeSettingsConnection
+  onOpenCloudSettings?: () => void
+}) {
+  const { t } = useTranslation('common')
+
+  return (
+    <section data-testid="model-interface-settings">
+      <div>
+        <h2 className="text-base font-semibold text-text-primary">
+          {t('workbench.model_interface_settings_title', '模型接口')}
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-text-secondary">
+          {t(
+            'workbench.model_interface_settings_description',
+            '管理任务可选择的本机接口和云端模型。'
+          )}
+        </p>
+      </div>
+      <div className="mt-4 grid gap-4">
+        <LocalModelSettingsSection />
+        {cloudConnection.isConnected ? (
+          <CloudModelsSection cloudConnection={cloudConnection} />
+        ) : (
+          <DisconnectedCloudModelsSection onOpenCloudSettings={onOpenCloudSettings} />
+        )}
+      </div>
+    </section>
+  )
+}
+
+function CodexAuthSettingsSection({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation('common')
+
+  return (
+    <section data-testid="codex-auth-settings">
+      <div>
+        <h2 className="text-base font-semibold text-text-primary">
+          {t('workbench.codex_auth_settings_title', 'Codex 认证')}
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-text-secondary">
+          {t(
+            'workbench.codex_auth_settings_description',
+            '管理本机 Codex auth.json 状态，以及云端设备使用的 Codex 认证。'
+          )}
+        </p>
+      </div>
+      <div className="mt-4 grid gap-4">{children}</div>
     </section>
   )
 }
@@ -978,19 +1190,25 @@ export function ModelSettingsPage({
             {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理本机模型、本机 Codex 和云端 Codex 同步。')}
+            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 认证。')}
           </p>
         </div>
         <div className="mt-8">
-          <LocalModelSettingsSection
-            status={localAuthStatus}
-            loading={localAuthLoading}
-            error={localAuthError}
-            onRefresh={() => void loadLocalAuthStatus()}
+          <ModelInterfaceSettingsSection
+            cloudConnection={cloudConnection}
+            onOpenCloudSettings={onOpenCloudSettings}
           />
         </div>
-        <div className="mt-4">
-          <DisconnectedCloudCodexSyncSection onOpenCloudSettings={onOpenCloudSettings} />
+        <div className="mt-8">
+          <CodexAuthSettingsSection>
+            <LocalCodexModelRow
+              status={localAuthStatus}
+              loading={localAuthLoading}
+              error={localAuthError}
+              onRefresh={() => void loadLocalAuthStatus()}
+            />
+            <DisconnectedCloudCodexSyncSection onOpenCloudSettings={onOpenCloudSettings} />
+          </CodexAuthSettingsSection>
         </div>
       </div>
     )
@@ -1004,7 +1222,7 @@ export function ModelSettingsPage({
             {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理本机模型、本机 Codex 和云端 Codex 同步。')}
+            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 认证。')}
           </p>
         </div>
         <button
@@ -1025,269 +1243,275 @@ export function ModelSettingsPage({
       </div>
 
       <div className="mt-8">
-        <LocalModelSettingsSection
-          status={localAuthStatus}
-          loading={localAuthLoading}
-          error={localAuthError}
-          onRefresh={() => void loadLocalAuthStatus()}
+        <ModelInterfaceSettingsSection
+          cloudConnection={cloudConnection}
+          onOpenCloudSettings={onOpenCloudSettings}
         />
       </div>
 
       <div className="mt-8">
-        {loading ? (
-          <div className="py-8 text-center text-sm text-text-secondary">
-            {t('common.loading', '加载中...')}
-          </div>
-        ) : (
-          <section
-            data-testid="runtime-config-cloud-sync"
-            className="rounded-lg border border-border bg-background p-5"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <KeyRound className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-sm font-semibold text-text-primary">
-                      {t('workbench.runtime_config_auth_file_title', '云端 Codex 模型')}
-                    </h2>
-                    <span
-                      data-testid="runtime-config-status"
-                      className={`rounded-full px-2 py-0.5 text-xs ${statusClassName}`}
-                    >
-                      {statusLabel}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm leading-6 text-text-secondary">
-                    {t(
-                      'workbench.runtime_config_codex_description',
-                      '把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份 Codex 模型。'
-                    )}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                data-testid="runtime-config-toggle"
-                role="switch"
-                aria-checked={config?.use_user_config ?? false}
-                onClick={handleToggleUseUserConfig}
-                disabled={!config?.configured || updating}
-                className={[
-                  'inline-flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-full px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50',
-                  config?.use_user_config
-                    ? 'bg-primary text-white'
-                    : 'bg-surface text-text-secondary hover:bg-muted hover:text-text-primary',
-                ].join(' ')}
-              >
-                {updating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {config?.use_user_config
-                  ? t('workbench.runtime_config_use_enabled', '正在使用')
-                  : t('workbench.runtime_config_use_disabled', '未启用')}
-              </button>
+        <CodexAuthSettingsSection>
+          <LocalCodexModelRow
+            status={localAuthStatus}
+            loading={localAuthLoading}
+            error={localAuthError}
+            onRefresh={() => void loadLocalAuthStatus()}
+          />
+          {loading ? (
+            <div className="py-8 text-center text-sm text-text-secondary">
+              {t('common.loading', '加载中...')}
             </div>
-
-            <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-              <div className="rounded-lg bg-surface px-3 py-2">
-                <div className="text-xs text-text-muted">
-                  {t('workbench.runtime_config_target_path', '目标路径')}
-                </div>
-                <div className="mt-1 font-mono text-xs text-text-primary">
-                  {config?.target_path ?? '~/.codex/auth.json'}
-                </div>
-              </div>
-              <div className="rounded-lg bg-surface px-3 py-2">
-                <div className="text-xs text-text-muted">
-                  {t('workbench.runtime_config_updated_at', '更新时间')}
-                </div>
-                <div className="mt-1 text-xs text-text-primary">
-                  {updatedAt || t('workbench.runtime_config_never_updated', '从未更新')}
-                </div>
-              </div>
-              <div className="rounded-lg bg-surface px-3 py-2 sm:col-span-2">
-                <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  {t(
-                    'workbench.runtime_config_secret_stored',
-                    '认证信息会加密保存，页面只显示状态和摘要。'
-                  )}
-                </div>
-                {config?.auth_json_sha256 && (
-                  <div className="mt-1 font-mono text-xs text-text-secondary">
-                    SHA-256 {shortDigest(config.auth_json_sha256)}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-5 rounded-lg border border-border bg-surface p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+          ) : (
+            <section
+              data-testid="runtime-config-cloud-sync"
+              className="rounded-lg border border-border bg-background p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
-                    <Network className="h-4 w-4" />
+                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <KeyRound className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-text-primary">
-                      {t('workbench.runtime_config_proxy_title')}
-                    </h3>
-                    <p className="mt-1 text-xs leading-5 text-text-secondary">
-                      {t('workbench.runtime_config_proxy_description')}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-text-primary">
+                        {t('workbench.runtime_config_auth_file_title', 'Codex 认证同步')}
+                      </h3>
+                      <span
+                        data-testid="runtime-config-status"
+                        className={`rounded-full px-2 py-0.5 text-xs ${statusClassName}`}
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-text-secondary">
+                      {t(
+                        'workbench.runtime_config_codex_description',
+                        '把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份认证。'
+                      )}
                     </p>
-                    {config?.proxy_configured ? (
-                      <div className="mt-2 text-xs text-text-secondary">
-                        {t('workbench.runtime_config_proxy_configured', {
-                          proxy: config.proxy_url_masked,
-                        })}
-                      </div>
-                    ) : (
-                      <div className="mt-2 text-xs text-text-muted">
-                        {t('workbench.runtime_config_proxy_not_configured')}
-                      </div>
-                    )}
                   </div>
                 </div>
                 <button
                   type="button"
-                  data-testid="runtime-config-proxy-toggle"
+                  data-testid="runtime-config-toggle"
                   role="switch"
-                  aria-checked={config?.use_proxy ?? false}
-                  onClick={handleToggleUseProxy}
-                  disabled={proxyUpdating || (!config?.proxy_configured && !config?.use_proxy)}
+                  aria-checked={config?.use_user_config ?? false}
+                  onClick={handleToggleUseUserConfig}
+                  disabled={!config?.configured || updating}
                   className={[
                     'inline-flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-full px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50',
-                    config?.use_proxy
+                    config?.use_user_config
                       ? 'bg-primary text-white'
-                      : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
+                      : 'bg-surface text-text-secondary hover:bg-muted hover:text-text-primary',
                   ].join(' ')}
                 >
-                  {proxyUpdating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {config?.use_proxy
-                    ? t('workbench.runtime_config_proxy_enabled')
-                    : t('workbench.runtime_config_proxy_disabled')}
+                  {updating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {config?.use_user_config
+                    ? t('workbench.runtime_config_use_enabled', '正在使用')
+                    : t('workbench.runtime_config_use_disabled', '未启用')}
                 </button>
               </div>
-            </div>
 
-            {notice && (
-              <div
-                data-testid="runtime-config-notice"
-                className="mt-4 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-sm text-primary"
-              >
-                {notice}
-              </div>
-            )}
-            {error && (
-              <div
-                data-testid="runtime-config-error"
-                className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div className="mt-6 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
-              <div className="rounded-lg border border-border bg-surface p-3">
-                <h3 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.runtime_config_device_title', '从设备导入')}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.runtime_config_device_description',
-                    '从一台在线设备读取 auth.json，并保存为云端 Codex 模型。'
-                  )}
-                </p>
-
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <select
-                    data-testid="runtime-config-import-device-select"
-                    value={effectiveImportDeviceId}
-                    onChange={event => setSelectedImportDeviceId(event.target.value)}
-                    disabled={onlineDevices.length === 0 || importing}
-                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label={t('workbench.runtime_config_import_device', '选择导入设备')}
-                  >
-                    {onlineDevices.length === 0 ? (
-                      <option value="">
-                        {t('workbench.runtime_config_no_online_devices', '没有在线 Codex 设备')}
-                      </option>
-                    ) : (
-                      onlineDevices.map(device => (
-                        <option key={device.device_id} value={device.device_id}>
-                          {device.name}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <button
-                    type="button"
-                    data-testid="runtime-config-import-button"
-                    onClick={() => void handleImportFromDevice()}
-                    disabled={!effectiveImportDeviceId || importing}
-                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {importing ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5" />
-                    )}
-                    {t('workbench.runtime_config_import_action', '从设备导入')}
-                  </button>
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+                <div className="rounded-lg bg-surface px-3 py-2">
                   <div className="text-xs text-text-muted">
-                    {activeDeviceName
-                      ? t('workbench.runtime_config_selected_device', {
-                          defaultValue: '当前选择：{{name}}',
-                          name: activeDeviceName,
-                        })
-                      : t('workbench.runtime_config_online_count', {
-                          defaultValue: '{{count}} 台在线设备',
-                          count: onlineDevices.length,
-                        })}
+                    {t('workbench.runtime_config_target_path', '目标路径')}
+                  </div>
+                  <div className="mt-1 font-mono text-xs text-text-primary">
+                    {config?.target_path ?? '~/.codex/auth.json'}
                   </div>
                 </div>
+                <div className="rounded-lg bg-surface px-3 py-2">
+                  <div className="text-xs text-text-muted">
+                    {t('workbench.runtime_config_updated_at', '更新时间')}
+                  </div>
+                  <div className="mt-1 text-xs text-text-primary">
+                    {updatedAt || t('workbench.runtime_config_never_updated', '从未更新')}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-surface px-3 py-2 sm:col-span-2">
+                  <div className="flex items-center gap-1.5 text-xs text-text-muted">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    {t(
+                      'workbench.runtime_config_secret_stored',
+                      '认证信息会加密保存，页面只显示状态和摘要。'
+                    )}
+                  </div>
+                  {config?.auth_json_sha256 && (
+                    <div className="mt-1 font-mono text-xs text-text-secondary">
+                      SHA-256 {shortDigest(config.auth_json_sha256)}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="rounded-lg border border-border bg-surface p-3">
-                <h3 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.runtime_config_upload_title', '同步本机 Codex')}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.runtime_config_upload_description',
-                    '选择本机 auth.json，保存到服务端后可供云端设备使用。'
-                  )}
-                </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  data-testid="runtime-config-file-input"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={event => void handleFileChange(event)}
-                />
-                <button
-                  type="button"
-                  data-testid="runtime-config-upload-button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {uploading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Upload className="h-3.5 w-3.5" />
-                  )}
-                  {t('workbench.runtime_config_upload_action', '同步本机 Codex')}
-                </button>
+              <div className="mt-5 rounded-lg border border-border bg-surface p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+                      <Network className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-text-primary">
+                        {t('workbench.runtime_config_proxy_title')}
+                      </h3>
+                      <p className="mt-1 text-xs leading-5 text-text-secondary">
+                        {t('workbench.runtime_config_proxy_description')}
+                      </p>
+                      {config?.proxy_configured ? (
+                        <div className="mt-2 text-xs text-text-secondary">
+                          {t('workbench.runtime_config_proxy_configured', {
+                            proxy: config.proxy_url_masked,
+                          })}
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-xs text-text-muted">
+                          {t('workbench.runtime_config_proxy_not_configured')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="runtime-config-proxy-toggle"
+                    role="switch"
+                    aria-checked={config?.use_proxy ?? false}
+                    onClick={handleToggleUseProxy}
+                    disabled={proxyUpdating || (!config?.proxy_configured && !config?.use_proxy)}
+                    className={[
+                      'inline-flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-full px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50',
+                      config?.use_proxy
+                        ? 'bg-primary text-white'
+                        : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {proxyUpdating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {config?.use_proxy
+                      ? t('workbench.runtime_config_proxy_enabled')
+                      : t('workbench.runtime_config_proxy_disabled')}
+                  </button>
+                </div>
               </div>
-            </div>
-          </section>
-        )}
+
+              {notice && (
+                <div
+                  data-testid="runtime-config-notice"
+                  className="mt-4 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-sm text-primary"
+                >
+                  {notice}
+                </div>
+              )}
+              {error && (
+                <div
+                  data-testid="runtime-config-error"
+                  className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                >
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div className="mt-6 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+                <div className="rounded-lg border border-border bg-surface p-3">
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.runtime_config_device_title', '从设备导入')}
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    {t(
+                      'workbench.runtime_config_device_description',
+                      '从一台在线设备读取 auth.json，并保存为云端 Codex 认证。'
+                    )}
+                  </p>
+
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <select
+                      data-testid="runtime-config-import-device-select"
+                      value={effectiveImportDeviceId}
+                      onChange={event => setSelectedImportDeviceId(event.target.value)}
+                      disabled={onlineDevices.length === 0 || importing}
+                      className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={t('workbench.runtime_config_import_device', '选择导入设备')}
+                    >
+                      {onlineDevices.length === 0 ? (
+                        <option value="">
+                          {t('workbench.runtime_config_no_online_devices', '没有在线 Codex 设备')}
+                        </option>
+                      ) : (
+                        onlineDevices.map(device => (
+                          <option key={device.device_id} value={device.device_id}>
+                            {device.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      data-testid="runtime-config-import-button"
+                      onClick={() => void handleImportFromDevice()}
+                      disabled={!effectiveImportDeviceId || importing}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {importing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                      {t('workbench.runtime_config_import_action', '从设备导入')}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-text-muted">
+                      {activeDeviceName
+                        ? t('workbench.runtime_config_selected_device', {
+                            defaultValue: '当前选择：{{name}}',
+                            name: activeDeviceName,
+                          })
+                        : t('workbench.runtime_config_online_count', {
+                            defaultValue: '{{count}} 台在线设备',
+                            count: onlineDevices.length,
+                          })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border bg-surface p-3">
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    {t('workbench.runtime_config_upload_title', '同步本机 Codex')}
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    {t(
+                      'workbench.runtime_config_upload_description',
+                      '选择本机 auth.json，保存到服务端后可供云端设备使用。'
+                    )}
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    data-testid="runtime-config-file-input"
+                    accept="application/json,.json"
+                    className="hidden"
+                    onChange={event => void handleFileChange(event)}
+                  />
+                  <button
+                    type="button"
+                    data-testid="runtime-config-upload-button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {uploading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    {t('workbench.runtime_config_upload_action', '同步本机 Codex')}
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+        </CodexAuthSettingsSection>
       </div>
     </div>
   )

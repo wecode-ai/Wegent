@@ -351,10 +351,12 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('model-interface-settings')).toHaveTextContent('模型接口')
+    expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('Codex 认证')
     expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
     expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
     expect(
-      screen.getByText('把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份 Codex 模型。')
+      screen.getByText('把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份认证。')
     ).toBeInTheDocument()
     expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
     const runtimeConfigButtons = Array.from(
@@ -452,7 +454,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
     const cloudSyncSection = screen.getByTestId('runtime-config-cloud-sync')
     expect(cloudSyncSection).toHaveClass('opacity-70')
-    expect(within(cloudSyncSection).getByText('云端 Codex 同步')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('model-interface-settings')).getByText('模型接口')
+    ).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('cloud-models-section')).getByText('云端模型')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-models-configure-button')).toHaveTextContent('配置')
+    expect(within(cloudSyncSection).getByText('Codex 认证同步')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-config-cloud-required')).toHaveTextContent('未连接云端')
     expect(screen.getByTestId('runtime-config-toggle')).toBeDisabled()
     expect(screen.getByTestId('runtime-config-proxy-toggle')).toBeDisabled()
