@@ -31,6 +31,7 @@ vi.mock('@/config/runtime', () => ({
 
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn(() => ({})),
+  shouldUseTauriFetch: vi.fn(() => false),
 }))
 
 vi.mock('@/api/models', () => ({
@@ -376,6 +377,49 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('tests a model before saving it', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'resp_1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: fetchMock,
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'gpt-oss:20b')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:11434/v1/responses',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer local-secret',
+          }),
+        })
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
   })
 
   test('keeps cloud auth sync controls unavailable when cloud is disconnected', async () => {

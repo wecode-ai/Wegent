@@ -73,7 +73,7 @@ function redactLocalModelConfig(config: LocalModelConfig): LocalModelSettingsEve
   }
 }
 
-function normalizeHttpUrl(value: string): string {
+export function normalizeLocalModelBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, '')
   if (!trimmed) {
     throw new Error('Model URL is required')
@@ -93,7 +93,7 @@ function normalizeHttpUrl(value: string): string {
   return trimmed
 }
 
-function normalizeModelId(value: string): string {
+export function normalizeLocalModelId(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) {
     throw new Error('Model ID is required')
@@ -110,8 +110,8 @@ export function listLocalModelConfigs(): LocalModelConfig[] {
 }
 
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
-  const modelId = normalizeModelId(input.modelId)
-  const baseUrl = normalizeHttpUrl(input.baseUrl)
+  const modelId = normalizeLocalModelId(input.modelId)
+  const baseUrl = normalizeLocalModelBaseUrl(input.baseUrl)
   const displayName = input.displayName?.trim() || modelId
   const apiKey = input.apiKey?.trim() || undefined
   const id = input.id?.trim() || nextConfigId()

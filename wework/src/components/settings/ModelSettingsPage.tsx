@@ -19,6 +19,7 @@ import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/loca
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
   deleteLocalModelConfig,
   listLocalModelConfigs,
@@ -192,6 +193,16 @@ interface LocalModelFormState {
   enabled: boolean
 }
 
+type LocalModelTestResult =
+  | {
+      kind: 'success'
+      message: string
+    }
+  | {
+      kind: 'error'
+      message: string
+    }
+
 const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   displayName: '',
   modelId: '',
@@ -214,6 +225,8 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
   const [formVisible, setFormVisible] = useState(false)
   const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
   const [error, setError] = useState<string | null>(null)
+  const [testingModel, setTestingModel] = useState(false)
+  const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
 
   const refreshModels = useCallback(() => {
     setModels(listLocalModelConfigs())
@@ -234,6 +247,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
     setFormVisible(false)
     setForm(EMPTY_LOCAL_MODEL_FORM)
     setError(null)
+    setTestResult(null)
   }
 
   const startCreating = () => {
@@ -241,6 +255,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
     setFormVisible(true)
     setForm(EMPTY_LOCAL_MODEL_FORM)
     setError(null)
+    setTestResult(null)
   }
 
   const startEditing = (model: LocalModelConfig) => {
@@ -254,6 +269,12 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
       enabled: model.enabled,
     })
     setError(null)
+    setTestResult(null)
+  }
+
+  const updateForm = (patch: Partial<LocalModelFormState>) => {
+    setForm(current => ({ ...current, ...patch }))
+    setTestResult(null)
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -296,6 +317,37 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
     }
   }
 
+  const handleTestModel = async () => {
+    setError(null)
+    setTestResult(null)
+    setTestingModel(true)
+    try {
+      await testLocalModelConnection({
+        baseUrl: form.baseUrl,
+        modelId: form.modelId,
+        apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+      })
+      setTestResult({
+        kind: 'success',
+        message: t('workbench.local_model_test_success', '模型连接正常'),
+      })
+    } catch (testError) {
+      const message = getErrorMessage(
+        testError,
+        t('workbench.local_model_test_failed', '模型测试失败')
+      )
+      setTestResult({
+        kind: 'error',
+        message: t('workbench.local_model_test_failed_with_message', {
+          defaultValue: '模型测试失败：{{message}}',
+          message,
+        }),
+      })
+    } finally {
+      setTestingModel(false)
+    }
+  }
+
   return (
     <section
       data-testid="local-model-settings"
@@ -332,9 +384,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
               <input
                 data-testid="local-model-url-input"
                 value={form.baseUrl}
-                onChange={event =>
-                  setForm(current => ({ ...current, baseUrl: event.target.value }))
-                }
+                onChange={event => updateForm({ baseUrl: event.target.value })}
                 placeholder="http://localhost:11434/v1"
                 className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
               />
@@ -344,9 +394,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
               <input
                 data-testid="local-model-id-input"
                 value={form.modelId}
-                onChange={event =>
-                  setForm(current => ({ ...current, modelId: event.target.value }))
-                }
+                onChange={event => updateForm({ modelId: event.target.value })}
                 placeholder="gpt-oss:20b"
                 className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
               />
@@ -358,9 +406,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
               <input
                 data-testid="local-model-display-name-input"
                 value={form.displayName}
-                onChange={event =>
-                  setForm(current => ({ ...current, displayName: event.target.value }))
-                }
+                onChange={event => updateForm({ displayName: event.target.value })}
                 placeholder="Ollama GPT"
                 className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
               />
@@ -370,7 +416,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
               <input
                 data-testid="local-model-api-key-input"
                 value={form.apiKey}
-                onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
+                onChange={event => updateForm({ apiKey: event.target.value })}
                 placeholder={
                   editingModel?.apiKey
                     ? t('workbench.local_model_api_key_replace_placeholder', '留空则保留现有 Key')
@@ -387,9 +433,7 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
                 data-testid="local-model-enabled-checkbox"
                 type="checkbox"
                 checked={form.enabled}
-                onChange={event =>
-                  setForm(current => ({ ...current, enabled: event.target.checked }))
-                }
+                onChange={event => updateForm({ enabled: event.target.checked })}
                 className="h-4 w-4 rounded border-border text-primary"
               />
               {t('workbench.local_model_enabled_label', '启用')}
@@ -406,6 +450,22 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
                   {t('workbench.local_model_clear_api_key_action', '清除 Key')}
                 </button>
               )}
+              <button
+                type="button"
+                data-testid="local-model-test-button"
+                onClick={() => void handleTestModel()}
+                disabled={testingModel}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {testingModel ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                )}
+                {testingModel
+                  ? t('workbench.local_model_testing_action', '测试中')
+                  : t('workbench.local_model_test_action', '测试')}
+              </button>
               <button
                 type="button"
                 data-testid="local-model-cancel-edit-button"
@@ -426,6 +486,23 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
               </button>
             </div>
           </div>
+          {testResult && (
+            <div
+              data-testid="local-model-test-result"
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
+                testResult.kind === 'success'
+                  ? 'border-primary/20 bg-primary/10 text-primary'
+                  : 'border-red-500/20 bg-red-500/10 text-red-500'
+              }`}
+            >
+              {testResult.kind === 'success' ? (
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : (
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              )}
+              <span>{testResult.message}</span>
+            </div>
+          )}
         </form>
       )}
 
