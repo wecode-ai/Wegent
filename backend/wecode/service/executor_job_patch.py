@@ -147,6 +147,12 @@ async def cleanup_orphan_pods(
     """
     from wecode.config.orphan_pod_config import ORPHAN_POD_MIN_TASK_ID
 
+    logger.info(
+        "+++ [executor_job] Starting orphan pod cleanup older_than_hours=%d stale_hours=%d dry_run=%s",
+        older_than_hours,
+        stale_hours,
+        dry_run,
+    )
     result: Dict[str, Any] = {
         "target": "orphan_pods",
         "older_than_hours": older_than_hours,
@@ -268,6 +274,12 @@ async def _cleanup_stale_task_executor_wecode(
     When no subtask records exist and dry_run is False, attempt to delete
     the orphan K8s pod by task_id label instead of returning executor_not_found.
     """
+    logger.info(
+        "+++ [executor_job] cleanup_stale_task_executor_wecode task_id=%s inactive_hours=%d dry_run=%s",
+        task_id,
+        inactive_hours,
+        dry_run,
+    )
     result = await _original_cleanup_stale_task_executor(
         self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=dry_run
     )

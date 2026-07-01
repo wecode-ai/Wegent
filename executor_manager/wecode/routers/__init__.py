@@ -4,7 +4,6 @@
 
 """Wecode-specific executor_manager API routes for orphan pod cleanup."""
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,8 +11,9 @@ from pydantic import BaseModel
 
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from shared.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class DeleteExecutorByTaskIdRequest(BaseModel):

@@ -263,9 +263,9 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
     corresponding DB subtask records, then deletes them. Runs every
     ORPHAN_POD_CLEANUP_INTERVAL_SECONDS seconds.
     """
+    from app.core.distributed_lock import distributed_lock
     from app.db.session import AsyncSessionLocal
     from app.services.adapters.executor_job import job_service
-    from app.services.distributed_lock import distributed_lock
     from wecode.config.orphan_pod_config import (
         ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
         ORPHAN_POD_CLEANUP_STALE_HOURS,
@@ -284,6 +284,11 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                         "+++ [job] Another instance is executing orphan pod cleanup, skipping"
                     )
                 else:
+                    logger.info(
+                        "+++ [job] Starting orphan pod cleanup task (older_than_hours=%d, stale_hours=%d)",
+                        ORPHAN_POD_MIN_AGE_HOURS,
+                        ORPHAN_POD_CLEANUP_STALE_HOURS,
+                    )
                     async with AsyncSessionLocal() as db:
                         await job_service.cleanup_orphan_pods(
                             db,
@@ -380,7 +385,7 @@ def apply_patch():
                 app.state.orphan_pod_cleanup_task = asyncio.create_task(
                     _orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
                 )
-                logger.info("+++ [job] orphan pod cleanup worker started (async)")
+                logger.info("++++ [job] orphan pod cleanup worker started (async)")
             else:
                 logger.info(
                     "+++ [job] orphan pod cleanup worker disabled by configuration"
