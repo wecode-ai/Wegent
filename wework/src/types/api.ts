@@ -275,8 +275,6 @@ export interface NormalizedRuntimeMessage {
   memory_citations?: CodexMemoryCitation[] | null
   memoryCitation?: CodexMemoryCitation | null
   memory_citation?: CodexMemoryCitation | null
-  contextEvents?: CodexContextEvent[] | null
-  context_events?: CodexContextEvent[] | null
 }
 
 export interface RuntimeTurnNavigationItem {
@@ -310,14 +308,6 @@ export interface CodexMemoryCitation {
   rollout_ids?: string[]
   threadIds?: string[]
   thread_ids?: string[]
-}
-
-export interface CodexContextEvent {
-  id: string
-  type: 'context_compaction' | 'contextCompaction' | string
-  status?: 'pending' | 'streaming' | 'done' | 'error' | string | null
-  createdAt?: number | string | null
-  created_at?: number | string | null
 }
 
 export interface LocalTaskSummary {

@@ -386,6 +386,10 @@ pub(crate) fn is_likely_codex_tool_output_item_type(item_type: &str) -> bool {
                 || item_type.contains("complete")))
 }
 
+pub(crate) fn is_codex_context_compaction_item_type(item_type: &str) -> bool {
+    matches!(item_type, "contextcompaction" | "contextcompacted")
+}
+
 pub(crate) fn item_id(item: &Value, prefix: &str) -> String {
     string_field(item, "id").unwrap_or_else(|| format!("{prefix}-{}", now_ms()))
 }

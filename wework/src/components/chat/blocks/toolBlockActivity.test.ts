@@ -97,7 +97,7 @@ describe('toolBlockActivity', () => {
     ).toBe('已编辑 1 个文件')
   })
 
-  test('groups completed tools while preserving running tools as standalone rows', () => {
+  test('groups completed tools while preserving context compaction and running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',
       turnId: 1,
@@ -116,20 +116,34 @@ describe('toolBlockActivity', () => {
         status: 'done',
         createdAt: 1770000000001,
       },
+      tool('read-before-1', 'cat README.md'),
+      {
+        id: 'ctx-1',
+        turnId: 1,
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: 'done',
+        createdAt: 1770000000002,
+      },
       tool('search-1', 'find . -name package.json'),
       tool('cmd-1', 'python3 analyze.py', 'streaming'),
       tool('read-1', 'cat README.md'),
     ])
 
-    expect(rows).toHaveLength(5)
+    expect(rows).toHaveLength(7)
     expect(rows[0]).toMatchObject({ type: 'block', id: 'thinking-1' })
     expect(rows[1]).toMatchObject({ type: 'block', id: 'text-1' })
     expect(rows[2]).toMatchObject({
       type: 'activity_group',
+      label: '已读取 1 个文件',
+    })
+    expect(rows[3]).toMatchObject({ type: 'block', id: 'ctx-1' })
+    expect(rows[4]).toMatchObject({
+      type: 'activity_group',
       label: '已搜索代码',
     })
-    expect(rows[3]).toMatchObject({ type: 'block', id: 'cmd-1' })
-    expect(rows[4]).toMatchObject({
+    expect(rows[5]).toMatchObject({ type: 'block', id: 'cmd-1' })
+    expect(rows[6]).toMatchObject({
       type: 'activity_group',
       label: '已读取 1 个文件',
     })

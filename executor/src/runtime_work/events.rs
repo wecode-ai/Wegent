@@ -19,8 +19,8 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     transcript::{tool_block_from_notification, tool_update_from_notification},
     util::{
-        completed_plan_item_text, extract_text, now_ms, raw_string_field, reasoning_content,
-        string_field,
+        completed_plan_item_text, extract_text, item_id, now_ms, raw_string_field,
+        reasoning_content, string_field,
     },
 };
 
@@ -209,6 +209,15 @@ impl CodexNotificationEventMapper {
             }
             "subagent/activity" => {
                 emit_subagent_activity(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
+            "context/compaction" => {
+                emit_context_compaction_event(
                     event_tx,
                     device_id,
                     local_task_id,
@@ -511,6 +520,35 @@ fn emit_reasoning_delta(
         request,
         json!({"delta": delta}),
     );
+}
+
+fn emit_context_compaction_event(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+) {
+    emit_response_event(
+        event_tx,
+        device_id,
+        "response.block.created",
+        local_task_id,
+        request,
+        json!({"block": context_compaction_block(params)}),
+    );
+}
+
+fn context_compaction_block(params: &Value) -> Value {
+    let block_id = item_id(params, "context_compaction");
+    json!({
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": now_ms(),
+    })
 }
 
 fn emit_tool_start(
@@ -1027,6 +1065,40 @@ mod tests {
             event["payload"]["data"]["block"]["content"],
             "I will inspect."
         );
+    }
+
+    #[test]
+    fn maps_codex_context_compacted_event_to_completed_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "id": "ctx-1",
+                    "type": "context_compacted"
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(event["payload"]["data"]["block"]["id"], "ctx-1");
+        assert_eq!(event["payload"]["data"]["block"]["type"], "tool");
+        assert_eq!(
+            event["payload"]["data"]["block"]["tool_name"],
+            "context_compaction"
+        );
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
     }
 
     #[test]

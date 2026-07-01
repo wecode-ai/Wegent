@@ -1,6 +1,5 @@
 import type {
   Attachment,
-  CodexContextEvent,
   CodexMemoryCitation,
   CodexReference,
   DeviceInfo,
@@ -69,7 +68,6 @@ export type WorkbenchMessage = Omit<
   stoppedNotice?: boolean | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
-  contextEvents?: CodexContextEvent[] | null
 }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'

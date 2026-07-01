@@ -20,7 +20,7 @@ use super::{
     store::RuntimeWorkStore,
     transcript::{tool_block_from_notification, tool_update_from_notification},
     util::{
-        completed_plan_item_text, extract_text, integer_field, now_ms, raw_string_field,
+        completed_plan_item_text, extract_text, integer_field, item_id, now_ms, raw_string_field,
         reasoning_content, string_field,
     },
 };
@@ -178,6 +178,9 @@ impl CodexNotificationCacheMapper {
             "thread/started" => {
                 self.observe_root_thread(params);
                 cache_runtime_thread_id(store, local_task_id, params);
+            }
+            "context/compaction" => {
+                cache_runtime_context_compaction(store, local_task_id, request, params)
             }
             "turn/completed" if is_root_codex_turn_event(params) => {
                 complete_runtime_assistant_message(store, local_task_id, request)
@@ -554,6 +557,32 @@ fn mutate_existing_cached_assistant_message(
         link.updated_at = now_ms();
         set_runtime_handle_messages(&mut link.runtime_handle, messages);
     });
+}
+
+fn cache_runtime_context_compaction(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+) {
+    cache_runtime_assistant_block(
+        store,
+        local_task_id,
+        request,
+        context_compaction_block(params),
+    );
+}
+
+fn context_compaction_block(params: &Value) -> Value {
+    let block_id = item_id(params, "context_compaction");
+    json!({
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": now_ms(),
+    })
 }
 
 fn merge_cached_message_fields(mut codex_message: Value, cached_message: &Value) -> Value {
@@ -1025,6 +1054,49 @@ mod tests {
         assert_eq!(messages[0]["blocks"][2]["tool_name"], "exec_command");
         assert_eq!(messages[0]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[0]["blocks"][2]["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_preserves_context_compaction_as_tool_block() {
+        let index_path = temp_index_path("context-compaction-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "id": "ctx-1",
+                    "type": "context_compacted"
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
+        assert_eq!(messages[0]["blocks"][0]["type"], "tool");
+        assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
+        assert_eq!(messages[0]["blocks"][0]["status"], "done");
 
         let _ = fs::remove_file(index_path);
     }
