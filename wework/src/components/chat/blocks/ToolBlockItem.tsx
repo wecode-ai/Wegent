@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import { AssistantPlanCard } from '../AssistantPlanCard'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { isWebSearchToolName } from './toolBlockActivity'
@@ -29,12 +30,14 @@ interface ToolBlockItemProps {
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
+  onOpenAssistantPlan?: (content: string) => void
 }
 
 export function ToolBlockItem({
   block,
   forceExpanded = false,
   onOpenWorkspaceFile,
+  onOpenAssistantPlan,
 }: ToolBlockItemProps) {
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
@@ -44,6 +47,9 @@ export function ToolBlockItem({
   }
   if (block.type === 'text') {
     return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+  }
+  if (block.type === 'plan') {
+    return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
   }
   if (block.type === 'file_changes') {
     return <ProcessFileChangesBlockItem block={block} />
@@ -108,6 +114,18 @@ export function ToolBlockItem({
       ) : null}
     </div>
   )
+}
+
+function PlanBlockItem({
+  block,
+  onOpenAssistantPlan,
+}: {
+  block: Extract<ProcessingBlock, { type: 'plan' }>
+  onOpenAssistantPlan?: (content: string) => void
+}) {
+  if (!block.content.trim()) return null
+
+  return <AssistantPlanCard content={block.content} onOpenPlan={onOpenAssistantPlan} />
 }
 
 function ProcessFileChangesBlockItem({

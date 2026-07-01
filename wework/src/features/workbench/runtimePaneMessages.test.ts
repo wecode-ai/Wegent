@@ -101,6 +101,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onChatDone?.({
+      task_id: 1,
       subtask_id: 9,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
@@ -117,7 +118,64 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
+      turnId: 9,
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
+    })
+  })
+
+  test('settles runtime streams without forwarding empty final content', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatDone?.({
+      task_id: 1,
+      subtask_id: 9,
+      offset: 0,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      result: {
+        value: '',
+      },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_done',
+      turnId: 9,
+    })
+    expect(
+      (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
+    ).toBeUndefined()
+  })
+
+  test('treats interrupted runtime errors as cancellation events', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatError?.({
+      task_id: 1,
+      subtask_id: 9,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      error: 'interrupted',
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_cancelled',
+      turnId: 9,
     })
   })
 })

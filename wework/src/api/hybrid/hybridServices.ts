@@ -361,6 +361,15 @@ export function createHybridWorkbenchServices(
     sendRuntimeMessage(data: RuntimeSendRequest) {
       return routeByAddress(data.address).sendRuntimeMessage(data)
     },
+    getRuntimeGoal(data) {
+      return routeByAddress(data.address).getRuntimeGoal(data)
+    },
+    setRuntimeGoal(data) {
+      return routeByAddress(data.address).setRuntimeGoal(data)
+    },
+    clearRuntimeGoal(data) {
+      return routeByAddress(data.address).clearRuntimeGoal(data)
+    },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest) {
       return runtimeApi(data.deviceId).openRuntimeWorkspace(data)
     },

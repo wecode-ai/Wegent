@@ -911,6 +911,7 @@ describe('DesktopWorkbenchLayout', () => {
       send: props.onSend ?? baseProps.onSend,
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
+      ignoreRequestUserInput: vi.fn(),
       answeredRequestUserInputIds: new Set(),
       addCodeComment: vi.fn(),
       clearCodeComments: vi.fn(),
@@ -1025,7 +1026,38 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens assistant plans in the right workspace panel', async () => {
+  test('ignores the implementation plan confirmation through the pane session', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
+    )
+  })
+
+  test('does not open assistant markdown as a plan in the right workspace panel', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1049,14 +1081,50 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('assistant-plan-expand-button')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent 体验计划')).toBeInTheDocument()
+  })
+
+  test('opens explicit assistant plan blocks in the right workspace panel', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-30T00:00:01.000Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 1,
+                type: 'plan',
+                content: [
+                  '# Wegent 体验计划',
+                  '',
+                  '## Summary',
+                  '- 优先修复流式展示。',
+                  '',
+                  '## Test Plan',
+                  '- 运行相关前端测试。',
+                ].join('\n'),
+                status: 'done',
+                createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('Wegent 体验计划')
+
     await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
 
-    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
-    expect(screen.getByTestId('right-workspace-plan-tab')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('Wegent 体验计划')
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('运行相关前端测试')
   })
 
   test('renders project-specific empty prompt after selecting a project', () => {

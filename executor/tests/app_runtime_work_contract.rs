@@ -969,7 +969,6 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
-      exit 0
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -993,7 +992,6 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
-      exit 0
       ;;
   esac
 done
@@ -1068,15 +1066,15 @@ fn write_fake_codex_empty_thread_with_rollout(log_path: &Path) -> PathBuf {
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-rollout","cwd":"/tmp/project","name":"Rollout transcript","preview":"rollout","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
-      exit 0
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-rollout","cwd":"/tmp/project","name":"Rollout transcript","preview":"rollout","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
       ;;
   esac
 done
@@ -1139,15 +1137,15 @@ fn write_fake_codex_thread_with_rollout_path(log_path: &Path, rollout_path: &Pat
 LOG_PATH='{}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-signature","cwd":"/tmp/project","name":"Signature transcript","preview":"signature","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
-      exit 0
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-signature","cwd":"/tmp/project","name":"Signature transcript","preview":"signature","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
       ;;
   esac
 done
@@ -1212,7 +1210,6 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
-      exit 0
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
@@ -1221,9 +1218,6 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"ok\n","exitCode":0}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
-      sleep 3
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-running-tool","status":"completed"}}}}}}'
-      exit 0
       ;;
   esac
 done
