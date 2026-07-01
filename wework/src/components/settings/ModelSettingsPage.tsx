@@ -625,10 +625,21 @@ function DisconnectedCloudCodexSyncSection({
   return (
     <section
       data-testid="runtime-config-cloud-sync"
-      className="rounded-lg border border-dashed border-border bg-surface p-5 opacity-70"
+      className="relative rounded-lg border border-dashed border-border bg-surface p-5 opacity-70"
     >
+      {onOpenCloudSettings && (
+        <button
+          type="button"
+          data-testid="runtime-config-cloud-configure-button"
+          onClick={onOpenCloudSettings}
+          className="absolute right-5 top-5 inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+        >
+          <Network className="h-3.5 w-3.5" />
+          {t('workbench.runtime_config_cloud_configure_action', '配置')}
+        </button>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
+        <div className="flex min-w-0 items-start gap-3 pr-24">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
             <KeyRound className="h-4 w-4" />
           </div>
@@ -652,18 +663,7 @@ function DisconnectedCloudCodexSyncSection({
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {onOpenCloudSettings && (
-            <button
-              type="button"
-              data-testid="runtime-config-cloud-configure-button"
-              onClick={onOpenCloudSettings}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
-            >
-              <Network className="h-3.5 w-3.5" />
-              {t('workbench.runtime_config_cloud_configure_action', '配置')}
-            </button>
-          )}
+        <div className="flex flex-wrap items-center gap-2 pl-12">
           <button
             type="button"
             data-testid="runtime-config-toggle"
