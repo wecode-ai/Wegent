@@ -49,7 +49,7 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass('bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-wework')).not.toHaveClass('bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass(
-      'h-7',
+      'h-8',
       'min-w-24',
       'justify-center',
       'rounded-lg',
@@ -63,7 +63,7 @@ describe('ChromeTitlebar', () => {
       'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
-    expect(screen.getByTestId('titlebar-actions')).toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('gap-1', 'pr-3')
   })
 
   test('renders app tabs as icon-only controls with hover labels', () => {

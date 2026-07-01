@@ -793,7 +793,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         {!isTauri && (
           <div
             data-testid="workspace-panel-floating-actions"
-            className="pointer-events-auto absolute right-7 top-1.5 z-popover flex shrink-0 items-center gap-2"
+            className="pointer-events-auto absolute right-8 top-1.5 z-popover flex shrink-0 items-center gap-1"
           >
             {topRightActions}
           </div>

@@ -435,6 +435,7 @@
     "desktop": "Desktop",
     "open_project_ide": "Open project IDE",
     "open_project_ide_with": "Open with {{opener}}",
+    "open_workspace_location": "Open location",
     "choose_project_ide": "Choose IDE",
     "project_ide_start_failed_title": "Unable to open project IDE",
     "project_ide_start_failed_message": "Failed to start project IDE",
