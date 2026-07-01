@@ -4,6 +4,7 @@ import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID, TITLEBAR_RIGHT_PANEL_PORTAL_ID } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type { ReactNode } from 'react'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
@@ -48,10 +49,12 @@ export function ChromeTitlebar({
       {/* macOS: traffic light spacer (left) */}
       {isTauri && platform === 'mac' && (
         <div
-          className="w-[95px] shrink-0"
+          className="w-[95px] shrink-0 self-stretch"
           data-testid="macos-traffic-light-spacer"
           data-tauri-drag-region
-        />
+        >
+          <MacOSTitleBarDragRegion />
+        </div>
       )}
 
       {beforeTabs && (
@@ -109,7 +112,13 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <div className="min-w-6 flex-1" {...(isTauri ? { 'data-tauri-drag-region': '' } : {})} />
+      <div
+        data-testid="chrome-titlebar-window-drag-region"
+        className="min-w-6 flex-1 self-stretch"
+        {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
+      >
+        {isTauri && <MacOSTitleBarDragRegion />}
+      </div>
       {isTauri && <TitlebarExtensionSlot />}
       <div
         data-testid="titlebar-right-workspace-zone"
@@ -132,7 +141,9 @@ export function ChromeTitlebar({
 
       {/* Windows/Linux: right spacer for native window controls */}
       {isTauri && platform !== 'mac' && (
-        <div className="w-[138px] shrink-0" data-tauri-drag-region />
+        <div className="w-[138px] shrink-0 self-stretch" data-tauri-drag-region>
+          <MacOSTitleBarDragRegion />
+        </div>
       )}
     </div>
   )
