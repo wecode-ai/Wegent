@@ -281,7 +281,7 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
             ) as acquired:
                 if not acquired:
                     logger.info(
-                        "[job] Another instance is executing orphan pod cleanup, skipping"
+                        "+++ [job] Another instance is executing orphan pod cleanup, skipping"
                     )
                 else:
                     async with AsyncSessionLocal() as db:
@@ -289,10 +289,10 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                             db,
                             older_than_hours=ORPHAN_POD_MIN_AGE_HOURS,
                             stale_hours=ORPHAN_POD_CLEANUP_STALE_HOURS,
-                            dry_run=False,
+                            dry_run=True,
                         )
         except Exception as e:
-            logger.error("[job] orphan pod cleanup error: %s", e)
+            logger.error("+++ [job] orphan pod cleanup error: %s", e)
 
         try:
             await asyncio.wait_for(
@@ -380,9 +380,11 @@ def apply_patch():
                 app.state.orphan_pod_cleanup_task = asyncio.create_task(
                     _orphan_pod_cleanup_worker(app.state.orphan_pod_cleanup_stop_event)
                 )
-                logger.info("[job] orphan pod cleanup worker started (async)")
+                logger.info("+++ [job] orphan pod cleanup worker started (async)")
             else:
-                logger.info("[job] orphan pod cleanup worker disabled by configuration")
+                logger.info(
+                    "+++ [job] orphan pod cleanup worker disabled by configuration"
+                )
 
         async def patched_stop(app):
             # Stop hourly notification thread gracefully
@@ -425,7 +427,7 @@ def apply_patch():
                     await orphan_task
                 except asyncio.CancelledError:
                     pass
-            logger.info("[job] orphan pod cleanup worker stopped")
+            logger.info("+++ [job] orphan pod cleanup worker stopped")
 
             # Call original stop (which is async)
             await original_stop(app)

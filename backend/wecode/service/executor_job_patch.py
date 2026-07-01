@@ -47,13 +47,14 @@ async def _cleanup_orphan_pod(
 
     # Step 1: try the normal stale cleanup path
     cleanup_result = await _original_cleanup_stale_task_executor(
-        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
+        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=True
     )
 
     if cleanup_result.get("deleted"):
         logger.info(
-            "[executor_job] Orphan pod cleaned via stale executor cleanup task_id=%s",
+            "+++ [executor_job] Orphan pod cleaned via stale executor cleanup task_id=%s pod_name=%s",
             task_id,
+            pod_name,
         )
         return {
             "task_id": task_id,
@@ -75,7 +76,7 @@ async def _cleanup_orphan_pod(
 
     # Step 2: fallback — delete K8s pod by name directly
     logger.info(
-        "[executor_job] Falling back to direct pod delete task_id=%s pod_name=%s",
+        "+++ [executor_job] Falling back to direct pod delete task_id=%s pod_name=%s",
         task_id,
         pod_name,
     )
@@ -83,7 +84,7 @@ async def _cleanup_orphan_pod(
         result = await ek_service.delete_pod_by_name_async(pod_name)
     except Exception as exc:
         logger.warning(
-            "[executor_job] Failed to delete orphan pod task_id=%s pod_name=%s error=%s",
+            "+++ [executor_job] Failed to delete orphan pod task_id=%s pod_name=%s error=%s",
             task_id,
             pod_name,
             exc,
@@ -99,7 +100,7 @@ async def _cleanup_orphan_pod(
     k8s_status = result.get("status")
     if k8s_status in ("success", "not_found"):
         logger.info(
-            "[executor_job] Deleted orphan pod task_id=%s pod_name=%s k8s_status=%s",
+            "+++ [executor_job] Deleted orphan pod task_id=%s pod_name=%s k8s_status=%s",
             task_id,
             pod_name,
             k8s_status,
@@ -130,12 +131,12 @@ async def cleanup_orphan_pods(
     stale_hours: int = 24,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """Scan K8s for old pods with no DB subtask records and clean them up.
+    """Scan K8s for old pods with no DB subtask records or stale and clean them up.
 
     Mirrors the pod_delete/ pipeline:
     1. get_old_pods_async: list old pods by name pattern (wegent-task|sandbox)
     2. For each pod with a valid task_id > ORPHAN_POD_MIN_TASK_ID and no DB records:
-       - call cleanup_stale_task_executor with stale_hours (matches script INACTIVE_HOURS=24)
+       - call cleanup_stale_task_executor with stale_hours (INACTIVE_HOURS=24)
        - if executor_not_found, delete K8s pod by name directly
     3. Pods with no task_id label or task_id <= threshold are skipped entirely,
        matching the original scripts' awk '$1+0 > 1000' guard.
@@ -161,29 +162,39 @@ async def cleanup_orphan_pods(
     result["total_scanned"] = len(old_pods)
 
     if not old_pods:
-        logger.info("[executor_job] No old pods found for orphan cleanup")
+        logger.info("+++ [executor_job] No old pods found for orphan cleanup")
         return result
 
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
         task_id_str: Optional[str] = pod_info.get("task_id")
 
-        if not pod_name:
-            continue
-
-        # Mirrors cleanup_stale_tasks.sh: skip pods with no task_id label
-        if not task_id_str:
-            result["skipped"].append({"pod_name": pod_name, "reason": "no_task_id"})
+        if not pod_name or not task_id_str:
+            logger.warning(
+                "+++ [executor_job] Skipping pod pod_name=%s task_id=%s",
+                pod_name,
+                task_id_str,
+            )
+            reason = "no_pod_name" if not pod_name else "no_task_id"
+            result["skipped"].append(
+                {"pod_name": pod_name, "task_id": task_id_str, "reason": reason}
+            )
             continue
 
         try:
             task_id = int(task_id_str)
         except (ValueError, TypeError):
             logger.warning(
-                "[executor_job] Invalid task_id from K8s label: %s", task_id_str
+                "+++ [executor_job] Invalid task_id pod_name=%s task_id=%s",
+                pod_name,
+                task_id_str,
             )
             result["skipped"].append(
-                {"pod_name": pod_name, "reason": "invalid_task_id"}
+                {
+                    "pod_name": pod_name,
+                    "task_id": task_id_str,
+                    "reason": "invalid_task_id",
+                }
             )
             continue
 
@@ -194,17 +205,6 @@ async def cleanup_orphan_pods(
                     "task_id": task_id,
                     "pod_name": pod_name,
                     "reason": "task_id_below_threshold",
-                }
-            )
-            continue
-
-        subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
-        if subtasks:
-            result["skipped"].append(
-                {
-                    "task_id": task_id,
-                    "pod_name": pod_name,
-                    "reason": "has_subtask_records",
                 }
             )
             continue
@@ -224,7 +224,7 @@ async def cleanup_orphan_pods(
         _append_pod_result(result, cleanup_result, task_id=task_id)
 
     logger.info(
-        "[executor_job] Orphan pod cleanup complete "
+        "+++ [executor_job] Orphan pod cleanup complete "
         "scanned=%d deleted=%d skipped=%d failed=%d",
         result["total_scanned"],
         len(result["deleted"]),
@@ -277,7 +277,7 @@ async def _cleanup_stale_task_executor_wecode(
             k8s_result = await ek_service.delete_executor_by_task_id_async(task_id)
         except Exception as exc:
             logger.warning(
-                "[executor_job] Failed to delete orphan pod by task_id task_id=%s error=%s",
+                "+++ [executor_job] Failed to delete orphan pod by task_id task_id=%s error=%s",
                 task_id,
                 exc,
             )
@@ -286,7 +286,7 @@ async def _cleanup_stale_task_executor_wecode(
         deleted_pods = k8s_result.get("deleted_pods", [])
         if k8s_result.get("status") == "success" and deleted_pods:
             logger.info(
-                "[executor_job] Deleted orphan pod(s) via task_id label task_id=%s pods=%s",
+                "+++ [executor_job] Deleted orphan pod(s) via task_id label task_id=%s pods=%s",
                 task_id,
                 deleted_pods,
             )
@@ -298,7 +298,7 @@ async def _cleanup_stale_task_executor_wecode(
                 "deleted_pods": deleted_pods,
             }
         logger.info(
-            "[executor_job] No pod found by task_id label task_id=%s k8s_status=%s",
+            "+++ [executor_job] No pod found by task_id label task_id=%s k8s_status=%s",
             task_id,
             k8s_status,
         )
@@ -313,7 +313,7 @@ def apply_patch():
         return
 
     if JobService is None:
-        logger.warning("[ExecutorJobPatch] JobService unavailable, skipping")
+        logger.warning("+++ [ExecutorJobPatch] JobService unavailable, skipping")
         return
 
     _original_cleanup_stale_task_executor = JobService.cleanup_stale_task_executor
@@ -323,7 +323,7 @@ def apply_patch():
     JobService.cleanup_stale_task_executor = _cleanup_stale_task_executor_wecode
 
     _patch_applied = True
-    logger.info("[ExecutorJobPatch] Applied orphan pod cleanup capabilities")
+    logger.info("+++ [ExecutorJobPatch] Applied orphan pod cleanup capabilities")
 
 
 apply_patch()

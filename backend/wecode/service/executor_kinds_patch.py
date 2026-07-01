@@ -33,7 +33,7 @@ async def get_old_pods_async(self, older_than_hours: int = 48) -> List[Dict[str,
     """
     try:
         logger.info(
-            "executor.get_old_pods async request url=%s older_than_hours=%d",
+            "+++ executor.get_old_pods async request url=%s older_than_hours=%d",
             EXECUTOR_OLD_TASK_IDS_URL,
             older_than_hours,
         )
@@ -45,7 +45,7 @@ async def get_old_pods_async(self, older_than_hours: int = 48) -> List[Dict[str,
             response.raise_for_status()
             return response.json().get("pods", [])
     except httpx.HTTPError as e:
-        logger.warning("Failed to fetch old pods from executor_manager: %s", e)
+        logger.warning("+++ Failed to fetch old pods from executor_manager: %s", e)
         return []
 
 
@@ -58,7 +58,7 @@ async def delete_executor_by_task_id_async(self, task_id: int) -> Dict:
     try:
         payload = {"task_id": task_id}
         logger.info(
-            "executor.delete_by_task_id async request url=%s task_id=%d",
+            "+++ executor.delete_by_task_id async request url=%s task_id=%d",
             EXECUTOR_DELETE_BY_TASK_ID_URL,
             task_id,
         )
@@ -100,7 +100,7 @@ async def delete_pod_by_name_async(
         if executor_namespace:
             payload["executor_namespace"] = executor_namespace
         logger.info(
-            "executor.delete_pod_by_name async request url=%s pod_name=%s",
+            "+++ executor.delete_pod_by_name async request url=%s pod_name=%s",
             EXECUTOR_DELETE_POD_BY_NAME_URL,
             pod_name,
         )
@@ -134,7 +134,7 @@ def apply_patch():
 
     if executor_kinds_service is None:
         logger.warning(
-            "[ExecutorKindsPatch] executor_kinds_service unavailable, skipping"
+            "+++ [ExecutorKindsPatch] executor_kinds_service unavailable, skipping"
         )
         return
 
@@ -149,7 +149,7 @@ def apply_patch():
     )
 
     _patch_applied = True
-    logger.info("[ExecutorKindsPatch] Applied orphan pod cleanup methods")
+    logger.info("+++ [ExecutorKindsPatch] Applied orphan pod cleanup methods")
 
 
 apply_patch()

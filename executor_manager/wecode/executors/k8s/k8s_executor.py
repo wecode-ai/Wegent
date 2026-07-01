@@ -1261,7 +1261,7 @@ class K8sExecutor(Executor):
                 }
 
             cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
-            name_pattern = re.compile(r"^(wegent-task|sandbox)")
+            name_pattern = re.compile(r"wegent-task|sandbox")
 
             response = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE,
@@ -1274,7 +1274,7 @@ class K8sExecutor(Executor):
             for pod in items:
                 metadata = pod.get("metadata", {})
                 pod_name = metadata.get("name", "")
-                if not name_pattern.match(pod_name):
+                if not name_pattern.search(pod_name):
                     continue
                 creation_ts = metadata.get("creationTimestamp")
                 if not creation_ts:
@@ -1293,7 +1293,7 @@ class K8sExecutor(Executor):
 
             elapsed = time.time() - start_time
             logger.info(
-                "Found %d old pods (older_than=%dh) in namespace %s (took %.2fs)",
+                "+++ Found %d old pods (older_than=%dh) in namespace %s (took %.2fs)",
                 len(old_pods),
                 older_than_hours,
                 K8S_NAMESPACE,
@@ -1302,14 +1302,14 @@ class K8sExecutor(Executor):
             return {"status": "success", "pods": old_pods}
 
         except ApiException as e:
-            logger.error("Kubernetes API error listing old pods: %s", e)
+            logger.error("+++ Kubernetes API error listing old pods: %s", e)
             return {
                 "status": "failed",
                 "error_msg": f"Kubernetes API error: {e}",
                 "pods": [],
             }
         except Exception as e:
-            logger.error("Error listing old Kubernetes pods: %s", e)
+            logger.error("+++ Error listing old Kubernetes pods: %s", e)
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
 
     def get_executor_count(
