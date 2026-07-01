@@ -39,6 +39,7 @@ const defaultStreamHandlers = {
 let streamHandlersMock = { ...defaultStreamHandlers }
 let selectedTaskDetailMock: TaskDetail | null = null
 let mockTaskInputMessage = ''
+let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
 const mockSetTaskInputMessage = jest.fn()
 let chatStatusIndicatorMock = {
   enabled: false,
@@ -51,7 +52,7 @@ const mockMessagesArea = jest.fn((_: Record<string, unknown>) => (
 ))
 
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => '/chat',
 }))
@@ -339,6 +340,7 @@ describe('ChatArea queue message handler mounting', () => {
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
     mockTaskInputMessage = ''
+    mockSearchParams = new URLSearchParams()
     chatStatusIndicatorMock = {
       enabled: false,
       display: null,
@@ -360,6 +362,14 @@ describe('ChatArea queue message handler mounting', () => {
 
   it('mounts QueueMessageHandler for chat mode', () => {
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
+  })
+
+  it('renders chat mode when search params are unavailable', () => {
+    mockSearchParams = undefined
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
   })
 

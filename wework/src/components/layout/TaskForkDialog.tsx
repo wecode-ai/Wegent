@@ -3,7 +3,7 @@ import { ArrowLeftRight, Check, FolderPlus, HardDrive, Loader2, X } from 'lucide
 import { Button } from '@/components/ui/button'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeleteDeviceWorkspaceRequest,
@@ -181,15 +181,7 @@ export function TaskForkDialog({
     enabledOptions[0] ??
     null
   const projectForBinding: ProjectWithTasks | null =
-    currentProject ??
-    (sourceProjectWork
-      ? {
-          id: runtimeProjectUiId(sourceProjectWork.project),
-          name: sourceProjectWork.project.name,
-          description: sourceProjectWork.project.description,
-          tasks: [],
-        }
-      : null)
+    currentProject ?? (sourceProjectWork ? runtimeProjectToProject(sourceProjectWork) : null)
 
   if (!open || !source) return null
 

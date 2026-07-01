@@ -71,3 +71,22 @@ async def test_connect_rejects_when_session_disappears_before_room_join(
 
     save_session.assert_awaited_once()
     enter_room.assert_awaited_once_with("sid-1", "user:7")
+
+
+@pytest.mark.asyncio
+async def test_wework_connect_joins_wework_user_room(valid_jwt_auth, monkeypatch):
+    namespace = chat_namespace.ChatNamespace()
+    save_session = AsyncMock()
+    enter_room = AsyncMock()
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+
+    await namespace.on_connect(
+        "sid-1",
+        {"REMOTE_ADDR": "127.0.0.1"},
+        {"token": "jwt-token", "client_origin": "wework"},
+    )
+
+    save_session.assert_awaited_once()
+    assert save_session.await_args.args[1]["client_origin"] == "wework"
+    enter_room.assert_awaited_once_with("sid-1", "wework:user:7")

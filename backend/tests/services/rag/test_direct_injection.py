@@ -464,6 +464,7 @@ class TestDirectInjectionUsesOriginalDocuments:
     async def test_direct_injection_with_document_ids_filter(self):
         """Direct injection should pass document_ids to get_original_documents."""
         from app.services.rag.retrieval_service import RetrievalService
+        from shared.models import RetrievalScope
 
         db = MagicMock()
 
@@ -490,7 +491,7 @@ class TestDirectInjectionUsesOriginalDocuments:
                 knowledge_base_ids=[123],
                 db=db,
                 context_window=10000,
-                document_ids=[1, 2, 3],
+                scope=RetrievalScope(document_ids=[1, 2, 3]),
                 user_id=7,
             )
 

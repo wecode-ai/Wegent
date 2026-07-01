@@ -120,8 +120,9 @@ class Settings(BaseSettings):
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
     STANDALONE_MODE: bool = False
-    # Enable in-process executor (no Docker required) when in standalone mode
+    # Enable the bundled Rust executor process when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
+    STANDALONE_EXECUTOR_DEVICE_ID: str = "standalone-admin-device"
 
     # Internal extension toggles.
     # Keep disabled by default so local/open-source development uses the public

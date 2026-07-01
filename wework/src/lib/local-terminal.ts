@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { LocalWorkspaceOpenerId } from './local-workspace-openers'
 import { isTauriRuntime } from './runtime-environment'
 
 export function isLocalTerminalAvailable(): boolean {
@@ -63,6 +64,30 @@ export async function startLocalTerminal({
     cwd: trimmedCwd || null,
     rows,
     cols,
+  })
+}
+
+export interface OpenLocalWorkspaceOptions {
+  opener: LocalWorkspaceOpenerId
+  path?: string
+}
+
+export async function openLocalWorkspace({
+  opener,
+  path,
+}: OpenLocalWorkspaceOptions): Promise<void> {
+  if (!isLocalTerminalAvailable()) {
+    throw new Error('Local workspace opening is unavailable outside the macOS Tauri app')
+  }
+
+  const trimmedPath = path?.trim()
+  if (!trimmedPath) {
+    throw new Error('Local workspace path is empty')
+  }
+
+  await invoke('open_local_workspace', {
+    opener,
+    path: trimmedPath,
   })
 }
 

@@ -51,9 +51,9 @@ npm run test:debug
 
 ## Configuration
 
-- Default test URL: `https://wegent.intra.weibo.com`
-- Override with: `./run-tests.sh https://preview-wegent.intra.weibo.com`
-- Or use environment variable: `TEST_BASE_URL=https://preview-wegent.intra.weibo.com ./run-tests.sh`
+- Default test URL: `http://localhost:3000`
+- Override with: `./run-tests.sh https://preview.example.com`
+- Or use environment variable: `TEST_BASE_URL=https://preview.example.com ./run-tests.sh`
 
 ## Test Files
 
@@ -69,20 +69,20 @@ npm run test:debug
 | `-a, --auth` | Force re-authentication (re-scan QR code) |
 | `-i, --install` | Force reinstall dependencies |
 | `-t, --test` | Run specific test by name (e.g., `-t clarification`) |
-| `URL` | Target URL to test (e.g., `https://preview-wegent.intra.weibo.com`) |
+| `URL` | Target URL to test (e.g., `https://preview.example.com`) |
 | `--help` | Show help message |
 
 ### Examples
 
 ```bash
-# Test production environment (default)
+# Test local environment (default)
 ./run-tests.sh
 
-# Test specific URL (e.g., https://preview-wegent.intra.weibo.com)
-./run-tests.sh https://preview-wegent.intra.weibo.com
+# Test specific URL (e.g., https://preview.example.com)
+./run-tests.sh https://preview.example.com
 
 # Test with browser visible
-./run-tests.sh -h https://preview-wegent.intra.weibo.com
+./run-tests.sh -h https://preview.example.com
 
 # Run specific test (e.g., clarification mode test)
 ./run-tests.sh -t clarification
@@ -91,5 +91,5 @@ npm run test:debug
 ./run-tests.sh -t clarification -h
 
 # Using environment variable
-TEST_BASE_URL=https://preview-wegent.intra.weibo.com ./run-tests.sh
+TEST_BASE_URL=https://preview.example.com ./run-tests.sh
 ```

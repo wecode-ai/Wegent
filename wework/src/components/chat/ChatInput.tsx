@@ -33,6 +33,8 @@ export interface ProjectChatControls {
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelOption: (optionId: string, value: string) => void
+  getSelectedModel?: () => UnifiedModel | null
+  getSelectedModelOptions?: () => ModelOptions
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
@@ -63,8 +65,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  worktreeBaseBranch?: string | null
-  onWorktreeBaseBranchChange?: (branchName: string) => void
+  worktreeBranch?: string | null
+  onWorktreeBranchChange?: (branchName: string | null) => void
 }
 
 interface ChatInputProps {
@@ -115,7 +117,7 @@ export function ChatInput({
   onPause,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
-  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
+  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '随心输入')
   const controls: ProjectChatControls = projectChat ?? {
     models: [],
     skills: [],

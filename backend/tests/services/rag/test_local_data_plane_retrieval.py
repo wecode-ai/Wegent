@@ -58,7 +58,7 @@ async def test_query_local_uses_shared_default_budget() -> None:
         knowledge_base_ids=[1],
         db=db,
         max_results=5,
-        document_ids=None,
+        scope=None,
         metadata_condition=None,
         knowledge_base_configs=spec.knowledge_base_configs,
         user_name=None,

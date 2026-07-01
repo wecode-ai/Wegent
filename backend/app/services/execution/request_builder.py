@@ -386,7 +386,7 @@ class TaskRequestBuilder:
         fork_runtime = self._extract_task_fork_runtime(task)
         inherited_sessions = self._extract_inherited_sessions(fork_runtime)
 
-        return ExecutionRequest(
+        execution_request = ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
             team_id=team.id,
@@ -443,14 +443,28 @@ class TaskRequestBuilder:
             task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
-            backend_url=settings.BACKEND_INTERNAL_URL,
+            backend_url="",
             attachments=attachments or [],
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
-            executor_name=subtask.executor_name,
+            executor_name=getattr(subtask, "executor_name", None),
+            executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        logger.info(
+            "[TaskRequestBuilder] Execution request attachment diagnostics: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
+            "attachment_ids=%s, has_auth_token=%s, backend_url_present=%s",
+            execution_request.task_id,
+            execution_request.subtask_id,
+            bot_config[0].get("shell_type", "") if bot_config else "",
+            len(execution_request.attachments),
+            [attachment.get("id") for attachment in execution_request.attachments],
+            bool(execution_request.auth_token),
+            bool(execution_request.backend_url),
+        )
+        return execution_request
 
     @staticmethod
     def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:
@@ -669,7 +683,7 @@ class TaskRequestBuilder:
     ) -> str:
         """Build a concise execution environment label for web guidance."""
         if has_device_id:
-            if device_type == "local":
+            if device_type in {"local", "app"}:
                 return "local device selected in Wegent"
             if device_type == "cloud":
                 return "cloud device or remote sandbox selected in Wegent"

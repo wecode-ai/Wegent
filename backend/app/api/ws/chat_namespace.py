@@ -46,7 +46,11 @@ from app.api.ws.events import (
     TaskJoinPayload,
     TaskLeavePayload,
 )
-from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.core.constants import (
+    CLIENT_ORIGIN_WEWORK,
+    get_wework_task_room,
+    get_wework_user_room,
+)
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -72,6 +76,9 @@ from app.services.chat.operations import (
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
+from app.services.chat.task_device_resolution import (
+    resolve_chat_task_dispatch_device_id,
+)
 from app.services.chat.trigger import (
     collect_completed_result,
     persist_completed_result,
@@ -351,6 +358,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
+        client_origin = (
+            CLIENT_ORIGIN_WEWORK
+            if auth.get("client_origin") == CLIENT_ORIGIN_WEWORK
+            else None
+        )
 
         await save_connect_session(
             self,
@@ -361,6 +373,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "request_id": request_id,
                 "token_exp": token_exp,
                 "auth_token": token,
+                "client_origin": client_origin,
             },
             logger=logger,
             log_prefix="[WS]",
@@ -369,8 +382,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-        # Join user room
-        user_room = f"user:{user.id}"
+        # Join only the stream room for this client origin. Wework gets raw
+        # Responses API events in a dedicated room and should not receive the
+        # legacy chat:* compatibility stream.
+        user_room = (
+            get_wework_user_room(user.id)
+            if client_origin == CLIENT_ORIGIN_WEWORK
+            else f"user:{user.id}"
+        )
         await enter_connect_room(
             self,
             sid,
@@ -451,8 +470,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        # Join task room
-        task_room = f"task:{payload.task_id}"
+        # Join only the stream room for this client origin. Wework uses the
+        # raw response.* stream; frontend keeps the legacy chat:* stream.
+        task_room = (
+            get_wework_task_room(payload.task_id)
+            if session.get("client_origin") == CLIENT_ORIGIN_WEWORK
+            else f"task:{payload.task_id}"
+        )
         await self.enter_room(sid, task_room)
 
         logger.info(
@@ -717,6 +741,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Get task JSON for group chat check
             task_json = {}
+            existing_task = None
             if payload.task_id:
                 existing_task = task_stores.task_store.get_regular_active_task(
                     db,
@@ -837,6 +862,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     user=user,
                     params=params,
                 )
+            resolved_device_id = await resolve_chat_task_dispatch_device_id(
+                db,
+                user_id=user_id,
+                params=params,
+                task=existing_task,
+            )
+            if resolved_device_id:
+                params.device_id = resolved_device_id
 
             result = await create_chat_task(
                 db=db,
@@ -977,7 +1010,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 user_subtask_id_for_context = (
                     user_subtask_for_context.id if user_subtask_for_context else None
                 )
-                device_id = payload.device_id
+                device_id = params.device_id
 
                 # Create async task for AI response - don't await it
                 # This ensures the ACK is returned before chat:start is sent

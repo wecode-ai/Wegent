@@ -20,7 +20,7 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
 from knowledge_engine.query import QueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from shared.models import RemoteKnowledgeBaseQueryConfig, SearchHints
+from shared.models import RemoteKnowledgeBaseQueryConfig, RetrievalScope, SearchHints
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
@@ -41,38 +41,6 @@ class RetrievalService:
     def __init__(self):
         """Initialize retrieval service."""
         self.runtime_resolver = RagRuntimeResolver()
-
-    @staticmethod
-    def _build_document_filter(document_ids: Optional[list[int]]) -> Optional[Dict]:
-        """Build metadata filter for restricting retrieval to specific documents."""
-        if not document_ids:
-            return None
-
-        doc_refs = [str(doc_id) for doc_id in document_ids]
-        return {
-            "operator": "and",
-            "conditions": [
-                {
-                    "key": "doc_ref",
-                    "operator": "in",
-                    "value": doc_refs,
-                }
-            ],
-        }
-
-    @staticmethod
-    def _combine_metadata_conditions(
-        *conditions: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        normalized_conditions = [condition for condition in conditions if condition]
-        if not normalized_conditions:
-            return None
-        if len(normalized_conditions) == 1:
-            return normalized_conditions[0]
-        return {
-            "operator": "and",
-            "conditions": normalized_conditions,
-        }
 
     @staticmethod
     def _estimate_total_tokens_for_knowledge_bases(
@@ -223,7 +191,7 @@ class RetrievalService:
     async def _try_direct_injection(
         self,
         knowledge_base_ids: list[int],
-        document_ids: Optional[list[int]],
+        scope: RetrievalScope | None,
         db: Session,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
         available_injection_tokens: Optional[int],
@@ -240,7 +208,7 @@ class RetrievalService:
         direct_records = await self.get_original_documents_from_knowledge_base(
             knowledge_base_ids=knowledge_base_ids,
             db=db,
-            document_ids=document_ids,
+            document_ids=scope.document_ids if scope else None,
         )
 
         # None means truncated documents detected, fallback to RAG
@@ -317,6 +285,7 @@ class RetrievalService:
         knowledge_base_ids: list[int],
         db: Session,
         max_results: int,
+        scope: RetrievalScope | None,
         metadata_condition: Optional[Dict[str, Any]],
         knowledge_base_configs: Optional[list[RemoteKnowledgeBaseQueryConfig]],
         user_name: Optional[str],
@@ -333,6 +302,7 @@ class RetrievalService:
                 search_hints=search_hints,
                 knowledge_base_id=kb_id,
                 db=db,
+                scope=scope,
                 metadata_condition=metadata_condition,
                 user_name=user_name,
                 knowledge_base_config=runtime_config_by_kb_id.get(kb_id),
@@ -368,7 +338,7 @@ class RetrievalService:
         knowledge_base_ids: list[int],
         db: Session,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
-        document_ids: Optional[list[int]] = None,
+        scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         context_window: Optional[int] = None,
         used_context_tokens: int = 0,
@@ -394,7 +364,7 @@ class RetrievalService:
             total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
-                document_ids=document_ids,
+                document_ids=scope.document_ids if scope else None,
             )
 
         available_injection_tokens = self._calculate_available_injection_tokens(
@@ -433,7 +403,7 @@ class RetrievalService:
         db: Session,
         search_hints: SearchHints | None = None,
         max_results: int = 5,
-        document_ids: Optional[list[int]] = None,
+        scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         knowledge_base_configs: Optional[list[RemoteKnowledgeBaseQueryConfig]] = None,
         user_name: Optional[str] = None,
@@ -458,7 +428,7 @@ class RetrievalService:
             db: Database session.
             search_hints: Optional retrieval hints for sparse/dense query shaping.
             max_results: Maximum number of results to return per KB.
-            document_ids: Optional list of document IDs to filter.
+            scope: Optional domain retrieval scope.
             metadata_condition: Optional metadata filtering conditions.
             knowledge_base_configs: Optional pre-built KB runtime configs.
             user_name: User name for embedding API headers.
@@ -478,7 +448,10 @@ class RetrievalService:
 
         set_span_attribute("rag.route_mode", route_mode)
         set_span_attribute("rag.kb_count", len(knowledge_base_ids))
-        set_span_attribute("rag.document_filter_count", len(document_ids or []))
+        set_span_attribute(
+            "rag.document_filter_count",
+            len(scope.document_ids if scope and scope.document_ids else []),
+        )
 
         # === Early check: empty knowledge base list ===
         if not knowledge_base_ids:
@@ -491,11 +464,8 @@ class RetrievalService:
                 "total_estimated_tokens": 0,
             }
 
-        # === Build metadata filter ===
-        combined_metadata_condition = self._combine_metadata_conditions(
-            self._build_document_filter(document_ids),
-            metadata_condition,
-        )
+        # === Metadata filter remains independent from domain retrieval scope ===
+        combined_metadata_condition = metadata_condition
         metadata_requires_rag = metadata_condition is not None
 
         # === Metadata filter requires RAG ===
@@ -509,6 +479,7 @@ class RetrievalService:
                 knowledge_base_ids=knowledge_base_ids,
                 db=db,
                 max_results=max_results,
+                scope=scope,
                 metadata_condition=combined_metadata_condition,
                 knowledge_base_configs=knowledge_base_configs,
                 user_name=user_name,
@@ -536,7 +507,7 @@ class RetrievalService:
             total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
-                document_ids=document_ids,
+                document_ids=scope.document_ids if scope else None,
             )
 
         use_direct_injection = (
@@ -577,7 +548,7 @@ class RetrievalService:
         if use_direct_injection:
             result = await self._try_direct_injection(
                 knowledge_base_ids=knowledge_base_ids,
-                document_ids=document_ids,
+                scope=scope,
                 db=db,
                 route_mode=route_mode,
                 available_injection_tokens=available_injection_tokens,
@@ -594,6 +565,7 @@ class RetrievalService:
             knowledge_base_ids=knowledge_base_ids,
             db=db,
             max_results=max_results,
+            scope=scope,
             metadata_condition=combined_metadata_condition,
             knowledge_base_configs=knowledge_base_configs,
             user_name=user_name,
@@ -605,6 +577,7 @@ class RetrievalService:
         knowledge_base_id: int,
         db: Session,
         search_hints: SearchHints | None = None,
+        scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
         knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
@@ -654,6 +627,7 @@ class RetrievalService:
             search_hints=search_hints,
             kb=kb,
             db=db,
+            scope=scope,
             metadata_condition=metadata_condition,
             user_name=user_name,
             knowledge_base_config=knowledge_base_config,
@@ -665,6 +639,7 @@ class RetrievalService:
         kb: Kind,
         db: Session,
         search_hints: SearchHints | None = None,
+        scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
         knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
@@ -695,6 +670,7 @@ class RetrievalService:
             query=query,
             search_hints=search_hints,
             knowledge_base_config=resolved_config,
+            scope=scope,
             metadata_condition=metadata_condition,
         )
 
@@ -746,6 +722,7 @@ class RetrievalService:
         query: str,
         search_hints: SearchHints | None = None,
         knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
+        scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute a single knowledge query with optional retrieval hints."""
@@ -764,6 +741,7 @@ class RetrievalService:
             query=query,
             search_hints=search_hints,
             retrieval_config=knowledge_base_config.retrieval_config,
+            scope=scope,
             metadata_condition=metadata_condition,
             user_id=knowledge_base_config.index_owner_user_id,
         )
@@ -810,7 +788,10 @@ class RetrievalService:
         records: List[Dict[str, Any]] = []
 
         # Case 1: Query by document IDs with KB scope filter
-        if document_ids:
+        if document_ids is not None:
+            if not document_ids:
+                return []
+
             query = (
                 db.query(
                     KnowledgeDocument.id,

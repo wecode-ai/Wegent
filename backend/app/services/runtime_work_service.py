@@ -564,6 +564,8 @@ async def send_runtime_message(
         payload["attachments"] = attachments
     if request.source:
         payload["source"] = request.source.model_dump()
+    if request.request_user_input_response is not None:
+        payload["requestUserInputResponse"] = request.request_user_input_response
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -3020,7 +3022,8 @@ def _device_type(device: Optional[dict[str, Any]]) -> str:
     )
     if hasattr(raw_type, "value"):
         raw_type = raw_type.value
-    return str(raw_type).strip().lower()
+    normalized = str(raw_type).strip().lower()
+    return "local" if normalized == "app" else normalized
 
 
 def _device_address(device: Optional[dict[str, Any]], fallback: str) -> str:

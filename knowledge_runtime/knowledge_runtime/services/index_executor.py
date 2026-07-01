@@ -9,15 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.content_fetcher import ContentFetcher
 
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_resolver import ConfigResolver
-from knowledge_runtime.services.content_fetcher import ContentFetcher
 from shared.models import RemoteIndexRequest
 
 logger = logging.getLogger(__name__)
@@ -33,9 +32,8 @@ class IndexExecutor:
     4. Indexes the document using DocumentService
     """
 
-    def __init__(self, db: Session) -> None:
-        self._db = db
-        self._config_resolver = ConfigResolver()
+    def __init__(self, config_loader: RuntimeConfigLoader | None = None) -> None:
+        self._config_loader = config_loader or RuntimeConfigLoader()
         self._content_fetcher = ContentFetcher()
 
     async def execute(self, request: RemoteIndexRequest) -> dict[str, Any]:
@@ -52,8 +50,7 @@ class IndexExecutor:
             ContentFetchError: If content fetching fails.
         """
         # Resolve configs from database
-        config = self._config_resolver.resolve_index_config(
-            db=self._db,
+        config = self._config_loader.resolve_index_config(
             knowledge_base_id=request.knowledge_base_id,
             user_id=request.user_id,
             document_id=request.document_id,

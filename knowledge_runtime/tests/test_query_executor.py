@@ -14,6 +14,7 @@ from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -46,6 +47,15 @@ def _make_query_config(knowledge_base_id: int = 1) -> QueryConfig:
             score_threshold=0.7,
         ),
     )
+
+
+def _make_config_loader(*configs: QueryConfig) -> MagicMock:
+    """Create a fake RuntimeConfigLoader returning configs by knowledge base ID."""
+    config_loader = MagicMock()
+    config_loader.resolve_query_configs.return_value = {
+        config.knowledge_base_id: config for config in configs
+    }
+    return config_loader
 
 
 @pytest.fixture
@@ -85,11 +95,9 @@ class TestQueryExecutor:
         ):
             query_request.query = "  红包   520 发送   金额 规则 "
             query_request.knowledge_base_ids = [1]
-            executor = QueryExecutor(db=MagicMock())
             config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            config_loader = _make_config_loader(config)
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
@@ -104,6 +112,7 @@ class TestQueryExecutor:
                 "hint_source": "fallback",
             },
             retrieval_config=config.retrieval_config,
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )
@@ -137,11 +146,9 @@ class TestQueryExecutor:
                 "phrases": ["release checklist"],
             }
             query_request.knowledge_base_ids = [1]
-            executor = QueryExecutor(db=MagicMock())
             config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            config_loader = _make_config_loader(config)
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
@@ -156,12 +163,13 @@ class TestQueryExecutor:
                 "hint_source": "explicit_hints",
             },
             retrieval_config=config.retrieval_config,
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )
 
     @pytest.mark.asyncio
-    async def test_execute_combines_document_ids_into_metadata_condition(
+    async def test_execute_converts_compatible_document_ids_to_scope(
         self, query_request
     ) -> None:
         mock_storage_backend = MagicMock()
@@ -189,11 +197,9 @@ class TestQueryExecutor:
                 "operator": "and",
                 "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
             }
-            executor = QueryExecutor(db=MagicMock())
             config = _make_query_config(1)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=config
-            )
+            config_loader = _make_config_loader(config)
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
@@ -208,28 +214,50 @@ class TestQueryExecutor:
                 "hint_source": "fallback",
             },
             retrieval_config=config.retrieval_config,
+            scope=RetrievalScope(document_ids=[10, 11]),
             metadata_condition={
                 "operator": "and",
-                "conditions": [
-                    {
-                        "operator": "and",
-                        "conditions": [
-                            {
-                                "key": "doc_ref",
-                                "operator": "in",
-                                "value": ["10", "11"],
-                            }
-                        ],
-                    },
-                    {
-                        "operator": "and",
-                        "conditions": [
-                            {"key": "source", "operator": "==", "value": "kb"}
-                        ],
-                    },
-                ],
+                "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
             },
             user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_keeps_scope_when_compatible_document_ids_match(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.knowledge_base_ids = [1]
+            query_request.scope = RetrievalScope(document_ids=[20])
+            query_request.document_ids = [20]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        assert mock_kb_executor.execute.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[20]
         )
 
     @pytest.mark.asyncio
@@ -253,9 +281,9 @@ class TestQueryExecutor:
             }
         )
 
-        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
+        config_loader = _make_config_loader(config_1, config_2)
 
         with (
             patch(
@@ -271,10 +299,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=mock_db)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                side_effect=[config_1, config_2]
-            )
+            executor = QueryExecutor(config_loader=config_loader)
 
             result = await executor.execute(query_request)
 
@@ -305,10 +330,9 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=MagicMock())
-            executor._config_resolver.resolve_query_config = MagicMock(
-                return_value=_make_query_config(1)
-            )
+            config = _make_query_config(1)
+            config_loader = _make_config_loader(config)
+            executor = QueryExecutor(config_loader=config_loader)
             query_request.knowledge_base_ids = [1]
             query_request.knowledge_base_retrieval_overrides = [
                 RemoteKnowledgeBaseRetrievalOverride(
@@ -342,6 +366,7 @@ class TestQueryExecutor:
                 vector_weight=0.8,
                 keyword_weight=0.2,
             ),
+            scope=None,
             metadata_condition=None,
             user_id=7,
         )
@@ -350,7 +375,7 @@ class TestQueryExecutor:
     async def test_execute_rejects_duplicate_retrieval_overrides(
         self, query_request
     ) -> None:
-        executor = QueryExecutor(db=MagicMock())
+        executor = QueryExecutor(config_loader=MagicMock())
         query_request.knowledge_base_ids = [1]
         query_request.knowledge_base_retrieval_overrides = [
             RemoteKnowledgeBaseRetrievalOverride(
@@ -373,7 +398,7 @@ class TestQueryExecutor:
     async def test_execute_rejects_unknown_retrieval_override_kb_id(
         self, query_request
     ) -> None:
-        executor = QueryExecutor(db=MagicMock())
+        executor = QueryExecutor(config_loader=MagicMock())
         query_request.knowledge_base_ids = [1]
         query_request.knowledge_base_retrieval_overrides = [
             RemoteKnowledgeBaseRetrievalOverride(
@@ -413,9 +438,9 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = mock_execute
 
-        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
+        config_loader = _make_config_loader(config_1, config_2)
 
         with (
             patch(
@@ -431,10 +456,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=mock_db)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                side_effect=[config_1, config_2]
-            )
+            executor = QueryExecutor(config_loader=config_loader)
 
             result = await executor.execute(query_request)
 
@@ -460,9 +482,9 @@ class TestQueryExecutor:
             }
         )
 
-        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
+        config_loader = _make_config_loader(config_1, config_2)
 
         with (
             patch(
@@ -478,10 +500,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=mock_db)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                side_effect=[config_1, config_2]
-            )
+            executor = QueryExecutor(config_loader=config_loader)
 
             result = await executor.execute(query_request)
 
@@ -497,9 +516,9 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = AsyncMock(return_value={"records": []})
 
-        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
+        config_loader = _make_config_loader(config_1, config_2)
 
         with (
             patch(
@@ -515,10 +534,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=mock_db)
-            executor._config_resolver.resolve_query_config = MagicMock(
-                side_effect=[config_1, config_2]
-            )
+            executor = QueryExecutor(config_loader=config_loader)
 
             result = await executor.execute(query_request)
 
@@ -535,9 +551,9 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = AsyncMock(return_value={"records": []})
 
-        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
+        config_loader = _make_config_loader(config_1, config_2)
 
         with (
             patch(
@@ -553,30 +569,19 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor(db=mock_db)
-            mock_resolve = MagicMock(side_effect=[config_1, config_2])
-            executor._config_resolver.resolve_query_config = mock_resolve
+            executor = QueryExecutor(config_loader=config_loader)
 
             await executor.execute(query_request)
 
-        # ConfigResolver should be called twice, once for each KB
-        assert mock_resolve.call_count == 2
-        mock_resolve.assert_any_call(
-            db=mock_db,
-            knowledge_base_id=1,
-            user_id=42,
-        )
-        mock_resolve.assert_any_call(
-            db=mock_db,
-            knowledge_base_id=2,
+        config_loader.resolve_query_configs.assert_called_once_with(
+            knowledge_base_ids=[1, 2],
             user_id=42,
         )
 
     @pytest.mark.asyncio
     async def test_extract_document_id_from_doc_ref(self) -> None:
         """Test document ID extraction from various doc_ref formats."""
-        mock_db = MagicMock()
-        executor = QueryExecutor(db=mock_db)
+        executor = QueryExecutor(config_loader=MagicMock())
 
         # Test "doc_XXX" format
         assert (
@@ -595,8 +600,7 @@ class TestQueryExecutor:
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation heuristic."""
-        mock_db = MagicMock()
-        executor = QueryExecutor(db=mock_db)
+        executor = QueryExecutor(config_loader=MagicMock())
 
         # ~4 characters per token
         assert executor._estimate_tokens("test") == 1  # 4 chars

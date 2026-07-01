@@ -211,6 +211,10 @@ describe('model-ui', () => {
       },
     }
 
-    expect(getControlsForModel(model).map(control => control.id)).toEqual(['reasoning', 'speed'])
+    expect(getControlsForModel(model).map(control => control.id)).toEqual([
+      'reasoning',
+      'collaborationMode',
+      'speed',
+    ])
   })
 })

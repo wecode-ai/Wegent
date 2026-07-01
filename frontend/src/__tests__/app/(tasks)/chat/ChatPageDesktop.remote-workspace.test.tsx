@@ -8,7 +8,7 @@ import type { ReactNode } from 'react'
 
 import { ChatPageDesktop } from '@/app/(tasks)/chat/ChatPageDesktop'
 
-let mockSearchParams = new URLSearchParams()
+let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
 let mockRuntimeConfig = {
   weworkCodeUrl: '',
 }
@@ -30,9 +30,7 @@ Object.defineProperty(window, 'matchMedia', {
 })
 
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => ({
-    get: (key: string) => mockSearchParams.get(key),
-  }),
+  useSearchParams: () => mockSearchParams,
   useRouter: () => ({
     push: jest.fn(),
     replace: jest.fn(),
@@ -180,6 +178,18 @@ describe('ChatPageDesktop remote workspace integration', () => {
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('42:false')
     expect(screen.queryByText('search-dialog')).not.toBeInTheDocument()
     expect(screen.queryByText('create-group-chat-dialog')).not.toBeInTheDocument()
+  })
+
+  test('chat desktop renders when search params are unavailable', () => {
+    mockSearchParams = undefined
+
+    render(<ChatPageDesktop />)
+
+    expect(screen.getByText('chat-area')).toBeInTheDocument()
+    expect(chatAreaProps[0]).toMatchObject({
+      taskType: 'chat',
+      teamModeFilter: 'chat',
+    })
   })
 
   test('agent=code query enables code task behavior in chat', () => {
