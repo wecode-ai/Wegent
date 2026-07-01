@@ -163,6 +163,7 @@ fn effective_backend_url(request: &ExecutionRequest) -> Option<String> {
         .backend_url
         .as_deref()
         .map(str::trim)
+        .map(|value| value.trim_end_matches('/'))
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| {
@@ -171,13 +172,13 @@ fn effective_backend_url(request: &ExecutionRequest) -> Option<String> {
             }
             env::var("WEGENT_BACKEND_URL")
                 .ok()
-                .map(|value| value.trim().to_owned())
+                .map(|value| value.trim().trim_end_matches('/').to_owned())
                 .filter(|value| !value.is_empty())
         })
         .or_else(|| {
             env::var("TASK_API_DOMAIN")
                 .ok()
-                .map(|value| value.trim().to_owned())
+                .map(|value| value.trim().trim_end_matches('/').to_owned())
                 .filter(|value| !value.is_empty())
         })
         .or_else(|| Some("http://wegent-backend:8000".to_owned()))

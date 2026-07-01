@@ -37,7 +37,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
 def test_replace_empty_backend_url_from_task_api_domain(monkeypatch):
     monkeypatch.delenv("EXECUTOR_MODE", raising=False)
     monkeypatch.delenv("WEGENT_BACKEND_URL", raising=False)
-    monkeypatch.setenv("TASK_API_DOMAIN", "http://backend:8000")
+    monkeypatch.setenv("TASK_API_DOMAIN", "http://backend:8000/")
     task_data = ExecutionRequest(
         backend_url="",
         auth_token="test-token",  # noqa: S106
@@ -55,7 +55,7 @@ def test_replace_empty_backend_url_from_task_api_domain(monkeypatch):
 
 def test_replace_empty_backend_url_from_local_backend_url(monkeypatch):
     monkeypatch.setenv("EXECUTOR_MODE", "local")
-    monkeypatch.setenv("WEGENT_BACKEND_URL", "http://localhost:8000")
+    monkeypatch.setenv("WEGENT_BACKEND_URL", "http://localhost:8000/")
     monkeypatch.setenv("TASK_API_DOMAIN", "http://backend:8000")
     task_data = ExecutionRequest(backend_url="")
 
@@ -63,6 +63,19 @@ def test_replace_empty_backend_url_from_local_backend_url(monkeypatch):
 
     assert (
         replaced["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
+    )
+
+
+def test_replace_none_backend_url_from_task_api_domain(monkeypatch):
+    monkeypatch.delenv("EXECUTOR_MODE", raising=False)
+    monkeypatch.delenv("WEGENT_BACKEND_URL", raising=False)
+    monkeypatch.setenv("TASK_API_DOMAIN", "http://backend:8000/")
+    task_data = ExecutionRequest(backend_url=None)  # type: ignore[arg-type]
+
+    replaced = replace_mcp_server_variables(_knowledge_mcp_servers(), task_data)
+
+    assert (
+        replaced["wegent-knowledge"]["url"] == "http://backend:8000/mcp/knowledge/sse"
     )
 
 

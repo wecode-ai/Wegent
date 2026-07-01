@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::env;
+use std::{
+    env,
+    sync::{Mutex, OnceLock},
+};
 
 use serde_json::{json, Value};
 use wegent_executor::{
@@ -19,6 +22,11 @@ fn request(value: Value) -> ExecutionRequest {
 
 fn source(request: &ExecutionRequest) -> Value {
     request.variable_context()
+}
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 struct EnvGuard {
@@ -375,9 +383,10 @@ fn mcp_variables_replace_backend_url_and_task_token_alias() {
 
 #[test]
 fn mcp_variables_replace_empty_backend_url_from_task_api_domain() {
+    let _lock = env_lock().lock().unwrap();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _local_backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000");
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000/");
     let servers = json!({
         "wegent-knowledge": {
             "type": "streamable-http",
@@ -405,8 +414,9 @@ fn mcp_variables_replace_empty_backend_url_from_task_api_domain() {
 
 #[test]
 fn mcp_variables_prefer_local_backend_url_in_local_mode() {
+    let _lock = env_lock().lock().unwrap();
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-    let _local_backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _local_backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000/");
     let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000");
     let servers = json!({
         "wegent-knowledge": {
