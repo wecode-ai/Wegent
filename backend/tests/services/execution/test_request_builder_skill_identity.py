@@ -6,6 +6,7 @@
 
 from types import SimpleNamespace
 
+from app.core.config import settings
 from app.services.auth import verify_skill_identity_token
 from app.services.execution.request_builder import TaskRequestBuilder
 
@@ -58,7 +59,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     assert result.skill_identity_token == "skill-jwt"
     assert result.executor_name == "executor-1"
     assert result.executor_namespace == "default"
-    assert result.backend_url == ""
+    assert result.backend_url == settings.BACKEND_INTERNAL_URL
 
 
 def test_generate_skill_identity_token_uses_sandbox_task_type(test_db):
