@@ -728,10 +728,8 @@ def test_transfer_endpoint_uses_extracted_module(
             return_value=transfer_response,
         ) as mock_transfer,
         patch(
-            "app.api.endpoints.knowledge_transfer.capture_trace_context",
-            return_value={"traceparent": "test"},
+            "app.api.endpoints.knowledge_transfer.schedule_kb_summary_updates_after_deletion"
         ),
-        patch("app.api.endpoints.knowledge_transfer._update_kb_summary_after_deletion"),
     ):
         response = test_client.post(
             "/api/knowledge-bases/10/transfer-documents",

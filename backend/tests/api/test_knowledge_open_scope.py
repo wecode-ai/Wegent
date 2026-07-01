@@ -205,3 +205,195 @@ def test_open_folder_create_move_and_list_documents(
     assert tree_response.status_code == 200
     tree_folder_ids = {item["id"] for item in tree_response.json()}
     assert folder_id in tree_folder_ids
+
+
+def test_open_delete_document_removes_document_and_schedules_summary_update(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-delete-kb")
+    document = _create_document(test_db, kb_id, test_user.id, "delete-me.md")
+    scheduled: dict = {}
+
+    def fake_schedule_summary_update(background_tasks, **kwargs):
+        scheduled.update(kwargs)
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.schedule_kb_summary_updates_after_deletion",
+        fake_schedule_summary_update,
+    )
+
+    response = test_client.delete(
+        f"/api/knowledge/documents/{document.id}",
+        headers=_api_key_headers(test_api_key[0]),
+    )
+
+    assert response.status_code == 204
+    assert KnowledgeService.get_document(test_db, document.id, test_user.id) is None
+    assert scheduled["kb_ids"] == [kb_id]
+    assert scheduled["user_id"] == test_user.id
+
+
+def test_open_delete_document_returns_404_for_missing_document(
+    test_client: TestClient,
+    test_api_key,
+) -> None:
+    response = test_client.delete(
+        "/api/knowledge/documents/999999",
+        headers=_api_key_headers(test_api_key[0]),
+    )
+
+    assert response.status_code == 404
+
+
+def test_open_reindex_document_uses_orchestrator(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-reindex-kb")
+    document = _create_document(test_db, kb_id, test_user.id, "reindex-me.md")
+    captured: dict = {}
+
+    def fake_reindex_document(**kwargs):
+        captured.update(kwargs)
+        return {"message": "Reindexing started", "document_id": document.id}
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.knowledge_orchestrator.reindex_document",
+        fake_reindex_document,
+    )
+
+    response = test_client.post(
+        f"/api/knowledge/documents/{document.id}/reindex",
+        headers=_api_key_headers(test_api_key[0]),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["document_id"] == document.id
+    assert captured["document_id"] == document.id
+    assert captured["user"].id == test_user.id
+    assert captured["trigger_summary"] is False
+
+
+def test_open_reindex_document_returns_403_for_permission_error(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-reindex-permission-kb")
+    document = _create_document(test_db, kb_id, test_user.id, "reindex-denied.md")
+
+    def fake_reindex_document(**kwargs):
+        raise ValueError(
+            "You do not have permission to manage this document in this knowledge base"
+        )
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.knowledge_orchestrator.reindex_document",
+        fake_reindex_document,
+    )
+
+    response = test_client.post(
+        f"/api/knowledge/documents/{document.id}/reindex",
+        headers=_api_key_headers(test_api_key[0]),
+    )
+
+    assert response.status_code == 403
+    assert "permission" in response.json()["detail"]
+
+
+def test_open_batch_delete_documents_allows_partial_success(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-batch-delete-kb")
+    document = _create_document(test_db, kb_id, test_user.id, "batch-delete.md")
+    missing_document_id = 999999
+    scheduled: dict = {}
+
+    def fake_schedule_summary_update(background_tasks, **kwargs):
+        scheduled.update(kwargs)
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.schedule_kb_summary_updates_after_deletion",
+        fake_schedule_summary_update,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents/batch/delete",
+        headers=_api_key_headers(test_api_key[0]),
+        json={"document_ids": [document.id, missing_document_id]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success_count"] == 1
+    assert payload["failed_count"] == 1
+    assert payload["failed_ids"] == [missing_document_id]
+    assert KnowledgeService.get_document(test_db, document.id, test_user.id) is None
+    assert scheduled["kb_ids"] == [kb_id]
+
+
+def test_open_batch_delete_documents_returns_403_when_all_fail(
+    test_client: TestClient,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    def fake_schedule_summary_update(background_tasks, **kwargs):
+        raise AssertionError("Summary update should not be scheduled")
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.schedule_kb_summary_updates_after_deletion",
+        fake_schedule_summary_update,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents/batch/delete",
+        headers=_api_key_headers(test_api_key[0]),
+        json={"document_ids": [999998, 999999]},
+    )
+
+    assert response.status_code == 403
+
+
+def test_open_batch_move_documents_moves_documents_to_folder(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-batch-move-kb")
+    folder = _create_folder(test_db, kb_id, test_user.id, "target")
+    first_doc = _create_document(test_db, kb_id, test_user.id, "first.md")
+    second_doc = _create_document(test_db, kb_id, test_user.id, "second.md")
+
+    response = test_client.post(
+        "/api/knowledge/documents/batch/move",
+        headers=_api_key_headers(test_api_key[0]),
+        json={
+            "document_ids": [first_doc.id, second_doc.id],
+            "folder_id": folder.id,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success_count"] == 2
+
+    folder_docs_response = test_client.get(
+        "/api/knowledge/documents",
+        headers=_api_key_headers(test_api_key[0]),
+        params={"knowledge_base_id": kb_id, "folder_id": folder.id},
+    )
+    folder_doc_ids = {item["id"] for item in folder_docs_response.json()["items"]}
+    assert folder_doc_ids == {first_doc.id, second_doc.id}
