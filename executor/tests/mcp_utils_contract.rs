@@ -404,6 +404,27 @@ fn mcp_variables_replace_empty_backend_url_from_task_api_domain() {
 }
 
 #[test]
+fn mcp_variables_prefer_local_backend_url_in_local_mode() {
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _local_backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend:8000");
+    let servers = json!({
+        "wegent-knowledge": {
+            "type": "streamable-http",
+            "url": "${{backend_url}}/mcp/knowledge/sse"
+        }
+    });
+    let task = request(json!({"backend_url": ""}));
+
+    let result = replace_mcp_server_variables(&servers, Some(&task));
+
+    assert_eq!(
+        result["wegent-knowledge"]["url"],
+        "http://localhost:8000/mcp/knowledge/sse"
+    );
+}
+
+#[test]
 fn mcp_variables_preserve_null_values_as_unknown_placeholders() {
     let servers = json!({"key": "${{user.name}}"});
     let task = request(json!({"user": {"name": null}}));

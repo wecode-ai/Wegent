@@ -136,7 +136,7 @@ impl ExecutionRequest {
         let Value::Object(object) = &mut value else {
             return Value::Object(Map::new());
         };
-        if let Some(backend_url) = backend_url_for_variable_context(self) {
+        if let Some(backend_url) = effective_backend_url(self) {
             object.insert("backend_url".to_owned(), Value::String(backend_url));
         }
         if let Some(task_type) = &self.task_type {
@@ -158,7 +158,7 @@ impl ExecutionRequest {
     }
 }
 
-fn backend_url_for_variable_context(request: &ExecutionRequest) -> Option<String> {
+fn effective_backend_url(request: &ExecutionRequest) -> Option<String> {
     request
         .backend_url
         .as_deref()
