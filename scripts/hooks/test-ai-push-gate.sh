@@ -120,7 +120,7 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework test --coverage --passWithNoTests$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework test --coverage$' "$CALL_LOG"; then
     echo "Expected Wework changes to run unit tests through the Wework package script."
     echo "Calls:"
     cat "$CALL_LOG"

@@ -394,7 +394,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         fi
 
         echo -e "   Running unit tests..."
-        pnpm --filter wework test --coverage --passWithNoTests > "$TEMP_DIR/wework_test.log" 2>&1
+        pnpm --filter wework test --coverage > "$TEMP_DIR/wework_test.log" 2>&1
         TEST_EXIT=$?
         if [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
