@@ -64,7 +64,17 @@ export async function testLocalModelConnection(
       },
       body: JSON.stringify({
         model: modelId,
-        input: 'Reply with ok.',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: 'Reply with ok.',
+              },
+            ],
+          },
+        ],
         max_output_tokens: 16,
         store: false,
       }),

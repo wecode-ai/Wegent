@@ -33,7 +33,17 @@ describe('localModelConnectionTest', () => {
     )
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'gpt-oss:20b',
-      input: expect.any(String),
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: 'Reply with ok.',
+            },
+          ],
+        },
+      ],
       max_output_tokens: 16,
     })
   })
