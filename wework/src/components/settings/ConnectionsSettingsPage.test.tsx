@@ -350,11 +350,10 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
     expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
     expect(
-      screen.getByText(
-        '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。'
-      )
+      screen.getByText('把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份 Codex 模型。')
     ).toBeInTheDocument()
     expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
     const runtimeConfigButtons = Array.from(
@@ -400,11 +399,17 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
 
     expect(await screen.findByTestId('model-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-config-cloud-required')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-config-toggle')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('本机 Codex')
+    const cloudSyncSection = screen.getByTestId('runtime-config-cloud-sync')
+    expect(cloudSyncSection).toHaveClass('opacity-70')
+    expect(within(cloudSyncSection).getByText('云端 Codex 同步')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-config-cloud-required')).toHaveTextContent('未连接云端')
+    expect(screen.getByTestId('runtime-config-toggle')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-proxy-toggle')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-import-device-select')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-import-button')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-upload-button')).toBeDisabled()
+    expect(screen.getByTestId('runtime-config-upload-button')).toHaveTextContent('同步本机 Codex')
     expect(userApi.getRuntimeConfig).not.toHaveBeenCalled()
   })
 

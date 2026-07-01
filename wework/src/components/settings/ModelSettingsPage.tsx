@@ -86,7 +86,7 @@ function validateAuthJsonContent(content: string, invalidMessage: string) {
   }
 }
 
-function LocalCodexAuthStatusCard({
+function LocalCodexModelRow({
   status,
   loading,
   error,
@@ -100,35 +100,35 @@ function LocalCodexAuthStatusCard({
   const { t } = useTranslation('common')
   const exists = status?.exists === true
   return (
-    <section
-      data-testid="local-codex-auth-status"
-      className="rounded-lg border border-border bg-background p-5"
+    <div
+      data-testid="local-codex-model-row"
+      className="rounded-lg border border-border bg-surface px-3 py-3"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
             <KeyRound className="h-4 w-4" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-text-primary">
-                {t('workbench.local_codex_auth_title', '本机 Codex auth.json')}
-              </h2>
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('workbench.local_codex_model_title', '本机 Codex')}
+              </h3>
               <span
-                data-testid="local-codex-auth-status-pill"
+                data-testid="local-codex-model-status-pill"
                 className={`rounded-full px-2 py-0.5 text-xs ${
                   exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
                 }`}
               >
                 {exists
-                  ? t('workbench.local_codex_auth_exists', '已找到')
-                  : t('workbench.local_codex_auth_missing', '未找到')}
+                  ? t('workbench.runtime_config_configured', '已配置')
+                  : t('workbench.runtime_config_not_configured', '未配置')}
               </span>
             </div>
-            <p className="mt-1 text-sm leading-6 text-text-secondary">
+            <p className="mt-1 text-xs leading-5 text-text-secondary">
               {t(
-                'workbench.local_codex_auth_description',
-                '本机运行 Codex 时会继续读取本机文件；这里不会展示明文，也不会默认上传。'
+                'workbench.local_codex_model_description',
+                '使用本机 ~/.codex/auth.json，在本机 device 上运行。'
               )}
             </p>
           </div>
@@ -149,8 +149,8 @@ function LocalCodexAuthStatusCard({
           )}
         </button>
       </div>
-      <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-        <div className="rounded-lg bg-surface px-3 py-2">
+      <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+        <div className="rounded-md bg-background px-3 py-2">
           <div className="text-xs text-text-muted">
             {t('workbench.runtime_config_target_path', '目标路径')}
           </div>
@@ -161,7 +161,7 @@ function LocalCodexAuthStatusCard({
             })}
           </div>
         </div>
-        <div className="rounded-lg bg-surface px-3 py-2">
+        <div className="rounded-md bg-background px-3 py-2">
           <div className="text-xs text-text-muted">
             {t('workbench.runtime_config_updated_at', '更新时间')}
           </div>
@@ -170,7 +170,7 @@ function LocalCodexAuthStatusCard({
               t('workbench.runtime_config_never_updated', '从未更新')}
           </div>
         </div>
-        <div className="rounded-lg bg-surface px-3 py-2 sm:col-span-2">
+        <div className="rounded-md bg-background px-3 py-2 sm:col-span-2">
           <div className="flex items-center gap-1.5 text-xs text-text-muted">
             <ShieldCheck className="h-3.5 w-3.5" />
             {status?.sha256
@@ -180,7 +180,7 @@ function LocalCodexAuthStatusCard({
           {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -200,10 +200,18 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   enabled: true,
 }
 
-function LocalModelSettingsSection() {
+interface LocalCodexModelRowProps {
+  status: LocalRuntimeAuthStatus | null
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}
+
+function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
   const { t } = useTranslation('common')
   const [models, setModels] = useState<LocalModelConfig[]>(() => listLocalModelConfigs())
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [formVisible, setFormVisible] = useState(false)
   const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
   const [error, setError] = useState<string | null>(null)
 
@@ -223,12 +231,21 @@ function LocalModelSettingsSection() {
 
   const resetForm = () => {
     setEditingId(null)
+    setFormVisible(false)
+    setForm(EMPTY_LOCAL_MODEL_FORM)
+    setError(null)
+  }
+
+  const startCreating = () => {
+    setEditingId(null)
+    setFormVisible(true)
     setForm(EMPTY_LOCAL_MODEL_FORM)
     setError(null)
   }
 
   const startEditing = (model: LocalModelConfig) => {
     setEditingId(model.id)
+    setFormVisible(true)
     setForm({
       displayName: model.displayName,
       modelId: model.modelId,
@@ -253,9 +270,7 @@ function LocalModelSettingsSection() {
       })
       resetForm()
     } catch (saveError) {
-      setError(
-        getErrorMessage(saveError, t('workbench.local_model_save_failed', '保存本地模型失败'))
-      )
+      setError(getErrorMessage(saveError, t('workbench.local_model_save_failed', '保存模型失败')))
     }
   }
 
@@ -289,125 +304,130 @@ function LocalModelSettingsSection() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-text-primary">
-            {t('workbench.local_model_settings_title', '本地模型')}
+            {t('workbench.local_model_settings_title', '本机模型')}
           </h2>
           <p className="mt-1 text-sm leading-6 text-text-secondary">
             {t(
               'workbench.local_model_settings_description',
-              '添加 OpenAI Responses 兼容模型 URL。配置只保存在本机，不会同步云端。'
+              '管理本机 Codex 和其他 OpenAI Responses 兼容模型。'
             )}
           </p>
         </div>
         <button
           type="button"
           data-testid="local-model-add-button"
-          onClick={resetForm}
+          onClick={startCreating}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
         >
           <Plus className="h-3.5 w-3.5" />
-          {t('workbench.local_model_add_action', '新增')}
+          {t('workbench.local_model_add_action', '添加模型')}
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-5 grid gap-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-            {t('workbench.local_model_url_label', '模型 URL')}
-            <input
-              data-testid="local-model-url-input"
-              value={form.baseUrl}
-              onChange={event => setForm(current => ({ ...current, baseUrl: event.target.value }))}
-              placeholder="http://localhost:11434/v1"
-              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-            />
-          </label>
-          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-            {t('workbench.local_model_id_label', '模型 ID')}
-            <input
-              data-testid="local-model-id-input"
-              value={form.modelId}
-              onChange={event => setForm(current => ({ ...current, modelId: event.target.value }))}
-              placeholder="gpt-oss:20b"
-              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-            />
-          </label>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-            {t('workbench.local_model_display_name_label', '显示名')}
-            <input
-              data-testid="local-model-display-name-input"
-              value={form.displayName}
-              onChange={event =>
-                setForm(current => ({ ...current, displayName: event.target.value }))
-              }
-              placeholder="Ollama GPT"
-              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-            />
-          </label>
-          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-            {t('workbench.local_model_api_key_label', 'API Key')}
-            <input
-              data-testid="local-model-api-key-input"
-              value={form.apiKey}
-              onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
-              placeholder={
-                editingModel?.apiKey
-                  ? t('workbench.local_model_api_key_replace_placeholder', '留空则保留现有 Key')
-                  : t('workbench.local_model_api_key_placeholder', '可选')
-              }
-              type="password"
-              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-            />
-          </label>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
-            <input
-              data-testid="local-model-enabled-checkbox"
-              type="checkbox"
-              checked={form.enabled}
-              onChange={event =>
-                setForm(current => ({ ...current, enabled: event.target.checked }))
-              }
-              className="h-4 w-4 rounded border-border text-primary"
-            />
-            {t('workbench.local_model_enabled_label', '启用')}
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            {editingModel?.apiKey && (
-              <button
-                type="button"
-                data-testid="local-model-clear-api-key-button"
-                onClick={clearEditingApiKey}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-              >
-                <X className="h-3.5 w-3.5" />
-                {t('workbench.local_model_clear_api_key_action', '清除 Key')}
-              </button>
-            )}
-            {editingId && (
+      {formVisible && (
+        <form onSubmit={handleSubmit} className="mt-5 grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              {t('workbench.local_model_url_label', '模型 URL')}
+              <input
+                data-testid="local-model-url-input"
+                value={form.baseUrl}
+                onChange={event =>
+                  setForm(current => ({ ...current, baseUrl: event.target.value }))
+                }
+                placeholder="http://localhost:11434/v1"
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              {t('workbench.local_model_id_label', '模型 ID')}
+              <input
+                data-testid="local-model-id-input"
+                value={form.modelId}
+                onChange={event =>
+                  setForm(current => ({ ...current, modelId: event.target.value }))
+                }
+                placeholder="gpt-oss:20b"
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              {t('workbench.local_model_display_name_label', '显示名')}
+              <input
+                data-testid="local-model-display-name-input"
+                value={form.displayName}
+                onChange={event =>
+                  setForm(current => ({ ...current, displayName: event.target.value }))
+                }
+                placeholder="Ollama GPT"
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              {t('workbench.local_model_api_key_label', 'API Key')}
+              <input
+                data-testid="local-model-api-key-input"
+                value={form.apiKey}
+                onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
+                placeholder={
+                  editingModel?.apiKey
+                    ? t('workbench.local_model_api_key_replace_placeholder', '留空则保留现有 Key')
+                    : t('workbench.local_model_api_key_placeholder', '可选')
+                }
+                type="password"
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
+              <input
+                data-testid="local-model-enabled-checkbox"
+                type="checkbox"
+                checked={form.enabled}
+                onChange={event =>
+                  setForm(current => ({ ...current, enabled: event.target.checked }))
+                }
+                className="h-4 w-4 rounded border-border text-primary"
+              />
+              {t('workbench.local_model_enabled_label', '启用')}
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {editingModel?.apiKey && (
+                <button
+                  type="button"
+                  data-testid="local-model-clear-api-key-button"
+                  onClick={clearEditingApiKey}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {t('workbench.local_model_clear_api_key_action', '清除 Key')}
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="local-model-cancel-edit-button"
                 onClick={resetForm}
-                className="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
               >
+                <X className="h-3.5 w-3.5" />
                 {t('common.cancel', '取消')}
               </button>
-            )}
-            <button
-              type="submit"
-              data-testid="local-model-save-button"
-              className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
-            >
-              {editingId
-                ? t('workbench.local_model_update_action', '保存')
-                : t('workbench.local_model_save_action', '添加模型')}
-            </button>
+              <button
+                type="submit"
+                data-testid="local-model-save-button"
+                className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+              >
+                {editingId
+                  ? t('workbench.local_model_update_action', '保存')
+                  : t('workbench.local_model_save_action', '保存模型')}
+              </button>
+            </div>
           </div>
-        </div>
-      </form>
+        </form>
+      )}
 
       {error && (
         <div
@@ -420,82 +440,207 @@ function LocalModelSettingsSection() {
       )}
 
       <div className="mt-5 grid gap-2">
-        {models.length === 0 ? (
+        <LocalCodexModelRow {...localCodexModel} />
+        {models.map(model => (
           <div
-            data-testid="local-model-empty"
-            className="rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-sm text-text-muted"
+            key={model.id}
+            data-testid={`local-model-row-${model.id}`}
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-3"
           >
-            {t('workbench.local_model_empty', '还没有本地模型配置')}
-          </div>
-        ) : (
-          models.map(model => (
-            <div
-              key={model.id}
-              data-testid={`local-model-row-${model.id}`}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-3"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold text-text-primary">
-                    {model.displayName}
-                  </h3>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${
-                      model.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
-                    }`}
-                  >
-                    {model.enabled
-                      ? t('workbench.local_model_enabled', '已启用')
-                      : t('workbench.local_model_disabled', '已停用')}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="truncate text-sm font-semibold text-text-primary">
+                  {model.displayName}
+                </h3>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    model.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
+                  }`}
+                >
+                  {model.enabled
+                    ? t('workbench.local_model_enabled', '已启用')
+                    : t('workbench.local_model_disabled', '已停用')}
+                </span>
+                {model.apiKey && (
+                  <span className="rounded-full bg-background px-2 py-0.5 text-xs text-text-muted">
+                    {t('workbench.local_model_api_key_saved', '已保存 Key')}
                   </span>
-                  {model.apiKey && (
-                    <span className="rounded-full bg-background px-2 py-0.5 text-xs text-text-muted">
-                      {t('workbench.local_model_api_key_saved', '已保存 Key')}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 break-all font-mono text-xs text-text-secondary">
-                  {model.modelId} · {model.baseUrl}
-                </div>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  data-testid={`local-model-edit-${model.id}`}
-                  onClick={() => startEditing(model)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
-                  aria-label={t('workbench.local_model_edit_action', '编辑')}
-                  title={t('workbench.local_model_edit_action', '编辑')}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  data-testid={`local-model-delete-${model.id}`}
-                  onClick={() => {
-                    setError(null)
-                    try {
-                      deleteLocalModelConfig(model.id)
-                      if (editingId === model.id) resetForm()
-                    } catch (deleteError) {
-                      setError(
-                        getErrorMessage(
-                          deleteError,
-                          t('workbench.local_model_delete_failed', '删除本地模型失败')
-                        )
-                      )
-                    }
-                  }}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
-                  aria-label={t('workbench.local_model_delete_action', '删除')}
-                  title={t('workbench.local_model_delete_action', '删除')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+              <div className="mt-1 break-all font-mono text-xs text-text-secondary">
+                {model.modelId} · {model.baseUrl}
               </div>
             </div>
-          ))
-        )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid={`local-model-edit-${model.id}`}
+                onClick={() => startEditing(model)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
+                aria-label={t('workbench.local_model_edit_action', '编辑')}
+                title={t('workbench.local_model_edit_action', '编辑')}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                data-testid={`local-model-delete-${model.id}`}
+                onClick={() => {
+                  setError(null)
+                  try {
+                    deleteLocalModelConfig(model.id)
+                    if (editingId === model.id) resetForm()
+                  } catch (deleteError) {
+                    setError(
+                      getErrorMessage(
+                        deleteError,
+                        t('workbench.local_model_delete_failed', '删除模型失败')
+                      )
+                    )
+                  }
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
+                aria-label={t('workbench.local_model_delete_action', '删除')}
+                title={t('workbench.local_model_delete_action', '删除')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function DisconnectedCloudCodexSyncSection() {
+  const { t } = useTranslation('common')
+
+  return (
+    <section
+      data-testid="runtime-config-cloud-sync"
+      className="rounded-lg border border-dashed border-border bg-surface p-5 opacity-70"
+      aria-disabled="true"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+            <KeyRound className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.runtime_config_cloud_sync_title', '云端 Codex 同步')}
+              </h2>
+              <span
+                data-testid="runtime-config-cloud-required"
+                className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted"
+              >
+                {t('workbench.runtime_config_cloud_disconnected', '未连接云端')}
+              </span>
+            </div>
+            <p className="mt-1 text-sm leading-6 text-text-secondary">
+              {t(
+                'workbench.runtime_config_cloud_sync_description',
+                '连接云端后，可以把本机 Codex auth.json 同步到云端设备，或从在线设备导入一份云端 Codex 模型。'
+              )}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          data-testid="runtime-config-toggle"
+          role="switch"
+          aria-checked={false}
+          disabled
+          className="inline-flex h-8 min-w-[112px] cursor-not-allowed items-center justify-center rounded-full bg-background px-3 text-sm font-medium text-text-muted"
+        >
+          {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+        </button>
+      </div>
+
+      <div className="mt-5 rounded-lg border border-border bg-background p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+              <Network className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('workbench.runtime_config_proxy_title')}
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
+                {t('workbench.runtime_config_proxy_description')}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            data-testid="runtime-config-proxy-toggle"
+            role="switch"
+            aria-checked={false}
+            disabled
+            className="inline-flex h-8 min-w-[112px] cursor-not-allowed items-center justify-center rounded-full bg-surface px-3 text-sm font-medium text-text-muted"
+          >
+            {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+        <div className="rounded-lg border border-border bg-background p-3">
+          <h3 className="text-sm font-semibold text-text-primary">
+            {t('workbench.runtime_config_device_title', '从设备导入')}
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t(
+              'workbench.runtime_config_device_description',
+              '从一台在线设备读取 auth.json，并保存为云端 Codex 模型。'
+            )}
+          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <select
+              data-testid="runtime-config-import-device-select"
+              disabled
+              className="h-8 min-w-0 flex-1 cursor-not-allowed rounded-md border border-border bg-surface px-2 text-sm text-text-muted"
+              aria-label={t('workbench.runtime_config_import_device', '选择导入设备')}
+            >
+              <option value="">
+                {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+              </option>
+            </select>
+            <button
+              type="button"
+              data-testid="runtime-config-import-button"
+              disabled
+              className="inline-flex h-8 cursor-not-allowed items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-muted"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t('workbench.runtime_config_import_action', '从设备导入')}
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background p-3">
+          <h3 className="text-sm font-semibold text-text-primary">
+            {t('workbench.runtime_config_upload_title', '同步本机 Codex')}
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t(
+              'workbench.runtime_config_upload_description',
+              '选择本机 auth.json，保存到服务端后可供云端设备使用。'
+            )}
+          </p>
+          <button
+            type="button"
+            data-testid="runtime-config-upload-button"
+            disabled
+            className="mt-3 inline-flex h-8 cursor-not-allowed items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background opacity-60"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            {t('workbench.runtime_config_upload_action', '同步本机 Codex')}
+          </button>
+        </div>
       </div>
     </section>
   )
@@ -711,44 +856,20 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
             {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
-            {t(
-              'workbench.model_settings_subtitle',
-              '配置本机模型，并在连接云端后管理 Codex auth.json 同步。'
-            )}
+            {t('workbench.model_settings_subtitle', '管理本机模型、本机 Codex 和云端 Codex 同步。')}
           </p>
         </div>
         <div className="mt-8">
-          <LocalModelSettingsSection />
-        </div>
-        <div className="mt-4">
-          <LocalCodexAuthStatusCard
+          <LocalModelSettingsSection
             status={localAuthStatus}
             loading={localAuthLoading}
             error={localAuthError}
             onRefresh={() => void loadLocalAuthStatus()}
           />
         </div>
-        <section
-          data-testid="runtime-config-cloud-required"
-          className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5"
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
-              <KeyRound className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-text-primary">
-                {t('workbench.cloud_connection_cloud_features', '连接云端后')}
-              </h2>
-              <p className="mt-1 text-sm leading-6 text-text-secondary">
-                {t(
-                  'workbench.runtime_config_cloud_required_desc',
-                  '云端 Codex 认证不会默认上传本机文件；只有你明确上传或从设备导入后，才会保存到服务端。'
-                )}
-              </p>
-            </div>
-          </div>
-        </section>
+        <div className="mt-4">
+          <DisconnectedCloudCodexSyncSection />
+        </div>
       </div>
     )
   }
@@ -761,10 +882,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
             {t('workbench.model_settings_title', '模型设置')}
           </h1>
           <p className="mt-2 text-sm text-text-secondary">
-            {t(
-              'workbench.model_settings_subtitle',
-              '配置本机模型，并在连接云端后管理 Codex auth.json 同步。'
-            )}
+            {t('workbench.model_settings_subtitle', '管理本机模型、本机 Codex 和云端 Codex 同步。')}
           </p>
         </div>
         <button
@@ -785,11 +903,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
       </div>
 
       <div className="mt-8">
-        <LocalModelSettingsSection />
-      </div>
-
-      <div className="mt-4">
-        <LocalCodexAuthStatusCard
+        <LocalModelSettingsSection
           status={localAuthStatus}
           loading={localAuthLoading}
           error={localAuthError}
@@ -803,7 +917,10 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
             {t('common.loading', '加载中...')}
           </div>
         ) : (
-          <section className="rounded-lg border border-border bg-background p-5">
+          <section
+            data-testid="runtime-config-cloud-sync"
+            className="rounded-lg border border-border bg-background p-5"
+          >
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex min-w-0 items-start gap-3">
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -812,7 +929,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-sm font-semibold text-text-primary">
-                      {t('workbench.runtime_config_auth_file_title', '认证文件')}
+                      {t('workbench.runtime_config_auth_file_title', '云端 Codex 模型')}
                     </h2>
                     <span
                       data-testid="runtime-config-status"
@@ -824,7 +941,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                   <p className="mt-1 text-sm leading-6 text-text-secondary">
                     {t(
                       'workbench.runtime_config_codex_description',
-                      '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。'
+                      '把本机 Codex auth.json 保存到服务端后，云端设备可以使用这份 Codex 模型。'
                     )}
                   </p>
                 </div>
@@ -872,7 +989,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                   <ShieldCheck className="h-3.5 w-3.5" />
                   {t(
                     'workbench.runtime_config_secret_stored',
-                    '认证信息会加密保存，不会在页面展示明文。'
+                    '认证信息会加密保存，页面只显示状态和摘要。'
                   )}
                 </div>
                 {config?.auth_json_sha256 && (
@@ -957,7 +1074,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.runtime_config_device_description',
-                    '从一台在线 Claude Code 设备读取 auth.json，系统校验后加密保存。'
+                    '从一台在线设备读取 auth.json，并保存为云端 Codex 模型。'
                   )}
                 </p>
 
@@ -972,10 +1089,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                   >
                     {onlineDevices.length === 0 ? (
                       <option value="">
-                        {t(
-                          'workbench.runtime_config_no_online_devices',
-                          '没有在线 Claude Code 设备'
-                        )}
+                        {t('workbench.runtime_config_no_online_devices', '没有在线 Codex 设备')}
                       </option>
                     ) : (
                       onlineDevices.map(device => (
@@ -1018,12 +1132,12 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
 
               <div className="rounded-lg border border-border bg-surface p-3">
                 <h3 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.runtime_config_upload_title', '上传认证文件')}
+                  {t('workbench.runtime_config_upload_title', '同步本机 Codex')}
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.runtime_config_upload_description',
-                    '选择本机的 auth.json，系统会校验 JSON 后加密保存。'
+                    '选择本机 auth.json，保存到服务端后可供云端设备使用。'
                   )}
                 </p>
                 <input
@@ -1046,7 +1160,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
                   ) : (
                     <Upload className="h-3.5 w-3.5" />
                   )}
-                  {t('workbench.runtime_config_upload_action', '上传 auth.json')}
+                  {t('workbench.runtime_config_upload_action', '同步本机 Codex')}
                 </button>
               </div>
             </div>
