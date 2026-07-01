@@ -386,6 +386,14 @@ fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerShared
         .clone()
 }
 
+#[allow(dead_code)]
+fn codex_app_server_request_is_retryable(method: &str) -> bool {
+    matches!(
+        method,
+        "thread/list" | "thread/read" | "config/read" | "model/list"
+    )
+}
+
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,

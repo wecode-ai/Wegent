@@ -12,7 +12,6 @@ import {
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
-  hasRequestUserInputResponse,
   isAnsweredRequestUserInputBlock,
   isHiddenRequestUserInputBlock,
   isRequestUserInputBlock,
@@ -185,16 +184,15 @@ export function ToolBlocksDisplay({
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
         {displayItems.map(item => {
           if (item.type === 'request_user_input') {
-            const payload = item.block.renderPayload as RequestUserInputPayload
-            return hasRequestUserInputResponse(payload) ? (
-              <RequestUserInputSummary key={item.id} payload={payload} />
+            return isAnsweredRequestUserInputBlock(item.block) ? (
+              <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
             ) : (
               <RequestUserInputCard
                 key={item.id}
-                payload={payload}
+                payload={item.block.renderPayload}
                 disabled={item.block.status === 'error'}
                 onSubmit={onRequestUserInputSubmit}
-                onIgnore={() => onRequestUserInputIgnore?.(payload)}
+                onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
               />
             )
           }

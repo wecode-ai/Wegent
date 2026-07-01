@@ -60,6 +60,21 @@ import {
 } from '@/tauri/localExecutor'
 import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
+import { requestLocalCodexOfficialModels } from './codexOfficialModels'
+import {
+  codexOfficialModelIdFromModelName,
+  codexOfficialModelName,
+  CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
+  CODEX_RUNTIME_MODEL_ID,
+  type CodexOfficialModel,
+} from '@/features/model-settings/codexOfficialModels'
+import {
+  findLocalModelConfigByModelName,
+  listLocalModelConfigs,
+  LOCAL_MODEL_NAME_PREFIX,
+  localModelName,
+  type LocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER } from './localSession'
@@ -74,11 +89,10 @@ function isRuntimeDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
 }
 
-const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
-const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
+const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -89,28 +103,127 @@ export const LOCAL_WORKBENCH_TEAM = {
   recommended_mode: 'code',
 } satisfies Team
 
-const LOCAL_CODEX_MODEL = {
-  name: CODEX_RUNTIME_MODEL_NAME,
-  type: 'runtime',
-  displayName: 'GPT-5.5 (Codex)',
-  provider: 'local',
-  modelId: CODEX_RUNTIME_MODEL_ID,
-  config: {
-    protocol: OPENAI_RESPONSES_PROTOCOL,
-    apiFormat: RESPONSES_API_FORMAT,
-    ui: {
-      family: 'gpt',
-      modelLabel: 'GPT-5.5',
-      controls: ['speed'],
-      sortOrder: 10,
-    },
-  },
-  runtime: {
-    family: 'openai.openai-responses',
+function localCodexModelFamily(model: CodexOfficialModel): string {
+  if (model.providerType !== 'provider') return 'codex-official'
+  return `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
+}
+
+function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean): UnifiedModel {
+  const modelFamily = localCodexModelFamily(model)
+  const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
+  return {
+    name: codexOfficialModelName(model),
+    type: 'runtime',
+    displayName: model.modelId,
     provider: 'local',
-  },
-  isActive: true,
-} satisfies UnifiedModel
+    modelId: model.modelId,
+    config: {
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      apiFormat: RESPONSES_API_FORMAT,
+      weworkModelKind: model.providerType === 'provider' ? 'codex-provider' : 'codex-official',
+      codexAuthConfigured,
+      codexOfficialModelId: model.id,
+      codexProviderId: model.providerId,
+      codexProviderName: model.providerName,
+      codexProviderType: model.providerType,
+      ui: {
+        family: modelFamily,
+        ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
+        modelLabel: model.modelId,
+        controls: ['speed'],
+        sortOrder: model.providerType === 'provider' ? 15 : 10,
+      },
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'local',
+    },
+    isActive: true,
+  }
+}
+
+function unavailableCodexModel(message: string): UnifiedModel {
+  return {
+    name: CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
+    type: 'runtime',
+    displayName: 'CodeX 模型不可用',
+    provider: 'local',
+    modelId: null,
+    config: {
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      apiFormat: RESPONSES_API_FORMAT,
+      weworkModelKind: 'codex-official',
+      codexAuthConfigured: false,
+      unavailableReason: message,
+      ui: {
+        family: 'codex-official',
+        modelLabel: 'CodeX 模型不可用',
+        controls: [],
+        sortOrder: 10,
+      },
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'local',
+    },
+    isActive: false,
+    compatibilityDisabled: true,
+    compatibilityDisabledReason: 'unavailable',
+  }
+}
+
+function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel {
+  const group = config.group?.trim()
+  const family = group
+    ? `model-interface:${encodeURIComponent(group.toLowerCase())}`
+    : 'model-interface'
+  return {
+    name: localModelName(config),
+    type: 'runtime',
+    displayName: config.displayName,
+    provider: 'local',
+    modelId: config.modelId,
+    config: {
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      apiFormat: RESPONSES_API_FORMAT,
+      ui: {
+        family,
+        ...(group ? { familyLabel: group } : {}),
+        modelLabel: config.displayName,
+        controls: ['speed'],
+        sortOrder: 20,
+      },
+      weworkModelKind: 'model-interface',
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'local',
+    },
+    isActive: config.enabled,
+  }
+}
+
+function localRuntimeModels(
+  codexOfficialModels: CodexOfficialModel[] = [],
+  codexOfficialError: string | null = null,
+  codexAuthConfigured = false
+): UnifiedModel[] {
+  const officialModels =
+    codexOfficialError || codexOfficialModels.length === 0
+      ? [
+          unavailableCodexModel(
+            codexOfficialError || 'Codex model list returned no available models'
+          ),
+        ]
+      : codexOfficialModels.map(model => localCodexModel(model, codexAuthConfigured))
+
+  return [
+    ...officialModels,
+    ...listLocalModelConfigs()
+      .filter(config => config.enabled)
+      .map(localModelConfigToUnifiedModel),
+  ]
+}
 
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
@@ -318,6 +431,10 @@ function normalizeRuntimeTaskSummaries(
 
 function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [number, number] {
   const seed = data.localTaskId || `${data.runtime}:${data.workspacePath ?? ''}:${data.message}`
+  return createRuntimeExecutionIdsFromSeed(seed)
+}
+
+function createRuntimeExecutionIdsFromSeed(seed: string): [number, number] {
   const taskId = 10_000_000_000_000 + stableLocalId(seed)
   return [taskId, taskId + 1]
 }
@@ -363,21 +480,11 @@ function requiredRuntimeWorkspacePath(data: RuntimeTaskCreateRequest): string {
   return workspacePath
 }
 
-function codexModelId(modelId?: string): string {
-  if (!modelId || modelId === CODEX_RUNTIME_MODEL_NAME) {
-    return CODEX_RUNTIME_MODEL_ID
+function builtInCodexModelId(modelId?: string): string {
+  if (modelId === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) {
+    throw new Error('Codex model list is unavailable')
   }
-  return modelId
-}
-
-function normalizeLocalRuntimeSendRequest(data: RuntimeSendRequest): RuntimeSendRequest {
-  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
-  return {
-    ...data,
-    message_id: data.message_id ?? createRuntimeMessageId(),
-    ...(data.modelId ? { modelId: codexModelId(data.modelId) } : {}),
-    ...(collaborationMode ? { collaborationMode } : {}),
-  }
+  return codexOfficialModelIdFromModelName(modelId) ?? modelId ?? CODEX_RUNTIME_MODEL_ID
 }
 
 function runtimeReasoning(modelOptions?: Record<string, string>): Record<string, string> | null {
@@ -395,6 +502,75 @@ function runtimeServiceTier(modelOptions?: Record<string, string>): string | nul
 
 function runtimeCollaborationMode(modelOptions?: Record<string, string>): string | null {
   return modelOptions?.collaborationMode || modelOptions?.collaboration_mode || null
+}
+
+function providerIdFromLocalConfig(config: LocalModelConfig): string {
+  return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
+}
+
+function localRuntimeModelConfig(
+  modelName?: string,
+  modelOptions?: Record<string, string>
+): Record<string, unknown> {
+  const localModel = findLocalModelConfigByModelName(modelName)
+  if (localModel) {
+    if (!localModel.enabled) {
+      throw new Error('Local model is disabled')
+    }
+    return {
+      model: 'openai',
+      model_id: localModel.modelId,
+      api_format: RESPONSES_API_FORMAT,
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      base_url: localModel.baseUrl,
+      api_key: localModel.apiKey || 'dummy',
+      model_provider: providerIdFromLocalConfig(localModel),
+      provider_name: localModel.displayName,
+      display_name: localModel.displayName,
+      runtime_config: {
+        codex: {
+          use_user_config: false,
+          configured: false,
+        },
+      },
+    }
+  }
+
+  if (modelName?.startsWith(LOCAL_MODEL_NAME_PREFIX)) {
+    throw new Error('Local model is no longer configured')
+  }
+
+  if (modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
+    throw new Error('Codex config.toml provider is no longer configured')
+  }
+
+  const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
+  const codexProviderName = modelOptions?.codexProviderName || modelOptions?.codex_provider_name
+  return {
+    model: 'openai',
+    model_id: builtInCodexModelId(modelName),
+    api_format: RESPONSES_API_FORMAT,
+    protocol: OPENAI_RESPONSES_PROTOCOL,
+    ...(codexProviderId ? { model_provider: codexProviderId } : {}),
+    ...(codexProviderName ? { provider_name: codexProviderName } : {}),
+    runtime_config: {
+      codex: {
+        use_user_config: true,
+        configured: true,
+      },
+    },
+  }
+}
+
+function applyRuntimeModelOptions(
+  modelConfig: Record<string, unknown>,
+  modelOptions?: Record<string, string>
+): Record<string, unknown> {
+  const reasoning = runtimeReasoning(modelOptions)
+  if (reasoning) modelConfig.reasoning = reasoning
+  const serviceTier = runtimeServiceTier(modelOptions)
+  if (serviceTier) modelConfig.service_tier = serviceTier
+  return modelConfig
 }
 
 type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
@@ -607,43 +783,56 @@ function executionWithWorkspace(
   } as RuntimeTaskCreateRequest['execution']
 }
 
-function createLocalExecutionRequest(
-  data: RuntimeTaskCreateRequest,
-  localDeviceId: string,
-  runtimeWorkspace: LocalRuntimeWorkspace
-): Record<string, unknown> {
-  const { workspacePath, workspaceSource, branch } = runtimeWorkspace
-  const [taskId, turnId] = createRuntimeExecutionIds(data)
-  const title = runtimeTaskTitle(data)
-  const modelConfig: Record<string, unknown> = {
-    model: 'openai',
-    model_id: codexModelId(data.modelId),
-    api_format: RESPONSES_API_FORMAT,
-    protocol: OPENAI_RESPONSES_PROTOCOL,
-    runtime_config: {
-      codex: {
-        use_user_config: true,
-        configured: true,
-      },
-    },
-  }
-  const reasoning = runtimeReasoning(data.modelOptions)
-  if (reasoning) modelConfig.reasoning = reasoning
-  const serviceTier = runtimeServiceTier(data.modelOptions)
-  if (serviceTier) modelConfig.service_tier = serviceTier
-  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
+interface BuildLocalRuntimeExecutionRequestInput {
+  localTaskId?: string | null
+  runtime: string
+  teamId: number
+  title: string
+  message: string
+  messageId: number
+  modelId?: string
+  modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
+  attachments?: RuntimeTaskCreateRequest['attachments']
+  localDeviceId: string
+  workspacePath?: string | null
+  workspaceSource: LocalRuntimeWorkspaceSource
+  branch?: string | null
+  newSession: boolean
+}
 
-  const skillNames = (data.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+function buildLocalRuntimeExecutionRequest(
+  input: BuildLocalRuntimeExecutionRequestInput
+): Record<string, unknown> {
+  const baseSeed =
+    input.localTaskId || `${input.runtime}:${input.workspacePath ?? ''}:${input.message}`
+  const [taskId, turnId] = createRuntimeExecutionIdsFromSeed(
+    input.newSession ? baseSeed : `${baseSeed}:${input.messageId}`
+  )
+  const modelConfig = applyRuntimeModelOptions(
+    localRuntimeModelConfig(input.modelId, input.modelOptions),
+    input.modelOptions
+  )
+  const reasoning = runtimeReasoning(input.modelOptions)
+  const collaborationMode = runtimeCollaborationMode(input.modelOptions)
+  const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+  const workspaceProject = input.workspacePath
+    ? {
+        source: input.workspaceSource,
+        path: input.workspacePath,
+        ...(input.branch ? { branch: input.branch } : {}),
+      }
+    : null
 
   return {
     task_id: taskId,
     subtask_id: turnId,
-    message_id: data.message_id ?? createRuntimeMessageId(),
-    team_id: data.teamId,
+    message_id: input.messageId,
+    team_id: input.teamId,
     team_name: LOCAL_WORKBENCH_TEAM.name,
     team_namespace: 'default',
-    task_title: title,
-    subtask_title: `${title} - Assistant`,
+    task_title: input.title,
+    subtask_title: `${input.title} - Assistant`,
     user: {
       id: LOCAL_USER.id,
       name: LOCAL_USER.user_name,
@@ -654,30 +843,30 @@ function createLocalExecutionRequest(
     user_name: LOCAL_USER.user_name,
     bot: [],
     model_config: modelConfig,
-    prompt: data.message,
+    prompt: input.message,
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: skillNames,
-    preload_skills: data.additionalSkills ?? [],
-    user_selected_skills: data.additionalSkills ?? [],
-    workspace: {
-      project: {
-        source: workspaceSource,
-        path: workspacePath,
-        ...(branch ? { branch } : {}),
-      },
-    },
-    workspace_source: workspaceSource,
-    project_workspace_path: workspacePath,
+    preload_skills: input.additionalSkills ?? [],
+    user_selected_skills: input.additionalSkills ?? [],
+    ...(workspaceProject
+      ? {
+          workspace: {
+            project: workspaceProject,
+          },
+          workspace_source: input.workspaceSource,
+          project_workspace_path: input.workspacePath,
+        }
+      : {}),
     execution_target_type: 'local',
-    device_id: localDeviceId,
-    new_session: true,
+    device_id: input.localDeviceId,
+    new_session: input.newSession,
     is_group_chat: false,
     collaboration_model: 'single',
     ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',
-    attachments: localRuntimeAttachments(data.attachments, turnId),
+    attachments: localRuntimeAttachments(input.attachments, turnId),
     reasoning_config: reasoning,
   }
 }
@@ -704,6 +893,22 @@ async function executeLocalDeviceCommand(
   )
   assertCommandSuccess(response, fallback)
   return response
+}
+
+async function loadLocalCodexAuthConfigured(
+  request: LocalAppServicesDeps['request']
+): Promise<boolean> {
+  if (!request) return false
+  try {
+    const response = await request<DeviceCommandResponse>('device.execute_command', {
+      command_key: 'runtime_auth_status',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    return response.success === true && recordValue(response.stdout).exists === true
+  } catch {
+    return false
+  }
 }
 
 async function prepareLocalRuntimeWorkspace(
@@ -782,12 +987,95 @@ async function createLocalRuntimeTaskPayload(
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
+  const messageId = normalizedData.message_id ?? createRuntimeMessageId()
 
   return {
     ...normalizedData,
     ...(collaborationMode ? { collaborationMode } : {}),
     title: runtimeTaskTitle(normalizedData),
-    executionRequest: createLocalExecutionRequest(normalizedData, localDeviceId, runtimeWorkspace),
+    executionRequest: buildLocalRuntimeExecutionRequest({
+      localTaskId: normalizedData.localTaskId,
+      runtime: normalizedData.runtime,
+      teamId: normalizedData.teamId,
+      title: runtimeTaskTitle(normalizedData),
+      message: normalizedData.message,
+      messageId,
+      modelId: normalizedData.modelId,
+      modelOptions: normalizedData.modelOptions,
+      additionalSkills: normalizedData.additionalSkills,
+      attachments: normalizedData.attachments,
+      localDeviceId,
+      workspacePath: runtimeWorkspace.workspacePath,
+      workspaceSource: runtimeWorkspace.workspaceSource,
+      branch: runtimeWorkspace.branch,
+      newSession: true,
+    }),
+  } as unknown as Record<string, unknown>
+}
+
+function createLocalRuntimeSendPayload(
+  data: RuntimeSendRequest,
+  localDeviceId: string
+): Record<string, unknown> {
+  const messageId = data.message_id ?? createRuntimeMessageId()
+  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
+  const workspacePath = stringValue(data.address.workspacePath)
+  const normalizedAddress: RuntimeTaskAddress = {
+    ...data.address,
+    deviceId: localDeviceId,
+    ...(workspacePath ? { workspacePath } : {}),
+  }
+
+  if (data.requestUserInputResponse || data.request_user_input_response) {
+    const payload = { ...data } as Record<string, unknown>
+    delete payload.modelId
+    delete payload.modelType
+    return {
+      ...payload,
+      address: normalizedAddress,
+      message_id: messageId,
+      ...(collaborationMode ? { collaborationMode } : {}),
+      executionRequest: buildLocalRuntimeExecutionRequest({
+        localTaskId: data.address.localTaskId,
+        runtime: 'codex',
+        teamId: LOCAL_WORKBENCH_TEAM.id,
+        title: data.address.localTaskId,
+        message: data.message,
+        messageId,
+        modelId: data.modelId,
+        modelOptions: data.modelOptions,
+        attachments: data.attachments,
+        localDeviceId,
+        workspacePath,
+        workspaceSource: 'local_path',
+        newSession: false,
+      }),
+    } as unknown as Record<string, unknown>
+  }
+
+  const payload = { ...data } as Record<string, unknown>
+  delete payload.modelId
+  delete payload.modelType
+  return {
+    ...payload,
+    address: normalizedAddress,
+    message_id: messageId,
+    ...(collaborationMode ? { collaborationMode } : {}),
+    executionRequest: buildLocalRuntimeExecutionRequest({
+      localTaskId: data.address.localTaskId,
+      runtime: 'codex',
+      teamId: LOCAL_WORKBENCH_TEAM.id,
+      title: data.address.localTaskId,
+      message: data.message,
+      messageId,
+      modelId: data.modelId,
+      modelOptions: data.modelOptions,
+      attachments: data.attachments,
+      localDeviceId,
+      workspacePath,
+      workspaceSource: 'local_path',
+      newSession: false,
+    }),
   } as unknown as Record<string, unknown>
 }
 
@@ -1044,8 +1332,9 @@ function createRuntimeWorkApi(
     ): Promise<RuntimeFileChangesRevertResponse> {
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
-    sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      return requestWithLocalDevice('runtime.tasks.send', normalizeLocalRuntimeSendRequest(data))
+    async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
+      const localDeviceId = await getLocalDeviceId()
+      return request('runtime.tasks.send', createLocalRuntimeSendPayload(data, localDeviceId))
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -1322,7 +1611,34 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
     },
     modelApi: {
-      listModels: async () => ({ data: [LOCAL_CODEX_MODEL] }),
+      listModels: async () => {
+        let codexOfficialModels: CodexOfficialModel[]
+        let codexOfficialError: string | null
+        let codexAuthConfigured: boolean
+        try {
+          await ensureStatus()
+          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+            requestLocalCodexOfficialModels(request).then(
+              value => ({ value, error: null }),
+              error => ({
+                value: null,
+                error: error instanceof Error ? error.message : String(error),
+              })
+            ),
+            loadLocalCodexAuthConfigured(request),
+          ])
+          codexOfficialModels = codexOfficialResult.value?.models ?? []
+          codexOfficialError = codexOfficialResult.error
+          codexAuthConfigured = nextCodexAuthConfigured
+        } catch (error) {
+          codexOfficialModels = []
+          codexOfficialError = error instanceof Error ? error.message : String(error)
+          codexAuthConfigured = false
+        }
+        return {
+          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+        }
+      },
     },
     skillApi: {
       listSkills: async () => [],

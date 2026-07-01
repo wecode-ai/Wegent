@@ -44,6 +44,7 @@ import {
   getSingleProjectDeviceWorkspaceId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
+import { defaultNewChatModelSelection } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -271,7 +272,10 @@ export function WorkbenchProvider({
     () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
     [state.currentRuntimeTask, state.runtimeWork]
   )
-  const defaultModelSelectionConfig = useCallback(() => null, [])
+  const defaultModelSelectionConfig = useCallback(
+    (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
+    []
+  )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
       const preferences = {
