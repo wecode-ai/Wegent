@@ -27,11 +27,16 @@ RUN mkdir -p /app/executor/src/bin \
 # Build stage: compile executor Rust binary.
 FROM builder-deps AS builder
 ARG APP_VERSION=dev
+ARG EXECUTOR_CARGO_FEATURES=""
 
 COPY executor/src /app/executor/src
 RUN cd /app/executor \
     && find src -type f -exec touch {} + \
-    && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor
+    && if [ -n "${EXECUTOR_CARGO_FEATURES}" ]; then \
+        APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor --features "${EXECUTOR_CARGO_FEATURES}"; \
+    else \
+        APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor; \
+    fi
 
 # Runtime base stage: slow-changing executor environment.
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS runtime-base
