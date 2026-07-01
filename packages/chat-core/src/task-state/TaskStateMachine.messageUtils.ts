@@ -5,9 +5,9 @@
 /**
  * Generate a unique message ID
  */
-export function generateMessageId(type: 'user' | 'ai', subtaskId?: number): string {
-  if (type === 'ai' && subtaskId) {
-    return `ai-${subtaskId}`
+export function generateMessageId(type: 'user' | 'ai', turnId?: number): string {
+  if (type === 'ai' && turnId) {
+    return `ai-${turnId}`
   }
   return `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 }

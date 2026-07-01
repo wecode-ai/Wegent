@@ -18,6 +18,7 @@ export interface ModelControlConfig {
   placement?: 'aboveModels' | 'belowModels'
   scope?: 'family' | 'model'
   includeInLabel?: 'always' | 'whenNonDefault' | 'never'
+  persistDefault?: boolean
   options: ModelControlOption[]
 }
 
@@ -110,6 +111,34 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
             label: 'Extra High',
             labelKey: 'workbench.intelligence_ultra',
             order: 40,
+          },
+        ],
+      },
+      {
+        id: 'collaborationMode',
+        label: 'Mode',
+        labelKey: 'workbench.collaboration_mode',
+        defaultValue: 'default',
+        placement: 'aboveModels',
+        scope: 'family',
+        includeInLabel: 'never',
+        persistDefault: false,
+        options: [
+          {
+            value: 'default',
+            label: 'Default mode',
+            labelKey: 'workbench.collaboration_default',
+            description: 'Answer directly in the normal Codex flow.',
+            descriptionKey: 'workbench.collaboration_default_description',
+            order: 10,
+          },
+          {
+            value: 'plan',
+            label: 'Plan mode',
+            labelKey: 'workbench.plan_mode',
+            description: 'Ask clarifying questions before continuing when needed.',
+            descriptionKey: 'workbench.plan_mode_description',
+            order: 20,
           },
         ],
       },
@@ -380,7 +409,9 @@ export function getSelectedModelDisplayLabel(
 export function getDefaultModelOptions(model: UnifiedModel | null): ModelOptions {
   if (!model) return {}
   return Object.fromEntries(
-    getControlsForModel(model).map(control => [control.id, control.defaultValue])
+    getControlsForModel(model)
+      .filter(control => control.persistDefault !== false)
+      .map(control => [control.id, control.defaultValue])
   )
 }
 
@@ -390,10 +421,9 @@ export function normalizeModelOptions(
 ): ModelOptions {
   if (!model) return {}
   return Object.fromEntries(
-    getControlsForModel(model).map(control => [
-      control.id,
-      options[control.id] ?? control.defaultValue,
-    ])
+    getControlsForModel(model)
+      .filter(control => control.persistDefault !== false || options[control.id] !== undefined)
+      .map(control => [control.id, options[control.id] ?? control.defaultValue])
   )
 }
 

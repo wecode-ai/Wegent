@@ -17,23 +17,23 @@ class TestNormalizeDomain:
     def test_plain_domain(self):
         """Test normalizing plain domain without protocol"""
         assert normalize_domain("github.com") == "github.com"
-        assert normalize_domain("gitlab.weibo.cn") == "gitlab.weibo.cn"
+        assert normalize_domain("gitlab.example.cn") == "gitlab.example.cn"
 
     def test_http_protocol(self):
         """Test normalizing domain with http protocol"""
         assert normalize_domain("http://github.com") == "github.com"
-        assert normalize_domain("http://gitlab.weibo.cn") == "gitlab.weibo.cn"
+        assert normalize_domain("http://gitlab.example.cn") == "gitlab.example.cn"
 
     def test_https_protocol(self):
         """Test normalizing domain with https protocol"""
         assert normalize_domain("https://github.com") == "github.com"
-        assert normalize_domain("https://gitlab.weibo.cn") == "gitlab.weibo.cn"
+        assert normalize_domain("https://gitlab.example.cn") == "gitlab.example.cn"
 
     def test_trailing_slash(self):
         """Test normalizing domain with trailing slash"""
         assert normalize_domain("github.com/") == "github.com"
         assert normalize_domain("http://github.com/") == "github.com"
-        assert normalize_domain("https://gitlab.weibo.cn/") == "gitlab.weibo.cn"
+        assert normalize_domain("https://gitlab.example.cn/") == "gitlab.example.cn"
 
     def test_multiple_trailing_slashes(self):
         """Test normalizing domain with multiple trailing slashes"""
@@ -56,7 +56,7 @@ class TestNormalizeDomain:
     def test_subdomain(self):
         """Test normalizing domain with subdomains"""
         assert normalize_domain("https://api.github.com") == "api.github.com"
-        assert normalize_domain("http://git.weibo.cn") == "git.weibo.cn"
+        assert normalize_domain("http://git.example.cn") == "git.example.cn"
 
 
 class TestDomainsMatch:
@@ -65,7 +65,7 @@ class TestDomainsMatch:
     def test_same_domain(self):
         """Test matching identical domains"""
         assert domains_match("github.com", "github.com") is True
-        assert domains_match("gitlab.weibo.cn", "gitlab.weibo.cn") is True
+        assert domains_match("gitlab.example.cn", "gitlab.example.cn") is True
 
     def test_different_domains(self):
         """Test non-matching different domains"""
@@ -86,7 +86,8 @@ class TestDomainsMatch:
         """Test matching domain with http vs https protocol"""
         assert domains_match("http://github.com", "https://github.com") is True
         assert (
-            domains_match("https://gitlab.weibo.cn", "http://gitlab.weibo.cn") is True
+            domains_match("https://gitlab.example.cn", "http://gitlab.example.cn")
+            is True
         )
 
     def test_with_trailing_slash(self):
@@ -98,20 +99,21 @@ class TestDomainsMatch:
     def test_complex_scenarios(self):
         """Test complex real-world scenarios"""
         # Database stores without protocol, user passes with protocol
-        assert domains_match("gitlab.weibo.cn", "https://gitlab.weibo.cn") is True
-        assert domains_match("gitlab.weibo.cn", "http://gitlab.weibo.cn") is True
+        assert domains_match("gitlab.example.cn", "https://gitlab.example.cn") is True
+        assert domains_match("gitlab.example.cn", "http://gitlab.example.cn") is True
 
         # Database stores with protocol, user passes without
-        assert domains_match("https://gitlab.weibo.cn", "gitlab.weibo.cn") is True
+        assert domains_match("https://gitlab.example.cn", "gitlab.example.cn") is True
 
         # Both with different protocols
         assert (
-            domains_match("http://gitlab.weibo.cn", "https://gitlab.weibo.cn") is True
+            domains_match("http://gitlab.example.cn", "https://gitlab.example.cn")
+            is True
         )
 
         # With trailing slashes
-        assert domains_match("https://gitlab.weibo.cn/", "gitlab.weibo.cn") is True
-        assert domains_match("gitlab.weibo.cn", "https://gitlab.weibo.cn/") is True
+        assert domains_match("https://gitlab.example.cn/", "gitlab.example.cn") is True
+        assert domains_match("gitlab.example.cn", "https://gitlab.example.cn/") is True
 
     def test_case_sensitivity(self):
         """Test that domain matching is case-sensitive (as per DNS)"""

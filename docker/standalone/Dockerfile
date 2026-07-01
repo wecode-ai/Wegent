@@ -134,18 +134,37 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
-# ========== Stage 4: Runtime ==========
+# ========== Stage 4: Build Rust Executor ==========
+FROM python-base AS executor-builder
+ARG APP_VERSION=dev
+
+WORKDIR /app
+
+RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
+
+ENV PATH=/root/.cargo/bin:${PATH}
+
+COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/src /app/executor/src
+RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
+
+# ========== Stage 5: Runtime ==========
 FROM python-base AS runtime
+ARG APP_VERSION=dev
 
 WORKDIR /app
 
 # Copy all Python modules to /app directory for consistent structure
 # All modules will be under /app: /app/shared, /app/chat_shell,
-# /app/knowledge_engine, /app/executor, /app/backend
+# /app/knowledge_engine, /app/backend
 COPY shared /app/shared
 COPY chat_shell /app/chat_shell
 COPY knowledge_engine /app/knowledge_engine
-COPY executor /app/executor
+COPY --from=executor-builder /app/executor/target/release/wegent-executor /app/wegent-executor
 
 # Install shared module first
 RUN uv pip install --system --no-cache /app/shared
@@ -156,8 +175,6 @@ RUN cd /app/knowledge_engine && uv pip install --system --no-cache -r pyproject.
 # Install chat_shell (depends on shared via ../shared -> /app/shared)
 RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
 
-# Install executor (depends on shared via ../shared -> /app/shared)
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
 
 # Copy and install backend
@@ -193,13 +210,15 @@ RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
 # Environment variables for standalone mode
 ENV STANDALONE_MODE=true
+ENV STANDALONE_EXECUTOR_DEVICE_ID=standalone-admin-device
 ENV ENVIRONMENT=development
 # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
 ENV DATABASE_URL=sqlite:////app/data/wegent.db
 ENV CHAT_SHELL_MODE=package
 ENV CODEX_HOME=/app/data/codex
-ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor
+ENV PYTHONPATH=/app:/app/backend:/app/chat_shell
 ENV NODE_PATH=/usr/lib/node_modules
+ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 
 # Redis configuration (embedded in standalone mode)
 ENV REDIS_URL=redis://localhost:6379/0

@@ -208,6 +208,22 @@ if [ -n "$FRONTEND_FILES" ]; then
 fi
 
 # =============================================================================
+# Wework Code Formatting Check (lint-staged)
+# =============================================================================
+
+WEWORK_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '^wework/' || true)
+
+if [ -n "$WEWORK_FILES" ]; then
+  echo "🦀 Running wework pre-commit checks..."
+
+  cd "$PROJECT_ROOT/wework" || exit 1
+  npx lint-staged
+  cd "$PROJECT_ROOT" || exit 1
+
+  echo "✅ Wework pre-commit checks passed"
+fi
+
+# =============================================================================
 # Alembic Multi-Head Detection
 # =============================================================================
 

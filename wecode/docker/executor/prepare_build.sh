@@ -2,5 +2,5 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+rm -rf ./executor
 cp -r ../../../executor ./executor
-cp -r ../../../shared ./shared

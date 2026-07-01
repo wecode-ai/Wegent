@@ -1,4 +1,9 @@
-import type { RuntimeProjectRef, RuntimeProjectWork } from '@/types/api'
+import type {
+  ProjectWithTasks,
+  RuntimeDeviceWorkspace,
+  RuntimeProjectRef,
+  RuntimeProjectWork,
+} from '@/types/api'
 
 export function runtimeProjectKey(project: RuntimeProjectRef): string {
   return project.key || (project.id != null ? `legacy:${project.id}` : project.name)
@@ -17,4 +22,43 @@ export function runtimeProjectUiId(project: RuntimeProjectRef): number {
     hash = (hash * 31 + key.charCodeAt(index)) >>> 0
   }
   return (hash % 1_000_000_000) + 1
+}
+
+function preferredRuntimeWorkspace(
+  workspaces: RuntimeDeviceWorkspace[]
+): RuntimeDeviceWorkspace | null {
+  return (
+    workspaces.find(workspace => workspace.available && workspace.workspaceKind !== 'chat') ??
+    workspaces.find(workspace => workspace.workspaceKind !== 'chat') ??
+    workspaces[0] ??
+    null
+  )
+}
+
+export function runtimeProjectToProject(projectWork: RuntimeProjectWork): ProjectWithTasks {
+  const workspace = preferredRuntimeWorkspace(projectWork.deviceWorkspaces)
+  const workspacePath = workspace?.workspacePath?.trim()
+  const deviceId = workspace?.deviceId?.trim()
+
+  return {
+    id: runtimeProjectUiId(projectWork.project),
+    name: projectWork.project.name,
+    description: projectWork.project.description,
+    color: projectWork.project.color,
+    config:
+      workspacePath && deviceId
+        ? {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId,
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: workspacePath,
+            },
+          }
+        : undefined,
+    tasks: [],
+  }
 }

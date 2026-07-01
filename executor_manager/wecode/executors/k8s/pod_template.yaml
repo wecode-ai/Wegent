@@ -79,6 +79,24 @@ spec:
           value: {{ auth_token }}
         - name: TASK_ID
           value: "{{ task_id }}"
+        - name: EXECUTOR_MODE
+          value: docker
+        - name: CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY
+          value: "false"
+        - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+          value: "1"
+        - name: CUSTOM_INSTRUCTION_FILES
+          value: .cursorrules,.windsurfrules,.wecode,.wecoderules,.wecoder,.wecode/rules
+        - name: includeCoAuthoredBy
+          value: "false"
+        - name: CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY
+          value: "1"
+        - name: CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK
+          value: "1"
+        - name: ENABLE_TOOL_SEARCH
+          value: "false"
+        - name: WEGENT_FILE_EDIT_HOOK_COMMAND
+          value: "/app/executor file-change-sender"
         - name: CALLBACK_URL
           value: {{ callback_url }}
         {% endif %}

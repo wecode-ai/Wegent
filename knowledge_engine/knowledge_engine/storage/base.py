@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
 
+from shared.models import RetrievalScope
+
 if TYPE_CHECKING:
     from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -26,6 +28,7 @@ class BaseStorageBackend(ABC):
 
     # Subclasses should override this with their supported methods
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = []
+    supports_retrieval_scope: ClassVar[bool] = False
 
     # Index name prefix for different storage types (can be overridden)
     INDEX_PREFIX: ClassVar[str] = "index"
@@ -282,6 +285,7 @@ class BaseStorageBackend(ABC):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -299,6 +303,7 @@ class BaseStorageBackend(ABC):
                 - vector_weight: Optional, weight for vector search
                 - keyword_weight: Optional, weight for keyword search
             metadata_condition: Optional metadata filtering conditions
+            scope: Optional domain-level retrieval scope
             **kwargs: Additional parameters
 
         Returns:

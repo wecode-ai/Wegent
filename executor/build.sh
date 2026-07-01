@@ -8,7 +8,10 @@ set -e
 
 echo "Building executor binary..."
 cd /app/executor
-pyinstaller executor.spec --clean
+cargo build --release --locked
 
-echo "Binary built successfully at: /app/executor/dist/executor"
-ls -lh /app/executor/dist/executor
+mkdir -p /app/executor/dist
+cp /app/executor/target/release/wegent-executor /app/executor/dist/wegent-executor
+
+echo "Binary built successfully at: /app/executor/dist/wegent-executor"
+ls -lh /app/executor/dist/wegent-executor

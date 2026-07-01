@@ -27,6 +27,9 @@ describe('LoginPage', () => {
     sessionStorage.clear()
     vi.stubEnv('VITE_LOGIN_MODE', 'all')
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'backend',
+    }
     window.history.pushState({}, '', '/login')
   })
 

@@ -318,6 +318,7 @@ def _process_attachment_context(
         dict[str, Any]
     ] = None,  # New parameter for model capabilities
     metadata_only_for_large_documents: bool = False,
+    inline_attachment_content: bool = True,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -332,7 +333,18 @@ def _process_attachment_context(
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
         model_config: Optional model config for capability check
+        inline_attachment_content: Whether to include parsed text/image content.
     """
+    if not inline_attachment_content:
+        header = _build_attachment_metadata_header(
+            context=context,
+            task_id=task_id,
+            subtask_id=subtask_id,
+        )
+        if header:
+            text_contents.append(f"[Attachment {idx}]\n{header}\n\n")
+        return
+
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
         # Build image attachment metadata
@@ -476,6 +488,27 @@ def _build_attachment_metadata_only_prefix(
         f"Parsed text preview status: {preview_status}. "
         f"Use the local file path for precise spreadsheet or full-file analysis.)"
         f"{preview_section}\n\n"
+    )
+
+
+def _build_attachment_metadata_header(
+    context: SubtaskContext,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
+) -> Optional[str]:
+    """Build attachment metadata without parsed text or image content."""
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return None
+
+    filename = context.original_filename
+    sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+    return build_attachment_header(
+        attachment_id=context.id,
+        filename=filename,
+        mime_type=context.mime_type or "unknown",
+        file_size=context.file_size or 0,
+        sandbox_path=sandbox_path,
+        is_image=context_service.is_image_context(context),
     )
 
 
@@ -1149,6 +1182,7 @@ async def prepare_contexts_for_chat(
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
     metadata_only_for_large_attachments: bool = False,
+    inline_attachment_content: bool = True,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -1172,6 +1206,11 @@ async def prepare_contexts_for_chat(
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
         model_config: Optional model configuration used by restricted KB safe summary.
+        metadata_only_for_large_attachments: Whether local file-capable
+            executors should receive metadata instead of large parsed file text.
+        inline_attachment_content: Whether to inject parsed attachment contents
+            into the prompt. Executor runtimes set this to False because they can
+            parse/read downloaded files inside the runtime.
     Returns:
         ChatContextsResult with processed message, table info, and KB results.
     """
@@ -1220,6 +1259,7 @@ async def prepare_contexts_for_chat(
         subtask_id=user_subtask_id,
         model_config=model_config,  # Pass model config for video capability check
         metadata_only_for_large_documents=metadata_only_for_large_attachments,
+        inline_attachment_content=inline_attachment_content,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1347,6 +1387,7 @@ async def _process_attachment_contexts_for_message(
         dict[str, Any]
     ] = None,  # New parameter for model capabilities
     metadata_only_for_large_documents: bool = False,
+    inline_attachment_content: bool = True,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1357,6 +1398,11 @@ async def _process_attachment_contexts_for_message(
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
         model_config: Optional model config for capability check
+        model_config: Optional model config for video capability check.
+        metadata_only_for_large_documents: Whether to replace large document
+            text with metadata and a short preview.
+        inline_attachment_content: Whether parsed attachment content should be
+            injected. When False, only attachment metadata is included.
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images/videos
@@ -1381,6 +1427,7 @@ async def _process_attachment_contexts_for_message(
                 subtask_id=subtask_id,
                 model_config=model_config,  # Pass model config
                 metadata_only_for_large_documents=metadata_only_for_large_documents,
+                inline_attachment_content=inline_attachment_content,
             )
         except Exception as e:
             if isinstance(e, VideoAttachmentResolutionError):

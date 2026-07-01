@@ -843,6 +843,23 @@ class TestSandboxManager:
         mock_redis_client.expire.assert_called()
         mock_redis_client.zadd.assert_called()
 
+    def test_save_sandbox_persists_activity_and_expiry_timestamps(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, sample_sandbox
+    ):
+        """Sandbox activity timestamps must survive repository reloads for cleanup."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.started_at = 1704067210.0
+        sample_sandbox.last_activity_at = 1704070800.0
+        sample_sandbox.expires_at = 1704072600.0
+
+        result = manager._repository.save_sandbox(sample_sandbox)
+
+        assert result is True
+        saved_payload = json.loads(mock_redis_client.hset.call_args.args[2])
+        assert saved_payload["started_at"] == sample_sandbox.started_at
+        assert saved_payload["last_activity_at"] == sample_sandbox.last_activity_at
+        assert saved_payload["expires_at"] == sample_sandbox.expires_at
+
     def test_save_sandbox_missing_task_id(
         self, sandbox_manager_with_mock_redis, mock_redis_client
     ):

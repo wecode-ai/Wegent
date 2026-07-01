@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Repository Policy
+
+on:
+  pull_request_target:
+    branches:
+      - main
+      - master
+      - develop
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  repository-policy:
+    name: Repository Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout trusted policy scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-policy
+          persist-credentials: false
+
+      - name: Checkout pull request merge tree
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          path: policy-target
+          persist-credentials: false
+
+      - name: Run repository policy check
+        env:
+          REPOSITORY_POLICY_ROOT: ${{ github.workspace }}/policy-target
+          REPOSITORY_POLICY_PATTERN_B64: ${{ vars.RESTRICTED_DOMAIN_PATTERN_B64 }}
+          REPOSITORY_POLICY_APPROVED_B64: ${{ vars.APPROVED_DOMAIN_REFERENCES_B64 }}
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/trusted-policy/scripts/hooks/check-repository-policy.sh"
+          bash "$GITHUB_WORKSPACE/trusted-policy/scripts/hooks/check-repository-policy.sh"

@@ -7,9 +7,10 @@ import { createRemoteTerminalClient, type RemoteTerminalClient } from '@/lib/rem
 interface RemoteTerminalProps {
   sessionId: string
   active: boolean
+  testIdsEnabled?: boolean
 }
 
-export function RemoteTerminal({ sessionId, active }: RemoteTerminalProps) {
+export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: RemoteTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -139,7 +140,7 @@ export function RemoteTerminal({ sessionId, active }: RemoteTerminalProps) {
   return (
     <div
       ref={containerRef}
-      data-testid="remote-terminal"
+      data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
       className="h-full min-h-0 w-full flex-1 overflow-hidden bg-white px-2 py-2"
       hidden={!active}
     />

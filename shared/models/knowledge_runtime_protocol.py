@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shared.models.runtime_config import (
     RuntimeEmbeddingModelConfig,
@@ -90,6 +90,29 @@ class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
     retrieval_config: RuntimeRetrievalConfig
 
 
+class RetrievalScope(KnowledgeRuntimeProtocolModel):
+    """Domain-level retrieval scope.
+
+    This is intentionally minimal for now. Document IDs are business document
+    IDs and must be compiled by storage backends into their native doc_ref
+    filters instead of being represented as generic metadata conditions.
+    """
+
+    document_ids: list[int] | None = None
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_document_ids(cls, value: list[int] | None) -> list[int] | None:
+        """Validate and deduplicate document scope IDs."""
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("document_ids must not be empty")
+        if any(document_id < 1 for document_id in value):
+            raise ValueError("document_ids must contain positive integers")
+        return list(dict.fromkeys(value))
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     """Index request - reference mode. KR resolves configs from DB."""
 
@@ -150,9 +173,31 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None
     ) = None
+    scope: RetrievalScope | None = None
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_compatible_document_ids(
+        cls,
+        value: list[int] | None,
+    ) -> list[int] | None:
+        """Validate the compatibility document scope field."""
+        return RetrievalScope.validate_document_ids(value)
+
+    @model_validator(mode="after")
+    def validate_scope_compatibility(self) -> RemoteQueryRequest:
+        """Reject conflicting new and compatibility document scope fields."""
+        if self.scope is None or self.document_ids is None:
+            return self
+
+        if set(self.scope.document_ids or []) != set(self.document_ids or []):
+            raise ValueError(
+                "scope.document_ids and document_ids must match when both are set"
+            )
+        return self
 
 
 class RemoteQueryRecord(KnowledgeRuntimeProtocolModel):
