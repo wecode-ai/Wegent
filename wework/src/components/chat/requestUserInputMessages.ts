@@ -4,6 +4,10 @@ import type { RequestUserInputPayload } from './RequestUserInputCard'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 
+export type RequestUserInputBlock = ToolBlock & {
+  renderPayload: RequestUserInputPayload
+}
+
 export function requestUserInputPayloadKey(
   payload: RequestUserInputPayload | null | undefined
 ): string | null {
@@ -47,7 +51,7 @@ export function isImplementationPlanRequestUserInput(
   })
 }
 
-export function isRequestUserInputBlock(block: ProcessingBlock): block is ToolBlock {
+export function isRequestUserInputBlock(block: ProcessingBlock): block is RequestUserInputBlock {
   if (block.type !== 'tool') return false
   return isRequestUserInputPayload(block.renderPayload)
 }
@@ -55,16 +59,16 @@ export function isRequestUserInputBlock(block: ProcessingBlock): block is ToolBl
 export function isPendingRequestUserInputBlock(
   block: ProcessingBlock,
   hiddenRequestUserInputIds: ReadonlySet<string> = EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
-): block is ToolBlock {
+): block is RequestUserInputBlock {
   if (!isRequestUserInputBlock(block)) return false
   if (block.status === 'error') return false
-  if (hasRequestUserInputResponse(block.renderPayload as RequestUserInputPayload)) return false
+  if (hasRequestUserInputResponse(block.renderPayload)) return false
   return !isHiddenRequestUserInputBlock(block, hiddenRequestUserInputIds)
 }
 
-export function isAnsweredRequestUserInputBlock(block: ProcessingBlock): block is ToolBlock {
+export function isAnsweredRequestUserInputBlock(block: ProcessingBlock): boolean {
   if (!isRequestUserInputBlock(block)) return false
-  return hasRequestUserInputResponse(block.renderPayload as RequestUserInputPayload)
+  return hasRequestUserInputResponse(block.renderPayload)
 }
 
 export function isHiddenRequestUserInputBlock(
@@ -72,7 +76,7 @@ export function isHiddenRequestUserInputBlock(
   hiddenRequestUserInputIds: ReadonlySet<string>
 ): boolean {
   if (!isRequestUserInputBlock(block)) return false
-  const key = requestUserInputPayloadKey(block.renderPayload as RequestUserInputPayload)
+  const key = requestUserInputPayloadKey(block.renderPayload)
   return Boolean(key && hiddenRequestUserInputIds.has(key))
 }
 
@@ -109,7 +113,7 @@ export function applyRequestUserInputResponseToMessages(
         ...block,
         status: 'done' as const,
         renderPayload: {
-          ...(block.renderPayload as RequestUserInputPayload),
+          ...block.renderPayload,
           response,
         },
       }
@@ -151,9 +155,12 @@ function findRequestUserInputMessageIndex(
   return -1
 }
 
-function isMatchingRequestUserInputBlock(block: ProcessingBlock, responseKey: string | null) {
+function isMatchingRequestUserInputBlock(
+  block: ProcessingBlock,
+  responseKey: string | null
+): block is RequestUserInputBlock {
   if (!isPendingRequestUserInputBlock(block)) return false
   if (!responseKey) return true
-  const payloadKey = requestUserInputPayloadKey(block.renderPayload as RequestUserInputPayload)
+  const payloadKey = requestUserInputPayloadKey(block.renderPayload)
   return payloadKey === responseKey
 }
