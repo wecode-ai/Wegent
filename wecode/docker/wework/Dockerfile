@@ -19,7 +19,6 @@ RUN pnpm config set registry https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY wework/package.json ./wework/package.json
-COPY wework/.husky ./wework/.husky
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 RUN pnpm --filter wework... install --frozen-lockfile
 
