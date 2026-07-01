@@ -374,7 +374,7 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn configure_repo_proxy(git_domain: &str) {
+pub(crate) async fn configure_repo_proxy(git_domain: &str) {
     let Some(proxy_values) = repo_proxy_values(git_domain) else {
         return;
     };

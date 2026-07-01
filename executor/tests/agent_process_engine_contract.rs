@@ -285,6 +285,75 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_configures_repo_proxy_before_cloning_github_workspace() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("claude-github-proxy-workspace-root");
+    let bin_dir = unique_dir("claude-github-proxy-bin");
+    let marker = unique_dir("claude-github-proxy-marker").join("git-args.txt");
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_fake_git(&bin_dir, &marker);
+    let fake_claude = write_fake_executable(
+        "fake-claude-github-proxy-cwd",
+        r#"#!/bin/sh
+if [ ! -d ".git" ]; then exit 30; fi
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
+"#,
+    );
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _repo_proxy = EnvGuard::set(
+        "REPO_PROXY_CONFIG",
+        r#"{"github.com":{"http.proxy":"http://127.0.0.1:7890","https.proxy":"http://127.0.0.1:7890"}}"#,
+    );
+    let path_value = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let _path = EnvGuard::set("PATH", &path_value);
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 86,
+        prompt: json!("run in proxied github repo"),
+        bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        extra: serde_json::Map::from_iter([(
+            "git_url".to_owned(),
+            json!("https://github.com/wecode-ai/Wegent.git"),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let expected_cwd = fs::canonicalize(workspace_root.join("86/Wegent")).unwrap();
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: expected_cwd.display().to_string()
+        }
+    );
+    let git_args = fs::read_to_string(marker).unwrap();
+    let lines = git_args.lines().collect::<Vec<_>>();
+    let http_proxy_index = lines
+        .iter()
+        .position(|line| line == &"config --global http.proxy http://127.0.0.1:7890")
+        .expect("missing http.proxy git config command");
+    let https_proxy_index = lines
+        .iter()
+        .position(|line| line == &"config --global https.proxy http://127.0.0.1:7890")
+        .expect("missing https.proxy git config command");
+    let clone_index = lines
+        .iter()
+        .position(|line| line.starts_with("clone "))
+        .expect("missing git clone command");
+
+    assert!(http_proxy_index < clone_index, "{git_args}");
+    assert!(https_proxy_index < clone_index, "{git_args}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_downloads_claude_attachments_to_local_task_workspace() {
     let _lock = env_lock().lock().await;
     let executor_home = unique_dir("claude-local-attachment-home");
