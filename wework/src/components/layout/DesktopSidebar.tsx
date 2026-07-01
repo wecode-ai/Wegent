@@ -279,7 +279,7 @@ function ArchiveConversationsConfirmDialog({
             data-testid={`${testId}-cancel-button`}
             onClick={onClose}
             disabled={submitting}
-            className="h-9 min-w-[76px] rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+            className="h-8 min-w-[76px] rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
           >
             {cancelLabel}
           </button>
@@ -288,7 +288,7 @@ function ArchiveConversationsConfirmDialog({
             data-testid={`${testId}-confirm-button`}
             onClick={() => void onConfirm()}
             disabled={submitting}
-            className="inline-flex h-9 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-red-500/15 px-4 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-8 min-w-[96px] items-center justify-center gap-2 rounded-lg bg-red-500/15 px-4 text-sm font-semibold text-red-500 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
@@ -471,7 +471,7 @@ function SidebarSectionHeader({
     hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section relative mb-2 flex h-7 items-center px-2.5">
+    <div className="group/section relative mb-2 flex h-8 items-center px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
@@ -821,7 +821,7 @@ function GlobalImNotificationBell({
         disabled={connecting}
         onClick={() => onMenuOpenChange(!menuOpen)}
         className={cn(
-          'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-50',
+          'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-50',
           notifying && 'text-primary hover:text-primary'
         )}
         title={title}
@@ -1134,7 +1134,7 @@ function RuntimeLocalTaskRow({
       aria-pressed={notificationsSubscribed}
       onClick={handleToggleNotification}
       className={cn(
-        'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
+        'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
         notificationsSubscribed && 'text-primary'
       )}
       title={notificationActionLabel}
@@ -1179,7 +1179,7 @@ function RuntimeLocalTaskRow({
         </span>
         <span
           data-testid={`runtime-local-task-trailing-${task.localTaskId}`}
-          className="relative ml-1 flex h-7 min-w-[28px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[78px]"
+          className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[104px]"
         >
           <span
             data-testid={`runtime-local-task-time-${task.localTaskId}`}
@@ -1197,14 +1197,14 @@ function RuntimeLocalTaskRow({
                 `runtime-local-task-notify-${task.localTaskId}`,
                 `runtime-local-task-notify-icon-${task.localTaskId}`
               )}
-            <span className="flex h-7 w-7 items-center justify-center">
+            <span className="flex h-8 w-8 items-center justify-center">
               {task.running ? (
                 <span
                   data-testid={`runtime-local-task-running-${task.localTaskId}`}
                   role="status"
                   title={t('workbench.runtime_task_running')}
                   aria-label={t('workbench.runtime_task_running')}
-                  className="flex h-7 w-7 items-center justify-center"
+                  className="flex h-8 w-8 items-center justify-center"
                 >
                   <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
                 </span>
@@ -1231,7 +1231,7 @@ function RuntimeLocalTaskRow({
           </span>
           <span
             data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
-            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[104px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
@@ -1246,7 +1246,7 @@ function RuntimeLocalTaskRow({
               data-testid={`runtime-local-task-mark-${task.localTaskId}`}
               onClick={handleToggleMark}
               className={cn(
-                'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
                 marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
               )}
               title={
@@ -1270,7 +1270,7 @@ function RuntimeLocalTaskRow({
               data-testid={`runtime-local-task-archive-${task.localTaskId}`}
               disabled={archiveDisabled}
               onClick={handleArchive}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
               title={t('workbench.archive_runtime_task', '归档')}
               aria-label={t('workbench.archive_runtime_task', '归档')}
             >
@@ -1575,7 +1575,7 @@ function ProjectItem({
                 onSelect: () => setRemoveConfirmOpen(true),
               },
             ]}
-            triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+            triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
           />
           <button
             type="button"
@@ -1586,7 +1586,7 @@ function ProjectItem({
               if (!canStartProjectChat) return
               onStartNewProjectChat(project.id)
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
             title={newProjectChatTitle}
             aria-label={newProjectChatTitle}
           >
@@ -2248,7 +2248,7 @@ export function DesktopSidebar({
                           onSelect: () => setArchiveSectionMode('projects'),
                         },
                       ]}
-                      triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                      triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                     />
                     <button
                       type="button"
@@ -2258,7 +2258,7 @@ export function DesktopSidebar({
                         event.stopPropagation()
                         openProjectCreateMenu(event.currentTarget)
                       }}
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                      className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                       aria-expanded={projectCreateMenuOpen}
                     >
                       <FolderPlus className="h-4 w-4" />
@@ -2383,7 +2383,7 @@ export function DesktopSidebar({
                         onSelect: () => setArchiveSectionMode('chats'),
                       },
                     ]}
-                    triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                    triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                   />
                   <button
                     type="button"
@@ -2393,7 +2393,7 @@ export function DesktopSidebar({
                       event.stopPropagation()
                       onNewChat()
                     }}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                    className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                   >
                     <MessageSquarePlus className="h-4 w-4" />
                   </button>
@@ -2443,7 +2443,7 @@ export function DesktopSidebar({
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
-                className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
                 aria-expanded={settingsMenuOpen}
               >
                 <Settings className="h-4 w-4 shrink-0" />
@@ -2479,7 +2479,7 @@ export function DesktopSidebar({
                       setIsRefreshing(false)
                     }
                   }}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
                   title={t('workbench.refresh_worklists', '刷新')}
                   aria-label={t('workbench.refresh_worklists', '刷新')}
                 >

@@ -134,8 +134,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
-      'h-9',
-      'w-9',
+      'h-8',
+      'w-8',
       'shrink-0'
     )
   })
@@ -1207,8 +1207,8 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[28px]', 'group-hover/task:w-[78px]')
-    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[78px]')
+    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[104px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[104px]')
   })
 
   test('moves pinned runtime tasks to the top of the project task list', async () => {

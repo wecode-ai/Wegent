@@ -1714,7 +1714,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -3011,9 +3011,9 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-8', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-9', 'w-9')
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
   test('toggles an empty project task list without selecting the project', async () => {
@@ -3442,7 +3442,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-7')
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-8', 'gap-1')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
       'min-w-0',
       'flex-1',
@@ -3533,14 +3533,52 @@ describe('DesktopWorkbenchLayout', () => {
       )
       expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
         'h-[38px]',
-        'border-b'
+        'bg-background'
       )
+      expect(screen.getByTestId('right-workspace-titlebar-spacer')).not.toHaveClass('border-b')
       expect(
         document.documentElement.style.getPropertyValue('--right-workspace-titlebar-width')
       ).toBe('580px')
 
       await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
       expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
+  test('removes right workspace tabs from the titlebar when the Tauri panel is closed', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+      const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+      expect(rightPanelShell).toHaveStyle({ width: '0px' })
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+      expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+      expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     } finally {
       if (previousTauriInternals === undefined) {
         delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
