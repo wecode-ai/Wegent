@@ -7,10 +7,11 @@ use std::{collections::HashSet, path::Path};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    bool_field, codex_wrapped_item_payload, extract_text, integer_field, is_codex_tool_item_type,
-    is_codex_tool_output_item_type, is_likely_codex_tool_item_type,
-    is_likely_codex_tool_output_item_type, item_id, item_type, normalize_workspace_path, now_ms,
-    raw_string_field, reasoning_content, string_field, timestamp_ms_field,
+    bool_field, codex_wrapped_item_payload, extract_text, integer_field,
+    is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
+    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
+    normalize_workspace_path, now_ms, raw_string_field, reasoning_content, string_field,
+    timestamp_ms_field,
 };
 
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
@@ -133,12 +134,10 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             merge_file_changes(assistant.file_changes.take(), summary);
                     }
                 }
-                "contextcompaction" => {
-                    assistant.context_events.push(context_event(
+                item_type if is_codex_context_compaction_item_type(item_type) => {
+                    assistant.blocks.push(context_compaction_block(
                         &item,
-                        created_at,
-                        "context_compaction",
-                        "done",
+                        item_timestamp(&item).unwrap_or(created_at),
                     ));
                 }
                 "agentmessage" => {
@@ -485,10 +484,8 @@ fn is_substantive_process_item_type(item_type: &str) -> bool {
     is_codex_tool_item_type(item_type)
         || is_codex_tool_output_item_type(item_type)
         || is_likely_codex_tool_item_type(item_type)
-        || matches!(
-            item_type,
-            "reasoning" | "filechange" | "patchapplyend" | "contextcompaction"
-        )
+        || matches!(item_type, "reasoning" | "filechange" | "patchapplyend")
+        || is_codex_context_compaction_item_type(item_type)
 }
 
 fn is_default_tool_item(item: &Value) -> bool {
@@ -502,10 +499,10 @@ fn is_default_tool_item(item: &Value) -> bool {
             | "reasoning"
             | "filechange"
             | "patchapplyend"
-            | "contextcompaction"
-    ) && (is_likely_codex_tool_item_type(&item_type)
-        || string_field(item, "call_id").is_some()
-        || string_field(item, "callId").is_some())
+    ) && !is_codex_context_compaction_item_type(&item_type)
+        && (is_likely_codex_tool_item_type(&item_type)
+            || string_field(item, "call_id").is_some()
+            || string_field(item, "callId").is_some())
 }
 
 fn is_default_tool_output_item(item: &Value) -> bool {
@@ -601,7 +598,6 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
 struct AssistantTurnAccumulation {
     blocks: Vec<Value>,
     file_changes: Option<Value>,
-    context_events: Vec<Value>,
     assistant_parts: Vec<String>,
     memory_citations: Vec<Value>,
 }
@@ -611,7 +607,6 @@ impl AssistantTurnAccumulation {
         Self {
             blocks: Vec::new(),
             file_changes,
-            context_events: Vec::new(),
             assistant_parts: Vec::new(),
             memory_citations: Vec::new(),
         }
@@ -619,7 +614,6 @@ impl AssistantTurnAccumulation {
 
     fn has_non_file_output(&self) -> bool {
         !self.blocks.is_empty()
-            || !self.context_events.is_empty()
             || !self.assistant_parts.is_empty()
             || !self.memory_citations.is_empty()
     }
@@ -631,7 +625,6 @@ impl AssistantTurnAccumulation {
     fn clear_after_emit(&mut self) {
         self.blocks.clear();
         self.file_changes = None;
-        self.context_events.clear();
         self.assistant_parts.clear();
         self.memory_citations.clear();
     }
@@ -678,7 +671,6 @@ fn push_accumulated_assistant(
         stopped_notice,
         blocks: &assistant.blocks,
         file_changes: assistant.file_changes.clone(),
-        context_events: &assistant.context_events,
         assistant_parts: &assistant.assistant_parts,
         memory_citations: &assistant.memory_citations,
     }));
@@ -986,7 +978,6 @@ struct AssistantMessageDraft<'a> {
     stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
-    context_events: &'a [Value],
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
 }
@@ -1021,14 +1012,6 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
             if let Some(object) = message.as_object_mut() {
                 object.insert("fileChanges".to_owned(), file_changes);
             }
-        }
-    }
-    if !draft.context_events.is_empty() {
-        if let Some(object) = message.as_object_mut() {
-            object.insert(
-                "contextEvents".to_owned(),
-                Value::Array(draft.context_events.to_vec()),
-            );
         }
     }
     if !draft.memory_citations.is_empty() {
@@ -1837,12 +1820,15 @@ fn diff_git_path(prefix: &str, path: &str) -> String {
     }
 }
 
-fn context_event(item: &Value, timestamp: i64, event_type: &str, status: &str) -> Value {
+fn context_compaction_block(item: &Value, timestamp: i64) -> Value {
+    let block_id = item_id(item, "context_compaction");
     json!({
-        "id": item_id(item, event_type),
-        "type": event_type,
-        "status": status,
-        "createdAt": timestamp,
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": timestamp,
     })
 }
 

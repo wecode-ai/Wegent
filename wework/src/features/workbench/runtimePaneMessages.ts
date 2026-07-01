@@ -289,7 +289,6 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
     references: normalizeRuntimeReferences(message.references),
     memoryCitations: normalizeRuntimeMemoryCitations(message),
-    contextEvents: normalizeRuntimeContextEvents(message),
     createdAt,
     completedAt,
     stoppedNotice,
@@ -337,15 +336,6 @@ function normalizeRuntimeMemoryCitations(
   addCitation(message.memory_citation)
 
   return citations.length > 0 ? citations : undefined
-}
-
-function normalizeRuntimeContextEvents(
-  message: NormalizedRuntimeMessage
-): WorkbenchMessage['contextEvents'] {
-  const events = [...(message.contextEvents ?? []), ...(message.context_events ?? [])].filter(
-    event => event && typeof event.id === 'string' && typeof event.type === 'string'
-  )
-  return events.length > 0 ? events : undefined
 }
 
 function isRuntimeStreamingStatus(status: string): boolean {

@@ -1035,7 +1035,7 @@ describe('MessageList', () => {
     expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
   })
 
-  test('renders Codex context events, memory citations, and one-column deduped file references', async () => {
+  test('renders Codex memory citations and one-column deduped file references', async () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
       <MessageList
@@ -1055,14 +1055,6 @@ describe('MessageList', () => {
               { path: '/workspace/project/logs/paas-context.log' },
               { path: '/workspace/project/scripts/notify_pr_ready.sh' },
             ],
-            contextEvents: [
-              {
-                id: 'context-1',
-                type: 'context_compaction',
-                status: 'done',
-                createdAt: Date.parse('2026-06-24T08:00:00.000Z'),
-              },
-            ],
             memoryCitations: [
               {
                 entries: [
@@ -1081,7 +1073,6 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('codex-context-events')).toBeInTheDocument()
     expect(screen.queryByText('引用文件')).not.toBeInTheDocument()
     expect(screen.getByTestId('codex-memory-citations')).toBeInTheDocument()
     expect(screen.getByTestId('codex-reference-list')).toBeInTheDocument()

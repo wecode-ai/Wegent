@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
-import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
+import { Archive, ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
@@ -17,6 +17,7 @@ import {
 } from '../RequestUserInputCard'
 import {
   buildProcessingDisplayRows,
+  isContextCompactionToolBlock,
   isCommandToolName,
   isGuidanceActivityGroup,
   isWebSearchActivityGroup,
@@ -191,6 +192,8 @@ export function ToolBlocksDisplay({
               stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
+          ) : isContextCompactionToolBlock(item.block) ? (
+            <ContextCompactionIndicator key={item.id} block={item.block} />
           ) : (
             <ToolBlockItem
               key={item.id}
@@ -398,6 +401,34 @@ function ToolActivityGroup({
       </CollapsibleProcessingContent>
     </div>
   )
+}
+
+function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
+  const label = getContextCompactionLabel(block)
+  const textClassName = block.status === 'error' ? 'text-red-500' : 'text-text-muted'
+
+  return (
+    <div
+      className="flex w-full min-w-0 items-center gap-3 py-1"
+      data-testid="context-compaction-indicator"
+      aria-label={label}
+    >
+      <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
+      <span
+        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
+      >
+        <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span className="min-w-0 truncate">{label}</span>
+      </span>
+      <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
+    </div>
+  )
+}
+
+function getContextCompactionLabel(block: ToolBlock): string {
+  if (block.status === 'error') return '上下文压缩失败'
+  if (block.status === 'done') return '上下文已自动压缩'
+  return '正在自动压缩上下文'
 }
 
 function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {

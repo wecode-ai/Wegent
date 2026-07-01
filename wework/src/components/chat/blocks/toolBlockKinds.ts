@@ -23,6 +23,7 @@ const EDIT_TOOLS = new Set([
   'functions.apply_patch',
 ])
 const GUIDANCE_TOOLS = new Set(['conversation_guidance', 'user_guidance'])
+const CONTEXT_COMPACTION_TOOLS = new Set(['context_compaction', 'contextcompaction'])
 
 function normalizeToolName(name: string): string {
   return name.trim().toLowerCase()
@@ -60,6 +61,10 @@ export function isFileEditToolName(name: string): boolean {
 
 export function isGuidanceToolName(name: string): boolean {
   return matchesToolName(name, GUIDANCE_TOOLS)
+}
+
+export function isContextCompactionToolName(name: string): boolean {
+  return matchesToolName(name, CONTEXT_COMPACTION_TOOLS)
 }
 
 export function getInputField(block: Pick<ToolBlock, 'toolInput'>, ...keys: string[]) {

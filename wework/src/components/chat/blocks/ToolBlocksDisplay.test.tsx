@@ -107,6 +107,15 @@ const completedGuidanceBlock: ProcessingBlock = {
   createdAt: 1770000004000,
 }
 
+const completedContextCompactionBlock: ProcessingBlock = {
+  id: 'ctx-1',
+  subtaskId: 1,
+  type: 'tool',
+  toolName: 'context_compaction',
+  status: 'done',
+  createdAt: 1770000004500,
+}
+
 describe('ToolBlocksDisplay', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -129,6 +138,47 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-activity-group-label')).toHaveTextContent('已引导对话')
     expect(screen.queryByRole('button', { name: '已引导对话' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-content')).not.toBeInTheDocument()
+  })
+
+  test('renders context compaction as an independent divider while preserving tool groups', () => {
+    const completedSearchBlock: ProcessingBlock = {
+      id: 'search-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: "/bin/zsh -lc 'rg -n context .'" },
+      status: 'done',
+      createdAt: 1770000005000,
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock, completedContextCompactionBlock, completedSearchBlock]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent('上下文已自动压缩')
+    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
+    expect(activityToggles).toHaveLength(2)
+    expect(activityToggles[0]).toHaveTextContent('已运行 1 条命令')
+    expect(activityToggles[1]).toHaveTextContent('已搜索代码')
+  })
+
+  test('renders running context compaction status without the generic thinking placeholder', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[{ ...completedContextCompactionBlock, status: 'streaming' }]}
+        isStreaming={true}
+      />
+    )
+
+    expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent(
+      '正在自动压缩上下文'
+    )
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('renders completed web search tools as a Codex-style web search activity', () => {

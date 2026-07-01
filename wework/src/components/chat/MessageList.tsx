@@ -37,7 +37,7 @@ import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
-import { CodexContextEvents, CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
+import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 
@@ -219,11 +219,7 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (message.status === 'streaming' || message.status === 'failed') return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
-  if (
-    message.references?.length ||
-    message.memoryCitations?.length ||
-    message.contextEvents?.length
-  ) {
+  if (message.references?.length || message.memoryCitations?.length) {
     return true
   }
 
@@ -1108,7 +1104,6 @@ function AssistantMessage({
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
-  const contextEvents = message.contextEvents ?? []
   const memoryCitations = message.memoryCitations ?? []
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
@@ -1168,7 +1163,6 @@ function AssistantMessage({
             />
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}
-          {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
           {hasVisibleContent ? (
             isAssistantPlanContent(visibleContent) ? (
               <AssistantPlanCard

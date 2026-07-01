@@ -6,6 +6,7 @@ import {
   isFileEditToolName,
   isFileReadToolName,
   isGuidanceToolName,
+  isContextCompactionToolName,
 } from './toolBlockKinds'
 
 export type ProcessingDisplayRow =
@@ -50,6 +51,12 @@ export function buildProcessingDisplayRows(
   }
 
   for (const block of blocks) {
+    if (block.type === 'tool' && isContextCompactionToolName(block.toolName)) {
+      flushCompletedTools()
+      rows.push({ type: 'block', id: block.id, block })
+      continue
+    }
+
     if (groupCompletedTools && block.type === 'tool' && isCompletedToolBlock(block)) {
       completedTools.push(block)
       continue
@@ -161,6 +168,10 @@ function unwrapShellCommand(command: string): string {
 
 function isCompletedToolBlock(block: ToolBlock): boolean {
   return block.status === 'done' || block.status === 'error'
+}
+
+export function isContextCompactionToolBlock(block: ProcessingBlock): block is ToolBlock {
+  return block.type === 'tool' && isContextCompactionToolName(block.toolName)
 }
 
 export function isWebSearchToolName(name: string): boolean {
