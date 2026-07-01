@@ -16,6 +16,9 @@ on:
       - master
       - develop
 
+permissions:
+  contents: read
+
 jobs:
   lint-backend:
     name: Lint Backend (Black & isort)
