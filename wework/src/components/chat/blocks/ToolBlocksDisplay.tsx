@@ -1,6 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
-import { Archive, ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
+import {
+  Archive,
+  ChevronDown,
+  FileText,
+  MessageCircle,
+  Pencil,
+  Search,
+  SquareTerminal,
+} from 'lucide-react'
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
@@ -17,8 +25,12 @@ import {
 } from '../RequestUserInputCard'
 import {
   buildProcessingDisplayRows,
-  isContextCompactionToolBlock,
+  getToolActivityFilePaths,
+  getToolActivityGroupKind,
+  getToolActivityKind,
+  getToolActivitySearchItem,
   isCommandToolName,
+  isContextCompactionToolBlock,
   isGuidanceActivityGroup,
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
@@ -380,22 +392,11 @@ function ToolActivityGroup({
         />
       </button>
       <CollapsibleProcessingContent expanded={expanded} testId="processing-activity-group-content">
-        <div
-          className={[
-            'mt-2 flex min-w-0 flex-col gap-3',
-            isWebSearchGroup ? '' : 'border-l border-border pl-4',
-          ].join(' ')}
-        >
+        <div className="mt-1.5 flex min-w-0 flex-col gap-1.5">
           {isWebSearchGroup ? (
             <WebSearchActivityDetails blocks={row.blocks} />
           ) : (
-            row.blocks.map(block => (
-              <ToolBlockItem
-                key={block.id}
-                block={block}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            ))
+            <ToolActivityDetails blocks={row.blocks} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           )}
         </div>
       </CollapsibleProcessingContent>
@@ -439,16 +440,126 @@ function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
   return <WebSearchActivityRows items={items} />
 }
 
+function ToolActivityDetails({
+  blocks,
+  onOpenWorkspaceFile,
+}: {
+  blocks: ToolBlock[]
+  onOpenWorkspaceFile?: (path: string) => void
+}) {
+  return (
+    <>
+      {blocks.map(block => {
+        const item = getToolActivitySearchItem(block)
+        if (item) {
+          return <CodeSearchActivityRow key={item.id} label={item.label} />
+        }
+
+        const paths = getToolActivityFilePaths(block)
+        if (paths.length > 0) {
+          return paths.map(path => (
+            <FileReadActivityRow
+              key={`${block.id}:${path}`}
+              path={path}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          ))
+        }
+
+        return (
+          <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+        )
+      })}
+    </>
+  )
+}
+
+function CodeSearchActivityRow({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="code-search-activity-row"
+      className="flex max-w-full text-[13px] leading-5 text-text-muted"
+    >
+      <span className="min-w-0 break-words">{label}</span>
+    </div>
+  )
+}
+
+function FileReadActivityRow({
+  path,
+  onOpenWorkspaceFile,
+}: {
+  path: string
+  onOpenWorkspaceFile?: (path: string) => void
+}) {
+  const label = `Read ${basename(path)}`
+  const content = (
+    <span data-testid="file-read-activity-row" className="min-w-0 truncate">
+      {label}
+    </span>
+  )
+
+  if (onOpenWorkspaceFile) {
+    return (
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1.5 text-left text-text-muted hover:text-text-secondary"
+        onClick={() => onOpenWorkspaceFile(path)}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return <div className="flex max-w-full items-center gap-1.5 text-text-muted">{content}</div>
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}
+
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
   return blocks.some(block => isCommandToolName(block.toolName))
 }
 
+function hasCodeSearchBlocks(blocks: ToolBlock[]): boolean {
+  return blocks.some(block => getToolActivityKind(block) === 'search')
+}
+
 function renderActivityGroupIcon(blocks: ToolBlock[]) {
+  if (hasCodeSearchBlocks(blocks)) {
+    return (
+      <Search
+        data-testid="processing-activity-search-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
+  }
   if (hasCommandBlocks(blocks)) {
     return <SquareTerminal className="h-4 w-4 shrink-0" strokeWidth={1.7} />
   }
   if (isGuidanceActivityGroup(blocks)) {
     return <MessageCircle className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  const kind = getToolActivityGroupKind(blocks)
+  if (kind === 'edit') {
+    return (
+      <Pencil
+        data-testid="processing-activity-edit-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
+  }
+  if (kind === 'create' || kind === 'file') {
+    return (
+      <FileText
+        data-testid="processing-activity-file-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
   }
   return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
 }

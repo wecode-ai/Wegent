@@ -178,6 +178,33 @@ describe('MessageList', () => {
     expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
   })
 
+  test('renders Codex plan implementation user messages as the chosen option label', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-plan-implementation',
+            role: 'user',
+            content: [
+              'PLEASE IMPLEMENT THIS PLAN:',
+              '# Wework 输入框 Codex 化视觉优化计划',
+              '',
+              '## Summary',
+              '- 保持输入框视觉与 Codex App 一致。',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('是的，执行此计划')
+    expect(screen.queryByText(/PLEASE IMPLEMENT THIS PLAN/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Wework 输入框 Codex 化视觉优化计划/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+  })
+
   test('renders answered request user input as an assistant question summary', () => {
     render(
       <MessageList
@@ -256,7 +283,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('计划')
+    const planCard = screen.getByTestId('assistant-plan-card')
+    expect(planCard).toHaveTextContent('计划')
+    expect(planCard).toHaveAttribute('role', 'button')
+    expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
+    expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
     expect(screen.queryByText('套餐')).not.toBeInTheDocument()
     expect(screen.queryByTestId('assistant-plan-like-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('assistant-plan-dislike-button')).not.toBeInTheDocument()
@@ -265,10 +296,16 @@ describe('MessageList', () => {
       expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
     )
     expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
-    await user.click(screen.getByTestId('assistant-plan-expand-button'))
+    expect(onOpenAssistantPlan).not.toHaveBeenCalled()
+    await user.click(planCard)
     expect(onOpenAssistantPlan).toHaveBeenCalledWith(
       expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
     )
+    await user.click(screen.getByTestId('assistant-plan-expand-button'))
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
 

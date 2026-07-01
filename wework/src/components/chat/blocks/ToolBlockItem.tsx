@@ -10,6 +10,7 @@ import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { isWebSearchToolName } from './toolBlockActivity'
 import {
   getFileInputPath,
+  getFileInputPaths,
   getInputField,
   isCommandToolName,
   isFileCreateToolName,
@@ -536,19 +537,13 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (isFileCreateToolName(name)) {
-    const filePath = getFileInputPath(block)
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `${prefix.create} ${fileName}` }
+    return { icon: <FileIcon />, label: getFileToolLabel(prefix.create, block, '新增') }
   }
   if (isFileEditToolName(name)) {
-    const filePath = getFileInputPath(block)
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <EditIcon />, label: `${prefix.edit} ${fileName}` }
+    return { icon: <EditIcon />, label: getFileToolLabel(prefix.edit, block, '编辑') }
   }
   if (isFileReadToolName(name)) {
-    const filePath = getFileInputPath(block)
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
+    return { icon: <FileIcon />, label: getFileToolLabel(prefix.read, block, '读取') }
   }
   if (isWebSearchToolName(name)) {
     return {
@@ -560,6 +555,19 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
     return { icon: <ToolIcon />, label: prefix.guidance }
   }
   return { icon: <ToolIcon />, label: prefix.generic }
+}
+
+function getFileToolLabel(prefix: string, block: ToolBlock, action: string): string {
+  const filePaths = getFileInputPaths(block)
+  if (filePaths.length === 1) return `${prefix} ${basename(filePaths[0])}`
+  if (filePaths.length > 1) return `${prefix} ${filePaths.length} 个文件`
+  return fileToolFallbackLabel(block.status, action)
+}
+
+function fileToolFallbackLabel(status: ToolBlock['status'], action: string): string {
+  if (status === 'error') return `${action}文件失败`
+  if (status === 'done') return `已${action}文件`
+  return `正在${action}文件`
 }
 
 function getToolStatusPrefix(block: ToolBlock) {
@@ -814,11 +822,15 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileWriteDetail({ block }: { block: ToolBlock }) {
-  const filePath = getFileInputPath(block)
+  const filePaths = getFileInputPaths(block)
   const content = getInputField(block, 'content', 'file_text', 'fileText')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
+      {filePaths.map(filePath => (
+        <p key={filePath} className="break-words text-xs text-text-muted">
+          {filePath}
+        </p>
+      ))}
       {content && (
         <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs leading-5 text-text-primary">
           {content.length > 500 ? content.substring(0, 500) + '...' : content}
@@ -829,11 +841,15 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileEditDetail({ block }: { block: ToolBlock }) {
-  const filePath = getFileInputPath(block)
+  const filePaths = getFileInputPaths(block)
   const previews = getEditPreviews(block)
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
+      {filePaths.map(filePath => (
+        <p key={filePath} className="break-words text-xs text-text-muted">
+          {filePath}
+        </p>
+      ))}
       {previews.map((preview, index) => (
         <div
           key={`${index}:${preview.oldText ?? ''}:${preview.newText ?? ''}`}

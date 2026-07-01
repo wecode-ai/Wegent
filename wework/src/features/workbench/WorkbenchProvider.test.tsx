@@ -992,7 +992,7 @@ function FollowUpProbe() {
           void paneSession.sendRequestUserInputResponse(
             {
               answers: {
-                implement: { answers: ['是，实施此计划'] },
+                implement: { answers: ['是的，执行此计划'] },
               },
             },
             { appendUserMessage: true, forceDefaultCollaborationMode: true }
@@ -3695,7 +3695,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('default')
     expect(sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: '是，实施此计划',
+        message: '是的，执行此计划',
         modelOptions: { collaborationMode: 'default' },
       })
     )

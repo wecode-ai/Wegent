@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
+import {
+  createRuntimeTaskStreamHandlers,
+  runtimeMessagesToWorkbenchMessages,
+} from './runtimePaneMessages'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
@@ -85,5 +88,86 @@ describe('createRuntimeTaskStreamHandlers', () => {
         renderPayload,
       },
     })
+  })
+
+  test('strips Codex UI directives from completed assistant content', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatDone?.({
+      subtask_id: 9,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      offset: 0,
+      result: {
+        value: [
+          '当前分支比 origin/main ahead 1，可以直接 push。',
+          '',
+          '::git-stage{cwd="/workspace/project"} ::git-commit{cwd="/workspace/project"}',
+        ].join('\n'),
+      },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_done',
+      content: '当前分支比 origin/main ahead 1，可以直接 push。',
+    })
+  })
+})
+
+describe('runtimeMessagesToWorkbenchMessages', () => {
+  test('strips Codex UI directives from restored assistant transcript content', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: [
+          '完成了。',
+          '',
+          '```text',
+          '::git-stage{cwd="/workspace/project"}',
+          '```',
+          '',
+          '::git-commit{cwd="/workspace/project"}',
+        ].join('\n'),
+      },
+    ])
+
+    expect(messages[0].content).toBe(
+      ['完成了。', '', '```text', '::git-stage{cwd="/workspace/project"}', '```'].join('\n')
+    )
+  })
+
+  test('keeps user-authored Codex directive text unchanged', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'user-1',
+        role: 'user',
+        content: '解释一下 ::git-stage{cwd="/workspace/project"} 是什么',
+      },
+    ])
+
+    expect(messages[0].content).toBe('解释一下 ::git-stage{cwd="/workspace/project"} 是什么')
+  })
+
+  test('keeps assistant prose that mentions a Codex directive inline', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '这类 ::git-stage{cwd="/workspace/project"} 指令会刷新 Git UI。',
+      },
+    ])
+
+    expect(messages[0].content).toBe(
+      '这类 ::git-stage{cwd="/workspace/project"} 指令会刷新 Git UI。'
+    )
   })
 })

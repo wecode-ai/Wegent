@@ -22,6 +22,7 @@ const EDIT_TOOLS = new Set([
   'apply_patch',
   'functions.apply_patch',
 ])
+const PATCH_APPLY_TOOLS = new Set(['apply_patch', 'functions.apply_patch'])
 const GUIDANCE_TOOLS = new Set(['conversation_guidance', 'user_guidance'])
 const CONTEXT_COMPACTION_TOOLS = new Set(['context_compaction', 'contextcompaction'])
 
@@ -59,6 +60,10 @@ export function isFileEditToolName(name: string): boolean {
   return matchesToolName(name, EDIT_TOOLS)
 }
 
+export function isPatchApplyToolName(name: string): boolean {
+  return matchesToolName(name, PATCH_APPLY_TOOLS)
+}
+
 export function isGuidanceToolName(name: string): boolean {
   return matchesToolName(name, GUIDANCE_TOOLS)
 }
@@ -77,8 +82,19 @@ export function getInputField(block: Pick<ToolBlock, 'toolInput'>, ...keys: stri
 }
 
 export function getFileInputPath(block: Pick<ToolBlock, 'toolInput'>): string | undefined {
-  return getInputField(
-    block,
+  return getFileInputPaths(block)[0]
+}
+
+export function getFileInputPaths(block: Pick<ToolBlock, 'toolInput'>): string[] {
+  const directPath = getDirectFileInputPath(block.toolInput)
+  if (directPath) return [directPath]
+  return getPatchFilePaths(block.toolInput)
+}
+
+function getDirectFileInputPath(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined
+  const directPath = getStringField(
+    input,
     'file_path',
     'filePath',
     'filepath',
@@ -90,4 +106,41 @@ export function getFileInputPath(block: Pick<ToolBlock, 'toolInput'>): string | 
     'notebook_path',
     'notebookPath'
   )
+  if (directPath) return directPath
+
+  for (const nestedKey of ['input', 'arguments']) {
+    const nestedValue = input[nestedKey]
+    if (isRecord(nestedValue)) {
+      const nestedPath = getDirectFileInputPath(nestedValue)
+      if (nestedPath) return nestedPath
+    }
+  }
+
+  return undefined
+}
+
+function getPatchFilePaths(input: Record<string, unknown> | undefined): string[] {
+  if (!input) return []
+  const patchText = getStringField(input, 'patch', 'input', 'arguments', 'content')
+  if (!patchText) return []
+
+  const paths = new Set<string>()
+  for (const line of patchText.split('\n')) {
+    const match = line.match(/^\*\*\* (?:Add|Delete|Update) File:\s*(.+)$/)
+    const path = match?.[1]?.trim()
+    if (path) paths.add(path)
+  }
+  return Array.from(paths)
+}
+
+function getStringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string') return value
+  }
+  return undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
