@@ -27,3 +27,4 @@ pub mod server;
 pub mod services;
 pub mod stream;
 pub mod version;
+pub mod wecode;

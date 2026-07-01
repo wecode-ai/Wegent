@@ -752,7 +752,7 @@ PY
     };
     let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    assert_eq!(payload["has_pre"], true);
+    assert_eq!(payload["has_pre"], false);
     assert_eq!(payload["has_post"], true);
     assert!(payload["commands"]
         .as_array()
@@ -879,9 +879,9 @@ PY
 #[tokio::test]
 async fn agent_process_engine_replaces_stale_file_edit_hooks_before_claude() {
     let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-stale-file-edit-hook-home");
     let workspace_root = unique_dir("claude-stale-file-edit-hook-workspace-root");
-    let task_dir = workspace_root.join("86");
-    let settings_path = task_dir.join(".claude/settings.json");
+    let settings_path = home.join(".claude/settings.json");
     fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
     fs::write(
         &settings_path,
@@ -949,6 +949,7 @@ print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", 
 PY
 "#,
     );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _file_edit_hook = EnvGuard::set("WEGENT_FILE_EDIT_HOOK_COMMAND", hook_command);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
@@ -968,7 +969,7 @@ PY
     };
     let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    assert_eq!(payload["pre_count"], 1);
+    assert_eq!(payload["pre_count"], 0);
     assert_eq!(payload["post_count"], 1);
     assert!(payload["commands"]
         .as_array()
