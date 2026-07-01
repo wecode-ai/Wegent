@@ -95,7 +95,7 @@ async def delete_pod_by_name(request: DeletePodByNameRequest, http_request: Requ
 
 async def get_old_task_ids(
     older_than_hours: int = 48,
-    http_request: Optional[Request] = None,
+    http_request: Request = None,
 ):
     """List old executor pods with task_id and pod_name for orphan cleanup.
 
