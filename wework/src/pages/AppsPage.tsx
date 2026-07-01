@@ -442,7 +442,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
       onClick: () => navigateTo('/settings/personal/proxy'),
     },
     {
-      title: 'Codex',
+      title: '模型设置',
       description: '管理本机模型与 Codex auth.json 云端同步，可从在线设备导入认证。',
       icon: Cpu,
       iconClassName: 'bg-gradient-to-br from-slate-900 to-slate-500 text-white',

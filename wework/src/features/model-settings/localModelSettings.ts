@@ -17,6 +17,10 @@ export interface SaveLocalModelConfigInput {
   enabled?: boolean
 }
 
+export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
+  apiKeyConfigured: boolean
+}
+
 export const LOCAL_MODEL_SETTINGS_STORAGE_KEY = 'wework.localModelSettings.v1'
 export const LOCAL_MODEL_SETTINGS_CHANGED_EVENT = 'wework:local-model-settings-changed'
 export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
@@ -56,9 +60,17 @@ function dispatchChanged(configs: LocalModelConfig[]): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(
     new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, {
-      detail: { configs },
+      detail: { configs: configs.map(redactLocalModelConfig) },
     })
   )
+}
+
+function redactLocalModelConfig(config: LocalModelConfig): LocalModelSettingsEventConfig {
+  const { apiKey, ...publicConfig } = config
+  return {
+    ...publicConfig,
+    apiKeyConfigured: Boolean(apiKey),
+  }
 }
 
 function normalizeHttpUrl(value: string): string {

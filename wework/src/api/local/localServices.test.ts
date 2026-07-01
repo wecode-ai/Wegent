@@ -730,6 +730,29 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('rejects missing local model config instead of falling back to built-in Codex', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        teamId: 0,
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        localTaskId: 'task-1',
+        runtime: 'codex',
+        message: 'hello',
+        title: 'Hello',
+        modelId: 'local-model:missing',
+      })
+    ).rejects.toThrow('Local model is no longer configured')
+    expect(request).not.toHaveBeenCalledWith('runtime.tasks.create', expect.anything())
+  })
+
   test('preserves request user input responses in local runtime send requests', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -750,18 +773,32 @@ describe('createLocalAppServices', () => {
       },
     })
 
-    expect(request).toHaveBeenCalledWith('runtime.tasks.send', {
-      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
-      message: '工作目标',
-      message_id: expect.any(Number),
-      requestUserInputResponse: {
-        requestId: 42,
-        itemId: 'item-1',
-        answers: {
-          goal: { answers: ['工作目标'] },
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+        message: '工作目标',
+        message_id: expect.any(Number),
+        requestUserInputResponse: {
+          requestId: 42,
+          itemId: 'item-1',
+          answers: {
+            goal: { answers: ['工作目标'] },
+          },
         },
-      },
-    })
+        executionRequest: expect.objectContaining({
+          prompt: '工作目标',
+          new_session: false,
+          model_config: expect.objectContaining({
+            model: 'openai',
+            model_id: 'gpt-5.5',
+            api_format: 'responses',
+            protocol: 'openai-responses',
+          }),
+        }),
+      })
+    )
+    expect(payload).not.toHaveProperty('modelId')
   })
 
   test('adapts executor runtime workspace list to workbench shape', async () => {

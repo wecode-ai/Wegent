@@ -745,6 +745,7 @@
     "local_model_save_action": "添加模型",
     "local_model_save_failed": "保存本地模型失败",
     "local_model_clear_key_failed": "清除 API Key 失败",
+    "local_model_delete_failed": "删除本地模型失败",
     "local_model_empty": "还没有本地模型配置",
     "local_model_enabled": "已启用",
     "local_model_disabled": "已停用",

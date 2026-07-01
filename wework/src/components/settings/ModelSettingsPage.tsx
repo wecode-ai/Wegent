@@ -473,8 +473,18 @@ function LocalModelSettingsSection() {
                   type="button"
                   data-testid={`local-model-delete-${model.id}`}
                   onClick={() => {
-                    deleteLocalModelConfig(model.id)
-                    if (editingId === model.id) resetForm()
+                    setError(null)
+                    try {
+                      deleteLocalModelConfig(model.id)
+                      if (editingId === model.id) resetForm()
+                    } catch (deleteError) {
+                      setError(
+                        getErrorMessage(
+                          deleteError,
+                          t('workbench.local_model_delete_failed', '删除本地模型失败')
+                        )
+                      )
+                    }
                   }}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
                   aria-label={t('workbench.local_model_delete_action', '删除')}

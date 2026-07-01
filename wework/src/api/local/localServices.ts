@@ -57,6 +57,7 @@ import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import {
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
+  LOCAL_MODEL_NAME_PREFIX,
   localModelName,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
@@ -452,6 +453,10 @@ function localRuntimeModelConfig(modelName?: string): Record<string, unknown> {
         },
       },
     }
+  }
+
+  if (modelName?.startsWith(LOCAL_MODEL_NAME_PREFIX)) {
+    throw new Error('Local model is no longer configured')
   }
 
   return {
@@ -917,11 +922,29 @@ function createLocalRuntimeSendPayload(
   }
 
   if (data.requestUserInputResponse || data.request_user_input_response) {
+    const payload = { ...data } as Record<string, unknown>
+    delete payload.modelId
+    delete payload.modelType
     return {
-      ...data,
+      ...payload,
       address: normalizedAddress,
       message_id: messageId,
       ...(collaborationMode ? { collaborationMode } : {}),
+      executionRequest: buildLocalRuntimeExecutionRequest({
+        localTaskId: data.address.localTaskId,
+        runtime: 'codex',
+        teamId: LOCAL_WORKBENCH_TEAM.id,
+        title: data.address.localTaskId,
+        message: data.message,
+        messageId,
+        modelId: data.modelId,
+        modelOptions: data.modelOptions,
+        attachments: data.attachments,
+        localDeviceId,
+        workspacePath,
+        workspaceSource: 'local_path',
+        newSession: false,
+      }),
     } as unknown as Record<string, unknown>
   }
 

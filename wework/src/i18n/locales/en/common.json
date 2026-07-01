@@ -745,6 +745,7 @@
     "local_model_save_action": "Add model",
     "local_model_save_failed": "Failed to save local model",
     "local_model_clear_key_failed": "Failed to clear API key",
+    "local_model_delete_failed": "Failed to delete local model",
     "local_model_empty": "No local model configs yet",
     "local_model_enabled": "Enabled",
     "local_model_disabled": "Disabled",

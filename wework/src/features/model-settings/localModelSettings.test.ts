@@ -64,41 +64,50 @@ describe('localModelSettings', () => {
     const listener = vi.fn()
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, listener)
 
-    const saved = saveLocalModelConfig({
-      id: 'local-a',
-      displayName: 'Local A',
-      modelId: 'model-a',
-      baseUrl: 'http://localhost:1234/v1',
-    })
-    const updated = saveLocalModelConfig({
-      id: saved.id,
-      displayName: 'Local A Updated',
-      modelId: 'model-a-new',
-      baseUrl: 'http://localhost:1234/v1',
-      enabled: false,
-    })
+    try {
+      const saved = saveLocalModelConfig({
+        id: 'local-a',
+        displayName: 'Local A',
+        modelId: 'model-a',
+        baseUrl: 'http://localhost:1234/v1',
+        apiKey: 'local-secret',
+      })
+      const updated = saveLocalModelConfig({
+        id: saved.id,
+        displayName: 'Local A Updated',
+        modelId: 'model-a-new',
+        baseUrl: 'http://localhost:1234/v1',
+        enabled: false,
+      })
 
-    expect(listLocalModelConfigs()).toHaveLength(1)
-    expect(updated).toMatchObject({
-      id: 'local-a',
-      displayName: 'Local A Updated',
-      modelId: 'model-a-new',
-      enabled: false,
-    })
+      expect(listLocalModelConfigs()).toHaveLength(1)
+      expect(updated).toMatchObject({
+        id: 'local-a',
+        displayName: 'Local A Updated',
+        modelId: 'model-a-new',
+        enabled: false,
+      })
 
-    expect(deleteLocalModelConfig('local-a')).toBe(true)
-    expect(listLocalModelConfigs()).toEqual([])
+      expect(deleteLocalModelConfig('local-a')).toBe(true)
+      expect(listLocalModelConfigs()).toEqual([])
 
-    saveLocalModelConfig({
-      id: 'local-b',
-      displayName: 'Local B',
-      modelId: 'model-b',
-      baseUrl: 'http://localhost:4321/v1',
-    })
-    clearLocalModelConfigs()
+      saveLocalModelConfig({
+        id: 'local-b',
+        displayName: 'Local B',
+        modelId: 'model-b',
+        baseUrl: 'http://localhost:4321/v1',
+      })
+      clearLocalModelConfigs()
 
-    expect(listLocalModelConfigs()).toEqual([])
-    expect(listener).toHaveBeenCalledTimes(5)
-    window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, listener)
+      expect(listLocalModelConfigs()).toEqual([])
+      expect(listener).toHaveBeenCalledTimes(5)
+      expect(listener.mock.calls[0][0].detail.configs[0]).toMatchObject({
+        id: 'local-a',
+        apiKeyConfigured: true,
+      })
+      expect(listener.mock.calls[0][0].detail.configs[0]).not.toHaveProperty('apiKey')
+    } finally {
+      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, listener)
+    }
   })
 })
