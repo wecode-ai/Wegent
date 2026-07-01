@@ -1,6 +1,10 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { ProjectWithTasks } from '@/types/api'
-import { resolveRuntimeWorkspaceContext, resolveWorkspaceTarget } from './workspace-target'
+import {
+  resolveProjectRuntimeWorkspaceTarget,
+  resolveRuntimeWorkspaceContext,
+  resolveWorkspaceTarget,
+} from './workspace-target'
 
 function createApi() {
   return {
@@ -40,6 +44,82 @@ describe('resolveWorkspaceTarget', () => {
         api: createApi(),
       })
     ).resolves.toBeNull()
+  })
+
+  test('resolves a selected project workspace from runtime work', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveProjectRuntimeWorkspaceTarget({
+        currentProject: project,
+        selectedDeviceWorkspaceId: 22,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'device-b',
+                  workspacePath: '/Users/me/Wegent',
+                  workspaceSource: 'local',
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalLocalTasks: 0,
+        },
+      })
+    ).toEqual({
+      deviceId: 'device-b',
+      path: '/Users/me/Wegent',
+      source: 'project',
+      workspaceSource: 'local',
+    })
+  })
+
+  test('uses the only available project workspace when none is explicitly selected', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveProjectRuntimeWorkspaceTarget({
+        currentProject: project,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'device-b',
+                  workspacePath: '/Users/me/Wegent',
+                  workspaceSource: 'local',
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalLocalTasks: 0,
+        },
+      })
+    ).toMatchObject({
+      deviceId: 'device-b',
+      path: '/Users/me/Wegent',
+      source: 'project',
+    })
   })
 
   test('resolves runtime task project and workspace from runtime work', () => {

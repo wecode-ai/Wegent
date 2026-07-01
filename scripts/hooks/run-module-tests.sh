@@ -9,7 +9,7 @@
 # - backend: pytest tests/
 # - frontend: pnpm test
 # - chat-core: pnpm test
-# - executor: pytest tests/
+# - executor: cargo test
 # - executor_manager: pytest tests/
 # - shared: pytest tests/
 # - knowledge_engine: pytest tests/
@@ -130,9 +130,9 @@ if [ -n "$CHAT_CORE_CHANGES" ]; then
 fi
 
 # Executor
-EXECUTOR_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
+EXECUTOR_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.(rs|toml)$|^executor/Cargo\.lock$" || true)
 if [ -n "$EXECUTOR_CHANGES" ]; then
-    run_module_tests "executor" "uv run pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/executor"
+    run_module_tests "executor" "cargo test --all-features" "$PROJECT_ROOT/executor"
 fi
 
 # Executor Manager

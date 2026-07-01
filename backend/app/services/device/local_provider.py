@@ -123,7 +123,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             device_json = device_kind.json.copy()
             persisted_display_name = resolve_device_display_name(device_json, name)
             set_device_display_name(device_json, persisted_display_name)
-            device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
+            device_json["spec"]["deviceType"] = self.device_type.value
             device_json["spec"]["connectionMode"] = DeviceConnectionMode.WEBSOCKET.value
             if capabilities is not None:
                 device_json["spec"]["capabilities"] = capabilities
@@ -156,7 +156,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 1
                 for device in existing_devices
                 if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
-                == DeviceType.LOCAL.value
+                == self.device_type.value
             )
             is_first_device = existing_count == 0
 
@@ -170,7 +170,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 },
                 "spec": {
                     "deviceId": device_id,
-                    "deviceType": DeviceType.LOCAL.value,
+                    "deviceType": self.device_type.value,
                     "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
                     "isDefault": is_first_device,
                     "capabilities": capabilities,
@@ -281,6 +281,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             return None
 
         spec = device_kind.json.get("spec", {})
+        if spec.get("deviceType", DeviceType.LOCAL.value) != self.device_type.value:
+            return None
 
         # Get online info from Redis
         online_info = await self._get_online_info(user_id, device_id)
@@ -300,7 +302,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "name": spec.get("displayName") or device_id,
             "status": online_info.get("status", "online") if online_info else "offline",
             "is_default": spec.get("isDefault", False),
-            "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+            "device_type": spec.get("deviceType", self.device_type.value),
             "connection_mode": spec.get(
                 "connectionMode", DeviceConnectionMode.WEBSOCKET.value
             ),
@@ -316,6 +318,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
+            "app_device_id": spec.get("appDeviceId"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
@@ -378,7 +381,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type == DeviceType.LOCAL.value:
+            if device_type == self.device_type.value:
                 local_devices.append(device_kind)
 
         if not local_devices:
@@ -433,7 +436,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": DeviceType.LOCAL.value,
+                    "device_type": self.device_type.value,
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),
@@ -449,6 +452,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                    "app_device_id": spec.get("appDeviceId"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
@@ -605,3 +609,15 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
 # Singleton instance
 local_device_provider = LocalDeviceProvider()
+
+
+class AppDeviceProvider(LocalDeviceProvider):
+    """Provider for the desktop app's current local executor cloud registration."""
+
+    @property
+    def device_type(self) -> DeviceType:
+        """Return APP device type."""
+        return DeviceType.APP
+
+
+app_device_provider = AppDeviceProvider()

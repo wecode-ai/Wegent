@@ -70,6 +70,10 @@ In intranet deployments, users can bind the current Wegent account to a Weibo ui
 
 The frontend first shows the resolved Weibo account profile and reminds users that they can switch accounts at `weibo.com`. Binding is written only after the user confirms. During confirmation, the backend resolves the current `SUB` again; if the uid changed, the user must confirm again. After binding succeeds, the page shows the bound Weibo uid, nickname, avatar, and binding time. Users can rebind to refresh the uid or unbind the account. Binding data is stored in the current user's preferences and does not require a separate database table. Unbinding only removes the Weibo binding data and keeps other preferences unchanged.
 
+### Archived Chat Management
+
+Desktop Wework settings can show archived Project and Conversation chats. Deleting one archived chat or using **Delete all** first opens a confirmation dialog; the app only permanently deletes the selected local runtime conversation records after confirmation. Bulk deletion applies only to the items currently listed as archived and does not affect non-archived chats.
+
 ---
 
 ## 🚀 Configuration Workflow

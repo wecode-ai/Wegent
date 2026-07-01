@@ -28,4 +28,13 @@ describe('AppIframe', () => {
     const iframe = screen.getByTestId('app-iframe-wegent')
     expect(iframe).toHaveAttribute('sandbox')
   })
+
+  test('allows popup links to escape the iframe sandbox', () => {
+    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    const iframe = screen.getByTestId('app-iframe-wegent')
+    expect(iframe).toHaveAttribute(
+      'sandbox',
+      expect.stringContaining('allow-popups-to-escape-sandbox')
+    )
+  })
 })

@@ -215,9 +215,11 @@ export function BranchSelector({
     }
   }
 
-  const branchLabel = loading
-    ? t('common.loading', '加载中...')
-    : currentBranch || t('workbench.environment_branch_empty', '暂无分支')
+  const emptyBranchLabel =
+    variant === 'workbar'
+      ? t('workbench.environment_branch_select', '选择分支')
+      : t('workbench.environment_branch_empty', '暂无分支')
+  const branchLabel = loading ? t('common.loading', '加载中...') : currentBranch || emptyBranchLabel
 
   return (
     <div ref={rootRef} className="relative">

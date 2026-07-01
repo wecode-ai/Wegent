@@ -6,7 +6,7 @@
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
-from app.services.device.local_provider import LocalDeviceProvider
+from app.services.device.local_provider import AppDeviceProvider, LocalDeviceProvider
 
 
 def _local_device(device_id: str, device_type: str) -> Kind:
@@ -43,3 +43,17 @@ async def test_list_devices_excludes_remote_devices(test_db):
     devices = await LocalDeviceProvider().list_devices(test_db, user_id=7)
 
     assert devices == []
+
+
+async def test_app_provider_lists_app_devices_separately(test_db):
+    """Desktop app registrations keep their explicit app device type."""
+    test_db.add(_local_device("app-device", DeviceType.APP.value))
+    test_db.add(_local_device("local-device", DeviceType.LOCAL.value))
+    test_db.commit()
+
+    app_devices = await AppDeviceProvider().list_devices(test_db, user_id=7)
+    local_devices = await LocalDeviceProvider().list_devices(test_db, user_id=7)
+
+    assert [device["device_id"] for device in app_devices] == ["app-device"]
+    assert app_devices[0]["device_type"] == DeviceType.APP.value
+    assert [device["device_id"] for device in local_devices] == ["local-device"]

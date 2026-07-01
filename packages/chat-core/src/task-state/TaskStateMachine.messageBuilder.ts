@@ -39,7 +39,7 @@ export function buildMessagesFromSubtasks({
   if (forceClean && currentMessages.size > 0) {
     messages = new Map()
     for (const [msgId, msg] of currentMessages) {
-      if (!msg.subtaskId || validSubtaskIds.has(msg.subtaskId)) {
+      if (!msg.turnId || validSubtaskIds.has(msg.turnId)) {
         messages.set(msgId, msg)
       }
     }
@@ -50,8 +50,8 @@ export function buildMessagesFromSubtasks({
   const existingSubtaskIds = new Set<number>()
   let existingUserMessageCount = 0
   for (const msg of messages.values()) {
-    if (msg.subtaskId) {
-      existingSubtaskIds.add(msg.subtaskId)
+    if (msg.turnId) {
+      existingSubtaskIds.add(msg.turnId)
     }
     if (msg.type === 'user') {
       existingUserMessageCount++
@@ -95,7 +95,7 @@ export function buildMessagesFromSubtasks({
         status: hasFrontendError ? 'error' : 'streaming',
         content: bestContent,
         timestamp: existingAiMessage?.timestamp || new Date(subtask.created_at).getTime(),
-        subtaskId: subtask.id,
+        turnId: subtask.id,
         messageId: subtask.message_id,
         attachments: subtask.attachments,
         contexts: subtask.contexts,
@@ -179,7 +179,7 @@ export function buildMessagesFromSubtasks({
       status,
       content,
       timestamp: new Date(subtask.created_at).getTime(),
-      subtaskId: subtask.id,
+      turnId: subtask.id,
       messageId: subtask.message_id,
       attachments: subtask.attachments,
       contexts: subtask.contexts,

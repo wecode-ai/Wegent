@@ -97,6 +97,21 @@ When a task becomes terminal:
 
 `chat:done` only means the current message stream ended. It does not prove the task lifecycle is terminal. If queued messages are still blocked after `chat:done`, `useChatStreamHandlers` calls the current task machine with `requestRuntimeCheck('queued-message-blocked')` so the frontend converges back to the server state.
 
+### Cancellation And State Convergence
+
+Runtime task cancellation must converge two state surfaces:
+
+- Runtime task state exposed by the executor, such as `running` and `status` from `runtime.tasks.list`. Sidebars, close guards, and task lists consume this state.
+- Message stream state inside the current pane, such as assistant messages that are still `assistant:streaming`. The composer stop button, send lock, and local streaming UI consume this state.
+
+The cancellation flow must follow these rules:
+
+- After receiving `runtime.tasks.cancel`, the executor must interrupt the active turn and wait for the app-server or child process to actually exit. If it does not exit before the timeout, return `cancel_timeout`; the frontend must not treat that as stopped.
+- Runners that can spawn child processes, such as the Codex app-server, must be managed and terminated as a process group so background workers cannot keep running after the parent process exits.
+- After the frontend receives an accepted cancellation result, it must refresh the runtime work list so sidebars and close guards observe `running: false`.
+- The pane session must locally finalize any still-streaming assistant messages as cancelled because cancellation may not emit a normal `chat:done` or response completed event.
+- Updating only runtime work leaves the composer looking busy. Updating only message streams leaves the sidebar looking busy. Both state surfaces must be updated in the same stop path.
+
 ## Change Guidelines
 
 When adding or changing task runtime UI:

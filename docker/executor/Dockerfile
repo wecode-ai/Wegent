@@ -2,30 +2,39 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build stage: compile executor to standalone binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder
-
+# Build base stage: Rust toolchain and native build dependencies.
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder-base
 WORKDIR /app
 
-# Copy pyproject.toml and install dependencies
-COPY executor/pyproject.toml /app/executor/pyproject.toml
+RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
 
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
-RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
+ENV PATH=/root/.cargo/bin:${PATH}
 
-# Install PyInstaller for building standalone binary (using uv for speed)
-RUN uv pip install --system pyinstaller
+# Build dependency stage: compile third-party crates before copying app source.
+FROM builder-base AS builder-deps
 
-# Copy source code
-COPY executor /app/executor
-COPY shared /app/shared
+COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+RUN mkdir -p /app/executor/src/bin \
+    && printf 'pub fn placeholder() {}\n' > /app/executor/src/lib.rs \
+    && printf 'fn main() {}\n' > /app/executor/src/bin/wegent-executor.rs \
+    && cd /app/executor \
+    && cargo build --release --locked --bin wegent-executor
 
-# Build standalone binary
-RUN cd /app/executor && bash build.sh
+# Build stage: compile executor Rust binary.
+FROM builder-deps AS builder
+ARG APP_VERSION=dev
 
-# Runtime stage: minimal image with only the binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+COPY executor/src /app/executor/src
+RUN cd /app/executor \
+    && find src -type f -exec touch {} + \
+    && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor
 
+# Runtime base stage: slow-changing executor environment.
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS runtime-base
 WORKDIR /app
 
 # Install system packages for document generation (AlmaLinux uses dnf)
@@ -67,13 +76,17 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
+# Runtime stage: base environment plus the executor binary.
+FROM runtime-base
+ARG APP_VERSION=dev
 
-# Copy only the standalone binary from builder
-COPY --from=builder /app/executor/dist/executor /app/executor
+# Copy the Rust executor binary to the stable path expected by executor_manager.
+COPY --from=builder /app/executor/target/release/wegent-executor /app/executor
 
 ENV PORT=10001
-ENV PYTHONPATH=/app
+ENV EXECUTOR_MODE=docker
+ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 ENV NODE_PATH=/usr/lib/node_modules
 
-# Run the standalone binary
+# Run the Rust executor binary
 CMD ["/app/executor"]

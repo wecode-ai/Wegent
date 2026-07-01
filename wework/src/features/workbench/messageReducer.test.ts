@@ -18,12 +18,12 @@ describe('messageReducer', () => {
     const withStart = messageReducer(withUser, {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
       shellType: 'ClaudeCode',
     })
     const withChunk = messageReducer(withStart, {
       type: 'assistant_chunk',
-      subtaskId: 9,
+      turnId: 9,
       content: 'hi',
     })
 
@@ -41,12 +41,12 @@ describe('messageReducer', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
     })
 
     const failed = messageReducer(state, {
       type: 'assistant_error',
-      subtaskId: 9,
+      turnId: 9,
       error: 'network down',
     })
 
@@ -60,12 +60,12 @@ describe('messageReducer', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
     })
 
     const failed = messageReducer(state, {
       type: 'assistant_error',
-      subtaskId: 9,
+      turnId: 9,
       error: 'too many requests',
       errorType: 'rate_limit',
     })
@@ -81,7 +81,7 @@ describe('messageReducer', () => {
     const state = messageReducer([], {
       type: 'assistant_cached',
       taskId: 8,
-      subtaskId: 18,
+      turnId: 18,
       content: '已经输出的内容',
     })
 
@@ -89,7 +89,7 @@ describe('messageReducer', () => {
     expect(state[0]).toMatchObject({
       id: 'assistant-18',
       taskId: 8,
-      subtaskId: 18,
+      turnId: 18,
       role: 'assistant',
       content: '已经输出的内容',
       status: 'streaming',
@@ -100,18 +100,18 @@ describe('messageReducer', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
       taskId: 1,
-      subtaskId: 9,
+      turnId: 9,
     })
 
     const withThinking = messageReducer(state, {
       type: 'assistant_chunk',
-      subtaskId: 9,
+      turnId: 9,
       content: '',
       reasoningChunk: 'Reading files',
     })
     const updated = messageReducer(withThinking, {
       type: 'assistant_chunk',
-      subtaskId: 9,
+      turnId: 9,
       content: '',
       reasoningChunk: ' and checking tests',
     })
@@ -131,11 +131,11 @@ describe('messageReducer', () => {
       messageReducer([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_chunk',
-        subtaskId: 9,
+        turnId: 9,
         content: '',
         reasoningChunk: 'Running a command',
       }
@@ -143,10 +143,10 @@ describe('messageReducer', () => {
 
     const withTool = messageReducer(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         toolInput: { command: 'pwd' },
@@ -166,21 +166,21 @@ describe('messageReducer', () => {
       messageReducer([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_chunk',
-        subtaskId: 9,
+        turnId: 9,
         content: 'Let me explore the repository structure.',
       }
     )
 
     const withTool = messageReducer(state, {
       type: 'block_created',
-      subtaskId: 9,
+      turnId: 9,
       block: {
         id: 'call_1',
-        subtaskId: 9,
+        turnId: 9,
         type: 'tool',
         toolName: 'bash',
         toolInput: { command: 'ls' },
@@ -205,11 +205,11 @@ describe('messageReducer', () => {
       messageReducer([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_chunk',
-        subtaskId: 9,
+        turnId: 9,
         content: '',
         reasoningChunk: 'Drafting',
       }
@@ -217,12 +217,12 @@ describe('messageReducer', () => {
 
     const done = messageReducer(state, {
       type: 'assistant_done',
-      subtaskId: 9,
+      turnId: 9,
       content: 'Final',
       blocks: [
         {
           id: 'thinking-real',
-          subtaskId: 9,
+          turnId: 9,
           type: 'thinking',
           content: 'Drafting',
           status: 'done',
@@ -262,17 +262,17 @@ describe('messageReducer', () => {
       messageReducer([], {
         type: 'assistant_started',
         taskId: 1,
-        subtaskId: 9,
+        turnId: 9,
       }),
       {
         type: 'assistant_done',
-        subtaskId: 9,
+        turnId: 9,
         fileChanges: activeFileChanges,
       }
     )
     const reverted = messageReducer(state, {
       type: 'file_changes_updated',
-      subtaskId: 9,
+      turnId: 9,
       fileChanges: {
         ...activeFileChanges,
         status: 'reverted',

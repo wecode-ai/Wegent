@@ -26,6 +26,7 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RuntimeRetrieverConfig",
         "RemoteKnowledgeBaseQueryConfig",
         "RemoteKnowledgeBaseRetrievalOverride",
+        "RetrievalScope",
         "RemoteDeleteDocumentIndexRequest",
         "RemoteIndexRequest",
         "RemoteListChunksRequest",
@@ -200,6 +201,104 @@ def test_remote_query_request_accepts_reference_mode() -> None:
             {"key": "lang", "operator": "==", "value": "zh"},
         ],
     }
+
+
+def test_remote_query_request_accepts_retrieval_scope_and_compatible_document_ids() -> (
+    None
+):
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    request = remote_query_request.model_validate(
+        {
+            "knowledge_base_ids": [1001],
+            "user_id": 42,
+            "query": "release checklist",
+            "scope": {"document_ids": [10, 11]},
+            "document_ids": [10, 11],
+        }
+    )
+
+    assert request.scope is not None
+    assert request.scope.document_ids == [10, 11]
+    assert request.document_ids == [10, 11]
+    assert request.model_dump(mode="json", exclude_none=True)["scope"] == {
+        "document_ids": [10, 11]
+    }
+
+
+def test_remote_query_request_rejects_conflicting_scope_document_ids() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(
+        ValidationError,
+        match="scope.document_ids and document_ids must match",
+    ):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "user_id": 42,
+                "query": "release checklist",
+                "scope": {"document_ids": [10, 11]},
+                "document_ids": [12],
+            }
+        )
+
+
+def test_remote_query_request_accepts_reordered_compatible_document_ids() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    request = remote_query_request.model_validate(
+        {
+            "knowledge_base_ids": [1001],
+            "user_id": 42,
+            "query": "release checklist",
+            "scope": {"document_ids": [11, 10]},
+            "document_ids": [10, 11],
+        }
+    )
+
+    assert request.scope is not None
+    assert request.scope.document_ids == [11, 10]
+    assert request.document_ids == [10, 11]
+
+
+def test_retrieval_scope_rejects_empty_document_ids() -> None:
+    retrieval_scope = _require_model("RetrievalScope")
+
+    with pytest.raises(ValidationError, match="document_ids must not be empty"):
+        retrieval_scope.model_validate({"document_ids": []})
+
+
+def test_retrieval_scope_rejects_non_positive_document_ids() -> None:
+    retrieval_scope = _require_model("RetrievalScope")
+
+    with pytest.raises(
+        ValidationError,
+        match="document_ids must contain positive integers",
+    ):
+        retrieval_scope.model_validate({"document_ids": [1, 0]})
+
+
+def test_retrieval_scope_deduplicates_document_ids() -> None:
+    retrieval_scope = _require_model("RetrievalScope")
+
+    scope = retrieval_scope.model_validate({"document_ids": [10, 11, 10]})
+
+    assert scope.document_ids == [10, 11]
+
+
+def test_remote_query_request_rejects_empty_compatible_document_ids() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError, match="document_ids must not be empty"):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "user_id": 42,
+                "query": "release checklist",
+                "document_ids": [],
+            }
+        )
 
 
 def test_remote_query_request_rejects_missing_user_id() -> None:

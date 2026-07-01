@@ -253,6 +253,16 @@ pnpm --dir frontend run build
 pnpm --dir frontend run start
 ```
 
+#### Wework 与本地 Rust 构建缓存
+
+Wework macOS 开发脚本会为 Tauri 和本地 executor 配置共享 Cargo target 目录，避免多个 Git worktree 反复完整编译相同依赖：
+
+- `pnpm --dir wework run dev:mac` 和 `pnpm --dir wework run build:mac` 默认使用 `$XDG_CACHE_HOME/wegent/cargo-target/wework-src-tauri`，未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/wework-src-tauri`。
+- 开发模式的 executor sidecar 和 `executor/local.sh build` 默认使用同一缓存根下的 `executor` 子目录。
+- 如需指定其他缓存根目录，设置 `WEGENT_CARGO_TARGET_ROOT=/path/to/cache`。
+- 如需恢复 Cargo 默认的每个 worktree 独立 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
+- 显式设置 `CARGO_TARGET_DIR` 时，脚本会尊重该值，不再自动选择共享目录。
+
 ---
 
 ### 5️⃣ Executor Manager 开发

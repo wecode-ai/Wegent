@@ -743,6 +743,49 @@ class TestProcessContextsAttachments:
         ]
 
     @pytest.mark.asyncio
+    async def test_executor_context_processing_uses_attachment_metadata_only(self):
+        """Executor runtimes should not inline backend-parsed attachment content."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1233,
+            subtask_id=1643,
+            prompt="hello",
+            system_prompt="system",
+            model_config={},
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="",
+            ),
+        )
+        prepare_mock = AsyncMock(return_value=ctx)
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=prepare_mock,
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1642,
+                    user_id=2,
+                )
+
+        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
+
+    @pytest.mark.asyncio
     async def test_prioritizes_knowledge_skill_when_user_selected_kb_is_present(self):
         """User-selected KBs should auto-preload and prioritize the management skill."""
         from app.services.chat.trigger import unified as trigger_unified

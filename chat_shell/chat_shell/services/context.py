@@ -15,6 +15,7 @@ Note: Agent creation is NOT handled here - it belongs to the service layer.
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,15 +48,51 @@ class ChatContextResult:
     mcp_clients: list = field(default_factory=list)
 
 
-def _content_has_attachment(content: Any) -> bool:
-    """Return True if a message content (str or block list) has an attachment."""
+# A document attachment header is ``[Attachment: …]``; images use
+# ``[Image Attachment: …]`` and videos ``[Video Attachment: …]``. The
+# ``\[Attachment:`` anchor (a bracket immediately before the colon-terminated
+# label) matches only documents — not image/video headers, and not the
+# ``[Attachment N]`` index label (no colon).
+_DOCUMENT_ATTACHMENT = re.compile(r"\[Attachment:")
+
+
+def _attachments_have_document(attachments: Any) -> bool:
+    """Return True if the structured request payload includes a document attachment.
+
+    Preferred, format-independent signal for the current turn: the backend sets
+    ``request.attachments`` with each attachment's ``mime_type``. A document is
+    anything that is not an image or a video — only those carry extracted text
+    for read_attachment to serve.
+    """
+    if not isinstance(attachments, list):
+        return False
+    for att in attachments:
+        # ExecutionRequest.attachments is untyped: entries may be plain dicts or
+        # attachment objects that expose mime_type as an attribute.
+        if isinstance(att, dict):
+            mime = str(att.get("mime_type") or "").lower()
+        else:
+            mime = str(getattr(att, "mime_type", "") or "").lower()
+        if mime and not mime.startswith("image/") and not mime.startswith("video/"):
+            return True
+    return False
+
+
+def _content_has_readable_attachment(content: Any) -> bool:
+    """Return True if rendered content carries a document attachment block.
+
+    Header-text fallback used for history (prior turns are not in
+    ``request.attachments``) and as a safety net for the current turn. Only
+    document attachments have extracted text; image/video blocks do not, so a
+    conversation with only those must NOT get the read_attachment tool.
+    """
     if isinstance(content, str):
-        return "<attachment>" in content
+        return bool(_DOCUMENT_ATTACHMENT.search(content))
     if isinstance(content, list):
         return any(
             isinstance(block, dict)
             and isinstance(block.get("text"), str)
-            and "<attachment>" in block["text"]
+            and _DOCUMENT_ATTACHMENT.search(block["text"])
             for block in content
         )
     return False
@@ -197,11 +234,20 @@ class ChatContext:
                         restored_tool_count,
                     )
 
-            # Only offer read_attachment when this conversation actually carries
-            # an attachment (current turn or history), to avoid bloating the
-            # tool list for plain chats.
-            has_attachments = _content_has_attachment(self._request.prompt) or any(
-                _content_has_attachment(message.get("content")) for message in history
+            # Only offer read_attachment when the conversation carries a document
+            # attachment whose text the tool can serve. Prefer the structured
+            # request payload (mime_type) for the current turn — robust to header
+            # format changes — then fall back to a header scan of the prompt and
+            # history (prior turns aren't in request.attachments). Image/video-only
+            # conversations and plain chats don't get it (it would return "empty").
+            has_attachments = (
+                _attachments_have_document(self._request.attachments)
+                or _content_has_readable_attachment(self._request.prompt)
+                or any(
+                    _content_has_readable_attachment(message.get("content"))
+                    for message in history
+                    if isinstance(message, dict)
+                )
             )
 
             # Build extra_tools from all sources (including builtin tools)

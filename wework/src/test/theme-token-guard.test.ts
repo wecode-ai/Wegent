@@ -65,6 +65,22 @@ describe('theme token guard', () => {
     expect(source).toContain("system: 'var(--z-system)'")
   })
 
+  test('soft scrollbar uses a visible light gray thumb before hover', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source).toContain('scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);')
+    expect(source).toContain('width: 7px;')
+    expect(source).toContain('height: 7px;')
+    expect(source).toContain('background-color: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track {')
+    expect(source).toContain('background: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track-piece {')
+    expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-corner {')
+    expect(source).toContain('border: 0;')
+    expect(source).toContain('border-radius: 0;')
+  })
+
   test.each(guardedFiles)(
     '%s uses theme tokens instead of hardcoded surface colors',
     relativePath => {

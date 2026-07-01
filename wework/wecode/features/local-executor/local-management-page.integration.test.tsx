@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import App from '@/App'
 
@@ -52,6 +52,15 @@ vi.mock('@tauri-apps/api/core', () => ({
         output: tauriState.executorRunning
           ? 'Installed: Yes\nStatus: Running\nPID: 12345'
           : 'Installed: Yes\nStatus: Stopped',
+        error: null,
+      })
+    }
+
+    if (command === 'local_executor_ensure_started') {
+      return Promise.resolve({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
         error: null,
       })
     }
@@ -169,11 +178,37 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WorkbenchProvider: ({
+    children,
+    onStartupReadyChange,
+  }: {
+    children: React.ReactNode
+    onStartupReadyChange?: (ready: boolean) => void
+  }) => {
+    queueMicrotask(() => onStartupReadyChange?.(true))
+    return <>{children}</>
+  },
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
+}))
+
+vi.mock('@wecode/features/local-executor/LocalExecutorStartupIndicator', () => ({
+  LocalExecutorStartupIndicator: () => (
+    <div data-testid="local-startup-indicator">
+      <button
+        type="button"
+        data-testid="local-startup-open-management-button"
+        onClick={() => {
+          window.history.pushState({}, '', '/apps?section=local-management')
+          window.dispatchEvent(new PopStateEvent('popstate'))
+        }}
+      >
+        本机管理
+      </button>
+    </div>
+  ),
 }))
 
 function enableTauri() {
@@ -202,6 +237,7 @@ describe('local executor management page', () => {
     tauriState.invokeArgs = []
     tauriState.commandOutputListener = null
     enableTauri()
+    vi.stubEnv('DEV', false)
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -260,6 +296,10 @@ describe('local executor management page', () => {
         })
       })
     )
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test('shows the basic local management controls', async () => {
@@ -470,7 +510,7 @@ describe('local executor management page', () => {
 
     const fourthEnabled = screen.getByTestId('executor-env-enabled-checkbox-3')
     const fourthKey = screen.getByTestId('executor-env-key-input-3')
-    expect(fourthEnabled).toBeVisible()
+    expect(fourthEnabled.closest('label')).toBeVisible()
     expect(fourthKey).toBeVisible()
     expect(
       fourthEnabled.compareDocumentPosition(fourthKey) & Node.DOCUMENT_POSITION_FOLLOWING

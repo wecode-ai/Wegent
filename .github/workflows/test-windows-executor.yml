@@ -17,20 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install dependencies and build
         working-directory: executor
         shell: pwsh
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/wegent-executor.exe dist/wegent-executor.exe
 
       - name: Rename binary with platform suffix
         shell: pwsh

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
 
@@ -22,16 +23,46 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WorkbenchProvider: ({
+    children,
+    onStartupReadyChange,
+  }: {
+    children: React.ReactNode
+    onStartupReadyChange?: (ready: boolean) => void
+  }) => {
+    queueMicrotask(() => onStartupReadyChange?.(true))
+    return <>{children}</>
+  },
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  connectLocalExecutorToBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  disconnectLocalExecutorFromBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
 
+function enableTauri() {
+  Object.defineProperty(window, '__TAURI_INTERNALS__', {
+    configurable: true,
+    value: {},
+  })
+}
+
 describe('App center route', () => {
   beforeEach(() => {
     localStorage.clear()
+    enableTauri()
+    vi.stubEnv('DEV', false)
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -86,11 +117,31 @@ describe('App center route', () => {
     )
   })
 
-  test('renders the app center route', async () => {
-    window.history.pushState({}, '', '/apps')
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  async function waitForStartupScreenToClose() {
+    await waitFor(() => {
+      expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+    })
+  }
+
+  test('opens the app center from the fixed titlebar tab', async () => {
+    window.history.pushState({}, '', '/')
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
+    await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/apps'))
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('titlebar-sidebar-toggle-placeholder')).toHaveClass(
+      'invisible',
+      'pointer-events-none'
+    )
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -100,11 +151,28 @@ describe('App center route', () => {
     expect(screen.queryByTestId('local-management-page')).not.toBeInTheDocument()
   })
 
+  test('overlays the workbench titlebar so the sidebar can reach the window top', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(screen.getByTestId('chrome-titlebar')).toHaveClass(
+      'absolute',
+      'inset-x-0',
+      'top-0',
+      'z-system',
+      'bg-transparent'
+    )
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+  })
+
   test('keeps the app center sidebar available on desktop app widths', async () => {
     window.history.pushState({}, '', '/apps')
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const appsPage = screen.getByTestId('apps-page')
@@ -124,6 +192,7 @@ describe('App center route', () => {
 
     render(<App />)
 
+    await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const scrollContainer = screen.getByTestId('apps-scroll-container')
