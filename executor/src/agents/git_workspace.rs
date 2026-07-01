@@ -12,7 +12,10 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use crate::{
-    agents::git_auth::{git_credentials, user_git_email, user_git_login, GitCredentials},
+    agents::git_auth::{
+        configure_repo_proxy, git_credentials, request_git_domain, user_git_email, user_git_login,
+        GitCredentials,
+    },
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
 };
@@ -175,6 +178,10 @@ async fn clone_repo(
                 parent.display()
             )
         })?;
+    }
+
+    if let Some(git_domain) = request_git_domain(request) {
+        configure_repo_proxy(&git_domain).await;
     }
 
     let clone_url = authenticated_clone_url(git_url, git_credentials(request).as_ref());
