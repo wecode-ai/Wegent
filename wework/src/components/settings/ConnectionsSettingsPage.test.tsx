@@ -460,7 +460,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('runtime-config-import-button')).toBeDisabled()
     expect(screen.getByTestId('runtime-config-upload-button')).toBeDisabled()
     expect(screen.getByTestId('runtime-config-upload-button')).toHaveTextContent('同步本机 Codex')
+    expect(screen.getByTestId('runtime-config-cloud-configure-button')).toHaveTextContent('配置')
     expect(userApi.getRuntimeConfig).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('runtime-config-cloud-configure-button'))
+
+    expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-cloud-connect-button')).toHaveTextContent('连接云端')
+    expect(window.location.pathname).toBe('/settings')
   })
 
   test('saves personal proxy then enables it for Codex auth', async () => {

@@ -615,14 +615,17 @@ function LocalModelSettingsSection(localCodexModel: LocalCodexModelRowProps) {
   )
 }
 
-function DisconnectedCloudCodexSyncSection() {
+function DisconnectedCloudCodexSyncSection({
+  onOpenCloudSettings,
+}: {
+  onOpenCloudSettings?: () => void
+}) {
   const { t } = useTranslation('common')
 
   return (
     <section
       data-testid="runtime-config-cloud-sync"
       className="rounded-lg border border-dashed border-border bg-surface p-5 opacity-70"
-      aria-disabled="true"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
@@ -649,16 +652,29 @@ function DisconnectedCloudCodexSyncSection() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          data-testid="runtime-config-toggle"
-          role="switch"
-          aria-checked={false}
-          disabled
-          className="inline-flex h-8 min-w-[112px] cursor-not-allowed items-center justify-center rounded-full bg-background px-3 text-sm font-medium text-text-muted"
-        >
-          {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenCloudSettings && (
+            <button
+              type="button"
+              data-testid="runtime-config-cloud-configure-button"
+              onClick={onOpenCloudSettings}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+            >
+              <Network className="h-3.5 w-3.5" />
+              {t('workbench.runtime_config_cloud_configure_action', '配置')}
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="runtime-config-toggle"
+            role="switch"
+            aria-checked={false}
+            disabled
+            className="inline-flex h-8 min-w-[112px] cursor-not-allowed items-center justify-center rounded-full bg-background px-3 text-sm font-medium text-text-muted"
+          >
+            {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+          </button>
+        </div>
       </div>
 
       <div className="mt-5 rounded-lg border border-border bg-background p-3">
@@ -750,9 +766,13 @@ function DisconnectedCloudCodexSyncSection() {
 
 interface ModelSettingsPageProps {
   runtime?: UserRuntime
+  onOpenCloudSettings?: () => void
 }
 
-export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps) {
+export function ModelSettingsPage({
+  runtime = 'codex',
+  onOpenCloudSettings,
+}: ModelSettingsPageProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -970,7 +990,7 @@ export function ModelSettingsPage({ runtime = 'codex' }: ModelSettingsPageProps)
           />
         </div>
         <div className="mt-4">
-          <DisconnectedCloudCodexSyncSection />
+          <DisconnectedCloudCodexSyncSection onOpenCloudSettings={onOpenCloudSettings} />
         </div>
       </div>
     )

@@ -1395,6 +1395,11 @@ export function ConnectionsSettingsPage({
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
+  const openCloudSettings = useCallback(() => {
+    setActiveNav('connections')
+    navigateTo(getSettingsNavPath('connections'))
+  }, [setActiveNav])
+
   return (
     <div
       data-testid="wework-settings-page"
@@ -1473,7 +1478,7 @@ export function ConnectionsSettingsPage({
         {activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
         ) : activeNav === 'model-settings' ? (
-          <ModelSettingsPage />
+          <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
         ) : activeNav === 'skills' ? (

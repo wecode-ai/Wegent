@@ -771,6 +771,7 @@
     "runtime_config_cloud_sync_title": "Cloud Codex sync",
     "runtime_config_cloud_sync_description": "After connecting to cloud, sync local Codex auth.json to cloud devices or import a cloud Codex model from an online device.",
     "runtime_config_cloud_disconnected": "Cloud disconnected",
+    "runtime_config_cloud_configure_action": "Configure",
     "runtime_config_cloud_disabled_hint": "Available after cloud connection",
     "runtime_config_auth_file_title": "Cloud Codex model",
     "runtime_config_configured": "Configured",

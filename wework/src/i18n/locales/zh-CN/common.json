@@ -771,6 +771,7 @@
     "runtime_config_cloud_sync_title": "云端 Codex 同步",
     "runtime_config_cloud_sync_description": "连接云端后，可以把本机 Codex auth.json 同步到云端设备，或从在线设备导入一份云端 Codex 模型。",
     "runtime_config_cloud_disconnected": "未连接云端",
+    "runtime_config_cloud_configure_action": "配置",
     "runtime_config_cloud_disabled_hint": "连接云端后可用",
     "runtime_config_auth_file_title": "云端 Codex 模型",
     "runtime_config_configured": "已配置",
