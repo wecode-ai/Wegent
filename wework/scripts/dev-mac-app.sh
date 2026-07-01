@@ -10,6 +10,11 @@ INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
 
 # shellcheck source=../../scripts/lib/cargo-cache.sh
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
+# shellcheck source=lib/wework-mac-env.sh
+source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+
+MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
+WEWORK_RELEASE_UI="false"
 
 usage() {
   cat <<'EOF'
@@ -17,6 +22,8 @@ Usage: bash wework/scripts/dev-mac-app.sh [options]
 
 Options:
   -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
+  --target TARGET       macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
+  --release-ui          Run a production frontend bundle through tauri dev.
   -h, --help            Show this help message.
 
 Environment:
@@ -32,9 +39,11 @@ Environment:
                         Executor sidecar path. Defaults to source reload sidecar.
   WEGENT_EXECUTOR_DEV_RELOAD
                         Set to 0 to run executor source once without reload.
+  MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
 
 Examples:
   bash wework/scripts/dev-mac-app.sh --port 9130
+  bash wework/scripts/dev-mac-app.sh --release-ui --target aarch64-apple-darwin
   WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
 EOF
 }
@@ -67,6 +76,23 @@ while [ "$#" -gt 0 ]; do
       REQUESTED_WEWORK_PORT="${1#*=}"
       shift
       ;;
+    --target)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a target value." >&2
+        usage
+        exit 1
+      fi
+      MACOS_BUILD_TARGET="$2"
+      shift 2
+      ;;
+    --target=*)
+      MACOS_BUILD_TARGET="${1#*=}"
+      shift
+      ;;
+    --release-ui)
+      WEWORK_RELEASE_UI="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -79,31 +105,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-get_local_ip() {
-  local ip
-
-  for interface in en0 en1; do
-    ip="$(ipconfig getifaddr "$interface" 2>/dev/null || true)"
-    if [ -n "$ip" ]; then
-      echo "$ip"
-      return
-    fi
-  done
-
-  local default_interface
-  default_interface="$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
-  if [ -n "$default_interface" ]; then
-    ip="$(ipconfig getifaddr "$default_interface" 2>/dev/null || true)"
-    if [ -n "$ip" ]; then
-      echo "$ip"
-      return
-    fi
-  fi
-
-  echo "127.0.0.1"
-}
-
-LOCAL_IP="${WEWORK_HOST:-$(get_local_ip)}"
+BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
 
@@ -158,46 +160,61 @@ if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
 fi
 WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
 
-normalize_api_proxy_target() {
-  local value="${1%/}"
-
-  if [[ "$value" == */api ]]; then
-    value="${value%/api}"
-  fi
-
-  echo "$value"
-}
-
-export VITE_API_PROXY_TARGET="$(normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-http://$LOCAL_IP:$BACKEND_PORT}")"
+export VITE_API_PROXY_TARGET="$(wework_normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-$BACKEND_BASE_URL}")"
 export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"
 if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
   WEWORK_EXECUTOR_SIDECAR="$WEWORK_DIR/scripts/dev-executor-sidecar.sh"
 fi
 export WEWORK_EXECUTOR_SIDECAR
-export VITE_API_BASE_URL="/api"
-export VITE_SOCKET_BASE_URL="http://localhost:$WEWORK_PORT"
-export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
+
+if [ "$WEWORK_RELEASE_UI" = "true" ]; then
+  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
+  export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}}"
+  export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
+  BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+else
+  export VITE_API_BASE_URL="/api"
+  export VITE_SOCKET_BASE_URL="http://localhost:$WEWORK_PORT"
+  export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
+  BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+fi
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 
-printf '{
-  "build": {
-    "devUrl": "http://localhost:%s",
-    "beforeDevCommand": "pnpm exec vite --host 0.0.0.0 --port %s --strictPort"
-  },
-  "bundle": {
-    "icon": [
-      "icons/icon-dev.icns",
-      "icons/icon.png"
-    ]
-  }
+WEWORK_PORT_VALUE="$WEWORK_PORT" \
+BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
+WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
+TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
+python3 - <<'PY'
+import json
+import os
+
+config = {
+    "build": {
+        "devUrl": f"http://localhost:{os.environ['WEWORK_PORT_VALUE']}",
+        "beforeDevCommand": os.environ["BEFORE_DEV_COMMAND_VALUE"],
+    },
 }
-' "$WEWORK_PORT" "$WEWORK_PORT" > "$TAURI_DEV_CONFIG"
+
+if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
+    config["bundle"] = {
+        "icon": [
+            "icons/icon-dev.icns",
+            "icons/icon.png",
+        ],
+    }
+
+with open(os.environ["TAURI_DEV_CONFIG_VALUE"], "w", encoding="utf-8") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
 
 echo "Starting WeWork mac app"
+echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
 echo "  WEWORK_PORT=$WEWORK_PORT"
+echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
 echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
@@ -213,4 +230,11 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
-exec pnpm exec tauri dev --config "$TAURI_DEV_CONFIG"
+TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
+if [ "$WEWORK_RELEASE_UI" = "true" ]; then
+  TAURI_ARGS+=(--release)
+fi
+if [ -n "$MACOS_BUILD_TARGET" ]; then
+  TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")
+fi
+exec pnpm exec tauri "${TAURI_ARGS[@]}"

@@ -1566,7 +1566,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.scroll(scroller)
 
     expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
-      'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)]',
+      'bottom-[var(--desktop-floating-composer-clearance)]',
       'z-popover'
     )
   })
@@ -1639,7 +1639,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('desktop-sidebar-hover-edge')).toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(document.body.style.cursor).toBe('')
     expect(document.body.style.userSelect).toBe('')
   })
@@ -1685,8 +1685,8 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
-    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
@@ -1714,7 +1714,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5', 'ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass(
       'transition-[margin]',
       'duration-[300ms]',
@@ -1744,7 +1745,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const main = getDesktopWorkbenchMainElement()
     const preview = screen.getByTestId('desktop-sidebar-preview')
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('desktop-sidebar-hover-edge')).toHaveClass('w-4')
     expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
 
@@ -1752,7 +1753,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
 
     fireEvent.pointerEnter(preview)
 
@@ -1761,7 +1762,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerLeave(preview)
 
     expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
   })
 
   test('keeps sidebar controls out of the page chrome in Tauri', async () => {
@@ -1779,8 +1780,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('environment-info-button')
     )
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mb-1.5', 'mr-1.5')
-    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
   })
 
   test('keeps a collapsed Tauri task title clear of titlebar controls', () => {

@@ -75,10 +75,11 @@ const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} px-0`
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
   'pointer-events-none absolute left-0 right-8 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)] z-popover bg-background/95 shadow-md'
+  'bottom-[var(--desktop-floating-composer-clearance)] z-popover bg-background/95 shadow-md'
 const DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS = 'pb-[var(--desktop-floating-composer-clearance)]'
 const DEFAULT_FLOATING_COMPOSER_HEIGHT_PX = 112
-const FLOATING_COMPOSER_CLEARANCE_GAP_PX = 104
+const FLOATING_COMPOSER_BOTTOM_OFFSET_PX = 8
+const FLOATING_COMPOSER_MESSAGE_GAP_PX = 16
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
 const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
@@ -214,7 +215,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : 'auto'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
-  const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
+  const floatingComposerClearance =
+    floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
   const workspaceTargetDevice = workspaceTarget?.deviceId
     ? devices.find(device => device.device_id === workspaceTarget.deviceId)
     : undefined
@@ -777,11 +779,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-0 mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'absolute inset-0 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[margin]',
         sidebarResizing && 'transition-none',
-        !isTauri && 'mt-1.5',
-        sidebarCollapsed && 'ml-1.5'
+        !isTauri && 'mt-1.5'
       )}
     >
       <WorkbenchPaneActiveOnly>
