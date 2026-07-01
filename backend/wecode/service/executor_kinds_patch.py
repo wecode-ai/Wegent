@@ -20,6 +20,28 @@ logger = logging.getLogger(__name__)
 
 _patch_applied = False
 
+
+def _validate_delete_response(response_data: Any, context: str) -> Dict[str, Any]:
+    """Validate executor deletion response body.
+
+    Args:
+        response_data: Parsed JSON body from the executor_manager response.
+        context: Short label describing the request, used in error messages.
+    """
+    if not isinstance(response_data, dict):
+        logger.warning(
+            "+++ Invalid %s response body: type=%s value=%r",
+            context,
+            type(response_data).__name__,
+            response_data,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid {context} response: {response_data!r}",
+        )
+    return response_data
+
+
 try:
     from app.services.adapters.executor_kinds import executor_kinds_service
 except Exception:
@@ -69,13 +91,7 @@ async def delete_executor_by_task_id_async(self, task_id: int) -> Dict:
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, dict):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Invalid delete-by-task-id response: {data!r}",
-                )
-            return data
+            return _validate_delete_response(response.json(), "delete-by-task-id")
     except httpx.HTTPError as e:
         raise HTTPException(
             status_code=500,
@@ -111,13 +127,7 @@ async def delete_pod_by_name_async(
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, dict):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Invalid delete-pod-by-name response: {data!r}",
-                )
-            return data
+            return _validate_delete_response(response.json(), "delete-pod-by-name")
     except httpx.HTTPError as e:
         raise HTTPException(
             status_code=500,
