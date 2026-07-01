@@ -660,9 +660,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       dispatchMessages({
         type: 'assistant_cancelled',
-        messageId: activeAssistantMessage.id,
-        turnId: activeAssistantMessage.turnId,
-        content: activeAssistantMessage.content,
       })
     },
     [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages]
@@ -1010,9 +1007,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (activeAssistantMessage) {
         const action: RuntimePaneMessageAction = {
           type: 'assistant_cancelled',
-          messageId: activeAssistantMessage.id,
-          turnId: activeAssistantMessage.turnId,
-          content: activeAssistantMessage.content,
         }
         dispatchMessages(action)
       }
@@ -1046,9 +1040,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     dispatchMessages({
       type: 'assistant_cancelled',
-      messageId: activeAssistantMessage.id,
-      turnId: activeAssistantMessage.turnId,
-      content: activeAssistantMessage.content,
     })
   }, [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages])
 

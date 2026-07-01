@@ -55,6 +55,17 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 
+#[derive(Default)]
+pub struct CodexAppServerTurnOptions {
+    pub resume_thread_id: Option<String>,
+    pub initial_thread_name: Option<String>,
+    pub initial_thread_goal: Option<Value>,
+    pub notifications: Option<CodexNotificationSender>,
+    pub cancellation: Option<oneshot::Receiver<()>>,
+    pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    pub thread_started: Option<CodexThreadStartedCallback>,
+}
+
 pub trait CodexTurnInterrupter: Send + Sync {
     fn interrupt_turn<'a>(
         &'a self,
@@ -212,26 +223,9 @@ impl CodexAppServerClient {
     pub async fn run_turn_with_cancel(
         &self,
         request: ExecutionRequest,
-        resume_thread_id: Option<String>,
-        initial_thread_name: Option<String>,
-        initial_thread_goal: Option<Value>,
-        notifications: Option<CodexNotificationSender>,
-        cancellation: Option<oneshot::Receiver<()>>,
-        request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-        thread_started: Option<CodexThreadStartedCallback>,
+        options: CodexAppServerTurnOptions,
     ) -> Result<CodexAppServerTurn, String> {
-        run_codex_app_server_turn_on_shared_client(
-            self,
-            request,
-            resume_thread_id,
-            initial_thread_name,
-            initial_thread_goal,
-            notifications,
-            cancellation,
-            request_user_input_answers,
-            thread_started,
-        )
-        .await
+        run_codex_app_server_turn_on_shared_client(self, request, options).await
     }
 
     async fn prepare_request(
@@ -626,12 +620,13 @@ pub async fn run_codex_app_server_turn(
     run_codex_app_server_turn_with_cancel(
         binary,
         request,
-        resume_thread_id,
-        initial_thread_name,
-        initial_thread_goal,
-        notifications,
-        None,
-        None,
+        CodexAppServerTurnOptions {
+            resume_thread_id,
+            initial_thread_name,
+            initial_thread_goal,
+            notifications,
+            ..CodexAppServerTurnOptions::default()
+        },
     )
     .await
 }
@@ -639,15 +634,18 @@ pub async fn run_codex_app_server_turn(
 async fn run_codex_app_server_turn_on_shared_client(
     client: &CodexAppServerClient,
     request: ExecutionRequest,
-    resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
-    initial_thread_goal: Option<Value>,
-    notifications: Option<CodexNotificationSender>,
-    cancellation: Option<oneshot::Receiver<()>>,
-    request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    thread_started: Option<CodexThreadStartedCallback>,
+    options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
+    let CodexAppServerTurnOptions {
+        resume_thread_id,
+        initial_thread_name,
+        initial_thread_goal,
+        notifications,
+        cancellation,
+        request_user_input_answers,
+        thread_started,
+    } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
@@ -760,12 +758,14 @@ async fn run_codex_app_server_turn_on_shared_client(
             client,
             &mut notification_rx,
             &thread_id,
-            active_turn_id,
             &mut state,
-            notifications,
-            cancellation,
-            request_user_input_answers,
-            goal_run_active,
+            SharedTurnNotificationOptions {
+                active_turn_id,
+                notifications,
+                cancellation,
+                request_user_input_answers,
+                goal_run_active,
+            },
         )
         .await;
         client.mark_thread_idle(&thread_id).await;
@@ -793,14 +793,18 @@ async fn run_codex_app_server_turn_on_shared_client(
 pub async fn run_codex_app_server_turn_with_cancel(
     binary: &str,
     request: ExecutionRequest,
-    resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
-    initial_thread_goal: Option<Value>,
-    notifications: Option<CodexNotificationSender>,
-    mut cancellation: Option<oneshot::Receiver<()>>,
-    request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
+    let CodexAppServerTurnOptions {
+        resume_thread_id,
+        initial_thread_name,
+        initial_thread_goal,
+        notifications,
+        mut cancellation,
+        request_user_input_answers,
+        ..
+    } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
@@ -983,26 +987,30 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
     }
 }
 
+struct SharedTurnNotificationOptions {
+    active_turn_id: Option<String>,
+    notifications: Option<CodexNotificationSender>,
+    cancellation: Option<oneshot::Receiver<()>>,
+    request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    goal_run_active: bool,
+}
+
 async fn read_shared_turn_notifications(
     client: &CodexAppServerClient,
     notification_rx: &mut broadcast::Receiver<Value>,
     thread_id: &str,
-    mut active_turn_id: Option<String>,
     state: &mut CodexRunState,
-    notifications: Option<CodexNotificationSender>,
-    mut cancellation: Option<oneshot::Receiver<()>>,
-    mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    goal_run_active: bool,
+    mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
     let mut cancel_requested = false;
     let mut last_outcome: Option<ExecutionOutcome> = None;
     loop {
-        let notification = if let Some(cancel_rx) = cancellation.as_mut() {
+        let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
             tokio::select! {
                 _ = cancel_rx => {
-                    cancellation = None;
+                    options.cancellation = None;
                     cancel_requested = true;
-                    if let Some(turn_id) = active_turn_id.as_deref() {
+                    if let Some(turn_id) = options.active_turn_id.as_deref() {
                         interrupt_shared_turn(client, thread_id, turn_id).await?;
                     }
                     continue;
@@ -1034,15 +1042,15 @@ async fn read_shared_turn_notifications(
         log_codex_raw_turn_message(&message);
 
         if let Some(turn_id) = turn_started_notification_turn_id(&message) {
-            active_turn_id = Some(turn_id);
+            options.active_turn_id = Some(turn_id);
             if cancel_requested {
-                if let Some(turn_id) = active_turn_id.as_deref() {
+                if let Some(turn_id) = options.active_turn_id.as_deref() {
                     interrupt_shared_turn(client, thread_id, turn_id).await?;
                 }
             }
         }
 
-        if let Some(sender) = &notifications {
+        if let Some(sender) = &options.notifications {
             let _ = sender.send(message.clone());
         }
 
@@ -1051,17 +1059,21 @@ async fn read_shared_turn_notifications(
             .and_then(Value::as_str)
             .is_some_and(|method| method == "item/tool/requestUserInput")
         {
-            answer_shared_request_user_input(client, &message, &mut request_user_input_answers)
-                .await?;
+            answer_shared_request_user_input(
+                client,
+                &message,
+                &mut options.request_user_input_answers,
+            )
+            .await?;
             continue;
         }
 
         if let Some(outcome) = state.handle_message(&message) {
-            active_turn_id = None;
+            options.active_turn_id = None;
             if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
                 return Ok(outcome);
             }
-            if !goal_run_active || !state.goal_is_active() {
+            if !options.goal_run_active || !state.goal_is_active() {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);

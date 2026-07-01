@@ -18,8 +18,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{
     agents::{
-        CodexAppServerClient, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
@@ -559,7 +559,7 @@ impl RuntimeWorkRpcHandler {
                 .map(|link| {
                     merge_cached_messages(
                         cached.messages.clone(),
-                        cached_runtime_transcript_messages(link),
+                        cached_runtime_transcript_messages_for_provider(link, &cached.messages),
                     )
                 })
                 .unwrap_or_else(|| cached.messages.clone());
@@ -654,15 +654,16 @@ impl RuntimeWorkRpcHandler {
         }
 
         let transcript_thread = codex_thread_state(&thread);
+        let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
         let messages = local_link
             .as_ref()
             .map(|link| {
                 merge_cached_messages(
-                    transcript_messages(&transcript_thread, &self.device_id),
-                    cached_runtime_transcript_messages(link),
+                    transcript_messages.clone(),
+                    cached_runtime_transcript_messages_for_provider(link, &transcript_messages),
                 )
             })
-            .unwrap_or_else(|| transcript_messages(&transcript_thread, &self.device_id));
+            .unwrap_or(transcript_messages);
         let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
         self.transcript_cache.insert(
@@ -1402,13 +1403,15 @@ impl RuntimeWorkRpcHandler {
                 .codex_app_server
                 .run_turn_with_cancel(
                     request.clone(),
-                    resume_thread_id,
-                    initial_thread_name,
-                    initial_thread_goal,
-                    None,
-                    Some(cancel_rx),
-                    Some(request_user_input_rx),
-                    Some(thread_started),
+                    CodexAppServerTurnOptions {
+                        resume_thread_id,
+                        initial_thread_name,
+                        initial_thread_goal,
+                        notifications: None,
+                        cancellation: Some(cancel_rx),
+                        request_user_input_answers: Some(request_user_input_rx),
+                        thread_started: Some(thread_started),
+                    },
                 )
                 .await;
 
@@ -1452,13 +1455,13 @@ impl RuntimeWorkRpcHandler {
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, request);
                 match turn.outcome {
-                    ExecutionOutcome::Completed { .. } => emit_response_event(
+                    ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
                         &self.device_id,
                         "response.completed",
                         local_task_id,
                         request,
-                        json!({}),
+                        json!({"value": content}),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
                         &self.event_tx,
@@ -1675,6 +1678,10 @@ impl RuntimeWorkRpcHandler {
         let mut route = existing.unwrap_or_else(|| {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active)
         });
+        if active {
+            route.event_mapper = CodexNotificationEventMapper::default();
+            route.cache_mapper = CodexNotificationCacheMapper::default();
+        }
         route.local_task_id = local_task_id;
         route.request = request;
         route.active = route.active || active;
@@ -2821,6 +2828,16 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
                 .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
         })
         .collect()
+}
+
+fn cached_runtime_transcript_messages_for_provider(
+    link: &RuntimeTaskLink,
+    provider_messages: &[Value],
+) -> Vec<Value> {
+    if provider_messages.is_empty() {
+        return cached_messages(link);
+    }
+    cached_runtime_transcript_messages(link)
 }
 
 fn cached_user_message(
