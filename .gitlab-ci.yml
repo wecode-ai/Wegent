@@ -61,21 +61,18 @@ wegent-executor-manager:
     DOCKERFILE_PATH: wecode/docker/executor_manager
   script:
     - build_image
-  when: manual
   rules:
-    - when: manual
-  # rules:
-  #   - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
-  #     when: never
-  #   - if: '$CI_COMMIT_BRANCH == "main"'
-  #     changes:
-  #       - executor_manager/**/*
-  #       - wecode/docker/executor_manager/**/*
-  #       - shared/**/*
-  #   - changes:
-  #     - executor_manager/**/*
-  #     - wecode/docker/executor_manager/**/*
-  #     - shared/**/*
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - executor_manager/**/*
+        - wecode/docker/executor_manager/**/*
+        - shared/**/*
+    - changes:
+      - executor_manager/**/*
+      - wecode/docker/executor_manager/**/*
+      - shared/**/*
 
 trigger_update_executor_manager:
     stage: production
