@@ -93,7 +93,7 @@ export function RightWorkspacePanel({
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const showTabs = openTabs.length > 0
-  const renderTabsInTitlebar = isTauriRuntime() && showTabs
+  const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
   const [browserTitle, setBrowserTitle] = useState<string | null>(null)

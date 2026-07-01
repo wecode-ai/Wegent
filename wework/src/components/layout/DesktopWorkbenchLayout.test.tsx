@@ -3526,6 +3526,43 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
+  test('removes right workspace tabs from the titlebar when the Tauri panel is closed', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+      const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+      expect(rightPanelShell).toHaveStyle({ width: '0px' })
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+      expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+      expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
   test('right workspace panel restores the previous tab after closing and reopening', async () => {
     renderWorkspacePanelLayout()
 
