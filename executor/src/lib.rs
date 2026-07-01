@@ -9,6 +9,7 @@ pub mod callback;
 mod claude_session;
 mod codex_phase;
 pub mod config;
+pub mod custom_runtime;
 pub mod emitter;
 pub mod envd;
 pub mod heartbeat;

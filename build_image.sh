@@ -84,7 +84,7 @@ docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm
 docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-web:${VERSION} -f docker/frontend/Dockerfile .
 
 # Build executor image
-docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-executor:${VERSION} -f docker/executor/Dockerfile .
+docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 --build-arg EXECUTOR_CARGO_FEATURES="${EXECUTOR_CARGO_FEATURES:-}" -t ghcr.io/wecode-ai/wegent-executor:${VERSION} -f docker/executor/Dockerfile .
 
 # Build executor manager image
 docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-executor-manager:${VERSION} -f docker/executor_manager/Dockerfile .

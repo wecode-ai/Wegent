@@ -8,7 +8,11 @@ set -e
 
 echo "Building executor binary..."
 cd /app/executor
-cargo build --release --locked
+if [ -n "${EXECUTOR_CARGO_FEATURES:-}" ]; then
+    cargo build --release --locked --features "${EXECUTOR_CARGO_FEATURES}"
+else
+    cargo build --release --locked
+fi
 
 mkdir -p /app/executor/dist
 cp /app/executor/target/release/wegent-executor /app/executor/dist/wegent-executor
