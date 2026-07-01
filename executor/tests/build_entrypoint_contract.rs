@@ -25,6 +25,7 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/standalone/start.sh",
         "../docker/standalone/Dockerfile",
         "../frontend/e2e/fixtures/claudecode-executor/Dockerfile",
+        "../wecode/docker/executor/Dockerfile",
         "../wework/scripts/dev-executor-sidecar.sh",
         "../wework/src-tauri/build.rs",
         "local.sh",
@@ -84,6 +85,17 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(device_dockerfile.contains("cargo build --release --locked"));
     assert!(device_dockerfile.contains("target/release/wegent-executor"));
+
+    let wecode_executor_dockerfile =
+        fs::read_to_string("../wecode/docker/executor/Dockerfile").unwrap();
+    assert!(
+        wecode_executor_dockerfile.contains("cargo build --release --locked --bin wegent-executor")
+    );
+    assert!(wecode_executor_dockerfile.contains("target/release/wegent-executor"));
+    assert!(wecode_executor_dockerfile.contains("ENV EXECUTOR_MODE=docker"));
+    assert!(wecode_executor_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
+    assert!(!wecode_executor_dockerfile.contains("file_change_sender"));
+    assert!(!wecode_executor_dockerfile.contains("CUSTOM_CONFIG"));
 
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));
