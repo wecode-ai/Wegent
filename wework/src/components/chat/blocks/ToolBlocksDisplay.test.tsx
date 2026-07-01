@@ -212,6 +212,180 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(2)
   })
 
+  test('renders read file activity details as file rows instead of shell commands', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'read-command-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command: 'nl -ba wework/src/components/chat/blocks/toolBlockActivity.ts',
+            },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+          {
+            id: 'read-command-2',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command:
+                '/bin/zsh -lc "sed -n \'1,120p\' wework/src/components/chat/blocks/toolBlockKinds.ts"',
+            },
+            status: 'done',
+            createdAt: 1770000000001,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /已读取 2 个文件/ }))
+
+    expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
+    expect(screen.getByText('Read toolBlockKinds.ts')).toBeInTheDocument()
+    expect(screen.queryByText(/已运行 nl -ba/)).not.toBeInTheDocument()
+  })
+
+  test('renders code search activity details as search summaries instead of shell commands', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'rg-command-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command:
+                '/bin/zsh -lc "rg -n \'ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command\'"',
+              workdir: '/Users/crystal/dev/git/Wegent/wework/src/components/chat/blocks',
+            },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+          {
+            id: 'rg-command-2',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command: "rg -n '已编辑|edited|edited_file|edit.*file' wework",
+            },
+            status: 'done',
+            createdAt: 1770000000001,
+          },
+          {
+            id: 'git-command-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command: 'git diff --name-only',
+            },
+            status: 'done',
+            createdAt: 1770000000002,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const activityToggle = screen.getByRole('button', {
+      name: /已搜索代码 已运行 1 条命令/,
+    })
+    expect(screen.getByTestId('processing-activity-search-icon')).toBeInTheDocument()
+
+    fireEvent.click(activityToggle)
+
+    expect(screen.getByText('已运行 git diff --name-only')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Searched for ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command in blocks'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Searched for 已编辑|edited|edited_file|edit.*file in wework')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/已运行 rg -n/)).not.toBeInTheDocument()
+  })
+
+  test('renders mixed code search and read file activity with specialized rows', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'rg-command-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command: 'rg -n "toolBlock" wework/src/components/chat/blocks',
+            },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+          {
+            id: 'read-command-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: {
+              command: "sed -n '1,220p' wework/src/components/chat/blocks/toolBlockActivity.ts",
+            },
+            status: 'done',
+            createdAt: 1770000000001,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /已读取 1 个文件 已搜索代码/ }))
+
+    const activityContent = screen.getByTestId('processing-activity-group-content')
+      .firstElementChild?.firstElementChild as HTMLElement
+    expect(activityContent).toHaveClass('mt-1.5', 'gap-1.5')
+    expect(activityContent).not.toHaveClass('border-l', 'pl-4', 'gap-3')
+    expect(screen.getByText('Searched for toolBlock in blocks')).toBeInTheDocument()
+    expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
+    expect(screen.queryByText(/已运行 sed -n/)).not.toBeInTheDocument()
+  })
+
+  test('hides internal stdin polling tools from completed activity', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          completedGuidanceBlock,
+          {
+            id: 'stdin-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'write_stdin',
+            toolInput: { session_id: 90870, chars: '' },
+            status: 'done',
+            createdAt: 1770000000001,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('processing-activity-group-label')).toHaveTextContent('已引导对话')
+    expect(screen.queryByRole('button', { name: /已执行 1 个工具/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('已执行')).not.toBeInTheDocument()
+  })
+
   test('renders file changes inside completed processing details', () => {
     render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
 
@@ -232,6 +406,73 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
       'BACKEND_URL=127.0.0.1'
     )
+  })
+
+  test('uses an edit icon for completed edit activity groups', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'patch-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'apply_patch',
+            toolInput: {
+              input: [
+                '*** Begin Patch',
+                '*** Update File: /workspace/project/executor/src/server/mod.rs',
+                '@@',
+                '-old',
+                '+new',
+                '*** End Patch',
+              ].join('\n'),
+            },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByRole('button', { name: /已编辑 1 个文件/ })).toBeInTheDocument()
+    expect(screen.getByTestId('processing-activity-edit-icon')).toBeInTheDocument()
+  })
+
+  test('hides redundant apply_patch activity when file changes are already rendered', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'patch-1',
+            turnId: 1,
+            type: 'tool',
+            toolName: 'apply_patch',
+            toolInput: {
+              input: [
+                '*** Begin Patch',
+                '*** Update File: /tmp/project/scripts/env',
+                '@@',
+                '-OLD_ENV=remote',
+                '+BACKEND_URL=127.0.0.1',
+                '*** End Patch',
+              ].join('\n'),
+            },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+          completedFileChangesBlock,
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
   })
 
   test('only persists the top-level processing expansion state', () => {

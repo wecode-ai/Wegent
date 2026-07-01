@@ -40,7 +40,6 @@ export function ChromeTitlebar({
   return (
     <div
       data-testid="chrome-titlebar"
-      {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
       className={cn(
         'z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none',
         className

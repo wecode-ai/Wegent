@@ -28,6 +28,7 @@ import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
+import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
@@ -596,8 +597,8 @@ describe('DesktopWorkbenchLayout', () => {
             questions: [
               {
                 id: 'implement',
-                question: '实施此计划?',
-                options: [{ label: '是，实施此计划' }],
+                question: '执行此计划?',
+                options: [{ label: '是的，执行此计划' }],
               },
             ],
           },
@@ -1017,7 +1018,7 @@ describe('DesktopWorkbenchLayout', () => {
         requestId: 42,
         itemId: undefined,
         answers: {
-          implement: { answers: ['是，实施此计划'] },
+          implement: { answers: ['是的，执行此计划'] },
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
@@ -1101,7 +1102,11 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
+    const desktopContent = screen.getByTestId('desktop-workbench-content')
+    expect(desktopContent).toHaveClass('pt-11')
+    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe(
+      '136px'
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-x-hidden',
@@ -1677,6 +1682,28 @@ describe('DesktopWorkbenchLayout', () => {
     })
     fireEvent.resize(window)
 
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '240px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+  })
+
+  test('expands an auto-collapsed sidebar from the titlebar toggle request', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 920,
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '0px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+
+    let handled = false
+    act(() => {
+      handled = requestDesktopSidebarToggle()
+    })
+
+    expect(handled).toBe(true)
     await waitFor(() => expect(sidebar).toHaveStyle({ width: '240px' }))
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
   })

@@ -170,8 +170,8 @@ describe('pendingRequestUserInputPayload', () => {
       questions: [
         {
           id: 'implement',
-          question: '实施此计划?',
-          options: [{ label: '是，实施此计划' }],
+          question: '执行此计划?',
+          options: [{ label: '是的，执行此计划' }],
         },
         {
           id: 'adjustment',
@@ -202,7 +202,7 @@ describe('pendingRequestUserInputPayload', () => {
       {
         id: 'user-after-plan',
         role: 'user',
-        content: '是，实施此计划',
+        content: '是的，执行此计划',
         status: 'done',
         createdAt: '2026-06-30T00:00:02.000Z',
       },

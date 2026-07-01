@@ -117,7 +117,11 @@ describe('ChromeTitlebar', () => {
     const spacer = screen.getByTestId('macos-traffic-light-spacer')
     const beforeTabs = screen.getByTestId('chrome-titlebar-before-tabs')
     const activeTab = screen.getByTestId('chrome-tab-wework')
+    const toggleButton = screen.getByRole('button', { name: 'Toggle sidebar' })
     expect(beforeTabs).toHaveTextContent('Toggle sidebar')
+    expect(screen.getByTestId('chrome-titlebar')).not.toHaveAttribute('data-tauri-drag-region')
+    expect(toggleButton.closest('[data-tauri-drag-region]')).toBeNull()
+    expect(activeTab.closest('[data-tauri-drag-region]')).toBeNull()
     expect(
       spacer.compareDocumentPosition(beforeTabs) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -149,8 +153,10 @@ describe('ChromeTitlebar', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    const dragRegion = document.querySelector('[data-tauri-drag-region]')
+    const dragRegion = screen.getByTestId('chrome-titlebar').lastElementChild
     expect(dragRegion).toBeInTheDocument()
+    expect(dragRegion).toHaveAttribute('data-tauri-drag-region')
+    expect(dragRegion).toHaveClass('w-[138px]')
     // Windows spacer is last child (right side)
     expect(dragRegion?.parentElement?.lastChild).toBe(dragRegion)
     disableTauri()

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
-import { buildProcessingDisplayRows, summarizeToolBlocks } from './toolBlockActivity'
+import {
+  buildProcessingDisplayRows,
+  getToolActivityFilePaths,
+  getToolActivitySearchItem,
+  summarizeToolBlocks,
+} from './toolBlockActivity'
 
 function tool(
   id: string,
@@ -57,6 +62,52 @@ describe('toolBlockActivity', () => {
     ).toBe('已搜索代码')
   })
 
+  test('extracts read file paths from shell read commands', () => {
+    expect(
+      getToolActivityFilePaths(
+        tool('nl-1', 'nl -ba wework/src/components/chat/blocks/toolBlockActivity.ts')
+      )
+    ).toEqual(['wework/src/components/chat/blocks/toolBlockActivity.ts'])
+
+    expect(
+      getToolActivityFilePaths(
+        tool(
+          'sed-1',
+          '/bin/zsh -lc "sed -n \'1,120p\' wework/src/components/chat/blocks/toolBlockKinds.ts"'
+        )
+      )
+    ).toEqual(['wework/src/components/chat/blocks/toolBlockKinds.ts'])
+  })
+
+  test('extracts code search summaries from shell search commands', () => {
+    expect(
+      getToolActivitySearchItem({
+        ...tool(
+          'rg-1',
+          '/bin/zsh -lc "rg -n \'ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command\'"'
+        ),
+        toolInput: {
+          command:
+            '/bin/zsh -lc "rg -n \'ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command\'"',
+          workdir: '/Users/crystal/dev/git/Wegent/wework/src/components/chat/blocks',
+        },
+      })
+    ).toMatchObject({
+      query: 'ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command',
+      scope: 'blocks',
+      label:
+        'Searched for ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command in blocks',
+    })
+
+    expect(
+      getToolActivitySearchItem(tool('rg-2', "rg -n '已编辑|edited|edited_file|edit.*file' wework"))
+    ).toMatchObject({
+      query: '已编辑|edited|edited_file|edit.*file',
+      scope: 'wework',
+      label: 'Searched for 已编辑|edited|edited_file|edit.*file in wework',
+    })
+  })
+
   test('summarizes mid-turn user guidance activity', () => {
     expect(
       summarizeToolBlocks([
@@ -71,6 +122,35 @@ describe('toolBlockActivity', () => {
         },
       ])
     ).toBe('已引导对话')
+  })
+
+  test('hides internal stdin polling tools from activity rows', () => {
+    const rows = buildProcessingDisplayRows([
+      {
+        id: 'guidance-1',
+        turnId: 1,
+        type: 'tool',
+        toolName: 'conversation_guidance',
+        toolInput: { message: 'follow this file' },
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'stdin-1',
+        turnId: 1,
+        type: 'tool',
+        toolName: 'write_stdin',
+        toolInput: { session_id: 90870, chars: '' },
+        status: 'done',
+        createdAt: 1770000000001,
+      },
+    ])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      type: 'activity_group',
+      label: '已引导对话',
+    })
   })
 
   test('classifies Claude multi-file edit tools as edit activity', () => {

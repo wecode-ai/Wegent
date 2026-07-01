@@ -14,6 +14,7 @@ import type {
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { MessageSource, ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
@@ -77,7 +78,10 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_done',
         messageId,
         turnId: payload.subtask_id,
-        content: typeof payload.result.value === 'string' ? payload.result.value : undefined,
+        content:
+          typeof payload.result.value === 'string'
+            ? stripCodexUiDirectives(payload.result.value)
+            : undefined,
         blocks: getResultBlocks(payload.subtask_id, payload.result),
         fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
       })
@@ -279,7 +283,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     id: message.id,
     role,
     turnId,
-    content: message.content,
+    content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
     runtimeMessageIndex,
     status,
     runtimeStatus,

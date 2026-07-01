@@ -1,5 +1,6 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
@@ -33,6 +34,7 @@ import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
@@ -78,6 +80,7 @@ const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
 const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
+const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
   /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -380,7 +383,9 @@ function UserMessage({
     () => parseCodexLocalFileMentions(message.content),
     [message.content]
   )
-  const displayContent = codexLocalFileMentions?.requestText ?? message.content
+  const displayContent = normalizeCodexUserMessageContent(
+    codexLocalFileMentions?.requestText ?? message.content
+  )
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
     [message.attachments]
@@ -567,27 +572,54 @@ function AssistantPlanCard({
     URL.revokeObjectURL(url)
   }
 
+  const openPlan = () => {
+    onOpenPlan?.(content)
+  }
+
+  const handleCardClick = (event: ReactMouseEvent<HTMLElement>) => {
+    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
+    openPlan()
+  }
+
+  const handleCardKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
+    event.preventDefault()
+    openPlan()
+  }
+
   return (
     <section
       data-testid="assistant-plan-card"
-      className="my-3 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+      role={onOpenPlan ? 'button' : undefined}
+      tabIndex={onOpenPlan ? 0 : undefined}
+      aria-label={onOpenPlan ? t('plan_card.expand') : undefined}
+      onClick={onOpenPlan ? handleCardClick : undefined}
+      onKeyDown={onOpenPlan ? handleCardKeyDown : undefined}
+      className={cn(
+        'my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+        onOpenPlan &&
+          'cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/70'
+      )}
     >
-      <div className="flex min-h-10 items-center justify-between gap-3 px-4 py-2 text-text-muted">
+      <div className="flex min-h-9 items-center justify-between gap-3 px-4 py-1.5 text-text-muted">
         <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
           <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
           <span>{t('plan_card.title')}</span>
         </div>
-        <PlanCardActions
-          content={content}
-          onDownload={handleDownload}
-          onExpand={() => onOpenPlan?.(content)}
-        />
+        <PlanCardActions content={content} onDownload={handleDownload} onExpand={openPlan} />
       </div>
-      <div className="relative max-h-[360px] overflow-hidden px-4 pb-4 pt-3">
-        <div className="assistant-plan-card-content text-[15px] leading-7 text-text-primary">
+      <div
+        data-testid="assistant-plan-card-preview"
+        className="relative max-h-[168px] overflow-hidden px-4 pb-3 pt-2"
+      >
+        <div
+          data-testid="assistant-plan-card-content"
+          className="assistant-plan-card-content text-sm leading-6 text-text-primary [&_.assistant-markdown_h1]:mb-3 [&_.assistant-markdown_h1]:mt-2 [&_.assistant-markdown_h2]:mb-2 [&_.assistant-markdown_h2]:mt-3 [&_.assistant-markdown_p]:mb-2 [&_.assistant-markdown_p]:leading-5 [&_.assistant-markdown_ul]:mb-2 [&_.assistant-markdown_ul]:space-y-1 [&_.assistant-markdown_li]:leading-5"
+        >
           <AssistantMarkdown content={content} />
         </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
       </div>
     </section>
   )
@@ -655,7 +687,10 @@ function PlanCardActions({
           data-testid={action.testId}
           aria-label={action.label}
           title={action.label}
-          onClick={action.onClick}
+          onClick={event => {
+            event.stopPropagation()
+            action.onClick()
+          }}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
         >
           {action.icon}
@@ -675,6 +710,21 @@ function isAssistantPlanContent(content: string): boolean {
     normalizedContent !== content ||
     (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
   )
+}
+
+function isNestedInteractiveElement(
+  target: EventTarget | null,
+  currentTarget: HTMLElement
+): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const interactiveTarget = target.closest('button,a,input,textarea,select')
+  return Boolean(interactiveTarget && interactiveTarget !== currentTarget)
+}
+
+function normalizeCodexUserMessageContent(content: string): string {
+  return content.trimStart().startsWith(CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX)
+    ? CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL
+    : content
 }
 
 function parseCodexLocalFileMentions(content: string): {

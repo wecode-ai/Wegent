@@ -1259,12 +1259,16 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass('right-0', 'w-64')
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-gpt')).toHaveTextContent('海外:gpt-5.5')
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-collaborationMode-default')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-collaborationMode-plan')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-collaborationMode-default')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-collaborationMode-plan')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
@@ -1281,6 +1285,91 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
+  test('opens desktop speed options from a collapsed model control submenu', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
+
+    await userEvent.hover(screen.getByTestId('model-control-menu-speed'))
+
+    expect(screen.getByTestId('model-control-speed-standard')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
+
+    await userEvent.click(screen.getByTestId('model-control-speed-fast'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+  })
+
+  test('hides the desktop model submenu after the pointer leaves the menu', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(screen.getByTestId('model-selector-menu').parentElement as HTMLElement)
+
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
   })
 
   test('keeps the desktop model menu in narrow Tauri windows', async () => {
@@ -1587,7 +1676,7 @@ describe('ChatInput', () => {
     })
   })
 
-  test('selects Codex plan mode from the desktop model menu', async () => {
+  test('omits Codex plan mode from the desktop model menu', async () => {
     const model: UnifiedModel = {
       name: 'codex-gpt-5.5',
       type: 'user',
@@ -1601,7 +1690,6 @@ describe('ChatInput', () => {
         },
       },
     }
-    const setSelectedModelOption = vi.fn()
     render(
       <ChatInput
         value=""
@@ -1613,18 +1701,17 @@ describe('ChatInput', () => {
           models: [model],
           selectedModel: model,
           selectedModelOptions: { reasoning: 'high' },
-          setSelectedModelOption,
         })}
       />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.click(screen.getByTestId('model-control-collaborationMode-plan'))
 
-    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
-    await waitFor(() => {
-      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
-    })
+    const menu = within(screen.getByTestId('model-selector-menu'))
+    expect(screen.queryByTestId('model-control-collaborationMode-default')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-collaborationMode-plan')).not.toBeInTheDocument()
+    expect(menu.queryByText('运行模式')).not.toBeInTheDocument()
+    expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
   test('keeps reasoning controls for the selected GPT model while hovering another family', async () => {

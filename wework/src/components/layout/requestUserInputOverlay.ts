@@ -1,5 +1,9 @@
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
-import { isPendingRequestUserInputBlock } from '@/components/chat/requestUserInputMessages'
+import {
+  CODEX_IMPLEMENT_PLAN_QUESTION,
+  CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL,
+  isPendingRequestUserInputBlock,
+} from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
@@ -31,8 +35,8 @@ function pendingImplementationPlanPayload(
     questions: [
       {
         id: 'implement',
-        question: '实施此计划?',
-        options: [{ label: '是，实施此计划' }],
+        question: CODEX_IMPLEMENT_PLAN_QUESTION,
+        options: [{ label: CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL }],
       },
       {
         id: 'adjustment',
