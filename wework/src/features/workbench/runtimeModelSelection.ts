@@ -115,7 +115,7 @@ export function selectedModelExecutionFields(
   selectedModel: UnifiedModel | null,
   selectedModelOptions: ModelOptions
 ): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> {
-  const modelOptions = {
+  const modelOptions: ModelOptions = {
     ...selectedModelOptions,
     collaborationMode: selectedModelOptions.collaborationMode ?? 'default',
   }
