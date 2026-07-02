@@ -53,8 +53,18 @@ export interface LocalExecutorBackendConnection {
   authToken: string
 }
 
+let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
-  return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
+  if (!ensureLocalExecutorStartedPromise) {
+    ensureLocalExecutorStartedPromise = invoke<LocalExecutorStatus>(
+      LOCAL_EXECUTOR_COMMANDS.ensure
+    ).finally(() => {
+      ensureLocalExecutorStartedPromise = null
+    })
+  }
+
+  return ensureLocalExecutorStartedPromise
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {

@@ -35,6 +35,7 @@ const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
+const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
@@ -311,6 +312,13 @@ struct LocalExecutorSocketDebug {
     path: String,
     exists: bool,
     file_type: String,
+}
+
+#[cfg(unix)]
+struct PreparedExecutorStream {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+    ready_line: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -895,13 +903,9 @@ fn connect_sidecar_socket() -> Result<UnixStream, String> {
 }
 
 #[cfg(unix)]
-fn attach_connected_stream(
-    app: tauri::AppHandle,
-    state: &LocalExecutorState,
-    stream: UnixStream,
-) -> Result<(), String> {
+fn prepare_connected_stream(stream: UnixStream) -> Result<PreparedExecutorStream, String> {
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
         .map_err(|error| format!("Failed to configure local executor socket timeout: {error}"))?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
@@ -919,13 +923,50 @@ fn attach_connected_stream(
         .get_ref()
         .try_clone()
         .map_err(|error| format!("Failed to clone local executor socket: {error}"))?;
+
+    Ok(PreparedExecutorStream {
+        reader,
+        writer,
+        ready_line,
+    })
+}
+
+#[cfg(unix)]
+fn connect_and_prepare_sidecar_socket() -> Result<PreparedExecutorStream, String> {
+    prepare_connected_stream(connect_sidecar_socket()?)
+}
+
+#[cfg(unix)]
+async fn connect_and_prepare_sidecar_socket_with_timeout() -> Result<PreparedExecutorStream, String>
+{
+    let (sender, receiver) = mpsc::channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = sender.send(connect_and_prepare_sidecar_socket());
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv_timeout(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS + 1))
+            .unwrap_or_else(|_| Err("Timed out waiting for local executor ready event".to_string()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(unix)]
+fn attach_prepared_stream(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+    prepared: PreparedExecutorStream,
+) -> Result<(), String> {
+    let mut reader = prepared.reader;
     let generation = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.generation = inner.generation.saturating_add(1);
-        inner.stream = Some(writer);
+        inner.stream = Some(prepared.writer);
         inner.running = true;
         inner.ready = false;
         inner.device_id = Some(
@@ -937,7 +978,7 @@ fn attach_connected_stream(
         inner.error = None;
         inner.generation
     };
-    handle_executor_line_inner(&app, &state.inner, &ready_line)?;
+    handle_executor_line_inner(&app, &state.inner, &prepared.ready_line)?;
     {
         let inner = state
             .inner
@@ -972,6 +1013,15 @@ fn attach_connected_stream(
     });
 
     Ok(())
+}
+
+#[cfg(unix)]
+async fn connect_and_attach_sidecar_socket(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+) -> Result<(), String> {
+    let prepared = connect_and_prepare_sidecar_socket_with_timeout().await?;
+    attach_prepared_stream(app, state, prepared)
 }
 
 #[cfg(unix)]
@@ -1143,16 +1193,16 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    let mut last_error = match connect_sidecar_socket() {
-        Ok(stream) => return attach_connected_stream(app, state, stream),
+    let mut last_error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
+        Ok(()) => return Ok(()),
         Err(error) => error,
     };
 
     spawn_sidecar_if_needed(app.clone(), state).await?;
 
     for _ in 0..LOCAL_EXECUTOR_CONNECT_RETRIES {
-        match connect_sidecar_socket() {
-            Ok(stream) => return attach_connected_stream(app.clone(), state, stream),
+        match connect_and_attach_sidecar_socket(app.clone(), state).await {
+            Ok(()) => return Ok(()),
             Err(error) => {
                 last_error = error;
                 retry_connect_delay().await;
