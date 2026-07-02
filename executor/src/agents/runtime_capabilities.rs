@@ -10,7 +10,12 @@ use std::{
     time::Duration,
 };
 
-use reqwest::StatusCode;
+use futures_util::{stream, StreamExt};
+use reqwest::{
+    header::{ETAG, IF_NONE_MATCH},
+    StatusCode,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -26,6 +31,8 @@ use crate::{
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
+const SKILL_DOWNLOAD_CONCURRENCY: usize = 4;
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request.extra.get("interactive_form_answer").is_some() {
@@ -361,7 +368,7 @@ async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
         SkillDeploymentOptions {
             skills_dir: skills_dir.to_path_buf(),
             clear_cache: is_docker_mode(),
-            skip_existing: !is_docker_mode(),
+            skip_existing: false,
         },
     ) else {
         return;
@@ -653,26 +660,55 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
     })?;
 
     let client = reqwest::Client::new();
-    let mut success_count = 0;
-    for skill in &plan.skills {
-        let target = plan.skills_dir.join(skill);
-        if plan.skip_existing && target.is_dir() {
-            success_count += 1;
-            continue;
-        }
-        if plan.clear_cache && target.exists() {
-            let _ = fs::remove_dir_all(&target);
-        }
-        let skill_ref = plan.resolved_skill_map.get(skill);
-        match download_skill(&client, plan, skill, skill_ref, api_base_url).await {
-            Ok(true) => success_count += 1,
-            Ok(false) => {}
-            Err(error) => {
-                let mut fields = vec![("skill", skill.clone())];
-                push_error_fields(&mut fields, error);
-                log_executor_event("skill deployment item skipped after error", &fields);
+    let results = stream::iter(plan.skills.iter().cloned())
+        .map(|skill| {
+            let client = &client;
+            async move {
+                let target = plan.skills_dir.join(&skill);
+                let skill_ref = plan.resolved_skill_map.get(&skill);
+                if !should_download_skill(&plan.skills_dir, &skill, skill_ref)? {
+                    return Ok::<SkillDeploymentResult, String>(SkillDeploymentResult {
+                        success: true,
+                        installed: None,
+                    });
+                }
+                if plan.clear_cache && target.exists() {
+                    let _ = fs::remove_dir_all(&target);
+                }
+                match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
+                    Ok(result) => Ok(result),
+                    Err(error) => {
+                        let mut fields = vec![("skill", skill.clone())];
+                        push_error_fields(&mut fields, error);
+                        log_executor_event("skill deployment item skipped after error", &fields);
+                        Ok(SkillDeploymentResult {
+                            success: false,
+                            installed: None,
+                        })
+                    }
+                }
             }
-        }
+        })
+        .buffer_unordered(SKILL_DOWNLOAD_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+    let success_count = results
+        .iter()
+        .filter(|result| matches!(result, Ok(SkillDeploymentResult { success: true, .. })))
+        .count();
+    for installed in results
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|result| result.installed)
+    {
+        record_installed_skill(
+            &plan.skills_dir,
+            &installed.skill_name,
+            installed.skill_id,
+            &installed.namespace,
+            installed.content_hash,
+        )?;
     }
 
     log_executor_event(
@@ -686,31 +722,222 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
     Ok(())
 }
 
+struct SkillDeploymentResult {
+    success: bool,
+    installed: Option<DownloadedSkillRecord>,
+}
+
+struct DownloadedSkillRecord {
+    skill_name: String,
+    skill_id: i64,
+    namespace: String,
+    content_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct InstalledSkillRecord {
+    skill_id: i64,
+    namespace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_hash: Option<String>,
+}
+
+fn skill_manifest_path(skills_dir: &Path) -> PathBuf {
+    skills_dir.join(SKILL_MANIFEST_FILE)
+}
+
+fn read_skill_manifest(
+    skills_dir: &Path,
+) -> Result<BTreeMap<String, InstalledSkillRecord>, String> {
+    let path = skill_manifest_path(skills_dir);
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+}
+
+fn write_skill_manifest(
+    skills_dir: &Path,
+    manifest: &BTreeMap<String, InstalledSkillRecord>,
+) -> Result<(), String> {
+    let path = skill_manifest_path(skills_dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    let content = serde_json::to_string_pretty(manifest)
+        .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
+    fs::write(&path, content)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn should_download_skill(
+    skills_dir: &Path,
+    skill_name: &str,
+    skill_ref: Option<&SkillRef>,
+) -> Result<bool, String> {
+    if !skills_dir.join(skill_name).join("SKILL.md").is_file() {
+        return Ok(true);
+    }
+    let Some(skill_ref) = skill_ref else {
+        return Ok(true);
+    };
+    let Some(content_hash) = skill_ref.content_hash.as_deref() else {
+        return Ok(true);
+    };
+    let manifest = read_skill_manifest(skills_dir)?;
+    let Some(installed) = manifest.get(skill_name) else {
+        return Ok(true);
+    };
+    Ok(installed.skill_id != skill_ref.skill_id
+        || installed.namespace != skill_ref.namespace
+        || installed.content_hash.as_deref() != Some(content_hash))
+}
+
+fn installed_skill_hash(skills_dir: &Path, skill_name: &str) -> Option<String> {
+    read_skill_manifest(skills_dir).ok().and_then(|manifest| {
+        manifest
+            .get(skill_name)
+            .and_then(|record| record.content_hash.clone())
+    })
+}
+
+fn record_installed_skill(
+    skills_dir: &Path,
+    skill_name: &str,
+    skill_id: i64,
+    namespace: &str,
+    content_hash: Option<String>,
+) -> Result<(), String> {
+    let mut manifest = read_skill_manifest(skills_dir).unwrap_or_default();
+    manifest.insert(
+        skill_name.to_owned(),
+        InstalledSkillRecord {
+            skill_id,
+            namespace: namespace.to_owned(),
+            content_hash,
+        },
+    );
+    write_skill_manifest(skills_dir, &manifest)
+}
+
 async fn download_skill(
     client: &reqwest::Client,
     plan: &SkillDeploymentPlan,
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
     api_base_url: &str,
-) -> Result<bool, String> {
+) -> Result<SkillDeploymentResult, String> {
     let Some((skill_id, namespace)) =
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {
-        return Ok(false);
+        return Ok(SkillDeploymentResult {
+            success: false,
+            installed: None,
+        });
     };
     let mut path = format!("/api/v1/kinds/skills/{skill_id}/download?namespace={namespace}");
     if let Some(task_id) = plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
-    let bytes = get_bytes(
+    let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
+    let download = get_skill_archive(
         client,
         &plan.auth_token,
         api_base_url,
         &path,
+        local_hash.as_deref(),
         DOWNLOAD_TIMEOUT,
     )
     .await?;
-    extract_skill_zip(skill_name, &bytes, &plan.skills_dir)
+    match download {
+        SkillArchiveResponse::NotModified => Ok(SkillDeploymentResult {
+            success: true,
+            installed: None,
+        }),
+        SkillArchiveResponse::Archive {
+            bytes,
+            content_hash,
+        } => {
+            let extracted = extract_skill_zip(skill_name, &bytes, &plan.skills_dir)?;
+            let installed = extracted.then(|| DownloadedSkillRecord {
+                skill_name: skill_name.to_owned(),
+                skill_id,
+                namespace,
+                content_hash: skill_ref
+                    .and_then(|value| value.content_hash.clone())
+                    .or(content_hash),
+            });
+            Ok(SkillDeploymentResult {
+                success: extracted,
+                installed,
+            })
+        }
+    }
+}
+
+enum SkillArchiveResponse {
+    NotModified,
+    Archive {
+        bytes: Vec<u8>,
+        content_hash: Option<String>,
+    },
+}
+
+async fn get_skill_archive(
+    client: &reqwest::Client,
+    auth_token: &str,
+    api_base_url: &str,
+    path: &str,
+    local_hash: Option<&str>,
+    timeout: Duration,
+) -> Result<SkillArchiveResponse, String> {
+    let mut request = client
+        .get(api_url(api_base_url, path))
+        .bearer_auth(auth_token)
+        .timeout(timeout);
+    if let Some(local_hash) = local_hash.map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.header(IF_NONE_MATCH, quote_etag(local_hash));
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("backend download failed: {error}"))?;
+    if response.status() == StatusCode::NOT_MODIFIED {
+        return Ok(SkillArchiveResponse::NotModified);
+    }
+    if response.status() != StatusCode::OK {
+        return Err(format!(
+            "backend download failed with HTTP {}",
+            response.status()
+        ));
+    }
+    let content_hash = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(normalize_etag_hash);
+    let bytes = response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| format!("backend download body read failed: {error}"))?;
+    Ok(SkillArchiveResponse::Archive {
+        bytes,
+        content_hash,
+    })
+}
+
+fn quote_etag(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"');
+    format!("\"{trimmed}\"")
+}
+
+fn normalize_etag_hash(value: &str) -> String {
+    value.trim().trim_matches('"').to_owned()
 }
 
 async fn resolve_skill(
@@ -774,33 +1001,6 @@ async fn get_json(
         .json::<Value>()
         .await
         .map_err(|error| format!("backend response JSON parse failed: {error}"))
-}
-
-async fn get_bytes(
-    client: &reqwest::Client,
-    auth_token: &str,
-    api_base_url: &str,
-    path: &str,
-    timeout: Duration,
-) -> Result<Vec<u8>, String> {
-    let response = client
-        .get(api_url(api_base_url, path))
-        .bearer_auth(auth_token)
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|error| format!("backend download failed: {error}"))?;
-    if response.status() != StatusCode::OK {
-        return Err(format!(
-            "backend download failed with HTTP {}",
-            response.status()
-        ));
-    }
-    response
-        .bytes()
-        .await
-        .map(|bytes| bytes.to_vec())
-        .map_err(|error| format!("backend download body read failed: {error}"))
 }
 
 fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Result<bool, String> {
@@ -1614,6 +1814,11 @@ fn toml_json_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     fn attachment(
         id: i64,
@@ -1674,5 +1879,181 @@ mod tests {
         assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
         assert_eq!(payload["attachments"][1]["status"], "failed");
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
+    }
+
+    #[test]
+    fn skill_manifest_skips_current_installed_skill() {
+        let temp = env::temp_dir().join(format!("skill-manifest-current-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let skill_dir = skills_dir.join("agent-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Skill").unwrap();
+        write_skill_manifest(
+            &skills_dir,
+            &BTreeMap::from([(
+                "agent-skill".to_owned(),
+                InstalledSkillRecord {
+                    skill_id: 44,
+                    namespace: "default".to_owned(),
+                    content_hash: Some("sha256:abc".to_owned()),
+                },
+            )]),
+        )
+        .unwrap();
+
+        let skill_ref = SkillRef {
+            skill_id: 44,
+            namespace: "default".to_owned(),
+            is_public: false,
+            content_hash: Some("sha256:abc".to_owned()),
+        };
+
+        assert!(!should_download_skill(&skills_dir, "agent-skill", Some(&skill_ref)).unwrap());
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[tokio::test]
+    async fn deploy_skills_keeps_current_skill_when_clear_cache_is_enabled() {
+        let temp =
+            env::temp_dir().join(format!("skill-clear-cache-current-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let skill_dir = skills_dir.join("agent-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Skill").unwrap();
+        write_skill_manifest(
+            &skills_dir,
+            &BTreeMap::from([(
+                "agent-skill".to_owned(),
+                InstalledSkillRecord {
+                    skill_id: 44,
+                    namespace: "default".to_owned(),
+                    content_hash: Some("sha256:abc".to_owned()),
+                },
+            )]),
+        )
+        .unwrap();
+        let plan = SkillDeploymentPlan {
+            skills: vec!["agent-skill".to_owned()],
+            auth_token: "token".to_owned(),
+            team_namespace: "default".to_owned(),
+            task_id: Some(88),
+            skills_dir: skills_dir.clone(),
+            clear_cache: true,
+            skip_existing: false,
+            resolved_skill_map: BTreeMap::from([(
+                "agent-skill".to_owned(),
+                SkillRef {
+                    skill_id: 44,
+                    namespace: "default".to_owned(),
+                    is_public: false,
+                    content_hash: Some("sha256:abc".to_owned()),
+                },
+            )]),
+        };
+
+        deploy_skills(&plan, "http://127.0.0.1:1").await.unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
+            "# Skill"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[tokio::test]
+    async fn deploy_skills_records_all_concurrent_downloads_in_manifest() {
+        let temp =
+            env::temp_dir().join(format!("skill-concurrent-manifest-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let api_base_url = serve_skill_archive_responses(BTreeMap::from([
+            (44, skill_zip_bytes("agent-skill-a")),
+            (45, skill_zip_bytes("agent-skill-b")),
+        ]))
+        .await;
+        let plan = SkillDeploymentPlan {
+            skills: vec!["agent-skill-a".to_owned(), "agent-skill-b".to_owned()],
+            auth_token: "token".to_owned(),
+            team_namespace: "default".to_owned(),
+            task_id: Some(88),
+            skills_dir: skills_dir.clone(),
+            clear_cache: true,
+            skip_existing: false,
+            resolved_skill_map: BTreeMap::from([
+                (
+                    "agent-skill-a".to_owned(),
+                    SkillRef {
+                        skill_id: 44,
+                        namespace: "default".to_owned(),
+                        is_public: false,
+                        content_hash: Some("sha256:a".to_owned()),
+                    },
+                ),
+                (
+                    "agent-skill-b".to_owned(),
+                    SkillRef {
+                        skill_id: 45,
+                        namespace: "default".to_owned(),
+                        is_public: false,
+                        content_hash: Some("sha256:b".to_owned()),
+                    },
+                ),
+            ]),
+        };
+
+        deploy_skills(&plan, &api_base_url).await.unwrap();
+
+        let manifest = read_skill_manifest(&skills_dir).unwrap();
+        assert_eq!(manifest.len(), 2);
+        assert_eq!(
+            manifest["agent-skill-a"].content_hash.as_deref(),
+            Some("sha256:a")
+        );
+        assert_eq!(
+            manifest["agent-skill-b"].content_hash.as_deref(),
+            Some("sha256:b")
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    async fn serve_skill_archive_responses(bodies: BTreeMap<i64, Vec<u8>>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for _ in 0..bodies.len() {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 8192];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                let skill_id = request
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|path| path.split("/skills/").nth(1))
+                    .and_then(|rest| rest.split('/').next())
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap();
+                let body = bodies.get(&skill_id).unwrap();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(body).await.unwrap();
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn skill_zip_bytes(skill_name: &str) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::FileOptions::default();
+        writer
+            .start_file(format!("{skill_name}/SKILL.md"), options)
+            .unwrap();
+        writer.write_all(b"# Skill").unwrap();
+        writer.finish().unwrap().into_inner()
     }
 }

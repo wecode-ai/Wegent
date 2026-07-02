@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -33,6 +34,8 @@ use crate::{
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
+const CLAUDE_TASK_SKILL_DOWNLOAD_CONCURRENCY: usize = 4;
+const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub(super) fn restore_claude_plugin_cache(request: &ExecutionRequest, spec: &CommandSpec) {
     let Some(config_dir) = spec
@@ -532,7 +535,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
         SkillDeploymentOptions {
             skills_dir,
             clear_cache: false,
-            skip_existing: true,
+            skip_existing: false,
         },
     ) else {
         return;
@@ -542,31 +545,168 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     };
 
     let provider = HttpPackageProvider::new(backend_url, plan.auth_token.clone());
-    for skill_name in &plan.skills {
-        let Some(skill_ref) = plan.resolved_skill_map.get(skill_name) else {
-            continue;
-        };
-        let target = plan.skills_dir.join(skill_name);
-        if plan.skip_existing && target.join("SKILL.md").is_file() {
-            continue;
-        }
-        let mut fields = task_fields(request.task_id, request.subtask_id);
-        fields.push(("skill", skill_name.clone()));
-        fields.push(("target", target.display().to_string()));
-        let spec = SkillSyncSpec {
-            name: skill_name.clone(),
-            skill_id: skill_ref.skill_id,
-            namespace: skill_ref.namespace.clone(),
-            is_public: skill_ref.is_public,
-        };
-        match provider.stage_skill(&spec, &target).await {
-            Ok(()) => log_executor_event("claude task skill deployed", &fields),
-            Err(error) => {
-                push_error_fields(&mut fields, error);
-                log_executor_event("claude task skill deployment failed", &fields);
+    stream::iter(plan.skills.iter().cloned())
+        .map(|skill_name| {
+            let provider = provider.clone();
+            let plan = &plan;
+            async move {
+                let Some(skill_ref) = plan.resolved_skill_map.get(&skill_name) else {
+                    return;
+                };
+                let target = plan.skills_dir.join(&skill_name);
+                let Some(cache_miss_reason) =
+                    claude_task_skill_cache_miss_reason(&target, skill_ref)
+                else {
+                    return;
+                };
+                let mut fields = task_fields(request.task_id, request.subtask_id);
+                fields.push(("skill", skill_name.clone()));
+                fields.push(("target", target.display().to_string()));
+                fields.push(("reason", cache_miss_reason));
+                fields.push(("skill_id", skill_ref.skill_id.to_string()));
+                fields.push(("namespace", skill_ref.namespace.clone()));
+                fields.push((
+                    "content_hash",
+                    skill_ref.content_hash.clone().unwrap_or_default(),
+                ));
+                log_executor_event("claude task skill cache miss", &fields);
+                let spec = SkillSyncSpec {
+                    name: skill_name.clone(),
+                    skill_id: skill_ref.skill_id,
+                    namespace: skill_ref.namespace.clone(),
+                    is_public: skill_ref.is_public,
+                    content_hash: skill_ref.content_hash.clone(),
+                };
+                match provider.stage_skill(&spec, &target).await {
+                    Ok(()) => {
+                        let _ = write_claude_task_skill_marker(&target, skill_ref);
+                        log_executor_event("claude task skill deployed", &fields)
+                    }
+                    Err(error) => {
+                        push_error_fields(&mut fields, error);
+                        log_executor_event("claude task skill deployment failed", &fields);
+                    }
+                }
             }
-        }
+        })
+        .buffer_unordered(CLAUDE_TASK_SKILL_DOWNLOAD_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+}
+
+fn claude_task_skill_cache_miss_reason(
+    target: &Path,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> Option<String> {
+    if !target.join("SKILL.md").is_file() {
+        return Some("missing_skill_file".to_owned());
     }
+    let manifest_status = claude_task_skill_manifest_cache_status(target, skill_ref);
+    if manifest_status.is_ok() {
+        return None;
+    }
+    let marker_status = claude_task_skill_marker_cache_status(target, skill_ref);
+    if marker_status.is_ok() {
+        return None;
+    }
+    Some(format!(
+        "manifest={};marker={}",
+        manifest_status.unwrap_err(),
+        marker_status.unwrap_err()
+    ))
+}
+
+fn claude_task_skill_manifest_cache_status(
+    target: &Path,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> Result<(), String> {
+    let Some(skill_name) = target.file_name().and_then(|value| value.to_str()) else {
+        return Err("invalid_target".to_owned());
+    };
+    let Some(skills_dir) = target.parent() else {
+        return Err("missing_skills_dir".to_owned());
+    };
+    let path = skills_dir.join(SKILL_MANIFEST_FILE);
+    let value = read_json_value(&path)?;
+    let Some(record) = value.get(skill_name) else {
+        return Err("record_missing".to_owned());
+    };
+    claude_task_skill_record_cache_status(record, skill_ref)
+}
+
+fn claude_task_skill_marker_cache_status(
+    target: &Path,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> Result<(), String> {
+    let value = read_json_value(&target.join(".wegent-skill.json"))?;
+    claude_task_skill_record_cache_status(&value, skill_ref)
+}
+
+fn read_json_value(path: &Path) -> Result<Value, String> {
+    let content = fs::read_to_string(path).map_err(|error| format!("read_failed({error})"))?;
+    serde_json::from_str::<Value>(&content).map_err(|error| format!("parse_failed({error})"))
+}
+
+fn claude_task_skill_record_cache_status(
+    record: &Value,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> Result<(), String> {
+    if is_claude_task_skill_record_current(record, skill_ref) {
+        Ok(())
+    } else {
+        Err(format!("record_mismatch({})", skill_record_summary(record)))
+    }
+}
+
+fn is_claude_task_skill_record_current(
+    record: &Value,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> bool {
+    if record.get("skill_id").and_then(Value::as_i64) != Some(skill_ref.skill_id)
+        || record.get("namespace").and_then(Value::as_str) != Some(skill_ref.namespace.as_str())
+    {
+        return false;
+    }
+    match skill_ref.content_hash.as_deref() {
+        Some(content_hash) => {
+            record.get("content_hash").and_then(Value::as_str) == Some(content_hash)
+        }
+        None => true,
+    }
+}
+
+fn skill_record_summary(record: &Value) -> String {
+    format!(
+        "skill_id={},namespace={},content_hash={}",
+        record
+            .get("skill_id")
+            .and_then(Value::as_i64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<missing>".to_owned()),
+        record
+            .get("namespace")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>"),
+        record
+            .get("content_hash")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>")
+    )
+}
+
+fn write_claude_task_skill_marker(
+    target: &Path,
+    skill_ref: &crate::services::skill_deployer::SkillRef,
+) -> std::io::Result<()> {
+    let marker = json!({
+        "skill_id": skill_ref.skill_id,
+        "namespace": &skill_ref.namespace,
+        "content_hash": skill_ref.content_hash,
+    });
+    fs::write(
+        target.join(".wegent-skill.json"),
+        serde_json::to_vec_pretty(&marker)?,
+    )
 }
 
 fn task_backend_url(request: &ExecutionRequest) -> Option<String> {
