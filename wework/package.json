@@ -9,6 +9,7 @@
     "tauri": "tauri",
     "build": "tsc -b && vite build",
     "build:mac": "bash scripts/build-mac-app.sh",
+    "build:mac:devtools": "WEWORK_RELEASE_DEVTOOLS=1 bash scripts/build-mac-app.sh",
     "ios:init": "tauri ios init",
     "dev:ios": "bash scripts/dev-ios-app.sh",
     "build:ios": "bash scripts/build-ios-app.sh",

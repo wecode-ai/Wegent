@@ -456,6 +456,41 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
+  test('closes local terminal sessions when the workspace panel unmounts', async () => {
+    const { unmount } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+    await waitFor(() => expect(startLocalTerminalMock).toHaveBeenCalled())
+
+    unmount()
+
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
+  })
+
+  test('closes local terminal sessions when the workspace target changes', async () => {
+    const nextProject = {
+      ...project,
+      id: 8,
+      name: 'project39',
+      config: {
+        ...project.config,
+        workspace: {
+          ...project.config.workspace,
+          localPath: '/workspace/projects/project39',
+        },
+      },
+    }
+    const { rerender } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+    await waitFor(() => expect(startLocalTerminalMock).toHaveBeenCalled())
+
+    rerender(<WorkspacePanelCards currentProject={nextProject} devices={[]} />)
+
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
+    expect(screen.queryByTestId('embedded-local-terminal')).not.toBeInTheDocument()
+  })
+
   test('waits for the local terminal check before default-opening local project terminals', async () => {
     const api = createProjectApiMock()
     const pathCheck = createDeferred<boolean>()
