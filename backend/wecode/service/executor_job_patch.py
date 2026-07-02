@@ -76,10 +76,25 @@ async def _cleanup_orphan_pod(
 
     # Step 2: fallback — delete K8s pod by name directly
     logger.info(
-        "+++ [executor_job] Falling back to direct pod delete task_id=%s pod_name=%s",
+        "+++ [executor_job] Falling back to direct pod delete task_id=%s pod_name=%s cleanup_result=%s",
+        task_id,
+        pod_name,
+        cleanup_result,
+    )
+    # TEMP: direct pod deletion disabled during safe rollout. Only log the
+    # candidate instead of calling delete_pod_by_name_async.
+    logger.info(
+        "+++ [executor_job] Direct pod delete disabled, skipping task_id=%s pod_name=%s",
         task_id,
         pod_name,
     )
+    return {
+        "task_id": task_id,
+        "pod_name": pod_name,
+        "deleted": False,
+        "skipped": True,
+        "reason": "direct_delete_disabled",
+    }
     try:
         result = await ek_service.delete_pod_by_name_async(pod_name)
     except Exception as exc:
