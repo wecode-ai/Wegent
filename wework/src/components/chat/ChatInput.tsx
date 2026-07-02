@@ -303,7 +303,12 @@ export function ChatInput({
         }}
         onClearCodeComments={onClearCodeComments}
         onListLocalSkills={controls.listLocalSkills}
+        models={controls.models}
         selectedModel={controls.selectedModel}
+        selectedModelOptions={controls.selectedModelOptions}
+        onSelectModel={controls.setSelectedModel}
+        onBlockedModelSelect={controls.onBlockedModelSelect}
+        isModelSelectionReady={controls.isModelSelectionReady ?? true}
         isStreaming={isStreaming}
         onPause={onPause}
       />

@@ -68,13 +68,21 @@ function parseJsonOutput(output: string): unknown {
 }
 
 function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
-  const seen = new Set<string>()
-  return skills.filter(skill => {
+  const deduped = new Map<string, LocalDeviceSkill>()
+  skills.forEach(skill => {
     const key = skill.name.trim().toLowerCase()
-    if (!key || seen.has(key)) return false
-    seen.add(key)
-    return true
+    if (!key) return
+    const current = deduped.get(key)
+    deduped.set(key, current ? preferSkill(current, skill) : skill)
   })
+  return Array.from(deduped.values())
+}
+
+function preferSkill(left: LocalDeviceSkill, right: LocalDeviceSkill): LocalDeviceSkill {
+  const leftRank = left.source_priority ?? 99
+  const rightRank = right.source_priority ?? 99
+  if (leftRank !== rightRank) return leftRank < rightRank ? left : right
+  return (left.mtime ?? 0) >= (right.mtime ?? 0) ? left : right
 }
 
 function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {

@@ -290,11 +290,39 @@ function commandStringList(response: DeviceCommandResponse): string[] {
 function commandSkills(response: DeviceCommandResponse): LocalDeviceSkill[] {
   const output = typeof response.stdout === 'string' ? JSON.parse(response.stdout) : response.stdout
   return Array.isArray(output)
-    ? output.filter(
-        (item): item is LocalDeviceSkill =>
-          typeof item === 'object' && item !== null && 'name' in item && 'path' in item
+    ? sortSkillsByName(
+        dedupeSkillsByName(
+          output.filter(
+            (item): item is LocalDeviceSkill =>
+              typeof item === 'object' && item !== null && 'name' in item && 'path' in item
+          )
+        )
       )
     : []
+}
+
+function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  const deduped = new Map<string, LocalDeviceSkill>()
+  skills.forEach(skill => {
+    const key = skill.name.trim().toLowerCase()
+    if (!key) return
+    const current = deduped.get(key)
+    deduped.set(key, current ? preferSkill(current, skill) : skill)
+  })
+  return Array.from(deduped.values())
+}
+
+function preferSkill(left: LocalDeviceSkill, right: LocalDeviceSkill): LocalDeviceSkill {
+  const leftRank = left.source_priority ?? 99
+  const rightRank = right.source_priority ?? 99
+  if (leftRank !== rightRank) return leftRank < rightRank ? left : right
+  return (left.mtime ?? 0) >= (right.mtime ?? 0) ? left : right
+}
+
+function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  return [...skills].sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+  )
 }
 
 function assertCommandSuccess(response: DeviceCommandResponse, fallback: string): void {
