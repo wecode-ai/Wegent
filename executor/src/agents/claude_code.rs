@@ -290,7 +290,23 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
             .arg("stream-json")
             .stdin(format!("{query}\n"));
     } else {
-        spec = spec.arg(claude_prompt_text(request));
+        let prompt = claude_prompt_text(request);
+        if prompt.trim().is_empty() {
+            spec = spec.arg("--input-format").arg("stream-json").stdin(format!(
+                "{}\n",
+                json!({
+                    "type": "user",
+                    "session_id": "",
+                    "message": {
+                        "role": "user",
+                        "content": ""
+                    },
+                    "parent_tool_use_id": null
+                })
+            ));
+        } else {
+            spec = spec.arg(prompt);
+        }
     }
 
     let mut spec = spec

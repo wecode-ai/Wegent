@@ -638,6 +638,7 @@ fn contains_waiting_for_user_payload(value: &Value) -> bool {
                 || object
                     .get("result")
                     .is_some_and(contains_waiting_for_user_payload)
+                || object.values().any(contains_waiting_for_user_payload)
         }
         Value::Array(items) => items.iter().any(contains_waiting_for_user_payload),
         Value::String(text) => text_contains_waiting_for_user_payload(text),
