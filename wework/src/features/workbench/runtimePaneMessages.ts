@@ -41,6 +41,7 @@ export function createRuntimeTaskStreamHandlers(
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       debugRuntimeStreamEvent('chat:start', address, payload, true)
       handlers.onAssistantStart?.()
       handlers.onMessageAction({
@@ -55,6 +56,7 @@ export function createRuntimeTaskStreamHandlers(
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
         hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
@@ -72,6 +74,7 @@ export function createRuntimeTaskStreamHandlers(
     onChatDone: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
         hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.file_changes)),
         blockCount: getResultBlocks(payload.subtask_id, payload.result)?.length ?? 0,
@@ -90,6 +93,7 @@ export function createRuntimeTaskStreamHandlers(
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       debugRuntimeStreamEvent('chat:error', address, payload, true, {
         error: payload.error,
         errorType: payload.type,
@@ -115,6 +119,7 @@ export function createRuntimeTaskStreamHandlers(
     onBlockCreated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       const block = normalizeChatBlock(payload.subtask_id, payload.block)
       debugRuntimeStreamEvent('block:created', address, payload, true, {
         rawBlockType: isRecord(payload.block) ? payload.block.type : null,
@@ -131,6 +136,7 @@ export function createRuntimeTaskStreamHandlers(
     onBlockUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const messageId = runtimeStreamMessageId(payload)
+      if (!messageId) return
       debugRuntimeStreamEvent('block:updated', address, payload, true, {
         blockId: payload.block_id,
         status: payload.status ?? null,
@@ -253,12 +259,12 @@ function runtimeStreamMessageId(
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
     | RuntimeSubagentActivityPayload
-): string {
+): string | null {
   const rawMessageId = typeof payload.message_id === 'number' ? payload.message_id : null
   if (rawMessageId !== null) {
     return `${payload.local_task_id ?? 'runtime'}:message:${rawMessageId}`
   }
-  return `${payload.local_task_id ?? 'runtime'}:message:${payload.task_id ?? 0}:${payload.subtask_id}`
+  return null
 }
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {

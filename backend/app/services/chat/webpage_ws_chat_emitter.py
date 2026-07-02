@@ -109,6 +109,7 @@ class WebPageSocketEmitter:
         result: Optional[Dict[str, Any]] = None,
         block_id: Optional[str] = None,
         block_offset: Optional[int] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -121,6 +122,7 @@ class WebPageSocketEmitter:
             result: Optional full result data (for executor tasks with thinking/workbench)
             block_id: Optional block ID for text block streaming (append content to specific block)
             block_offset: Optional character offset within the current text block
+            message_id: Message ID for deterministic stream identity
         """
         payload = {
             "subtask_id": subtask_id,
@@ -128,6 +130,8 @@ class WebPageSocketEmitter:
             "offset": offset,
             "task_id": task_id,  # Add task_id for page refresh recovery
         }
+        if message_id is not None:
+            payload["message_id"] = message_id
         # Include block_id if provided (for text block streaming)
         if block_id is not None:
             payload["block_id"] = block_id
