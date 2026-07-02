@@ -97,7 +97,7 @@ RUN set -eux; \
 
 # Install Python packages for document generation using China mirror.
 RUN pip install -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com \
-    python-pptx openpyxl python-docx reportlab Pillow pandas \
+    python-pptx openpyxl python-docx reportlab Pillow pandas duckdb \
     pypdf pdfplumber pytesseract \
     "markitdown[pptx]" defusedxml weasyprint \
     pyyaml \
