@@ -13,7 +13,8 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     agents::{
-        interactive_mcp::build_interactive_form_answer_query, task_identity::task_identity_env,
+        backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
+        task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
@@ -810,16 +811,7 @@ fn write_claude_task_skill_marker(
 }
 
 fn task_backend_url(_request: &ExecutionRequest) -> Option<String> {
-    env::var("WEGENT_BACKEND_URL")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            env::var("TASK_API_DOMAIN")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        })
+    request_backend_url(_request)
 }
 
 fn user_selected_skills(request: &ExecutionRequest) -> Vec<String> {

@@ -5,6 +5,7 @@
 use std::{env, future::Future, pin::Pin};
 
 mod agno;
+mod backend_url;
 mod claude_code;
 mod claude_options;
 mod codex;

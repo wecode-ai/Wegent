@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    agents::{claude_config_dir, claude_task_dir, extract_claude_options},
+    agents::{
+        backend_url::{is_local_mode, request_backend_url_or_default},
+        claude_config_dir, claude_task_dir, extract_claude_options,
+    },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
@@ -1631,26 +1634,11 @@ fn load_global_mcp_records() -> BTreeMap<String, Value> {
 }
 
 fn request_api_base_url(_request: &ExecutionRequest) -> String {
-    api_base_url()
+    request_backend_url_or_default(_request)
 }
 
 fn api_url(api_base_url: &str, path: &str) -> String {
     format!("{}{}", api_base_url.trim_end_matches('/'), path)
-}
-
-fn api_base_url() -> String {
-    if is_local_mode() {
-        if let Ok(value) = env::var("WEGENT_BACKEND_URL") {
-            if !value.trim().is_empty() {
-                return value.trim().to_owned();
-            }
-        }
-    }
-    env::var("TASK_API_DOMAIN")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://wegent-backend:8000".to_owned())
 }
 
 fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
@@ -1716,12 +1704,6 @@ fn executor_home() -> PathBuf {
 
 fn codex_skills_dir(task_dir: &Path) -> PathBuf {
     task_dir.join(".codex/skills")
-}
-
-fn is_local_mode() -> bool {
-    env::var("EXECUTOR_MODE")
-        .ok()
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("local"))
 }
 
 fn is_docker_mode() -> bool {
