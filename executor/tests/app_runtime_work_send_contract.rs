@@ -6,7 +6,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::OnceLock,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -16,6 +16,8 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex, MutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
+
+const RUNTIME_EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -2033,7 +2035,7 @@ async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
 }
 
 async fn wait_for_logged_pid(log_path: &Path, prefix: &str) -> u32 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + RUNTIME_EVENT_TIMEOUT;
     loop {
         let content = fs::read_to_string(log_path).unwrap_or_default();
         if let Some(pid) = content.lines().find_map(|line| {

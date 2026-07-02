@@ -499,6 +499,60 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_deploys_interactive_legacy_skill_alias_before_claude() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-interactive-skill-alias-home");
+    let workspace_root = unique_dir("claude-interactive-skill-alias-workspace");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend_url =
+        serve_one_http_response(skill_zip_bytes("interactive"), Arc::clone(&requests)).await;
+    let fake_claude = write_fake_executable(
+        "fake-claude-interactive-skill-alias",
+        r#"#!/bin/sh
+interactive_skill=false
+legacy_alias=false
+if [ -f "$SKILLS_DIR/interactive/SKILL.md" ]; then interactive_skill=true; fi
+if [ -f "$SKILLS_DIR/interactive-form-question/SKILL.md" ]; then legacy_alias=true; fi
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"interactive=%s alias=%s"}]}}\n' "$interactive_skill" "$legacy_alias"
+"#,
+    );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 89,
+        backend_url: Some(backend_url),
+        auth_token: Some("task-token".to_owned()),
+        prompt: json!("ask through an interactive form"),
+        bot: json!([{
+            "id": 329,
+            "shell_type": "ClaudeCode",
+            "skills": ["interactive"],
+            "skill_refs": {
+                "interactive": {
+                    "skill_id": 44,
+                    "namespace": "default",
+                    "is_public": true,
+                }
+            }
+        }]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "interactive=true alias=true".to_owned()
+        }
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_restores_enabled_claude_plugin_zip_before_claude() {
     let _lock = env_lock().lock().await;
     let home = unique_dir("claude-plugin-zip-home");

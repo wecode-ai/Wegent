@@ -119,6 +119,21 @@ fn coordinate_mode_collects_member_bot_skills_for_deployment() {
 }
 
 #[test]
+fn collect_skill_names_canonicalizes_interactive_form_legacy_alias() {
+    let request = ExecutionRequest {
+        extra: serde_json::Map::from_iter([(
+            "skill_names".to_owned(),
+            json!(["interactive-form-question"]),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let skills = collect_skill_names_for_deployment(&json!({}), &request);
+
+    assert_eq!(skills, vec!["interactive"]);
+}
+
+#[test]
 fn deployment_plan_passes_task_id_for_shared_skill_auth() {
     let request = ExecutionRequest {
         task_id: 5_258_563,

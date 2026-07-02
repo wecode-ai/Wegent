@@ -121,6 +121,25 @@ class TestLoadSkillToolDynamicTools:
         assert "[LoadSkillTool_MCP_DEFERRED]" in caplog.text
         assert "mcp_server_count=1" in caplog.text
 
+    def test_load_skill_accepts_interactive_form_legacy_alias(self):
+        """Legacy interactive form skill names should load the canonical skill."""
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["interactive"],
+            skill_metadata={
+                "interactive": {
+                    "description": "Ask the user through an interactive form.",
+                    "prompt": "Use interactive_form_question.",
+                },
+            },
+        )
+
+        result = load_skill_tool._run("interactive-form-question")
+
+        assert "Skill 'interactive' has been loaded" in result
+        assert load_skill_tool.is_skill_loaded("interactive")
+        assert load_skill_tool.get_loaded_skills() == {"interactive"}
+
     def test_get_available_tools_updates_after_loading_more_skills(self):
         """Test that get_available_tools updates when more skills are loaded."""
         tool = LoadSkillTool(

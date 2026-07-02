@@ -21,6 +21,7 @@ from chat_shell.messages.converter import MessageConverter
 from chat_shell.prompts.builder import (
     append_deep_thinking_prompt,
     build_system_prompt,
+    get_clarification_prompt,
 )
 
 
@@ -67,6 +68,13 @@ class TestDeepThinkingPrompt:
         # Should NOT contain deep thinking or clarification prompts
         assert "<deep_thinking_mode>" not in result
         assert "<clarification_mode>" not in result
+
+    def test_clarification_prompt_names_canonical_interactive_skill(self):
+        """Clarification guidance should not teach the legacy skill name."""
+        prompt = get_clarification_prompt()
+
+        assert "interactive skill instructions" in prompt
+        assert "interactive-form-question skill" not in prompt
 
 
 class TestMessageBuilding:

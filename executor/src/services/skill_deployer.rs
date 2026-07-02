@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::Value;
 
@@ -32,6 +36,84 @@ pub struct SkillDeploymentPlan {
     pub clear_cache: bool,
     pub skip_existing: bool,
     pub resolved_skill_map: BTreeMap<String, SkillRef>,
+}
+
+const INTERACTIVE_SKILL_NAME: &str = "interactive";
+const INTERACTIVE_FORM_QUESTION_ALIAS: &str = "interactive-form-question";
+const INTERACTIVE_FORM_TOOL_ALIAS: &str = "interactive_form_question";
+const INTERACTIVE_RUNTIME_ALIASES: &[&str] = &[INTERACTIVE_FORM_QUESTION_ALIAS];
+const INTERACTIVE_FORM_ALIAS_SKILL_MD: &str = r#"---
+name: "interactive-form-question"
+description: "Compatibility alias for Wegent's interactive skill. Use this when older prompts ask for interactive-form-question to collect user input via interactive_form_question."
+displayName: "Interactive Form Question"
+version: "2.0.0"
+author: "Wegent Team"
+tags: ["interaction", "user-input", "form", "clarification", "compatibility"]
+---
+
+# Interactive Form Question
+
+This is a compatibility alias for the `interactive` skill.
+
+Use the already configured `interactive_form_question` tool to ask the user questions through an interactive form. Do not write questions, options, or choice lists as plain text when the form tool is available.
+"#;
+
+pub fn canonical_skill_name(skill_name: &str) -> &str {
+    match skill_name.trim() {
+        INTERACTIVE_FORM_QUESTION_ALIAS | INTERACTIVE_FORM_TOOL_ALIAS => INTERACTIVE_SKILL_NAME,
+        value => value,
+    }
+}
+
+pub fn ensure_runtime_skill_aliases(
+    skills_dir: &Path,
+    skills: &[String],
+) -> Result<Vec<String>, String> {
+    let mut created_or_existing = Vec::new();
+
+    for skill in skills {
+        for alias in runtime_aliases_for_skill(skill) {
+            let canonical = canonical_skill_name(skill);
+            if !skills_dir.join(canonical).join("SKILL.md").is_file() {
+                continue;
+            }
+
+            let alias_dir = skills_dir.join(alias);
+            let alias_skill_md = alias_dir.join("SKILL.md");
+            if alias_skill_md.is_file() {
+                created_or_existing.push((*alias).to_owned());
+                continue;
+            }
+            if alias_dir.exists() && !alias_dir.is_dir() {
+                return Err(format!(
+                    "skill alias path is not a directory: {}",
+                    alias_dir.display()
+                ));
+            }
+            fs::create_dir_all(&alias_dir).map_err(|error| {
+                format!(
+                    "failed to create skill alias dir {}: {error}",
+                    alias_dir.display()
+                )
+            })?;
+            fs::write(&alias_skill_md, INTERACTIVE_FORM_ALIAS_SKILL_MD).map_err(|error| {
+                format!(
+                    "failed to write skill alias {}: {error}",
+                    alias_skill_md.display()
+                )
+            })?;
+            created_or_existing.push((*alias).to_owned());
+        }
+    }
+
+    Ok(created_or_existing)
+}
+
+fn runtime_aliases_for_skill(skill_name: &str) -> &'static [&'static str] {
+    match canonical_skill_name(skill_name) {
+        INTERACTIVE_SKILL_NAME => INTERACTIVE_RUNTIME_ALIASES,
+        _ => &[],
+    }
 }
 
 pub fn resolve_skill_download_map(
@@ -189,7 +271,7 @@ fn skill_config_map(skill_configs: &[Value]) -> BTreeMap<String, SkillRef> {
         let Some(skill_ref) = skill_ref_from_value(config) else {
             continue;
         };
-        map.insert(name.to_owned(), skill_ref);
+        map.insert(canonical_skill_name(name).to_owned(), skill_ref);
     }
     map
 }
@@ -214,8 +296,9 @@ fn skill_ref_from_value(value: &Value) -> Option<SkillRef> {
 
 fn add_skill_names(names: &mut Vec<String>, value: Option<&Value>) {
     for name in string_array(value) {
-        if !names.contains(&name) {
-            names.push(name);
+        let canonical = canonical_skill_name(&name).to_owned();
+        if !names.contains(&canonical) {
+            names.push(canonical);
         }
     }
 }
@@ -242,7 +325,7 @@ fn value_object_map(value: Option<&Value>) -> BTreeMap<String, Value> {
     };
     object
         .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
+        .map(|(key, value)| (canonical_skill_name(key).to_owned(), value.clone()))
         .collect()
 }
 
