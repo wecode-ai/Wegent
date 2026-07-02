@@ -1,4 +1,86 @@
 {
+  "external": {
+    "title": "WeiboAP",
+    "sidebarTitle": "WeiboAP",
+    "subtitle": "浏览你可访问的 AP 托管知识库",
+    "unifiedSubtitle": "实时读取 AP 授权范围内的知识库，Wegent 不提供新建、编辑、删除入口",
+    "readonly": "只读 · 无新建入口",
+    "searchPlaceholder": "搜索 WeiboAP",
+    "ap": {
+      "readonlyBadge": "AP·只读"
+    },
+    "opener": {
+      "title": "AP 文档",
+      "invalidSource": "无法打开 AP 来源"
+    },
+    "scope": {
+      "label": "范围",
+      "all": "全部",
+      "personal": "个人",
+      "organization": "组织"
+    },
+    "actions": {
+      "enter": "进入",
+      "back": "返回",
+      "retry": "重试",
+      "refresh": "刷新",
+      "close": "关闭"
+    },
+    "status": {
+      "empty": "你在 AP 暂无可访问的知识库",
+      "emptyPersonal": "暂无可访问的个人 AP 知识库",
+      "emptyOrganization": "暂无可访问的组织 AP 知识库",
+      "emptyFolder": "当前目录暂无文档",
+      "unavailable": "AP 知识库暂时不可用，稍后重试",
+      "employeeRequiredTitle": "绑定工号后可查看 WeiboAP",
+      "employeeRequiredDescription": "WeiboAP 按工号识别访问权限。完成工号绑定后即可查看个人库和组织库。"
+    },
+    "detail": {
+      "titleFallback": "WeiboAP",
+      "readonlyBanner": "此知识库由 AP 托管，只读",
+      "directory": "目录",
+      "root": "全部文档",
+      "backToRoot": "回到根目录"
+    },
+    "preview": {
+      "title": "文档预览",
+      "emptyTitle": "选择文档预览",
+      "emptyDescription": "点击左侧文档后，系统会在当前时刻向 AP 获取预览地址。",
+      "unsupported": "该文档不支持预览",
+      "failed": "无法打开预览",
+      "openInNewTab": "新页签打开"
+    },
+    "searchTest": {
+      "title": "检索测试",
+      "description": "输入关键词验证当前 AP 库的连通性和召回结果。",
+      "placeholder": "输入测试关键词",
+      "run": "检索",
+      "failed": "AP 检索测试失败",
+      "empty": "未在所选 AP 库中检索到相关内容",
+      "untitled": "未命名文档",
+      "summary": "命中 {{count}} 条 · 检索 {{searched}} 个库 · 跳过 {{ignored}} 个无权库"
+    },
+    "mount": {
+      "sourceFilter": "来源",
+      "sourceAll": "全部",
+      "sourceInternal": "内部",
+      "sourceAp": "AP",
+      "searchPlaceholder": "搜索 WeiboAP",
+      "empty": "未找到 WeiboAP 知识库",
+      "loadFailed": "加载 WeiboAP 失败",
+      "selectedOnly": "仅选中库",
+      "scopePersonal": "个人",
+      "scopeOrganization": "组织",
+      "personalFixedDisabled": "个人库仅支持对话内临时挂载",
+      "overLimit": "AP 知识库最多选择 {{limit}} 个"
+    },
+    "table": {
+      "name": "名称",
+      "documents": "文档数",
+      "updatedAt": "更新时间",
+      "actions": "操作"
+    }
+  },
   "document": {
     "permission": {
       "orgDepartment": "部门",

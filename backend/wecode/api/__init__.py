@@ -5,9 +5,13 @@
 """
 Internal API endpoints
 """
+import logging
+
 # Register ERP entity resolver for org_department entity type
 from app.services.share.external_entity_resolver import register_entity_resolver
 from wecode.service.erp_entity_resolver import ErpEntityResolver
+
+logger = logging.getLogger(__name__)
 
 register_entity_resolver("org_department", ErpEntityResolver)
 
@@ -53,6 +57,7 @@ from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.department_search import router as department_search_router
 from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
 from wecode.api.evaluation import router as evaluation_router
+from wecode.api.external_knowledge import router as external_knowledge_router
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
@@ -68,6 +73,57 @@ if (
     import wecode.task_sharding.store_patch as task_sharding_store_patch
 
     task_sharding_store_patch.install_task_sharding_store_patch()
+
+
+def _register_ap_external_knowledge_provider() -> None:
+    try:
+        from wecode.config.external_knowledge_config import external_knowledge_settings
+        from wecode.service.external_knowledge.providers.ap import (
+            ApExternalKnowledgeProvider,
+        )
+
+        provider = ApExternalKnowledgeProvider(external_knowledge_settings)
+    except Exception as exc:
+        message = "[wecode] Failed to initialize AP external knowledge provider"
+        logger.error(message, exc_info=True)
+        _register_unavailable_external_knowledge_provider("ap", str(exc) or message)
+        return
+
+    try:
+        from app.services.rag.sources import retrieval_source_registry
+        from wecode.service.external_knowledge.registry import (
+            register as register_external_knowledge,
+        )
+
+        register_external_knowledge(provider)
+        retrieval_source_registry.register(provider)
+    except Exception as exc:
+        message = "[wecode] Failed to register AP external knowledge provider"
+        logger.error(message, exc_info=True)
+        _register_unavailable_external_knowledge_provider("ap", str(exc) or message)
+
+
+def _register_unavailable_external_knowledge_provider(name: str, reason: str) -> None:
+    try:
+        from app.services.rag.sources import retrieval_source_registry
+        from wecode.service.external_knowledge.registry import (
+            register as register_external_knowledge,
+        )
+        from wecode.service.external_knowledge.unavailable import (
+            UnavailableExternalKnowledgeProvider,
+        )
+
+        provider = UnavailableExternalKnowledgeProvider(name, reason)
+        register_external_knowledge(provider)
+        retrieval_source_registry.register(provider)
+    except Exception:
+        logger.error(
+            "[wecode] Failed to register unavailable external knowledge provider",
+            exc_info=True,
+        )
+
+
+_register_ap_external_knowledge_provider()
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
@@ -85,6 +141,11 @@ api_router.include_router(
     cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
 )
 api_router.include_router(evaluation_router, tags=["evaluation"])
+api_router.include_router(
+    external_knowledge_router,
+    prefix="/wecode/external-knowledge",
+    tags=["wecode", "external-knowledge"],
+)
 api_router.include_router(mail_devices_router, prefix="/devices", tags=["devices"])
 api_router.include_router(mail_token_router, prefix="/wecode", tags=["wecode"])
 api_router.include_router(

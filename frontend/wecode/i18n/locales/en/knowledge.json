@@ -1,4 +1,86 @@
 {
+  "external": {
+    "title": "WeiboAP",
+    "sidebarTitle": "WeiboAP",
+    "subtitle": "Browse AP-hosted knowledge bases you can access",
+    "unifiedSubtitle": "Reads knowledge bases in your AP authorization scope in real time. Wegent does not provide create, edit, or delete actions.",
+    "readonly": "Read-only · no create entry",
+    "searchPlaceholder": "Search WeiboAP",
+    "ap": {
+      "readonlyBadge": "AP · Read-only"
+    },
+    "opener": {
+      "title": "AP document",
+      "invalidSource": "Unable to open AP source"
+    },
+    "scope": {
+      "label": "Scope",
+      "all": "All",
+      "personal": "Personal",
+      "organization": "Organization"
+    },
+    "actions": {
+      "enter": "Enter",
+      "back": "Back",
+      "retry": "Retry",
+      "refresh": "Refresh",
+      "close": "Close"
+    },
+    "status": {
+      "empty": "You do not have access to any AP knowledge bases",
+      "emptyPersonal": "No accessible personal AP knowledge bases",
+      "emptyOrganization": "No accessible organization AP knowledge bases",
+      "emptyFolder": "No documents in this folder",
+      "unavailable": "AP Knowledge is temporarily unavailable. Try again later.",
+      "employeeRequiredTitle": "Bind your employee ID to view WeiboAP",
+      "employeeRequiredDescription": "WeiboAP uses your employee ID for access control. After binding, you can view personal and organization knowledge bases."
+    },
+    "detail": {
+      "titleFallback": "WeiboAP",
+      "readonlyBanner": "This knowledge base is hosted by AP and is read-only",
+      "directory": "Directory",
+      "root": "All documents",
+      "backToRoot": "Back to root"
+    },
+    "preview": {
+      "title": "Document Preview",
+      "emptyTitle": "Select a document to preview",
+      "emptyDescription": "When you click a document, Wegent requests the preview URL from AP at that moment.",
+      "unsupported": "This document cannot be previewed",
+      "failed": "Unable to open preview",
+      "openInNewTab": "Open in new tab"
+    },
+    "searchTest": {
+      "title": "Retrieval test",
+      "description": "Enter a keyword to verify connectivity and recall for this AP knowledge base.",
+      "placeholder": "Enter a test keyword",
+      "run": "Search",
+      "failed": "AP retrieval test failed",
+      "empty": "No relevant content was found in the selected AP knowledge base",
+      "untitled": "Untitled document",
+      "summary": "{{count}} hits · searched {{searched}} knowledge bases · skipped {{ignored}} unauthorized bases"
+    },
+    "mount": {
+      "sourceFilter": "Source",
+      "sourceAll": "All",
+      "sourceInternal": "Internal",
+      "sourceAp": "AP",
+      "searchPlaceholder": "Search WeiboAP",
+      "empty": "No WeiboAP knowledge bases found",
+      "loadFailed": "Failed to load WeiboAP",
+      "selectedOnly": "Selected only",
+      "scopePersonal": "Personal",
+      "scopeOrganization": "Organization",
+      "personalFixedDisabled": "Personal bases only support temporary chat attachment",
+      "overLimit": "You can select up to {{limit}} AP knowledge bases"
+    },
+    "table": {
+      "name": "Name",
+      "documents": "Documents",
+      "updatedAt": "Updated",
+      "actions": "Actions"
+    }
+  },
   "document": {
     "permission": {
       "orgDepartment": "Department",
