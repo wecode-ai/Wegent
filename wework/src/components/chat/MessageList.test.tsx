@@ -558,6 +558,42 @@ describe('MessageList', () => {
     )
   })
 
+  test('shows trailing thinking after partial content when processing blocks are still running', () => {
+    const runningSearchBlock: ProcessingBlock = {
+      id: 'search-running',
+      turnId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'rg -n chat src' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-done-with-running-block',
+            role: 'assistant',
+            content: '我先把硬编码中文改成 chat 命名空间翻译。',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [runningSearchBlock],
+          },
+        ]}
+      />
+    )
+
+    const content = screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')
+    const thinking = screen.getByTestId('thinking-indicator')
+
+    expect(thinking).toHaveTextContent('正在思考')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+    expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
   test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
     render(
       <MessageList
@@ -2902,6 +2938,66 @@ describe('MessageList', () => {
     expect(thinkingIndicator).toHaveTextContent('正在思考')
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows thinking from the message list after completed processing activity', () => {
+    const completedBlock: ProcessingBlock = {
+      id: 'call-1',
+      turnId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'pwd' },
+      toolOutput: '/workspace/project',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('does not duplicate thinking when live process text is visible', () => {
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      turnId: 1,
+      type: 'text',
+      content: 'Let me inspect the repository first.',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [processBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Let me inspect the repository first.')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('keeps running tool rows visible while showing trailing thinking', () => {
