@@ -61,7 +61,7 @@ from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_document,
 )
 
-logger = logging.getLogger(__name__)
+batch_logger = logging.getLogger(__name__)
 
 
 def _build_attachment_filename(name: str, file_extension: str) -> str:
@@ -1339,6 +1339,8 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied
         """
+        logger = logging.getLogger(__name__)
+
         from app.services.context import context_service
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
@@ -3018,7 +3020,7 @@ class KnowledgeService:
             except Exception as exc:  # noqa: BLE001 - continue deleting remaining docs
                 failed_ids.append(doc_id)
                 failure_messages.append(str(exc))
-                logger.exception("Unexpected error deleting document %s", doc_id)
+                batch_logger.exception("Unexpected error deleting document %s", doc_id)
 
         operation_result = BatchOperationResult(
             success_count=success_count,
@@ -3071,7 +3073,7 @@ class KnowledgeService:
                 failed_ids.append(doc_id)
             except Exception:  # noqa: BLE001 - continue updating remaining docs
                 failed_ids.append(doc_id)
-                logger.exception("Unexpected error enabling document %s", doc_id)
+                batch_logger.exception("Unexpected error enabling document %s", doc_id)
 
         return BatchOperationResult(
             success_count=success_count,
@@ -3117,7 +3119,7 @@ class KnowledgeService:
                 failed_ids.append(doc_id)
             except Exception:  # noqa: BLE001 - continue updating remaining docs
                 failed_ids.append(doc_id)
-                logger.exception("Unexpected error disabling document %s", doc_id)
+                batch_logger.exception("Unexpected error disabling document %s", doc_id)
 
         return BatchOperationResult(
             success_count=success_count,
