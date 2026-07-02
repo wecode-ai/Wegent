@@ -1507,7 +1507,7 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('archive-project-conversations-dialog-7-confirm-button'))
 
     await waitFor(() => {
-      expect(onArchiveProjectConversations).toHaveBeenCalledWith('project:7')
+      expect(onArchiveProjectConversations).toHaveBeenCalledWith('project:7', undefined)
     })
     expect(confirmSpy).not.toHaveBeenCalled()
 
@@ -1858,7 +1858,7 @@ describe('DesktopSidebar', () => {
       screen.getByTestId('projects-section-archive-conversations-dialog-confirm-button')
     )
     await waitFor(() => {
-      expect(onArchiveProjectsConversations).toHaveBeenCalledWith(['project:7'])
+      expect(onArchiveProjectsConversations).toHaveBeenCalledWith(['project:7'], undefined)
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
@@ -1880,13 +1880,16 @@ describe('DesktopSidebar', () => {
     )
 
     await waitFor(() => {
-      expect(onArchiveChatConversations).toHaveBeenCalledWith([
-        {
-          deviceId: 'local-device',
-          workspacePath: '/workspace/chats/chat-1',
-          localTaskId: 'chat-1',
-        },
-      ])
+      expect(onArchiveChatConversations).toHaveBeenCalledWith(
+        [
+          {
+            deviceId: 'local-device',
+            workspacePath: '/workspace/chats/chat-1',
+            localTaskId: 'chat-1',
+          },
+        ],
+        undefined
+      )
     })
   })
 
