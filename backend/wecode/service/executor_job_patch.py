@@ -173,7 +173,7 @@ async def cleanup_orphan_pods(
 
     # TEMP: cap real deletions per run for safe rollout. Manually adjust or
     # set to None to disable.
-    max_deletions: Optional[int] = 0
+    max_deletions: Optional[int] = 1
 
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
@@ -302,6 +302,11 @@ async def _cleanup_stale_task_executor_wecode(
     )
     result = await _original_cleanup_stale_task_executor(
         self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=dry_run
+    )
+    logger.info(
+        "+++ [executor_job] cleanup_stale_task_executor_wecode result task_id=%s result=%s",
+        task_id,
+        result,
     )
     if result.get("reason") == "executor_not_found" and not dry_run:
         ek_service = _executor_job_mod.executor_kinds_service
