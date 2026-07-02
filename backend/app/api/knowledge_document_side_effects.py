@@ -42,22 +42,16 @@ def update_kb_summary_after_deletion(
     try:
         summary_service = get_summary_service(db)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                summary_service.trigger_kb_summary(
-                    kb_id, user_id, user_name, force=False, clear_if_empty=True
-                )
+        asyncio.run(
+            summary_service.trigger_kb_summary(
+                kb_id, user_id, user_name, force=False, clear_if_empty=True
             )
-        finally:
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
+        )
 
     except Exception as e:
         logger.error(
             f"[KnowledgeAPI] Failed to update KB summary after deletion: "
-            f"kb_id={kb_id}, error={str(e)}",
+            f"kb_id={kb_id}, error={e!s}",
             exc_info=True,
         )
     finally:

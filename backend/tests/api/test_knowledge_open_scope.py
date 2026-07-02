@@ -2,10 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.schemas.knowledge import (
+    BatchOperationResult,
     DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeDocumentCreate,
@@ -358,6 +362,22 @@ def test_open_batch_delete_documents_returns_403_when_all_fail(
         fake_schedule_summary_update,
     )
 
+    def fake_batch_delete_documents(**kwargs):
+        return SimpleNamespace(
+            result=BatchOperationResult(
+                success_count=0,
+                failed_count=2,
+                failed_ids=[999998, 999999],
+                message="Only Owner or Maintainer can delete documents from this knowledge base",
+            ),
+            kb_ids=[],
+        )
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.KnowledgeService.batch_delete_documents",
+        fake_batch_delete_documents,
+    )
+
     response = test_client.post(
         "/api/knowledge/documents/batch/delete",
         headers=_api_key_headers(test_api_key[0]),
@@ -365,6 +385,29 @@ def test_open_batch_delete_documents_returns_403_when_all_fail(
     )
 
     assert response.status_code == 403
+
+
+def test_open_batch_delete_documents_returns_404_when_all_missing(
+    test_client: TestClient,
+    test_api_key,
+    monkeypatch,
+) -> None:
+    def fake_schedule_summary_update(background_tasks, **kwargs):
+        raise AssertionError("Summary update should not be scheduled")
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.schedule_kb_summary_updates_after_deletion",
+        fake_schedule_summary_update,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents/batch/delete",
+        headers=_api_key_headers(test_api_key[0]),
+        json={"document_ids": [999998, 999999]},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
 
 
 def test_open_batch_move_documents_moves_documents_to_folder(
@@ -397,3 +440,44 @@ def test_open_batch_move_documents_moves_documents_to_folder(
     )
     folder_doc_ids = {item["id"] for item in folder_docs_response.json()["items"]}
     assert folder_doc_ids == {first_doc.id, second_doc.id}
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_status"),
+    [
+        ("Document not found", 404),
+        ("You do not have permission to move these documents", 403),
+        ("Invalid folder_id", 400),
+    ],
+)
+def test_open_batch_move_documents_maps_zero_success_errors(
+    test_client: TestClient,
+    test_api_key,
+    monkeypatch,
+    message: str,
+    expected_status: int,
+) -> None:
+    def fake_batch_move_documents(**kwargs):
+        return BatchOperationResult(
+            success_count=0,
+            failed_count=1,
+            failed_ids=[999999],
+            message=message,
+        )
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.KnowledgeFolderService.batch_move_documents",
+        fake_batch_move_documents,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents/batch/move",
+        headers=_api_key_headers(test_api_key[0]),
+        json={
+            "document_ids": [999999],
+            "folder_id": 0,
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"] == message
