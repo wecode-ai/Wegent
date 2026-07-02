@@ -11,6 +11,7 @@ use cbc::{
     Decryptor,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::{io::AsyncWriteExt, process::Command};
 
 use crate::{
@@ -26,6 +27,16 @@ pub struct GitCredentials {
     pub token: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitTokenDiagnostics {
+    source: &'static str,
+    encrypted: bool,
+    decrypt_success: Option<bool>,
+    raw_len: usize,
+    token_len: usize,
+    token_fingerprint: String,
+}
+
 pub async fn setup_git_authentication(request: &ExecutionRequest) {
     set_git_environment(request);
     let fields = task_fields(request.task_id, request.subtask_id);
@@ -36,8 +47,7 @@ pub async fn setup_git_authentication(request: &ExecutionRequest) {
         );
         return;
     };
-    let Some((credentials, token_source, token_encrypted)) =
-        git_credentials_with_metadata(&git_domain, request)
+    let Some((credentials, diagnostics)) = git_credentials_with_diagnostics(&git_domain, request)
     else {
         let mut skipped_fields = fields;
         skipped_fields.push(("reason", "missing_token".to_owned()));
@@ -48,15 +58,13 @@ pub async fn setup_git_authentication(request: &ExecutionRequest) {
 
     let mut start_fields = fields.clone();
     start_fields.push(("git_domain", git_domain.clone()));
-    start_fields.push(("token_source", token_source.to_owned()));
-    start_fields.push(("token_encrypted", token_encrypted.to_string()));
+    push_token_diagnostic_fields(&mut start_fields, &diagnostics);
     log_executor_event("git cli authentication started", &start_fields);
 
     let success = authenticate_cli(&git_domain, &credentials).await;
     let mut auth_fields = fields;
     auth_fields.push(("git_domain", git_domain));
-    auth_fields.push(("token_source", token_source.to_owned()));
-    auth_fields.push(("token_encrypted", token_encrypted.to_string()));
+    push_token_diagnostic_fields(&mut auth_fields, &diagnostics);
     auth_fields.push(("success", success.to_string()));
     log_executor_event("git cli authentication finished", &auth_fields);
 }
@@ -103,34 +111,79 @@ fn git_credentials_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<GitCredentials> {
-    git_credentials_with_metadata(git_domain, request).map(|(credentials, _, _)| credentials)
+    let Some((credentials, diagnostics)) = git_credentials_with_diagnostics(git_domain, request)
+    else {
+        let mut fields = task_fields(request.task_id, request.subtask_id);
+        fields.push(("git_domain", git_domain.to_owned()));
+        fields.push(("reason", "missing_token".to_owned()));
+        log_executor_event("git token diagnostics unavailable", &fields);
+        return None;
+    };
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("git_domain", git_domain.to_owned()));
+    push_token_diagnostic_fields(&mut fields, &diagnostics);
+    log_executor_event("git token diagnostics", &fields);
+    Some(credentials)
 }
 
-fn git_credentials_with_metadata(
+fn git_credentials_with_diagnostics(
     git_domain: &str,
     request: &ExecutionRequest,
-) -> Option<(GitCredentials, &'static str, bool)> {
+) -> Option<(GitCredentials, GitTokenDiagnostics)> {
     let (raw_token, token_source) = raw_git_token_for_domain(git_domain, request)?;
-    let token_encrypted = is_token_encrypted(raw_token.trim());
-    normalize_git_token(&raw_token).map(|token| {
-        (
-            GitCredentials {
-                username: user_git_login(request).unwrap_or_else(|| "token".to_owned()),
-                token,
-            },
-            token_source,
-            token_encrypted,
-        )
-    })
+    let raw_token = raw_token.trim();
+    let token_encrypted = is_token_encrypted(raw_token);
+    let token = normalize_git_token(raw_token)?;
+    let diagnostics = GitTokenDiagnostics {
+        source: token_source,
+        encrypted: token_encrypted,
+        decrypt_success: token_encrypted.then_some(token != raw_token),
+        raw_len: raw_token.len(),
+        token_len: token.len(),
+        token_fingerprint: token_fingerprint(&token),
+    };
+    Some((
+        GitCredentials {
+            username: user_git_login(request).unwrap_or_else(|| "token".to_owned()),
+            token,
+        },
+        diagnostics,
+    ))
+}
+
+fn push_token_diagnostic_fields(
+    fields: &mut Vec<(&'static str, String)>,
+    diagnostics: &GitTokenDiagnostics,
+) {
+    fields.push(("token_source", diagnostics.source.to_owned()));
+    fields.push(("token_encrypted", diagnostics.encrypted.to_string()));
+    if let Some(decrypt_success) = diagnostics.decrypt_success {
+        fields.push(("token_decrypt_success", decrypt_success.to_string()));
+    }
+    fields.push(("raw_token_len", diagnostics.raw_len.to_string()));
+    fields.push(("token_len", diagnostics.token_len.to_string()));
+    fields.push(("token_fingerprint", diagnostics.token_fingerprint.clone()));
 }
 
 fn raw_git_token_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<(String, &'static str)> {
-    user_git_token(request)
-        .map(|token| (token, "request_user"))
-        .or_else(|| token_file(git_domain).map(|token| (token, "home_ssh_domain_file")))
+    if let Some(token) = user_git_token(request) {
+        if is_masked_or_empty_token(&token) {
+            log_token_source_probe(
+                request,
+                git_domain,
+                "request_user",
+                Some(token.trim().len()),
+                Some("masked_or_empty"),
+            );
+        } else {
+            log_token_source_probe(request, git_domain, "request_user", Some(token.len()), None);
+            return Some((token, "request_user"));
+        }
+    }
+    token_file(git_domain, request).map(|token| (token, "home_ssh_domain_file"))
 }
 
 fn user_git_token(request: &ExecutionRequest) -> Option<String> {
@@ -180,14 +233,64 @@ pub fn user_git_email(request: &ExecutionRequest) -> Option<String> {
     Some(format!("{git_id}+{git_login}@users.noreply.github.com"))
 }
 
-fn token_file(git_domain: &str) -> Option<String> {
-    let path = home_dir()?.join(".ssh").join(git_domain);
-    fs::read_to_string(path).ok()
+fn token_file(git_domain: &str, request: &ExecutionRequest) -> Option<String> {
+    let Some(home) = home_dir() else {
+        log_token_source_probe(
+            request,
+            git_domain,
+            "home_ssh_domain_file",
+            None,
+            Some("missing_home"),
+        );
+        return None;
+    };
+    let path = home.join(".ssh").join(git_domain);
+    match fs::read_to_string(&path) {
+        Ok(token) => {
+            log_token_source_probe(
+                request,
+                git_domain,
+                "home_ssh_domain_file",
+                Some(token.trim().len()),
+                None,
+            );
+            Some(token)
+        }
+        Err(error) => {
+            let mut fields = task_fields(request.task_id, request.subtask_id);
+            fields.push(("git_domain", git_domain.to_owned()));
+            fields.push(("token_source", "home_ssh_domain_file".to_owned()));
+            fields.push(("token_file", path.display().to_string()));
+            fields.push(("error_kind", format!("{:?}", error.kind())));
+            fields.push(("error", error.to_string()));
+            log_executor_event("git token source probe failed", &fields);
+            None
+        }
+    }
+}
+
+fn log_token_source_probe(
+    request: &ExecutionRequest,
+    git_domain: &str,
+    token_source: &'static str,
+    token_len: Option<usize>,
+    reason: Option<&'static str>,
+) {
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("git_domain", git_domain.to_owned()));
+    fields.push(("token_source", token_source.to_owned()));
+    if let Some(token_len) = token_len {
+        fields.push(("raw_token_len", token_len.to_string()));
+    }
+    if let Some(reason) = reason {
+        fields.push(("reason", reason.to_owned()));
+    }
+    log_executor_event("git token source probe", &fields);
 }
 
 fn normalize_git_token(token: &str) -> Option<String> {
     let token = token.trim();
-    if token.is_empty() || token == "***" {
+    if is_masked_or_empty_token(token) {
         return None;
     }
     if is_token_encrypted(token) {
@@ -197,6 +300,18 @@ fn normalize_git_token(token: &str) -> Option<String> {
         });
     }
     Some(token.to_owned())
+}
+
+fn is_masked_or_empty_token(token: &str) -> bool {
+    let token = token.trim();
+    token.is_empty() || token == "***"
+}
+
+fn token_fingerprint(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+        .chars()
+        .take(12)
+        .collect()
 }
 
 async fn authenticate_cli(git_domain: &str, credentials: &GitCredentials) -> bool {
@@ -515,11 +630,17 @@ fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    const TEST_GIT_DOMAIN: &str = "github.com";
 
     #[test]
     fn decrypt_git_token_matches_legacy_aes_cbc_fixture() {
-        let _key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
-        let _iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
+        let _env = EnvGuard::set_many(&[
+            ("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"),
+            ("GIT_TOKEN_AES_IV", "1234567890123456"),
+        ]);
 
         assert_eq!(
             decrypt_git_token("iOuoSwc/HrF6ZhttvtSNeQ==").as_deref(),
@@ -529,26 +650,148 @@ mod tests {
         assert!(!is_token_encrypted("ghp_test_token"));
     }
 
+    #[test]
+    fn git_credentials_reports_safe_token_diagnostics() {
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "user".to_owned(),
+                json!({
+                    "git_token": "glpat-secret",
+                    "git_login": "oauth2"
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics("gitlab.com", &request).unwrap();
+
+        assert_eq!(credentials.username, "oauth2");
+        assert_eq!(credentials.token, "glpat-secret");
+        assert_eq!(diagnostics.source, "request_user");
+        assert!(!diagnostics.encrypted);
+        assert_eq!(diagnostics.decrypt_success, None);
+        assert_eq!(diagnostics.raw_len, "glpat-secret".len());
+        assert_eq!(diagnostics.token_len, "glpat-secret".len());
+        assert_eq!(diagnostics.token_fingerprint.len(), 12);
+        assert_ne!(diagnostics.token_fingerprint, "glpat-secret");
+    }
+
+    #[test]
+    fn git_credentials_reports_encrypted_token_decrypt_success() {
+        let _env = EnvGuard::set_many(&[
+            ("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"),
+            ("GIT_TOKEN_AES_IV", "1234567890123456"),
+        ]);
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "user".to_owned(),
+                json!({
+                    "git_token": "iOuoSwc/HrF6ZhttvtSNeQ=="
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics("github.com", &request).unwrap();
+
+        assert_eq!(credentials.token, "ghp_test_token");
+        assert!(diagnostics.encrypted);
+        assert_eq!(diagnostics.decrypt_success, Some(true));
+        assert_eq!(diagnostics.token_len, "ghp_test_token".len());
+    }
+
+    #[test]
+    fn git_credentials_reads_domain_token_file_from_home_ssh() {
+        let temp_home =
+            env::temp_dir().join(format!("wegent-git-auth-test-{}", std::process::id()));
+        let ssh_dir = temp_home.join(".ssh");
+        fs::create_dir_all(&ssh_dir).unwrap();
+        fs::write(ssh_dir.join(TEST_GIT_DOMAIN), "file-token\n").unwrap();
+        let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
+
+        let request = ExecutionRequest::default();
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics(TEST_GIT_DOMAIN, &request).unwrap();
+
+        assert_eq!(credentials.token, "file-token");
+        assert_eq!(diagnostics.source, "home_ssh_domain_file");
+        assert_eq!(diagnostics.raw_len, "file-token".len());
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn git_credentials_falls_back_to_token_file_when_request_token_is_masked() {
+        let temp_home = env::temp_dir().join(format!(
+            "wegent-git-auth-masked-test-{}",
+            std::process::id()
+        ));
+        let ssh_dir = temp_home.join(".ssh");
+        fs::create_dir_all(&ssh_dir).unwrap();
+        fs::write(ssh_dir.join(TEST_GIT_DOMAIN), "file-token\n").unwrap();
+        let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "user".to_owned(),
+                json!({
+                    "git_token": "***",
+                    "git_login": "oauth2"
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics(TEST_GIT_DOMAIN, &request).unwrap();
+
+        assert_eq!(credentials.token, "file-token");
+        assert_eq!(credentials.username, "oauth2");
+        assert_eq!(diagnostics.source, "home_ssh_domain_file");
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
     struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
+        previous: Vec<(&'static str, Option<String>)>,
+        _guard: MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
-            let previous = env::var(key).ok();
-            env::set_var(key, value);
-            Self { key, previous }
+            Self::set_many(&[(key, value)])
+        }
+
+        fn set_many(values: &[(&'static str, &str)]) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let previous = values
+                .iter()
+                .map(|(key, value)| {
+                    let previous = env::var(key).ok();
+                    env::set_var(key, value);
+                    (*key, previous)
+                })
+                .collect();
+            Self {
+                previous,
+                _guard: guard,
+            }
         }
     }
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                env::set_var(self.key, previous);
-            } else {
-                env::remove_var(self.key);
+            for (key, previous) in self.previous.iter().rev() {
+                if let Some(previous) = previous {
+                    env::set_var(key, previous);
+                } else {
+                    env::remove_var(key);
+                }
             }
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 }

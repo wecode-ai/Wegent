@@ -314,6 +314,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
     sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
+    ignoreRequestUserInput: vi.fn(),
     answeredRequestUserInputIds: new Set(),
     addCodeComment: vi.fn(),
     clearCodeComments: vi.fn(),
@@ -519,6 +520,37 @@ describe('MobileWorkbenchLayout', () => {
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('ignores the implementation plan confirmation through the pane session on mobile', async () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+        projectChat={baseProjectChat}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
     )
   })
 

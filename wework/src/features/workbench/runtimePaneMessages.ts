@@ -8,6 +8,7 @@ import type {
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  RuntimeGoalEventPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
@@ -28,6 +29,8 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
 }
 
 export function createRuntimeTaskStreamHandlers(
@@ -78,10 +81,7 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_done',
         messageId,
         turnId: payload.subtask_id,
-        content:
-          typeof payload.result.value === 'string'
-            ? stripCodexUiDirectives(payload.result.value)
-            : undefined,
+        content: doneContent(payload.result),
         blocks: getResultBlocks(payload.subtask_id, payload.result),
         fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
       })
@@ -95,13 +95,21 @@ export function createRuntimeTaskStreamHandlers(
         errorType: payload.type,
       })
       handlers.onAssistantSettled?.()
-      handlers.onMessageAction({
-        type: 'assistant_error',
-        messageId,
-        turnId: payload.subtask_id,
-        error: payload.error,
-        errorType: payload.type,
-      })
+      if (isCancelledRuntimeError(payload)) {
+        handlers.onMessageAction({
+          type: 'assistant_cancelled',
+          messageId,
+          turnId: payload.subtask_id,
+        })
+      } else {
+        handlers.onMessageAction({
+          type: 'assistant_error',
+          messageId,
+          turnId: payload.subtask_id,
+          error: payload.error,
+          errorType: payload.type,
+        })
+      }
       handlers.onRefreshWorkLists?.()
     },
     onBlockCreated: payload => {
@@ -151,6 +159,14 @@ export function createRuntimeTaskStreamHandlers(
         kind: payload.kind ?? null,
       })
       handlers.onSubagentActivity?.(payload)
+    },
+    onRuntimeGoalUpdated: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeGoalUpdated?.(payload)
+    },
+    onRuntimeGoalCleared: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeGoalCleared?.(payload)
     },
   }
 }
@@ -218,6 +234,7 @@ function isRuntimeTaskStreamPayload(
     | ChatErrorPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
+    | RuntimeGoalEventPayload
     | RuntimeSubagentActivityPayload
 ): boolean {
   if (!payload.local_task_id) return false
@@ -289,6 +306,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     runtimeStatus,
     source,
     attachments: message.attachments,
+    runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
     references: normalizeRuntimeReferences(message.references),
@@ -297,6 +315,12 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean | undefined {
+  return message.runtimeGoalRequest === true || message.runtime_goal_request === true
+    ? true
+    : undefined
 }
 
 function getRuntimeMessageBlockTurnId(message: NormalizedRuntimeMessage, turnId?: number): number {
@@ -351,6 +375,21 @@ function isRuntimeStreamingStatus(status: string): boolean {
     status === 'active' ||
     status === 'busy' ||
     status === 'pending'
+  )
+}
+
+function isCancelledRuntimeError(payload: ChatErrorPayload): boolean {
+  const error = payload.error.trim().toLowerCase()
+  const type = payload.type?.trim().toLowerCase()
+  return (
+    error === 'interrupted' ||
+    error === 'cancelled' ||
+    error === 'canceled' ||
+    error === 'aborted' ||
+    type === 'interrupted' ||
+    type === 'cancelled' ||
+    type === 'canceled' ||
+    type === 'aborted'
   )
 }
 
@@ -435,6 +474,24 @@ function normalizeProcessingBlock(
     }
   }
 
+  if (block.type === 'plan') {
+    const id = typeof block.id === 'string' ? block.id : `plan-${turnId}-${index}`
+    const content =
+      typeof block.content === 'string'
+        ? block.content
+        : typeof block.text === 'string'
+          ? block.text
+          : ''
+    return {
+      id,
+      turnId,
+      type: 'plan',
+      content,
+      status,
+      createdAt: timestamp,
+    }
+  }
+
   if (block.type === 'file_changes') {
     const fileChanges = normalizeTurnFileChanges(block.fileChanges ?? block.file_changes)
     if (!fileChanges) return null
@@ -469,6 +526,13 @@ function getResultBlocks(turnId: number, result: unknown): ProcessingBlock[] | u
   if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
   const blocks = normalizeProcessingBlocks(turnId, result.blocks)
   return blocks.length > 0 ? blocks : undefined
+}
+
+function doneContent(result: unknown): string | undefined {
+  if (!isRecord(result)) return undefined
+  if (typeof result.value !== 'string') return undefined
+  const content = stripCodexUiDirectives(result.value)
+  return content.length > 0 ? content : undefined
 }
 
 function getReasoningChunk(result: unknown): string | undefined {

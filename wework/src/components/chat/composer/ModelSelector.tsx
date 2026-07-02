@@ -41,6 +41,10 @@ type DesktopSubmenuTarget =
   | { type: 'control'; id: string }
   | { type: 'none' }
 
+function isVisibleModelSelectorControl(control: ModelControlConfig): boolean {
+  return control.id !== 'collaborationMode'
+}
+
 interface ModelSelectorProps {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -288,11 +292,15 @@ export function ModelSelector({
     const controls = selectedModel
       ? getControlsForModel(selectedModel)
       : (activeGroup?.config.controls ?? [])
-    return controls.filter(control => (control.scope ?? 'family') === 'family')
+    return controls.filter(
+      control => isVisibleModelSelectorControl(control) && (control.scope ?? 'family') === 'family'
+    )
   }, [activeGroup, selectedModel])
   const supportsReasoningControl = controlsAboveFamilies.some(control => control.id === 'reasoning')
   const selectedModelControls = selectedModel
-    ? getControlsForModel(selectedModel).filter(control => control.scope === 'model')
+    ? getControlsForModel(selectedModel).filter(
+        control => isVisibleModelSelectorControl(control) && control.scope === 'model'
+      )
     : []
   const controlsBelowModels = selectedModelControls.filter(
     control => control.placement === 'belowModels'
@@ -724,6 +732,9 @@ export function ModelSelector({
         'workbench.model_disabled_missing_target_runtime_family',
         'This model is missing runtime.family'
       )
+    }
+    if (reason === 'unavailable') {
+      return t('workbench.model_disabled_unavailable', 'This model is unavailable')
     }
     return t(
       'workbench.model_disabled_runtime_family_mismatch',

@@ -306,12 +306,13 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
     let _wegent_workspace_root = EnvGuard::remove("WEGENT_WORKSPACE_ROOT");
     let _local_workspace_root = EnvGuard::remove("LOCAL_WORKSPACE_ROOT");
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 2201,
         subtask_id: 3212,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!([
             {
@@ -386,11 +387,13 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 86,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with task skill"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
@@ -457,11 +460,13 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 87,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with bot skill"),
         bot: json!([{

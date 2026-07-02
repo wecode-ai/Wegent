@@ -209,6 +209,31 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('settles a streamed assistant message without replacing its content', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        turnId: 9
+      }),
+      {
+        type: 'assistant_chunk',
+        turnId: 9,
+        content: 'streamed answer'
+      }
+    )
+
+    const done = reduceWorkbenchMessages(state, {
+      type: 'assistant_done',
+      turnId: 9
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'streamed answer',
+      status: 'done'
+    })
+  })
+
   test('marks all streaming assistant messages cancelled when no turn is specified', () => {
     const state = [
       {

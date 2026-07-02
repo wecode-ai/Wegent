@@ -20,7 +20,7 @@
   },
   "request_user_input": {
     "asked_count": "Asked {{count}} question(s)",
-    "ignore": "Ignore",
+    "ignore": "Cancel",
     "submit": "Submit",
     "custom_placeholder": "Type your answer"
   },
