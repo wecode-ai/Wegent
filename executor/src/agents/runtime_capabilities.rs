@@ -1430,14 +1430,8 @@ fn load_global_mcp_records() -> BTreeMap<String, Value> {
         .unwrap_or_default()
 }
 
-fn request_api_base_url(request: &ExecutionRequest) -> String {
-    request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(api_base_url)
+fn request_api_base_url(_request: &ExecutionRequest) -> String {
+    api_base_url()
 }
 
 fn api_url(api_base_url: &str, path: &str) -> String {
@@ -1615,6 +1609,35 @@ fn toml_json_value(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    struct EnvGuard {
+        key: &'static str,
+        old_value: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let old_value = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, old_value }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let old_value = env::var(key).ok();
+            env::remove_var(key);
+            Self { key, old_value }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.old_value {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
     fn attachment(
         id: i64,
         status: Option<&str>,
@@ -1674,5 +1697,21 @@ mod tests {
         assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
         assert_eq!(payload["attachments"][1]["status"], "failed");
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
+    }
+
+    #[test]
+    fn request_api_base_url_prefers_env_over_payload_backend_url() {
+        let _lock = crate::test_env::lock();
+        let _mode = EnvGuard::remove("EXECUTOR_MODE");
+        let _api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
+        let request = ExecutionRequest {
+            backend_url: Some("http://payload-backend.invalid".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            request_api_base_url(&request),
+            "http://env-backend.local:8000"
+        );
     }
 }

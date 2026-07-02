@@ -145,12 +145,23 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .get("model_id")
         .and_then(|value| value.as_str())
         .unwrap_or("");
+    let executor_name = request
+        .executor_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env_value("EXECUTOR_NAME"));
+    let executor_namespace = request
+        .executor_namespace
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env_value("EXECUTOR_NAMESPACE"));
     ResponsesEventBuilder::new(request.task_id, request.subtask_id, model)
         .with_message_id(request.message_id)
-        .with_executor_info(
-            request.executor_name.as_deref(),
-            request.executor_namespace.as_deref(),
-        )
+        .with_executor_info(executor_name.as_deref(), executor_namespace.as_deref())
 }
 
 fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
@@ -161,4 +172,11 @@ fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
         ExecutionOutcome::Running => "running",
         ExecutionOutcome::Cancelled { .. } => "cancelled",
     }
+}
+
+fn env_value(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
