@@ -60,6 +60,7 @@ import type {
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus } from '@/types/workbench'
 import type {
+  ArchiveRuntimeConversationsResult,
   ArchiveRuntimeLocalTaskOptions,
   ArchiveRuntimeLocalTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
@@ -110,9 +111,18 @@ interface DesktopSidebarProps {
     address: RuntimeTaskAddress,
     options?: ArchiveRuntimeLocalTaskOptions
   ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
-  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
-  onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void> | void
-  onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void> | void
+  onArchiveProjectConversations?: (
+    runtimeProjectKey: string,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
+  onArchiveProjectsConversations?: (
+    runtimeProjectKeys: string[],
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
+  onArchiveChatConversations?: (
+    addresses: RuntimeTaskAddress[],
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
@@ -1385,7 +1395,10 @@ function ProjectItem({
     address: RuntimeTaskAddress,
     options?: ArchiveRuntimeLocalTaskOptions
   ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
-  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void> | void
+  onArchiveProjectConversations?: (
+    runtimeProjectKey: string,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
@@ -1402,6 +1415,7 @@ function ProjectItem({
   )
   const [projectArchiving, setProjectArchiving] = useState(false)
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const [removingProject, setRemovingProject] = useState(false)
   const pinnedTaskKeysStorageRef = useRef(pinnedTaskKeysStorageKey)
@@ -1466,17 +1480,31 @@ function ProjectItem({
       setArchiveConfirmOpen(false)
     }
   }
-  const confirmArchiveProjectConversations = async () => {
+  const runArchiveProjectConversations = async (options?: ArchiveRuntimeLocalTaskOptions) => {
     const runtimeProjectKey = runtimeProjectWork?.project.key
     if (!runtimeProjectKey || !onArchiveProjectConversations) return
     setProjectArchiving(true)
     try {
-      await onArchiveProjectConversations(runtimeProjectKey)
+      const result = await onArchiveProjectConversations(runtimeProjectKey, options)
+      if (result?.status === 'dirty_worktree') {
+        setArchiveConfirmOpen(false)
+        setForceArchiveConfirmOpen(true)
+        return
+      }
       setArchiveConfirmOpen(false)
+      setForceArchiveConfirmOpen(false)
     } finally {
       setProjectArchiving(false)
     }
   }
+  const confirmArchiveProjectConversations = () => runArchiveProjectConversations()
+  const closeForceArchiveConfirm = () => {
+    if (!projectArchiving) {
+      setForceArchiveConfirmOpen(false)
+    }
+  }
+  const confirmForceArchiveProjectConversations = () =>
+    runArchiveProjectConversations({ force: true })
   const closeRemoveConfirm = () => {
     if (!removingProject) {
       setRemoveConfirmOpen(false)
@@ -1703,6 +1731,17 @@ function ProjectItem({
         onClose={closeRemoveConfirm}
         onConfirm={confirmRemoveProject}
       />
+      <ArchiveConversationsConfirmDialog
+        open={forceArchiveConfirmOpen}
+        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+        description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
+        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+        cancelLabel={t('workbench.cancel', '取消')}
+        submitting={projectArchiving}
+        testId={`archive-project-force-dialog-${project.id}`}
+        onClose={closeForceArchiveConfirm}
+        onConfirm={confirmForceArchiveProjectConversations}
+      />
     </div>
   )
 }
@@ -1780,6 +1819,9 @@ export function DesktopSidebar({
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
+  const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
+    'projects' | 'chats' | null
+  >(null)
   const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
@@ -1971,29 +2013,61 @@ export function DesktopSidebar({
       setArchiveSectionMode(null)
     }
   }
-  const confirmArchiveSectionConversations = async () => {
-    if (archiveSectionMode === 'projects') {
+  const forceArchiveSectionDialogTestId =
+    forceArchiveSectionMode === 'chats'
+      ? 'runtime-chat-section-force-archive-dialog'
+      : 'projects-section-force-archive-dialog'
+  const runArchiveSectionConversations = async (
+    mode: 'projects' | 'chats',
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => {
+    if (mode === 'projects') {
       if (!onArchiveProjectsConversations || projectSectionArchiveKeys.length === 0) return
       setIsArchivingProjectSection(true)
       try {
-        await onArchiveProjectsConversations(projectSectionArchiveKeys)
+        const result = await onArchiveProjectsConversations(projectSectionArchiveKeys, options)
+        if (result?.status === 'dirty_worktree') {
+          setArchiveSectionMode(null)
+          setForceArchiveSectionMode('projects')
+          return
+        }
         setArchiveSectionMode(null)
+        setForceArchiveSectionMode(null)
       } finally {
         setIsArchivingProjectSection(false)
       }
       return
     }
 
-    if (archiveSectionMode === 'chats') {
+    if (mode === 'chats') {
       if (!onArchiveChatConversations || chatSectionArchiveAddresses.length === 0) return
       setIsArchivingChatSection(true)
       try {
-        await onArchiveChatConversations(chatSectionArchiveAddresses)
+        const result = await onArchiveChatConversations(chatSectionArchiveAddresses, options)
+        if (result?.status === 'dirty_worktree') {
+          setArchiveSectionMode(null)
+          setForceArchiveSectionMode('chats')
+          return
+        }
         setArchiveSectionMode(null)
+        setForceArchiveSectionMode(null)
       } finally {
         setIsArchivingChatSection(false)
       }
     }
+  }
+  const confirmArchiveSectionConversations = () => {
+    if (!archiveSectionMode) return
+    void runArchiveSectionConversations(archiveSectionMode)
+  }
+  const closeForceArchiveSectionDialog = () => {
+    if (!isArchiveSectionSubmitting) {
+      setForceArchiveSectionMode(null)
+    }
+  }
+  const confirmForceArchiveSectionConversations = () => {
+    if (!forceArchiveSectionMode) return
+    void runArchiveSectionConversations(forceArchiveSectionMode, { force: true })
   }
   const displayedExpandedProjectIds = visibleExpandedProjectIds
   const autoExpandedProjectKeyRef = useRef<string | null>(null)
@@ -2552,6 +2626,17 @@ export function DesktopSidebar({
             testId={archiveSectionDialogTestId}
             onClose={closeArchiveSectionDialog}
             onConfirm={confirmArchiveSectionConversations}
+          />
+          <ArchiveConversationsConfirmDialog
+            open={forceArchiveSectionMode !== null}
+            title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+            description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
+            confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+            cancelLabel={t('workbench.cancel', '取消')}
+            submitting={isArchiveSectionSubmitting}
+            testId={forceArchiveSectionDialogTestId}
+            onClose={closeForceArchiveSectionDialog}
+            onConfirm={confirmForceArchiveSectionConversations}
           />
           <TextInputDialog
             open={renamingProject !== null}

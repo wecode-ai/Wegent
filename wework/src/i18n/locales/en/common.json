@@ -66,6 +66,7 @@
     "archive_runtime_task_notice_close": "Dismiss archive notice",
     "archive_runtime_task_dirty_worktree_title": "Worktree has uncommitted code",
     "archive_runtime_task_dirty_worktree_force_desc": "Force archiving will delete this worktree directory. Uncommitted changes cannot be recovered.",
+    "archive_runtime_tasks_dirty_worktree_force_desc": "Force archiving will delete the worktree directories for these conversations. Uncommitted changes cannot be recovered.",
     "archive_runtime_task_force_confirm": "Force archive",
     "archive_runtime_task_check_failed": "Failed to check worktree changes before archiving",
     "archive_runtime_task_remove_failed": "Task archived, but failed to remove the worktree",

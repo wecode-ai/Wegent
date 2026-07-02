@@ -66,6 +66,7 @@
     "archive_runtime_task_notice_close": "关闭归档提示",
     "archive_runtime_task_dirty_worktree_title": "工作树有未提交代码",
     "archive_runtime_task_dirty_worktree_force_desc": "强制归档会删除这个工作树目录，未提交的更改将无法恢复。",
+    "archive_runtime_tasks_dirty_worktree_force_desc": "强制归档会删除这些会话对应的工作树目录，未提交的更改将无法恢复。",
     "archive_runtime_task_force_confirm": "强制归档",
     "archive_runtime_task_check_failed": "归档前检查工作树变更失败",
     "archive_runtime_task_remove_failed": "任务已归档，但删除工作树失败",
