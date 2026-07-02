@@ -127,7 +127,7 @@ export function BottomWorkspacePanel({
           <header
             data-testid={contentTestIdsEnabled ? 'bottom-workspace-tabbar' : undefined}
             role="tablist"
-            className="flex h-10 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border bg-[#fafafa] px-2 pr-12"
+            className="flex h-10 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border bg-surface px-2 pr-12"
           >
             <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
               {tabs.map(tab => (
@@ -161,7 +161,7 @@ export function BottomWorkspacePanel({
                   devices={devices}
                   workspaceTarget={workspaceTarget}
                   defaultOpenTool={panelActive ? 'terminal' : undefined}
-                  onRequestClose={onRequestClose}
+                  onRequestClose={() => closeTab(tab.id)}
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
                   panelActive={panelActive}
@@ -210,7 +210,7 @@ function BottomWorkspaceTitleTab({
       className={cn(
         'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active
-          ? 'border border-border bg-white text-text-primary shadow-sm'
+          ? 'border border-border bg-background text-text-primary shadow-sm'
           : 'border border-transparent text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
       )}
     >

@@ -36,6 +36,9 @@ export function getBlockedModelSelectionMessage(
   if (reason === 'missing_target_runtime_family') {
     return `${modelLabel} 缺少运行时信息，不能用于当前对话`
   }
+  if (reason === 'unavailable') {
+    return `${modelLabel} 当前不可用`
+  }
   return `${modelLabel} 与当前对话的模型协议不兼容，请新建对话后使用该模型`
 }
 

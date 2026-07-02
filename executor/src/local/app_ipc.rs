@@ -10,13 +10,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::UnixListener,
-    sync::broadcast,
+    sync::{broadcast, mpsc},
 };
 
 use crate::{
@@ -31,6 +32,7 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const WORKSPACE_TREE_SCRIPT: &str = r#"
 import json
 import os
@@ -486,10 +488,22 @@ impl AppIpcServer {
     }
 
     async fn handle_stream(&self, stream: tokio::net::UnixStream) -> Result<(), String> {
-        let (reader, mut writer) = stream.into_split();
-        write_message(&mut writer, &self.ready_event())
+        let (reader, writer) = stream.into_split();
+        let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
+        let mut writer_task = tokio::spawn(async move {
+            let mut writer = writer;
+            while let Some(message) = write_rx.recv().await {
+                write_message(&mut writer, &message)
+                    .await
+                    .map_err(|error| format!("failed to write app IPC message: {error}"))?;
+            }
+            Ok::<(), String>(())
+        });
+
+        write_tx
+            .send(self.ready_event())
             .await
-            .map_err(|error| format!("failed to write app IPC ready event: {error}"))?;
+            .map_err(|error| format!("failed to queue app IPC ready event: {error}"))?;
 
         let mut reader = BufReader::new(reader);
         let mut events = self.event_tx.subscribe();
@@ -497,26 +511,104 @@ impl AppIpcServer {
         loop {
             line.clear();
             tokio::select! {
+                writer = &mut writer_task => {
+                    return match writer {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(error)) => Err(error),
+                        Err(error) => Err(format!("app IPC writer task failed: {error}")),
+                    };
+                }
                 read = reader.read_line(&mut line) => {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
                         return Ok(());
                     }
-                    if let Some(response) = self.handle_line(&line).await {
-                        write_message(&mut writer, &response)
-                            .await
-                            .map_err(|error| format!("failed to write app IPC response: {error}"))?;
-                    }
+                    let server = self.clone();
+                    let response_tx = write_tx.clone();
+                    let request_line = line.clone();
+                    let (request_id, method) = app_ipc_request_metadata(&request_line);
+                    tokio::spawn(async move {
+                        let started_at = Instant::now();
+                        log_app_ipc_request(
+                            "app IPC request started",
+                            request_id.as_deref(),
+                            method.as_deref(),
+                            None,
+                            None,
+                        );
+                        let response = match tokio::time::timeout(
+                            Duration::from_secs(APP_IPC_REQUEST_TIMEOUT_SECONDS),
+                            server.handle_line(&request_line),
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(_) => {
+                                log_app_ipc_request(
+                                    "app IPC request timed out",
+                                    request_id.as_deref(),
+                                    method.as_deref(),
+                                    Some(started_at.elapsed().as_millis()),
+                                    None,
+                                );
+                                Some(error_message(
+                                    request_id.as_deref(),
+                                    &AppIpcError::new(
+                                        "request_timeout",
+                                        format!(
+                                            "app IPC request timed out after {APP_IPC_REQUEST_TIMEOUT_SECONDS}s"
+                                        ),
+                                    ),
+                                ))
+                            }
+                        };
+
+                        if let Some(response) = response {
+                            let ok = response.get("ok").and_then(Value::as_bool);
+                            log_app_ipc_request(
+                                "app IPC request finished",
+                                request_id.as_deref(),
+                                method.as_deref(),
+                                Some(started_at.elapsed().as_millis()),
+                                ok,
+                            );
+                            if response_tx.send(response).await.is_err() {
+                                log_app_ipc_request(
+                                    "app IPC response dropped",
+                                    request_id.as_deref(),
+                                    method.as_deref(),
+                                    Some(started_at.elapsed().as_millis()),
+                                    ok,
+                                );
+                            }
+                        } else {
+                            log_app_ipc_request(
+                                "app IPC request ignored",
+                                request_id.as_deref(),
+                                method.as_deref(),
+                                Some(started_at.elapsed().as_millis()),
+                                None,
+                            );
+                        }
+                    });
                 }
                 event = events.recv() => {
                     match event {
                         Ok(message) => {
-                            write_message(&mut writer, &message)
+                            write_tx.send(message)
                                 .await
-                                .map_err(|error| format!("failed to write app IPC event: {error}"))?;
+                                .map_err(|error| format!("failed to queue app IPC event: {error}"))?;
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            let message = self.event_message(
+                                "executor.event_lagged",
+                                json!({ "skipped": skipped }),
+                            );
+                            write_tx.send(message)
+                                .await
+                                .map_err(|error| format!("failed to queue app IPC lag event: {error}"))?;
+                        }
                         Err(broadcast::error::RecvError::Closed) => return Ok(()),
                     }
                 }
@@ -571,6 +663,48 @@ pub fn app_ipc_listening_log_line(device_id: &str, socket_path: &str) -> String 
             ("socket_path", socket_path.to_owned()),
         ],
     )
+}
+
+fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
+    match serde_json::from_str::<Value>(line) {
+        Ok(Value::Object(message)) => {
+            let request_id = message
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned);
+            let method = message
+                .get("method")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned);
+            (request_id, method)
+        }
+        _ => (None, None),
+    }
+}
+
+fn log_app_ipc_request(
+    event: &str,
+    request_id: Option<&str>,
+    method: Option<&str>,
+    elapsed_ms: Option<u128>,
+    ok: Option<bool>,
+) {
+    let mut fields = Vec::new();
+    if let Some(request_id) = request_id {
+        fields.push(("request_id", request_id.to_owned()));
+    }
+    if let Some(method) = method {
+        fields.push(("method", method.to_owned()));
+    }
+    if let Some(elapsed_ms) = elapsed_ms {
+        fields.push(("elapsed_ms", elapsed_ms.to_string()));
+    }
+    if let Some(ok) = ok {
+        fields.push(("ok", ok.to_string()));
+    }
+    write_executor_log_line(&format_executor_log(event, &fields));
 }
 
 pub fn app_ipc_socket_path() -> PathBuf {

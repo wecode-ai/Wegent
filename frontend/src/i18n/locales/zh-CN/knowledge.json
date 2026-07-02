@@ -9,6 +9,45 @@
   "documents": "文档",
   "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
+  "picker": {
+    "columns": {
+      "sources": "一级分组",
+      "knowledgeBases": "二级分组"
+    },
+    "sources": {
+      "personal": "个人知识",
+      "group": "组知识",
+      "organization": "公司知识"
+    },
+    "scopes": {
+      "personal": "个人",
+      "organization": "组织"
+    },
+    "target": {
+      "knowledgeBase": "知识库",
+      "folder": "目录",
+      "document": "文档"
+    },
+    "count": {
+      "knowledgeBases": "{{count}} 个知识库",
+      "documents": "{{count}} 个文档"
+    },
+    "loading": "加载知识库中...",
+    "loadingDocuments": "加载文档中...",
+    "retry": "重试",
+    "empty": "暂无内容",
+    "emptyGroups": "暂无群组",
+    "emptyKnowledgeBases": "暂无知识库",
+    "emptyDocuments": "暂无文档",
+    "boundKnowledgeBases": "已绑定知识库",
+    "selectKnowledgeBase": "选择一个知识库查看文档",
+    "selectWholeKb": "选择知识库",
+    "selected": "已选择",
+    "selectedDocuments": "已选 {{count}} 个文档",
+    "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
+    "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
+    "previewUnavailable": "预览地址不可用"
+  },
   "modules": {
     "title": "我的知识",
     "code": "代码知识",
@@ -70,15 +109,15 @@
       "typeToSearch": "输入关键词搜索知识库",
       "favorites": "收藏",
       "recent": "最近",
-      "groups": "分组",
+      "groups": "组知识",
       "navigation": "导航",
       "all": "全部",
       "noGroups": "暂无分组",
       "noFavorites": "暂无收藏的知识库",
       "noRecent": "暂无最近访问记录",
       "clearRecent": "清除记录",
-      "personal": "个人",
-      "organization": "公司",
+      "personal": "个人知识",
+      "organization": "公司知识",
       "dingtalk": "钉钉文档",
       "groupSettings": "组设置",
       "justNow": "刚刚",

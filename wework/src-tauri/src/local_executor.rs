@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -33,10 +33,12 @@ const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
-const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 120;
+const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
+const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
+const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
@@ -310,6 +312,13 @@ struct LocalExecutorSocketDebug {
     path: String,
     exists: bool,
     file_type: String,
+}
+
+#[cfg(unix)]
+struct PreparedExecutorStream {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+    ready_line: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -764,6 +773,33 @@ fn fail_pending_requests_for_generation(
     }
 }
 
+fn fail_unresponsive_request_inner(inner: &SharedExecutorInner, request_id: &str, message: String) {
+    let pending = inner
+        .lock()
+        .map(|mut inner| {
+            let mut pending = Vec::new();
+            if let Some(sender) = inner.pending.remove(request_id) {
+                pending.push(sender);
+            }
+            let failed_pending_count = inner.pending.len();
+            pending.extend(inner.pending.drain().map(|(_, sender)| sender));
+            inner.ready = false;
+            inner.running = false;
+            inner.generation = inner.generation.saturating_add(1);
+            clear_connected_stream(&mut inner);
+            inner.error = Some(message.clone());
+            log::warn!(
+                "Local executor IPC marked unresponsive: request_id={request_id}, failed_pending_count={failed_pending_count}, message={message}"
+            );
+            pending
+        })
+        .unwrap_or_default();
+
+    for sender in pending {
+        let _ = sender.send(Err(message.clone()));
+    }
+}
+
 fn set_executor_error(state: &LocalExecutorState, error: String) {
     set_executor_error_inner(&state.inner, error);
 }
@@ -867,13 +903,9 @@ fn connect_sidecar_socket() -> Result<UnixStream, String> {
 }
 
 #[cfg(unix)]
-fn attach_connected_stream(
-    app: tauri::AppHandle,
-    state: &LocalExecutorState,
-    stream: UnixStream,
-) -> Result<(), String> {
+fn prepare_connected_stream(stream: UnixStream) -> Result<PreparedExecutorStream, String> {
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
         .map_err(|error| format!("Failed to configure local executor socket timeout: {error}"))?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
@@ -891,13 +923,50 @@ fn attach_connected_stream(
         .get_ref()
         .try_clone()
         .map_err(|error| format!("Failed to clone local executor socket: {error}"))?;
+
+    Ok(PreparedExecutorStream {
+        reader,
+        writer,
+        ready_line,
+    })
+}
+
+#[cfg(unix)]
+fn connect_and_prepare_sidecar_socket() -> Result<PreparedExecutorStream, String> {
+    prepare_connected_stream(connect_sidecar_socket()?)
+}
+
+#[cfg(unix)]
+async fn connect_and_prepare_sidecar_socket_with_timeout() -> Result<PreparedExecutorStream, String>
+{
+    let (sender, receiver) = mpsc::channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = sender.send(connect_and_prepare_sidecar_socket());
+    });
+
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv_timeout(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS + 1))
+            .unwrap_or_else(|_| Err("Timed out waiting for local executor ready event".to_string()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(unix)]
+fn attach_prepared_stream(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+    prepared: PreparedExecutorStream,
+) -> Result<(), String> {
+    let mut reader = prepared.reader;
     let generation = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.generation = inner.generation.saturating_add(1);
-        inner.stream = Some(writer);
+        inner.stream = Some(prepared.writer);
         inner.running = true;
         inner.ready = false;
         inner.device_id = Some(
@@ -909,7 +978,7 @@ fn attach_connected_stream(
         inner.error = None;
         inner.generation
     };
-    handle_executor_line_inner(&app, &state.inner, &ready_line)?;
+    handle_executor_line_inner(&app, &state.inner, &prepared.ready_line)?;
     {
         let inner = state
             .inner
@@ -944,6 +1013,15 @@ fn attach_connected_stream(
     });
 
     Ok(())
+}
+
+#[cfg(unix)]
+async fn connect_and_attach_sidecar_socket(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+) -> Result<(), String> {
+    let prepared = connect_and_prepare_sidecar_socket_with_timeout().await?;
+    attach_prepared_stream(app, state, prepared)
 }
 
 #[cfg(unix)]
@@ -1115,16 +1193,16 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    let mut last_error = match connect_sidecar_socket() {
-        Ok(stream) => return attach_connected_stream(app, state, stream),
+    let mut last_error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
+        Ok(()) => return Ok(()),
         Err(error) => error,
     };
 
     spawn_sidecar_if_needed(app.clone(), state).await?;
 
     for _ in 0..LOCAL_EXECUTOR_CONNECT_RETRIES {
-        match connect_sidecar_socket() {
-            Ok(stream) => return attach_connected_stream(app.clone(), state, stream),
+        match connect_and_attach_sidecar_socket(app.clone(), state).await {
+            Ok(()) => return Ok(()),
             Err(error) => {
                 last_error = error;
                 retry_connect_delay().await;
@@ -1193,11 +1271,13 @@ async fn send_executor_request(
     start_executor_if_needed(app, state).await?;
 
     let request_id = next_request_id(state);
+    let method = request.method.clone();
+    let started_at = Instant::now();
     let (sender, receiver) = mpsc::channel::<Result<Value, String>>();
     let message = json!({
         "type": "request",
         "id": request_id,
-        "method": request.method,
+        "method": method,
         "params": request.params,
     });
     let line = format!(
@@ -1211,16 +1291,49 @@ async fn send_executor_request(
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
+        let pending_count = inner.pending.len();
+        log::info!(
+            "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
+        );
         if let Err(error) = write_request_line(&mut inner, &line) {
             inner.pending.remove(&request_id);
+            log::warn!(
+                "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
+            );
             return Err(error);
         }
     }
 
+    let inner = state.inner.clone();
+    let wait_request_id = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        receiver
-            .recv()
-            .unwrap_or_else(|_| Err("Local executor disconnected".to_string()))
+        match receiver.recv_timeout(Duration::from_secs(LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS)) {
+            Ok(result) => {
+                log::info!(
+                    "Local executor IPC request finished: request_id={wait_request_id}, method={method}, elapsed_ms={}",
+                    started_at.elapsed().as_millis()
+                );
+                result
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                log::warn!(
+                    "Local executor IPC request disconnected: request_id={wait_request_id}, method={method}, elapsed_ms={}",
+                    started_at.elapsed().as_millis()
+                );
+                Err("Local executor disconnected".to_string())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let message = format!(
+                    "Local executor request {method} timed out after {LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS}s"
+                );
+                log::warn!(
+                    "Local executor IPC request timed out: request_id={wait_request_id}, method={method}, elapsed_ms={}",
+                    started_at.elapsed().as_millis()
+                );
+                fail_unresponsive_request_inner(&inner, &wait_request_id, message.clone());
+                Err(message)
+            }
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1527,9 +1640,11 @@ mod tests {
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
         let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
+        let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var("HOME", "/tmp/wework-test-home");
         std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
 
         let home = local_executor_home_path().expect("executor home should resolve");
         let socket = app_ipc_socket_path().expect("socket path should resolve");
@@ -1538,6 +1653,7 @@ mod tests {
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
         restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
+        restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
             home,
@@ -1652,8 +1768,10 @@ mod tests {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
         let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
+        let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
         std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
                 backend_url: "https://cloud.example.com".to_string(),
@@ -1669,6 +1787,7 @@ mod tests {
 
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
         restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
+        restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),

@@ -333,7 +333,7 @@ function ReviewToolbar({
       data-testid="file-changes-review-toolbar"
       className="flex min-h-11 shrink-0 flex-col justify-center gap-0.5 border-b border-border bg-background px-3 py-1"
     >
-      <div className="flex min-h-7 items-center gap-2">
+      <div className="flex min-h-8 items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-text-primary">
           <div className="relative shrink-0">
             {canSwitchView ? (
@@ -344,7 +344,7 @@ function ReviewToolbar({
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen(open => !open)}
-                  className="flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  className="flex h-8 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
                   <span>{toolbarTitle}</span>
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -367,7 +367,7 @@ function ReviewToolbar({
                           setMenuOpen(false)
                           option.onSelect()
                         }}
-                        className="flex h-7 w-full items-center gap-2 px-2.5 text-left font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+                        className="flex h-8 w-full items-center gap-2 px-2.5 text-left font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         <span className="min-w-0 flex-1 truncate">{option.label}</span>
                         {option.active ? <Check className="h-4 w-4 shrink-0" /> : null}
@@ -463,11 +463,11 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
+        'flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40',
         pressed && 'border-border bg-muted text-text-primary'
       )}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="h-4 w-4" />
     </button>
   )
 }
@@ -500,7 +500,7 @@ function ReviewFileTree({
       aria-label={t('file_changes.file_list_label')}
     >
       <div className="px-3 pb-1.5 pt-2">
-        <div className="flex h-7 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
+        <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
           <Search className="h-3.5 w-3.5 text-text-muted" />
           <input
             data-testid="file-changes-review-file-search-input"
@@ -678,7 +678,7 @@ function FileDiffSection({
         aria-controls={getDiffSectionDomId(index)}
         title={actionLabel}
         onClick={onToggle}
-        className="sticky top-0 z-10 flex h-9 w-full items-center gap-2 border-b border-border bg-background px-3 text-left text-xs font-medium text-text-primary hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+        className="sticky top-0 z-10 flex h-8 w-full items-center gap-2 border-b border-border bg-background px-3 text-left text-xs font-medium text-text-primary hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
       >
         {collapsed ? (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />

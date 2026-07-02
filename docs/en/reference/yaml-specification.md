@@ -562,19 +562,30 @@ spec:
       folderIds: [12]
       explicitDocumentIds: null
       includeSubfolders: true
+  externalKnowledgeRefs:
+    - provider: ap
+      mode: explicit
+      id: kb-1
+      name: External Product Docs
+      scope: organization
+      target_type: document
+      node_id: document:node-1
+      document_id: node-1
+      target_name: api-reference.md
 ```
 
 ### Field Description
 
-| Field                      | Type   | Required | Description                                                                                                         |
-| -------------------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `metadata.name`            | string | Yes      | Unique identifier for the Task                                                                                      |
-| `metadata.namespace`       | string | Yes      | Namespace, typically `default`                                                                                      |
-| `spec.title`               | string | Yes      | Task title                                                                                                          |
-| `spec.prompt`              | string | Yes      | Task description                                                                                                    |
-| `spec.teamRef`             | object | Yes      | Team reference                                                                                                      |
-| `spec.workspaceRef`        | object | Yes      | Workspace reference                                                                                                 |
-| `spec.knowledgeBaseScopes` | array  | No       | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns |
+| Field                        | Type   | Required | Description                                                                                                                |
+| ---------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `metadata.name`              | string | Yes      | Unique identifier for the Task                                                                                             |
+| `metadata.namespace`         | string | Yes      | Namespace, typically `default`                                                                                             |
+| `spec.title`                 | string | Yes      | Task title                                                                                                                 |
+| `spec.prompt`                | string | Yes      | Task description                                                                                                           |
+| `spec.teamRef`               | object | Yes      | Team reference                                                                                                             |
+| `spec.workspaceRef`          | object | Yes      | Workspace reference                                                                                                        |
+| `spec.knowledgeBaseScopes`   | array  | No       | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns        |
+| `spec.externalKnowledgeRefs` | array  | No       | Task-level external knowledge source bindings maintained by chat context selection and the task knowledge management entry |
 
 ### Knowledge Base Scopes
 
@@ -589,6 +600,23 @@ spec:
 | `folderIds`           | array   | No       | Allowed folder IDs. `0` means documents directly under the root folder |
 | `explicitDocumentIds` | array   | No       | Explicitly allowed document IDs                                        |
 | `includeSubfolders`   | boolean | No       | Whether folder scope includes subfolders, defaults to `true`           |
+
+### External Knowledge Source Bindings
+
+`spec.externalKnowledgeRefs` is a runtime field describing the external knowledge sources bound to the current Task. It is maintained by chat send handling and the task knowledge management APIs. It is not used for Ghost, Bot, or Team default configuration.
+
+| Field         | Type   | Required      | Description                                                                                    |
+| ------------- | ------ | ------------- | ---------------------------------------------------------------------------------------------- |
+| `provider`    | string | Yes           | External knowledge provider id                                                                 |
+| `mode`        | string | No            | Binding mode, defaults to `explicit`; `explicit` requires `id`                                 |
+| `id`          | string | Conditionally | Stable provider-owned source ID                                                                |
+| `name`        | string | No            | Source display name                                                                            |
+| `scope`       | string | No            | Provider-interpretable scope                                                                   |
+| `target_type` | string | No            | `knowledge_base`, `folder`, or `document`; missing values are treated as whole-source bindings |
+| `node_id`     | string | No            | Provider-neutral node ID                                                                       |
+| `document_id` | string | No            | Provider-neutral document ID                                                                   |
+| `parent_id`   | string | No            | Provider-neutral parent node ID                                                                |
+| `target_name` | string | No            | Folder or document target display name                                                         |
 
 ### Task Status
 

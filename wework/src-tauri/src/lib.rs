@@ -29,6 +29,101 @@ const TRAY_MENU_QUIT_ID: &str = "quit";
 const TRAY_MENU_TASK_PREFIX: &str = "task:";
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
+#[cfg(desktop)]
+const LOG_DIRECTORY_APP_NAME: &str = "Wework";
+#[cfg(desktop)]
+const LOG_DIRECTORY_VENDOR_NAME: &str = "Wegent";
+#[cfg(desktop)]
+const RUST_LOG_FILE_NAME: &str = "wework-tauri";
+#[cfg(desktop)]
+const WEBVIEW_LOG_FILE_NAME: &str = "wework-frontend";
+
+#[cfg(desktop)]
+fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(app
+            .path()
+            .home_dir()
+            .map_err(|error| format!("Failed to locate home directory: {error}"))?
+            .join("Library")
+            .join("Logs")
+            .join(LOG_DIRECTORY_VENDOR_NAME)
+            .join(LOG_DIRECTORY_APP_NAME));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(app
+            .path()
+            .local_data_dir()
+            .map_err(|error| format!("Failed to locate local data directory: {error}"))?
+            .join(LOG_DIRECTORY_VENDOR_NAME)
+            .join(LOG_DIRECTORY_APP_NAME)
+            .join("logs"));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return Ok(app
+            .path()
+            .data_dir()
+            .map_err(|error| format!("Failed to locate data directory: {error}"))?
+            .join(LOG_DIRECTORY_VENDOR_NAME)
+            .join(LOG_DIRECTORY_APP_NAME)
+            .join("logs"));
+    }
+
+    #[allow(unreachable_code)]
+    app.path()
+        .app_log_dir()
+        .map_err(|error| format!("Failed to locate app log directory: {error}"))
+}
+
+#[cfg(desktop)]
+fn create_log_plugin(
+    app: &tauri::AppHandle,
+) -> Result<tauri::plugin::TauriPlugin<tauri::Wry>, String> {
+    let log_directory = app_log_directory(app)?;
+    Ok(tauri_plugin_log::Builder::default()
+        .clear_targets()
+        .level(log::LevelFilter::Debug)
+        .target(
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                path: log_directory.clone(),
+                file_name: Some(RUST_LOG_FILE_NAME.into()),
+            })
+            .filter(|metadata| {
+                !metadata
+                    .target()
+                    .starts_with(tauri_plugin_log::WEBVIEW_TARGET)
+            }),
+        )
+        .target(
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                path: log_directory,
+                file_name: Some(WEBVIEW_LOG_FILE_NAME.into()),
+            })
+            .filter(|metadata| {
+                metadata
+                    .target()
+                    .starts_with(tauri_plugin_log::WEBVIEW_TARGET)
+            }),
+        )
+        .build())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn get_app_log_directory(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(app_log_directory(&app)?.to_string_lossy().to_string())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn get_app_log_directory(_app: tauri::AppHandle) -> Result<String, String> {
+    Err("App log directory is only available on desktop".to_string())
+}
 
 fn normalized_non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
@@ -386,6 +481,32 @@ fn download_local_file_to_downloads(
     let target_path = unique_download_path(&downloads_dir, &filename);
     std::fs::copy(&source_path, &target_path)
         .map_err(|error| format!("Failed to copy file to Downloads: {error}"))?;
+    notify_download_finished(&target_path);
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_text_file_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    if content.is_empty() {
+        return Err("File content is empty".to_string());
+    }
+
+    let downloads_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Failed to locate Downloads directory: {error}"))?;
+    std::fs::create_dir_all(&downloads_dir)
+        .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
+
+    let filename = sanitized_download_filename(&filename, std::path::Path::new("plan.md"));
+    let target_path = unique_download_path(&downloads_dir, &filename);
+    std::fs::write(&target_path, content)
+        .map_err(|error| format!("Failed to save file to Downloads: {error}"))?;
     notify_download_finished(&target_path);
 
     Ok(target_path.to_string_lossy().to_string())
@@ -871,13 +992,17 @@ pub fn run() {
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
             }
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            #[cfg(desktop)]
+            app.handle().plugin(
+                create_log_plugin(app.handle())
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
+            )?;
+
+            log::info!(
+                "Wework app logs are written to {}",
+                get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
+            );
+
             #[cfg(desktop)]
             setup_system_tray(app)?;
             Ok(())
@@ -906,8 +1031,10 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
+            get_app_log_directory,
             set_tray_menu_state,
             download_local_file_to_downloads,
+            save_text_file_to_downloads,
             local_path_exists,
             wecode::local_executor::open_executor_logs_directory,
             open_local_workspace,

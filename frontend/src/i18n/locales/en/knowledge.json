@@ -9,6 +9,45 @@
   "documents": "documents",
   "document_count": "{{count}} document",
   "documents_count": "{{count}} documents",
+  "picker": {
+    "columns": {
+      "sources": "Primary Group",
+      "knowledgeBases": "Secondary Group"
+    },
+    "sources": {
+      "personal": "Personal Knowledge",
+      "group": "Group Knowledge",
+      "organization": "Company Knowledge"
+    },
+    "scopes": {
+      "personal": "Personal",
+      "organization": "Organization"
+    },
+    "target": {
+      "knowledgeBase": "Knowledge Base",
+      "folder": "Folder",
+      "document": "Document"
+    },
+    "count": {
+      "knowledgeBases": "{{count}} knowledge bases",
+      "documents": "{{count}} documents"
+    },
+    "loading": "Loading knowledge bases...",
+    "loadingDocuments": "Loading documents...",
+    "retry": "Retry",
+    "empty": "No content",
+    "emptyGroups": "No groups",
+    "emptyKnowledgeBases": "No knowledge bases",
+    "emptyDocuments": "No documents",
+    "boundKnowledgeBases": "Bound knowledge bases",
+    "selectKnowledgeBase": "Select a knowledge base to view documents",
+    "selectWholeKb": "Select KB",
+    "selected": "Selected",
+    "selectedDocuments": "{{count}} documents selected",
+    "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
+    "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
+    "previewUnavailable": "Preview URL is unavailable"
+  },
   "modules": {
     "title": "Knowledge Space",
     "code": "Code Knowledge",
@@ -70,15 +109,15 @@
       "typeToSearch": "Type to search knowledge bases",
       "favorites": "Favorites",
       "recent": "Recent",
-      "groups": "Groups",
+      "groups": "Group Knowledge",
       "navigation": "Navigation",
       "all": "All",
       "noGroups": "No groups",
       "noFavorites": "No favorite knowledge bases",
       "noRecent": "No recent access history",
       "clearRecent": "Clear history",
-      "personal": "Personal",
-      "organization": "Organization",
+      "personal": "Personal Knowledge",
+      "organization": "Company Knowledge",
       "dingtalk": "DingTalk Docs",
       "groupSettings": "Group Settings",
       "justNow": "Just now",

@@ -44,6 +44,7 @@ export interface ModelCompatibilitySource {
 
 interface ModelUiMetadata {
   family: string
+  familyLabel?: string
   region?: string
   modelLabel: string
   sortOrder: number
@@ -60,6 +61,9 @@ const REGION_LABELS: Record<string, string> = {
 
 const FAMILY_ORDER = [
   'claude',
+  'codex-official',
+  'codex-provider',
+  'model-interface',
   'gpt',
   'gemini',
   'kimi',
@@ -72,105 +76,110 @@ const FAMILY_ORDER = [
 
 const HIDDEN_MODEL_FAMILIES = new Set(['gemini'])
 
+const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
+  {
+    id: 'reasoning',
+    label: 'Reasoning',
+    labelKey: 'workbench.reasoning_level',
+    defaultValue: 'high',
+    placement: 'aboveModels',
+    scope: 'family',
+    includeInLabel: 'never',
+    options: [
+      {
+        value: 'low',
+        label: 'Low',
+        labelKey: 'workbench.intelligence_low',
+        order: 10,
+      },
+      {
+        value: 'medium',
+        label: 'Medium',
+        labelKey: 'workbench.intelligence_medium',
+        order: 20,
+      },
+      {
+        value: 'high',
+        label: 'High',
+        labelKey: 'workbench.intelligence_high',
+        order: 30,
+      },
+      {
+        value: 'extra_high',
+        label: 'Extra High',
+        labelKey: 'workbench.intelligence_ultra',
+        order: 40,
+      },
+    ],
+  },
+  {
+    id: 'collaborationMode',
+    label: 'Mode',
+    labelKey: 'workbench.collaboration_mode',
+    defaultValue: 'default',
+    placement: 'aboveModels',
+    scope: 'family',
+    includeInLabel: 'never',
+    persistDefault: false,
+    options: [
+      {
+        value: 'default',
+        label: 'Default mode',
+        labelKey: 'workbench.collaboration_default',
+        description: 'Answer directly in the normal Codex flow.',
+        descriptionKey: 'workbench.collaboration_default_description',
+        order: 10,
+      },
+      {
+        value: 'plan',
+        label: 'Plan mode',
+        labelKey: 'workbench.plan_mode',
+        description: 'Ask clarifying questions before continuing when needed.',
+        descriptionKey: 'workbench.plan_mode_description',
+        order: 20,
+      },
+    ],
+  },
+  {
+    id: 'speed',
+    label: 'Speed',
+    labelKey: 'workbench.speed',
+    defaultValue: 'standard',
+    placement: 'belowModels',
+    scope: 'model',
+    includeInLabel: 'whenNonDefault',
+    options: [
+      {
+        value: 'standard',
+        label: '标准',
+        labelKey: 'workbench.speed_standard',
+        description: '默认速度',
+        descriptionKey: 'workbench.speed_standard_description',
+        order: 10,
+      },
+      {
+        value: 'fast',
+        label: '⚡ 快速',
+        labelKey: 'workbench.speed_fast',
+        summaryLabel: '⚡',
+        description: '1.5 倍速度，消耗增加',
+        descriptionKey: 'workbench.speed_fast_description',
+        order: 20,
+      },
+    ],
+  },
+]
+
 export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: 'claude', label: 'Claude', order: 10, controls: [] },
+  { id: 'codex-official', label: 'CodeX', order: 20, controls: OPENAI_RESPONSES_CONTROLS },
+  { id: 'codex-provider', label: 'Provider 模型', order: 30, controls: OPENAI_RESPONSES_CONTROLS },
+  { id: 'model-interface', label: '接口模型', order: 40, controls: OPENAI_RESPONSES_CONTROLS },
   {
     id: 'gpt',
     label: 'GPT',
-    order: 20,
-    controls: [
-      {
-        id: 'reasoning',
-        label: 'Reasoning',
-        labelKey: 'workbench.reasoning_level',
-        defaultValue: 'high',
-        placement: 'aboveModels',
-        scope: 'family',
-        includeInLabel: 'never',
-        options: [
-          {
-            value: 'low',
-            label: 'Low',
-            labelKey: 'workbench.intelligence_low',
-            order: 10,
-          },
-          {
-            value: 'medium',
-            label: 'Medium',
-            labelKey: 'workbench.intelligence_medium',
-            order: 20,
-          },
-          {
-            value: 'high',
-            label: 'High',
-            labelKey: 'workbench.intelligence_high',
-            order: 30,
-          },
-          {
-            value: 'extra_high',
-            label: 'Extra High',
-            labelKey: 'workbench.intelligence_ultra',
-            order: 40,
-          },
-        ],
-      },
-      {
-        id: 'collaborationMode',
-        label: 'Mode',
-        labelKey: 'workbench.collaboration_mode',
-        defaultValue: 'default',
-        placement: 'aboveModels',
-        scope: 'family',
-        includeInLabel: 'never',
-        persistDefault: false,
-        options: [
-          {
-            value: 'default',
-            label: 'Default mode',
-            labelKey: 'workbench.collaboration_default',
-            description: 'Answer directly in the normal Codex flow.',
-            descriptionKey: 'workbench.collaboration_default_description',
-            order: 10,
-          },
-          {
-            value: 'plan',
-            label: 'Plan mode',
-            labelKey: 'workbench.plan_mode',
-            description: 'Ask clarifying questions before continuing when needed.',
-            descriptionKey: 'workbench.plan_mode_description',
-            order: 20,
-          },
-        ],
-      },
-      {
-        id: 'speed',
-        label: 'Speed',
-        labelKey: 'workbench.speed',
-        defaultValue: 'standard',
-        placement: 'belowModels',
-        scope: 'model',
-        includeInLabel: 'whenNonDefault',
-        options: [
-          {
-            value: 'standard',
-            label: '标准',
-            labelKey: 'workbench.speed_standard',
-            description: '默认速度',
-            descriptionKey: 'workbench.speed_standard_description',
-            order: 10,
-          },
-          {
-            value: 'fast',
-            label: '⚡ 快速',
-            labelKey: 'workbench.speed_fast',
-            summaryLabel: '⚡',
-            description: '1.5 倍速度，消耗增加',
-            descriptionKey: 'workbench.speed_fast_description',
-            order: 20,
-          },
-        ],
-      },
-    ],
+    order: 50,
+    controls: OPENAI_RESPONSES_CONTROLS,
   },
   { id: 'gemini', label: 'Gemini', order: 30, controls: [] },
   { id: 'kimi', label: 'Kimi', order: 40, controls: [] },
@@ -246,15 +255,34 @@ export function inferModelFamily(model: UnifiedModel): string {
   return 'other'
 }
 
-export function getFamilyConfig(familyId: string): ModelFamilyConfig {
-  return (
-    MODEL_FAMILY_CONFIGS.find(config => config.id === familyId) ?? {
-      id: familyId,
-      label: familyId.replace(/^\w/, letter => letter.toUpperCase()),
-      order: 100,
-      controls: [],
-    }
-  )
+export function getFamilyConfig(familyId: string, label?: string): ModelFamilyConfig {
+  const base =
+    MODEL_FAMILY_CONFIGS.find(config => config.id === familyId) ??
+    (familyId.startsWith('codex-provider:')
+      ? MODEL_FAMILY_CONFIGS.find(config => config.id === 'codex-provider')
+      : familyId.startsWith('model-interface:')
+        ? MODEL_FAMILY_CONFIGS.find(config => config.id === 'model-interface')
+        : null)
+  const resolved = base ?? {
+    id: familyId,
+    label: familyId.replace(/^\w/, letter => letter.toUpperCase()),
+    order: 100,
+    controls: [],
+  }
+  return {
+    ...resolved,
+    id: familyId,
+    label: label || resolved.label,
+  }
+}
+
+function familyOrderValue(familyId: string, configuredOrder: number): number {
+  const exactOrder = FAMILY_ORDER.indexOf(familyId)
+  if (exactOrder >= 0) return exactOrder
+
+  const baseFamilyId = familyId.split(':', 1)[0]
+  const baseOrder = FAMILY_ORDER.indexOf(baseFamilyId)
+  return baseOrder >= 0 ? baseOrder : configuredOrder
 }
 
 function inferRegion(model: UnifiedModel): string | undefined {
@@ -302,9 +330,12 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
       ? ui.modelLabel.trim()
       : stripRegionPrefix(model.displayName || model.modelId || model.name)
   const sortOrder = typeof ui.sortOrder === 'number' ? ui.sortOrder : 100
+  const familyLabel =
+    typeof ui.familyLabel === 'string' && ui.familyLabel.trim() ? ui.familyLabel.trim() : undefined
 
   return {
     family: inferModelFamily(model),
+    familyLabel,
     region: inferRegion(model),
     modelLabel,
     sortOrder,
@@ -315,7 +346,7 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
 export function getControlsForModel(model: UnifiedModel | null): ModelControlConfig[] {
   if (!model) return []
   const metadata = getModelUiMetadata(model)
-  const familyConfig = getFamilyConfig(metadata.family)
+  const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
   return familyConfig.controls.filter(control => {
     if ((control.scope ?? 'family') === 'family') return true
     return metadata.supportedControls.has(control.id)
@@ -453,17 +484,22 @@ function compareVersionDesc(leftLabel: string, rightLabel: string): number {
 }
 
 export function groupModelsByFamily(models: UnifiedModel[]) {
-  const groups = new Map<string, UnifiedModel[]>()
+  const groups = new Map<string, { models: UnifiedModel[]; familyLabel?: string }>()
   for (const model of models) {
-    const family = inferModelFamily(model)
+    const metadata = getModelUiMetadata(model)
+    const family = metadata.family
     if (HIDDEN_MODEL_FAMILIES.has(family)) continue
-    groups.set(family, [...(groups.get(family) ?? []), model])
+    const group = groups.get(family)
+    groups.set(family, {
+      models: [...(group?.models ?? []), model],
+      familyLabel: group?.familyLabel ?? metadata.familyLabel,
+    })
   }
 
   return [...groups.entries()]
-    .map(([familyId, familyModels]) => ({
-      config: getFamilyConfig(familyId),
-      models: [...familyModels].sort((a, b) => {
+    .map(([familyId, group]) => ({
+      config: getFamilyConfig(familyId, group.familyLabel),
+      models: [...group.models].sort((a, b) => {
         const left = getModelUiMetadata(a)
         const right = getModelUiMetadata(b)
         return (
@@ -475,10 +511,8 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
       }),
     }))
     .sort((a, b) => {
-      const leftOrder = FAMILY_ORDER.indexOf(a.config.id)
-      const rightOrder = FAMILY_ORDER.indexOf(b.config.id)
-      const normalizedLeft = leftOrder >= 0 ? leftOrder : a.config.order
-      const normalizedRight = rightOrder >= 0 ? rightOrder : b.config.order
+      const normalizedLeft = familyOrderValue(a.config.id, a.config.order)
+      const normalizedRight = familyOrderValue(b.config.id, b.config.order)
       return normalizedLeft - normalizedRight || a.config.label.localeCompare(b.config.label)
     })
 }

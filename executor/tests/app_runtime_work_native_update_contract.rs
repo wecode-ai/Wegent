@@ -121,11 +121,17 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
         .iter()
         .find(|task| task["localTaskId"] == "thread-idle")
         .unwrap();
+    let active_completed = tasks
+        .iter()
+        .find(|task| task["localTaskId"] == "thread-active-completed")
+        .unwrap();
 
     assert_eq!(running_by_rollout["status"], "active");
     assert_eq!(running_by_rollout["running"], true);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
+    assert_eq!(active_completed["status"], "active");
+    assert_eq!(active_completed["running"], false);
 }
 
 #[tokio::test]
@@ -289,7 +295,7 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000064,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000063,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-running-rollout","cwd":"/tmp/project","name":"Running rollout","preview":"run","path":"{}","createdAt":1780000000,"updatedAt":1780000062,"status":"idle","turns":[]}},{{"id":"thread-running-wrapped-item","cwd":"/tmp/project","name":"Running wrapped item","preview":"run","path":"/tmp/codex/running-wrapped-item.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[{{"type":"response_item","payload":{{"id":"call-1","type":"function_call","status":"inProgress","call_id":"call-1","name":"exec_command"}}}}]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-running-status","cwd":"/tmp/project","name":"Running status","preview":"run","path":"/tmp/codex/running-status.jsonl","createdAt":1780000000,"updatedAt":1780000064,"status":"inProgress","turns":[]}},{{"id":"thread-running-turn","cwd":"/tmp/project","name":"Running turn","preview":"run","path":"/tmp/codex/running-turn.jsonl","createdAt":1780000000,"updatedAt":1780000063,"status":"idle","turns":[{{"id":"turn-1","status":"inProgress","items":[{{"id":"cmd-1","type":"commandExecution","status":"inProgress","command":"cargo test","cwd":"/tmp/project"}}]}}]}},{{"id":"thread-running-rollout","cwd":"/tmp/project","name":"Running rollout","preview":"run","path":"{}","createdAt":1780000000,"updatedAt":1780000062,"status":"idle","turns":[]}},{{"id":"thread-running-wrapped-item","cwd":"/tmp/project","name":"Running wrapped item","preview":"run","path":"/tmp/codex/running-wrapped-item.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[{{"type":"response_item","payload":{{"id":"call-1","type":"function_call","status":"inProgress","call_id":"call-1","name":"exec_command"}}}}]}}]}},{{"id":"thread-active-completed","cwd":"/tmp/project","name":"Active completed","preview":"active","path":"/tmp/codex/active-completed.jsonl","createdAt":1780000000,"updatedAt":1780000061,"status":"active","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}},{{"id":"thread-idle","cwd":"/tmp/project","name":"Idle","preview":"idle","path":"/tmp/codex/idle.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","status":"completed","items":[]}}]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done

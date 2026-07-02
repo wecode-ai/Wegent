@@ -147,8 +147,11 @@ describe('App center route', () => {
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
     expect(screen.getByTestId('apps-nav-local-management')).toBeInTheDocument()
     expect(screen.getByText('Claude Code')).toBeInTheDocument()
-    expect(screen.getByText('Codex')).toBeInTheDocument()
     expect(screen.queryByTestId('local-management-page')).not.toBeInTheDocument()
+    expect(screen.getByText('模型设置')).toBeInTheDocument()
+    expect(screen.queryByText('Skills')).not.toBeInTheDocument()
+    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('插件包')).not.toBeInTheDocument()
   })
 
   test('overlays the workbench titlebar so the sidebar can reach the window top', async () => {

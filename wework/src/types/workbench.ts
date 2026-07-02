@@ -1,6 +1,5 @@
 import type {
   Attachment,
-  CodexContextEvent,
   CodexMemoryCitation,
   CodexReference,
   DeviceInfo,
@@ -18,6 +17,7 @@ import type {
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
   WorkbenchFileChangesBlock,
+  WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
@@ -37,6 +37,8 @@ export type ToolBlock = WorkbenchToolBlock
 export type ThinkingBlock = WorkbenchThinkingBlock
 
 export type TextBlock = WorkbenchTextBlock
+
+export type PlanBlock = WorkbenchPlanBlock
 
 export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
 
@@ -67,9 +69,9 @@ export type WorkbenchMessage = Omit<
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
+  runtimeGoalRequest?: boolean | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
-  contextEvents?: CodexContextEvent[] | null
 }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'

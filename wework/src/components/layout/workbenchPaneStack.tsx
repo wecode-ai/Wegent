@@ -14,12 +14,7 @@ export function getWorkbenchPaneKey({
   currentProject,
 }: WorkbenchPaneIdentity): string {
   if (currentRuntimeTask) {
-    return [
-      'runtime',
-      currentRuntimeTask.deviceId,
-      currentRuntimeTask.localTaskId,
-      currentRuntimeTask.workspacePath ?? '',
-    ].join(':')
+    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.localTaskId].join(':')
   }
   return currentProject ? `project:${currentProject.id}` : 'standalone'
 }
@@ -44,12 +39,9 @@ export function CachedWorkbenchPaneStack({
   const [cachedKeys, setCachedKeys] = useState<string[]>(() => [activeKey])
   const cachedKeysRef = useRef<string[]>(cachedKeys)
   const recentKeysRef = useRef<string[]>([activeKey])
-  const activePaneWasCached = paneCacheRef.current.has(activeKey)
   cachedKeysRef.current = cachedKeys
 
-  if (!activePaneWasCached) {
-    paneCacheRef.current.set(activeKey, activePane)
-  }
+  paneCacheRef.current.set(activeKey, activePane)
   recentKeysRef.current = markRecentlyUsed(recentKeysRef.current, activeKey)
 
   useEffect(() => {

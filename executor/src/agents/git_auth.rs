@@ -631,11 +631,16 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    const TEST_GIT_DOMAIN: &str = "github.com";
 
     #[test]
     fn decrypt_git_token_matches_legacy_aes_cbc_fixture() {
-        let _key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
-        let _iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
+        let _env = EnvGuard::set_many(&[
+            ("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"),
+            ("GIT_TOKEN_AES_IV", "1234567890123456"),
+        ]);
 
         assert_eq!(
             decrypt_git_token("iOuoSwc/HrF6ZhttvtSNeQ==").as_deref(),
@@ -659,7 +664,7 @@ mod tests {
         };
 
         let (credentials, diagnostics) =
-            git_credentials_with_diagnostics("gitlab.example.com", &request).unwrap();
+            git_credentials_with_diagnostics("gitlab.com", &request).unwrap();
 
         assert_eq!(credentials.username, "oauth2");
         assert_eq!(credentials.token, "glpat-secret");
@@ -674,8 +679,10 @@ mod tests {
 
     #[test]
     fn git_credentials_reports_encrypted_token_decrypt_success() {
-        let _key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
-        let _iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
+        let _env = EnvGuard::set_many(&[
+            ("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"),
+            ("GIT_TOKEN_AES_IV", "1234567890123456"),
+        ]);
         let request = ExecutionRequest {
             extra: serde_json::Map::from_iter([(
                 "user".to_owned(),
@@ -701,12 +708,12 @@ mod tests {
             env::temp_dir().join(format!("wegent-git-auth-test-{}", std::process::id()));
         let ssh_dir = temp_home.join(".ssh");
         fs::create_dir_all(&ssh_dir).unwrap();
-        fs::write(ssh_dir.join("git.intra.weibo.com"), "file-token\n").unwrap();
+        fs::write(ssh_dir.join(TEST_GIT_DOMAIN), "file-token\n").unwrap();
         let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
 
         let request = ExecutionRequest::default();
         let (credentials, diagnostics) =
-            git_credentials_with_diagnostics("git.intra.weibo.com", &request).unwrap();
+            git_credentials_with_diagnostics(TEST_GIT_DOMAIN, &request).unwrap();
 
         assert_eq!(credentials.token, "file-token");
         assert_eq!(diagnostics.source, "home_ssh_domain_file");
@@ -722,7 +729,7 @@ mod tests {
         ));
         let ssh_dir = temp_home.join(".ssh");
         fs::create_dir_all(&ssh_dir).unwrap();
-        fs::write(ssh_dir.join("git.intra.weibo.com"), "file-token\n").unwrap();
+        fs::write(ssh_dir.join(TEST_GIT_DOMAIN), "file-token\n").unwrap();
         let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
         let request = ExecutionRequest {
             extra: serde_json::Map::from_iter([(
@@ -736,7 +743,7 @@ mod tests {
         };
 
         let (credentials, diagnostics) =
-            git_credentials_with_diagnostics("git.intra.weibo.com", &request).unwrap();
+            git_credentials_with_diagnostics(TEST_GIT_DOMAIN, &request).unwrap();
 
         assert_eq!(credentials.token, "file-token");
         assert_eq!(credentials.username, "oauth2");
@@ -745,25 +752,46 @@ mod tests {
     }
 
     struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
+        previous: Vec<(&'static str, Option<String>)>,
+        _guard: MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
-            let previous = env::var(key).ok();
-            env::set_var(key, value);
-            Self { key, previous }
+            Self::set_many(&[(key, value)])
+        }
+
+        fn set_many(values: &[(&'static str, &str)]) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let previous = values
+                .iter()
+                .map(|(key, value)| {
+                    let previous = env::var(key).ok();
+                    env::set_var(key, value);
+                    (*key, previous)
+                })
+                .collect();
+            Self {
+                previous,
+                _guard: guard,
+            }
         }
     }
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                env::set_var(self.key, previous);
-            } else {
-                env::remove_var(self.key);
+            for (key, previous) in self.previous.iter().rev() {
+                if let Some(previous) = previous {
+                    env::set_var(key, previous);
+                } else {
+                    env::remove_var(key);
+                }
             }
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 }

@@ -5,8 +5,9 @@
 use serde_json::Value;
 
 use super::util::{
-    codex_wrapped_item_payload, is_codex_tool_item_type, is_codex_tool_output_item_type,
-    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_type,
+    codex_wrapped_item_payload, is_codex_context_compaction_item_type, is_codex_tool_item_type,
+    is_codex_tool_output_item_type, is_likely_codex_tool_item_type,
+    is_likely_codex_tool_output_item_type, item_type,
 };
 
 pub(crate) struct CodexNotification<'a> {
@@ -79,6 +80,11 @@ fn wrapped_item_method(wrapper_type: &str, payload_type: &str) -> Option<&'stati
         }
         ("eventmsg", "subagentactivity") | ("responseitem", "subagentactivity") => {
             Some("subagent/activity")
+        }
+        ("eventmsg" | "responseitem", payload_type)
+            if is_codex_context_compaction_item_type(payload_type) =>
+        {
+            Some("context/compaction")
         }
         ("eventmsg", "collabagenttoolcall") | ("responseitem", "collabagenttoolcall") => {
             Some("collab-agent/activity")
@@ -219,6 +225,20 @@ mod tests {
         });
         let notification = codex_notification(&message);
         assert_eq!(notification.method, "item/completed");
+    }
+
+    #[test]
+    fn maps_codex_context_compacted_event_to_stream_method() {
+        let message = json!({
+            "type": "event_msg",
+            "payload": {
+                "id": "ctx-1",
+                "type": "context_compacted"
+            }
+        });
+        let notification = codex_notification(&message);
+        assert_eq!(notification.method, "context/compaction");
+        assert_eq!(notification.params["type"], "context_compacted");
     }
 
     #[test]

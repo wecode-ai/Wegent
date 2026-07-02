@@ -2685,9 +2685,10 @@ class KnowledgeService:
         organization_namespaces = (
             db.query(Namespace)
             .filter(
-                Namespace.name.in_({kb.namespace for kb in org_kbs}),
+                Namespace.level == GroupLevel.organization.value,
                 Namespace.is_active == True,
             )
+            .order_by(Namespace.id.asc())
             .all()
         )
         organization_namespace_map = {

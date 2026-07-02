@@ -4,6 +4,12 @@ import type {
   DeviceCommandResponse,
   DeviceInfo,
   LocalDeviceSkill,
+  RuntimeGoalClearRequest,
+  RuntimeGoalClearResponse,
+  RuntimeGoalGetRequest,
+  RuntimeGoalGetResponse,
+  RuntimeGoalSetRequest,
+  RuntimeGoalSetResponse,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeSendRequest,
@@ -80,6 +86,9 @@ export interface ExecutorRuntimeClient {
     data: RuntimeFileChangesRevertRequest
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
+  getRuntimeGoal: (data: RuntimeGoalGetRequest) => Promise<RuntimeGoalGetResponse>
+  setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
+  clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>
   openRuntimeWorkspace: (data: RuntimeWorkspaceOpenRequest) => Promise<RuntimeWorkspaceOpenResponse>
   renameRuntimeWorkspace: (
     data: RuntimeWorkspaceRenameRequest

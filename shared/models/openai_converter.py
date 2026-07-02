@@ -199,6 +199,7 @@ class OpenAIRequestConverter:
             "preload_skill_refs": request.preload_skill_refs,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "external_knowledge_refs": request.external_knowledge_refs,
             "knowledge_base_scopes": [
                 {
                     "knowledge_base_id": scope.knowledge_base_id,
@@ -370,6 +371,7 @@ class OpenAIRequestConverter:
             mcp_servers=mcp_servers,
             knowledge_base_ids=metadata.get("knowledge_base_ids"),
             document_ids=metadata.get("document_ids"),
+            external_knowledge_refs=metadata.get("external_knowledge_refs"),
             knowledge_base_scopes=_coerce_knowledge_base_scopes(
                 metadata.get("knowledge_base_scopes")
             ),
