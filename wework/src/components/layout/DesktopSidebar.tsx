@@ -1348,6 +1348,7 @@ function ProjectItem({
   project,
   expanded,
   onToggleProject,
+  onSelectProject,
   devices,
   runtimeProjectWork,
   pinnedTaskKeysStorageKey,
@@ -1368,6 +1369,7 @@ function ProjectItem({
   project: ProjectWithTasks
   expanded: boolean
   onToggleProject: (projectId: number) => void
+  onSelectProject?: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
   pinnedTaskKeysStorageKey: string
@@ -1503,6 +1505,7 @@ function ProjectItem({
           data-testid="project-item-button"
           onClick={() => {
             onToggleProject(project.id)
+            onSelectProject?.(project.id)
           }}
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
@@ -1721,6 +1724,7 @@ export function DesktopSidebar({
   activeItem = 'chat',
   onNewChat,
   onOpenSearch,
+  onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
   onRenameRuntimeLocalTask,
@@ -2343,6 +2347,7 @@ export function DesktopSidebar({
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={false}
                       onToggleProject={handleToggleProject}
+                      onSelectProject={onSelectProject}
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
                       onRenameProject={setRenamingProject}

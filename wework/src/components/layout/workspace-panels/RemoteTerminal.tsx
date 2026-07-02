@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
 import { createRemoteTerminalClient, type RemoteTerminalClient } from '@/lib/remote-terminal-socket'
+import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -38,7 +39,12 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
     const client = createRemoteTerminalClient(sessionId)
     let disposed = false
 
+    let inputFallback: XtermInputFallbackController = {
+      noteData: () => undefined,
+      dispose: () => undefined,
+    }
     const dataDisposable = terminal.onData(data => {
+      inputFallback.noteData(data)
       void client.write(data).catch(error => {
         if (!disposed) {
           console.error('Failed to write to remote terminal:', error)
@@ -58,6 +64,17 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
 
     terminal.loadAddon(fitAddon)
     terminal.open(container)
+    inputFallback = installXtermInputFallback({
+      terminal,
+      writeData: data => {
+        inputFallback.noteData(data)
+        void client.write(data).catch(error => {
+          if (!disposed) {
+            console.error('Failed to write fallback input to remote terminal:', error)
+          }
+        })
+      },
+    })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     clientRef.current = client
@@ -96,6 +113,7 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
       disposed = true
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
       void client

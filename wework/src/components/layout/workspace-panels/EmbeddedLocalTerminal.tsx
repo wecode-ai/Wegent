@@ -8,6 +8,7 @@ import {
   resizeLocalTerminal,
   writeLocalTerminal,
 } from '@/lib/local-terminal'
+import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -43,7 +44,12 @@ export function EmbeddedLocalTerminal({
       },
     })
     const fitAddon = new FitAddon()
+    let inputFallback: XtermInputFallbackController = {
+      noteData: () => undefined,
+      dispose: () => undefined,
+    }
     const dataDisposable = terminal.onData(data => {
+      inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
     })
     let disposed = false
@@ -51,6 +57,13 @@ export function EmbeddedLocalTerminal({
 
     terminal.loadAddon(fitAddon)
     terminal.open(container)
+    inputFallback = installXtermInputFallback({
+      terminal,
+      writeData: data => {
+        inputFallback.noteData(data)
+        void writeLocalTerminal(sessionId, data)
+      },
+    })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
@@ -96,6 +109,7 @@ export function EmbeddedLocalTerminal({
       disposed = true
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()
       terminalRef.current = null
