@@ -15,8 +15,9 @@ on:
         required: false
 
 env:
-  GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+  GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
   REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
 
 concurrency:
   group: publish-image
@@ -36,7 +37,6 @@ jobs:
 
     outputs:
       new_version: ${{ steps.get_version.outputs.version }}
-      image_prefix: ${{ steps.get_version.outputs.image_prefix }}
 
     steps:
       - name: Checkout code (full history for version detection)
@@ -52,10 +52,6 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "image_prefix=${REGISTRY}/${OWNER_LOWER}" >> "$GITHUB_OUTPUT"
-          echo "Using image prefix: ${REGISTRY}/${OWNER_LOWER}"
 
           # If custom version is provided, use it directly
           if [ -n "${INPUT_VERSION:-}" ]; then
@@ -129,7 +125,7 @@ jobs:
           file: docker/backend/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=backend-amd64
           cache-to: type=gha,mode=max,scope=backend-amd64
 
@@ -161,7 +157,7 @@ jobs:
           file: docker/backend/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-backend:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=backend-arm64
           cache-to: type=gha,mode=max,scope=backend-arm64
 
@@ -196,7 +192,7 @@ jobs:
           file: docker/executor/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=executor-amd64
           cache-to: type=gha,mode=max,scope=executor-amd64
 
@@ -228,7 +224,7 @@ jobs:
           file: docker/executor/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-executor:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=executor-arm64
           cache-to: type=gha,mode=max,scope=executor-arm64
 
@@ -263,7 +259,7 @@ jobs:
           file: docker/executor_manager/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=executor-manager-amd64
           cache-to: type=gha,mode=max,scope=executor-manager-amd64
 
@@ -295,7 +291,7 @@ jobs:
           file: docker/executor_manager/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=executor-manager-arm64
           cache-to: type=gha,mode=max,scope=executor-manager-arm64
 
@@ -332,7 +328,7 @@ jobs:
           file: docker/device/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=device-amd64
           cache-to: type=gha,mode=max,scope=device-amd64
 
@@ -365,7 +361,7 @@ jobs:
           file: docker/device/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=device-arm64
           cache-to: type=gha,mode=max,scope=device-arm64
 
@@ -396,7 +392,6 @@ jobs:
       - name: Create and push device multi-arch manifest
         env:
           VERSION: ${{ needs.prepare-release.outputs.new_version }}
-          IMAGE_PREFIX: ${{ needs.prepare-release.outputs.image_prefix }}
           IMAGE_NAME: wegent-device
         run: |
           set -euo pipefail
@@ -442,7 +437,7 @@ jobs:
           file: docker/frontend/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=frontend-amd64
           cache-to: type=gha,mode=max,scope=frontend-amd64
           build-args: |
@@ -477,7 +472,7 @@ jobs:
           file: docker/frontend/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=frontend-arm64
           cache-to: type=gha,mode=max,scope=frontend-arm64
           build-args: |
@@ -515,7 +510,7 @@ jobs:
           file: docker/chat_shell/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=chat-shell-amd64
           cache-to: type=gha,mode=max,scope=chat-shell-amd64
 
@@ -547,7 +542,7 @@ jobs:
           file: docker/chat_shell/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=chat-shell-arm64
           cache-to: type=gha,mode=max,scope=chat-shell-arm64
 
@@ -582,7 +577,7 @@ jobs:
           file: docker/knowledge_runtime/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=knowledge-runtime-amd64
           cache-to: type=gha,mode=max,scope=knowledge-runtime-amd64
 
@@ -614,7 +609,7 @@ jobs:
           file: docker/knowledge_runtime/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=knowledge-runtime-arm64
           cache-to: type=gha,mode=max,scope=knowledge-runtime-arm64
 
@@ -649,7 +644,7 @@ jobs:
           file: docker/knowledge_doc_converter/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=knowledge-doc-converter-amd64
           cache-to: type=gha,mode=max,scope=knowledge-doc-converter-amd64
 
@@ -681,7 +676,7 @@ jobs:
           file: docker/knowledge_doc_converter/Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=knowledge-doc-converter-arm64
           cache-to: type=gha,mode=max,scope=knowledge-doc-converter-arm64
 
@@ -717,7 +712,7 @@ jobs:
           file: docker/standalone/Dockerfile
           load: true
           platforms: linux/amd64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=standalone-amd64
           cache-to: type=gha,mode=max,scope=standalone-amd64
           build-args: |
@@ -725,13 +720,13 @@ jobs:
 
       - name: Verify standalone image startup (amd64)
         env:
-          IMAGE: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
           CONTAINER_NAME: wegent-standalone-verify-amd64
         run: bash scripts/verify-standalone-image.sh "$IMAGE"
 
       - name: Push verified standalone image (amd64)
         env:
-          IMAGE: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
         run: docker push "$IMAGE"
 
   build-standalone-arm64:
@@ -762,7 +757,7 @@ jobs:
           file: docker/standalone/Dockerfile
           load: true
           platforms: linux/arm64
-          tags: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=standalone-arm64
           cache-to: type=gha,mode=max,scope=standalone-arm64
           build-args: |
@@ -770,13 +765,13 @@ jobs:
 
       - name: Verify standalone image startup (arm64)
         env:
-          IMAGE: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
           CONTAINER_NAME: wegent-standalone-verify-arm64
         run: bash scripts/verify-standalone-image.sh "$IMAGE"
 
       - name: Push verified standalone image (arm64)
         env:
-          IMAGE: ${{ needs.prepare-release.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
         run: docker push "$IMAGE"
 
   # ============================================================================
@@ -1029,7 +1024,6 @@ jobs:
       - name: Create and push multi-arch manifests
         env:
           VERSION: ${{ needs.prepare-release.outputs.new_version }}
-          IMAGE_PREFIX: ${{ needs.prepare-release.outputs.image_prefix }}
         run: |
           set -euo pipefail
 

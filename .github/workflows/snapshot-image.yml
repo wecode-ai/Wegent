@@ -16,6 +16,7 @@ on:
 env:
   GIT_REF: ${{ github.sha }}
   REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
 
 concurrency:
   group: snapshot-image-main
@@ -30,7 +31,6 @@ jobs:
     outputs:
       app_version: ${{ steps.meta.outputs.app_version }}
       git_sha: ${{ steps.meta.outputs.git_sha }}
-      image_prefix: ${{ steps.meta.outputs.image_prefix }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
 
     steps:
@@ -50,8 +50,6 @@ jobs:
           GIT_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=12 HEAD)"
           APP_VERSION="${INPUT_VERSION}"
-          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
-          IMAGE_PREFIX="${REGISTRY}/${OWNER_LOWER}"
 
           if ! [[ "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Error: version '${APP_VERSION}' must use MAJOR.MINOR.PATCH format." >&2
@@ -66,14 +64,12 @@ jobs:
 
           echo "git_sha=${GIT_SHA}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "image_prefix=${IMAGE_PREFIX}" >> "$GITHUB_OUTPUT"
           echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Snapshot metadata"
             echo ""
             echo "- Git SHA: \`${GIT_SHA}\`"
-            echo "- Image prefix: \`${IMAGE_PREFIX}\`"
             echo "- Image/app version: \`${APP_VERSION}\`"
             echo "- Channel tags after verification: \`main\`, \`edge\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -174,7 +170,7 @@ jobs:
           file: ${{ matrix.image.dockerfile }}
           push: true
           platforms: ${{ matrix.platform.value }}
-          tags: ${{ needs.prepare-snapshot.outputs.image_prefix }}/${{ matrix.image.name }}:${{ needs.prepare-snapshot.outputs.app_version }}-${{ matrix.platform.suffix }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:${{ needs.prepare-snapshot.outputs.app_version }}-${{ matrix.platform.suffix }}
           cache-from: type=gha,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
           cache-to: type=gha,mode=max,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
           build-args: ${{ steps.build-args.outputs.args }}
@@ -317,7 +313,6 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
-          IMAGE_PREFIX: ${{ needs.prepare-snapshot.outputs.image_prefix }}
         run: |
           set -euo pipefail
 
@@ -363,7 +358,7 @@ jobs:
 
       - name: Verify standalone snapshot image
         env:
-          IMAGE: ${{ needs.prepare-snapshot.outputs.image_prefix }}/wegent-standalone:${{ needs.prepare-snapshot.outputs.app_version }}
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-snapshot.outputs.app_version }}
           CONTAINER_NAME: wegent-standalone-snapshot-verify
         run: bash scripts/verify-standalone-image.sh "$IMAGE"
 
@@ -390,7 +385,6 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
-          IMAGE_PREFIX: ${{ needs.prepare-snapshot.outputs.image_prefix }}
         run: |
           set -euo pipefail
 
