@@ -85,6 +85,26 @@ def test_round_trip_preserves_interactive_form_answer():
     assert converted.interactive_form_answer == request.interactive_form_answer
 
 
+def test_round_trip_preserves_attachments_for_executor_download():
+    request = ExecutionRequest(
+        attachments=[
+            {
+                "id": 16,
+                "filename": "frontend.zip",
+                "content_type": "application/zip",
+                "size": 1024,
+                "download_url": "/api/attachments/16/download",
+            }
+        ]
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["attachments"] == request.attachments
+    assert converted.attachments == request.attachments
+
+
 def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
     request = ExecutionRequest(skip_git_clone=True)
 
@@ -93,6 +113,23 @@ def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
 
     assert openai_request["metadata"]["skip_git_clone"] is True
     assert converted.skip_git_clone is True
+
+
+def test_round_trip_preserves_executor_identity():
+    request = ExecutionRequest(
+        executor_name="wegent-task-user7-pod7",
+        executor_namespace="default",
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["executor_name"] == request.executor_name
+    assert (
+        openai_request["metadata"]["executor_namespace"] == request.executor_namespace
+    )
+    assert converted.executor_name == request.executor_name
+    assert converted.executor_namespace == request.executor_namespace
 
 
 def test_round_trip_preserves_fork_runtime_and_inherited_sessions():

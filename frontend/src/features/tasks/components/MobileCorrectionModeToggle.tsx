@@ -160,7 +160,7 @@ export default function MobileCorrectionModeToggle({
         <div className="flex items-center gap-3">
           <Sparkles className="h-4 w-4 text-text-muted" />
           <div className="flex flex-col">
-            <span className="text-sm">纠错模式</span>
+            <span className="text-sm">{t('chat:correction.label')}</span>
             {enabled && correctionModelName && (
               <span className="text-xs text-text-muted truncate max-w-[120px]">
                 {correctionModelName}
@@ -173,7 +173,7 @@ export default function MobileCorrectionModeToggle({
 
       {/* Model Selection Dialog */}
       <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
-        <DialogContent className="max-w-[calc(100vw-16px)] overflow-x-auto sm:max-w-3xl">
+        <DialogContent className="max-w-[calc(100vw-24px)] overflow-hidden p-4 sm:max-w-3xl sm:p-6">
           <DialogHeader>
             <DialogTitle>{t('chat:correction.select_model')}</DialogTitle>
             <DialogDescription>{t('chat:correction.select_model_desc')}</DialogDescription>
@@ -191,7 +191,8 @@ export default function MobileCorrectionModeToggle({
               onSearchValueChange={setSearchQuery}
               onSelectModel={handleModelSelect}
               getModelKey={model => `${model.type}-${model.name}`}
-              className="w-[min(720px,calc(100vw-48px))]"
+              variant="mobile"
+              className="w-full"
               renderModelBadges={model => (
                 <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
                   {model.type === 'public'

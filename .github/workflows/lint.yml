@@ -16,6 +16,9 @@ on:
       - master
       - develop
 
+permissions:
+  contents: read
+
 jobs:
   lint-backend:
     name: Lint Backend (Black & isort)
@@ -99,13 +102,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24'
           cache: 'pnpm'
           cache-dependency-path: ./pnpm-lock.yaml
 
@@ -128,13 +129,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24'
           cache: 'pnpm'
           cache-dependency-path: ./pnpm-lock.yaml
 
@@ -145,7 +144,7 @@ jobs:
         run: pnpm --filter wework lint
 
       - name: Run TypeScript check
-        run: pnpm --filter wework exec tsc --noEmit
+        run: pnpm --filter wework typecheck
 
   check-settings-config:
     name: Check Settings Configuration
@@ -159,6 +158,17 @@ jobs:
         run: |
           chmod +x ./scripts/hooks/check-settings-config.sh
           ./scripts/hooks/check-settings-config.sh
+
+      - name: Run repository policy check
+        # Fork PRs run this in repository-policy.yml using pull_request_target
+        # with the trusted base-branch script and the PR merge tree as data.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          REPOSITORY_POLICY_PATTERN_B64: ${{ vars.RESTRICTED_DOMAIN_PATTERN_B64 }}
+          REPOSITORY_POLICY_APPROVED_B64: ${{ vars.APPROVED_DOMAIN_REFERENCES_B64 }}
+        run: |
+          chmod +x ./scripts/hooks/check-repository-policy.sh
+          ./scripts/hooks/check-repository-policy.sh
 
   check-alembic-heads:
     name: Check Alembic Multi-Head

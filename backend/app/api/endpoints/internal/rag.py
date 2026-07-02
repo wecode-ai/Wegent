@@ -13,11 +13,14 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.schemas.external_knowledge import ExternalKnowledgeRef
+from app.schemas.scope_validation import (
+    validate_document_ids as validate_scope_document_ids,
+)
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.knowledge.protected_mediation import (
     ProtectedKnowledgeMediationResponse,
@@ -47,6 +50,7 @@ from shared.models import (
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
+    RetrievalScope,
 )
 
 # Constants for document reading pagination
@@ -189,6 +193,12 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional SubtaskContext persistence metadata handled entirely in Backend",
     )
+
+    @field_validator("document_ids")
+    @classmethod
+    def validate_document_ids(cls, value: Optional[list[int]]) -> Optional[list[int]]:
+        return validate_scope_document_ids(value)
+
     mediation_context: Optional[RetrieveMediationContext] = Field(
         default=None,
         description="Optional model identity used by Backend restricted mediation",
@@ -517,12 +527,17 @@ async def _execute_scoped_retrieve(
     modes: set[str] = set()
     total_estimated_tokens = 0
     for kb_ids, group_document_ids in retrieve_groups:
+        retrieval_scope = (
+            RetrievalScope(document_ids=group_document_ids)
+            if group_document_ids
+            else None
+        )
         runtime_spec = runtime_resolver.build_query_runtime_spec(
             db=db,
             knowledge_base_ids=kb_ids,
             query=request.query,
             max_results=request.max_results,
-            document_ids=group_document_ids,
+            scope=retrieval_scope,
             route_mode=request.route_mode,
             user_id=persistence_context.user_id if persistence_context else None,
             user_name=request.user_name,
@@ -575,7 +590,7 @@ def _finalize_query_runtime_spec(
     required_attributes = (
         "query",
         "knowledge_base_ids",
-        "document_ids",
+        "scope",
         "direct_injection_budget",
         "model_copy",
     )
@@ -589,7 +604,7 @@ def _finalize_query_runtime_spec(
         knowledge_base_ids=runtime_spec.knowledge_base_ids,
         db=db,
         route_mode=runtime_spec.route_mode,
-        document_ids=runtime_spec.document_ids,
+        scope=runtime_spec.scope,
         metadata_condition=runtime_spec.metadata_condition,
         context_window=budget.context_window if budget else None,
         used_context_tokens=budget.used_context_tokens if budget else 0,
@@ -724,7 +739,11 @@ async def internal_retrieve(
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
                 max_results=request.max_results,
-                document_ids=resolved_document_ids or None,
+                scope=(
+                    RetrievalScope(document_ids=resolved_document_ids)
+                    if resolved_document_ids
+                    else None
+                ),
                 route_mode=request.route_mode,
                 user_id=persistence_context.user_id if persistence_context else None,
                 user_name=request.user_name,

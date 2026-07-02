@@ -16,6 +16,15 @@ interface TauriWindowConfig {
 interface TauriConfig {
   app: {
     windows: TauriWindowConfig[]
+    security?: {
+      assetProtocol?: {
+        enable?: boolean
+        scope?: {
+          requireLiteralLeadingDot?: boolean
+          allow?: string[]
+        }
+      }
+    }
   }
 }
 
@@ -42,9 +51,28 @@ describe('macOS window chrome', () => {
   test('grants permission to start native window dragging', () => {
     const capabilityPath = resolve(process.cwd(), 'src-tauri/capabilities/default.json')
     const capability = JSON.parse(readFileSync(capabilityPath, 'utf8')) as {
-      permissions: string[]
+      permissions: Array<string | object>
     }
 
     expect(capability.permissions).toContain('core:window:allow-start-dragging')
+  })
+
+  test('does not grant permission to reveal downloaded local images', () => {
+    const capabilityPath = resolve(process.cwd(), 'src-tauri/capabilities/default.json')
+    const capability = JSON.parse(readFileSync(capabilityPath, 'utf8')) as {
+      permissions: Array<string | object>
+    }
+
+    expect(capability.permissions).not.toContain('opener:allow-reveal-item-in-dir')
+  })
+
+  test('allows asset protocol access to local attachment previews', () => {
+    const configPath = resolve(process.cwd(), 'src-tauri/tauri.conf.json')
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as TauriConfig
+    const assetProtocol = config.app.security?.assetProtocol
+
+    expect(assetProtocol?.enable).toBe(true)
+    expect(assetProtocol?.scope?.requireLiteralLeadingDot).toBe(false)
+    expect(assetProtocol?.scope?.allow).toEqual(['**/*'])
   })
 })

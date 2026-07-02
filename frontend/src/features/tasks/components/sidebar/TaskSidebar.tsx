@@ -43,10 +43,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { getSearchParam } from '@/lib/search-params'
 
 export const SIDEBAR_NAV_CONFIG = {
   keepSecondaryNavFixed: true,
 }
+
+type PathEntry = {
+  getHref?: () => string
+}
+
+const getPathHref = (pathEntry: PathEntry | undefined, fallback: string): string =>
+  pathEntry?.getHref?.() ?? fallback
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -172,18 +180,23 @@ export default function TaskSidebar({
   }
 
   const currentPath = pathname ?? ''
-  const resourceLibraryPath = paths.resourceLibrary?.getHref?.() ?? '/resource-library'
+  const chatPath = getPathHref(paths.chat, '/chat')
+  const feedPath = getPathHref(paths.feed, '/feed')
+  const wikiPath = getPathHref(paths.wiki, '/knowledge')
+  const devicesPath = getPathHref(paths.devices, '/devices')
+  const inboxPath = getPathHref(paths.inbox, '/inbox')
+  const resourceLibraryPath = getPathHref(paths.resourceLibrary, '/resource-library')
   const codingNavItem = getCodingNavItem()
   const isCodeAgentActive =
     !codingNavItem.external &&
-    currentPath === paths.chat.getHref() &&
-    searchParams.get('agent') === 'code'
+    currentPath === chatPath &&
+    getSearchParam(searchParams, 'agent') === 'code'
 
   const navigationButtons: NavigationButton[] = [
     {
       label: t('common:navigation.flow'),
       icon: Workflow,
-      path: paths.feed.getHref(),
+      path: feedPath,
       isActive: pageType === 'flow',
       buttonPageType: 'flow',
     },
@@ -198,7 +211,7 @@ export default function TaskSidebar({
     {
       label: t('common:navigation.wiki'),
       icon: BookOpen,
-      path: paths.wiki.getHref(),
+      path: wikiPath,
       isActive: pageType === 'knowledge',
       buttonPageType: 'knowledge',
     },
@@ -213,14 +226,14 @@ export default function TaskSidebar({
     {
       label: t('devices:my_devices'),
       icon: Monitor,
-      path: paths.devices.getHref(),
+      path: devicesPath,
       isActive: pageType === 'devices',
       buttonPageType: 'devices',
     },
     {
       label: t('common:navigation.inbox'),
       icon: Inbox,
-      path: paths.inbox.getHref(),
+      path: inboxPath,
       isActive: pageType === 'inbox',
       buttonPageType: 'inbox',
       unreadCount: inboxUnreadCount,
@@ -235,7 +248,7 @@ export default function TaskSidebar({
 
     if (typeof window !== 'undefined') {
       // Always navigate to chat page for new conversation
-      router.replace(paths.chat.getHref())
+      router.replace(chatPath)
     }
     // Close mobile sidebar after navigation
     setIsMobileSidebarOpen(false)

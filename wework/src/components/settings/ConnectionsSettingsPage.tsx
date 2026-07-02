@@ -12,6 +12,7 @@ import {
   Globe2,
   Info,
   Loader2,
+  LogOut,
   Monitor,
   MoreHorizontal,
   Network,
@@ -29,10 +30,14 @@ import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
+import { createModelApi } from '@/api/models'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
@@ -49,11 +54,13 @@ import {
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
+import type { UnifiedModel } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
-import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
+import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -78,7 +85,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
-    fallback: '连接',
+    fallback: '云端设置',
   },
   {
     key: 'appearance',
@@ -87,10 +94,10 @@ const settingsNavItems: SettingsNavItem[] = [
     fallback: '外观',
   },
   {
-    key: 'codex-auth',
+    key: 'model-settings',
     icon: UserRound,
-    label: 'settings_nav_codex_auth',
-    fallback: 'Codex 认证',
+    label: 'settings_nav_model_settings',
+    fallback: '模型设置',
     category: 'personal',
   },
   {
@@ -140,7 +147,7 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
 
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
-  if (normalizedPath === '/settings/personal') return 'codex-auth'
+  if (normalizedPath === '/settings/personal') return 'model-settings'
   const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
   if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
@@ -149,7 +156,7 @@ function getSettingsNavFromPath(path: string): string {
 }
 
 function getSettingsNavPath(key: string): string {
-  if (key === 'codex-auth') return '/settings/personal/codex'
+  if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
@@ -227,9 +234,53 @@ function DeviceIconActionButton({
   )
 }
 
-function createSettingsDeviceApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
+interface CloudSettingsConnection {
+  isConnected: boolean
+  apiBaseUrl?: string
+  token: string | null
+}
+
+function createSettingsDeviceApi(connection: CloudSettingsConnection) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  return createDeviceApi(
+    createHttpClient({
+      baseUrl: connection.apiBaseUrl,
+      getToken: () => connection.token,
+      redirectOnUnauthorized: false,
+    })
+  )
+}
+
+function createSettingsModelApi(connection: CloudSettingsConnection) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  return createModelApi(
+    createHttpClient({
+      baseUrl: connection.apiBaseUrl,
+      getToken: () => connection.token,
+      redirectOnUnauthorized: false,
+    })
+  )
+}
+
+function cloudHostLabel(value?: string | null): string {
+  if (!value) return '-'
+  try {
+    return new URL(value).host
+  } catch {
+    return value
+  }
+}
+
+function modelLabel(model: UnifiedModel): string {
+  return model.displayName || model.name
+}
+
+function modelMeta(model: UnifiedModel): string {
+  return [model.provider, model.runtime?.family, model.type].filter(Boolean).join(' · ')
 }
 
 function formatMetricPercent(value: number | null | undefined): string {
@@ -239,12 +290,14 @@ function formatMetricPercent(value: number | null | undefined): string {
 }
 
 function DeviceMetrics({ deviceId }: { deviceId: string }) {
+  const cloudConnection = useOptionalCloudConnection()
   const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
 
   useEffect(() => {
+    if (!cloudConnection.isConnected) return
     let cancelled = false
 
-    createSettingsDeviceApi()
+    createSettingsDeviceApi(cloudConnection)
       .getMetrics(deviceId)
       .then(data => {
         if (!cancelled) setMetrics(data)
@@ -256,7 +309,7 @@ function DeviceMetrics({ deviceId }: { deviceId: string }) {
     return () => {
       cancelled = true
     }
-  }, [deviceId])
+  }, [cloudConnection, deviceId])
 
   return (
     <div
@@ -280,20 +333,21 @@ function DeviceMetrics({ deviceId }: { deviceId: string }) {
 }
 
 function VncDesktopButton({ deviceId }: { deviceId: string }) {
+  const cloudConnection = useOptionalCloudConnection()
   const [loading, setLoading] = useState(false)
 
   const handleClick = useCallback(async () => {
     if (loading) return
     setLoading(true)
     try {
-      const config = await createSettingsDeviceApi().getVncConfig(deviceId)
+      const config = await createSettingsDeviceApi(cloudConnection).getVncConfig(deviceId)
       await openExternalUrl(buildVncPageUrl(deviceId, config.sandbox_id))
     } catch (e) {
       console.error('Failed to open device desktop:', e)
     } finally {
       setLoading(false)
     }
-  }, [deviceId, loading])
+  }, [cloudConnection, deviceId, loading])
 
   return (
     <DeviceActionButton
@@ -521,6 +575,7 @@ function CloudDeviceConnectionInfoDialog({
 }
 
 function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+  const cloudConnection = useOptionalCloudConnection()
   const [sessionLoading, setSessionLoading] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(device.name)
@@ -540,13 +595,13 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     setSessionLoading('terminal')
     try {
       if (supportsLocalTerminalLaunch(device)) {
-        await createSettingsDeviceApi().openLocalTerminal(device.device_id)
+        await createSettingsDeviceApi(cloudConnection).openLocalTerminal(device.device_id)
         return
       }
 
-      const result = await createSettingsDeviceApi().startTerminal(device.device_id)
+      const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
-        window.open(result.url, '_blank', 'noopener')
+        await openExternalUrl(result.url)
         return
       }
       setTerminalSession(result)
@@ -555,7 +610,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     } finally {
       setSessionLoading(null)
     }
-  }, [device])
+  }, [cloudConnection, device])
 
   useEffect(() => {
     if (!supportsLocalTerminalLaunch(device) || !isLocalTerminalAvailable()) {
@@ -563,8 +618,10 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     }
 
     let cancelled = false
-    const { apiBaseUrl } = getRuntimeConfig()
-    getLocalExecutorDeviceId(apiBaseUrl)
+    if (!cloudConnection.apiBaseUrl) {
+      return
+    }
+    getLocalExecutorDeviceId(cloudConnection.apiBaseUrl)
       .then(deviceId => {
         if (!cancelled) {
           setLocalExecutorDeviceId(deviceId)
@@ -579,16 +636,14 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     return () => {
       cancelled = true
     }
-  }, [device])
+  }, [cloudConnection.apiBaseUrl, device])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
       if (device.status !== 'online') return
       setSessionLoading(type)
       try {
-        const { apiBaseUrl } = getRuntimeConfig()
-        const client = createHttpClient({ baseUrl: apiBaseUrl })
-        const deviceApi = createDeviceApi(client)
+        const deviceApi = createSettingsDeviceApi(cloudConnection)
         const result =
           type === 'terminal'
             ? await deviceApi.startTerminal(device.device_id)
@@ -602,7 +657,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         setSessionLoading(null)
       }
     },
-    [device.device_id, device.status]
+    [cloudConnection, device.device_id, device.status]
   )
 
   const handleStartEdit = () => {
@@ -624,10 +679,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     }
     setSaving(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      await deviceApi.renameDevice(device.device_id, trimmed)
+      await createSettingsDeviceApi(cloudConnection).renameDevice(device.device_id, trimmed)
       setEditing(false)
       onChanged()
     } catch (e) {
@@ -640,10 +692,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleRestartDevice = async () => {
     setRestarting(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      await deviceApi.restartCloudDevice(device.device_id)
+      await createSettingsDeviceApi(cloudConnection).restartCloudDevice(device.device_id)
       setConfirmAction(null)
       onChanged()
     } catch (e) {
@@ -656,9 +705,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleDeleteDevice = async () => {
     setDeleting(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
+      const deviceApi = createSettingsDeviceApi(cloudConnection)
       if (isCloudDevice(device)) {
         await deviceApi.deleteCloudDevice(device.device_id)
       } else {
@@ -702,7 +749,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const canLaunchLocalTerminal =
     supportsLocalTerminalLaunch(device) &&
     isLocalTerminalAvailable() &&
-    localExecutorDeviceId === device.device_id
+    isCurrentAppDevice(device, [localExecutorDeviceId])
   const canUseCloudSessions = supportsCloudSessions(device)
   const canUseRemoteSessions = supportsRemoteSessions(device)
   const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
@@ -979,23 +1026,137 @@ function DeviceSection({
   )
 }
 
+function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSettingsConnection }) {
+  const { t } = useTranslation('common')
+  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!cloudConnection.isConnected) {
+      return undefined
+    }
+
+    let cancelled = false
+    Promise.resolve()
+      .then(() => {
+        if (cancelled) return null
+        setLoading(true)
+        setError(null)
+        return createSettingsModelApi(cloudConnection).listModels()
+      })
+      .then(response => {
+        if (!cancelled && response) setModels(response.data)
+      })
+      .catch(loadError => {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'Failed to load cloud models')
+          setModels([])
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cloudConnection])
+
+  return (
+    <section
+      data-testid="cloud-models-section"
+      className="rounded-lg border border-border bg-background p-5"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-text-primary">
+            {t('workbench.cloud_models_title', '云端模型')}
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t(
+              'workbench.cloud_models_desc',
+              '服务端模型会和本机 Codex 模型一起出现在工作台模型选择器里。'
+            )}
+          </p>
+        </div>
+        {!loading && (
+          <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">
+            {models.length}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="py-6 text-sm text-text-secondary">
+          {t('workbench.cloud_models_loading', '正在加载云端模型...')}
+        </div>
+      ) : error ? (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+          {t('workbench.cloud_models_error', '云端模型加载失败')}
+        </div>
+      ) : models.length === 0 ? (
+        <div className="py-6 text-sm text-text-secondary">
+          {t('workbench.cloud_models_empty', '暂无云端模型')}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {models.slice(0, 8).map(model => (
+            <div
+              key={`${model.type}:${model.name}:${model.namespace ?? ''}`}
+              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+            >
+              <Code2 className="h-4 w-4 shrink-0 text-text-secondary" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-text-primary">
+                  {modelLabel(model)}
+                </div>
+                <div className="truncate text-xs text-text-secondary">
+                  {modelMeta(model) || model.name}
+                </div>
+              </div>
+              {model.isActive === false && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted">
+                  {t('workbench.plugin_detail_disabled', '已停用')}
+                </span>
+              )}
+            </div>
+          ))}
+          {models.length > 8 && (
+            <div className="px-1 pt-1 text-xs text-text-secondary">
+              {t('workbench.cloud_models_more', {
+                defaultValue: '还有 {{count}} 个模型',
+                count: models.length - 8,
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
 }) {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
 
   const fetchDevices = useCallback(async () => {
+    if (!cloudConnection.isConnected) {
+      setDevices([])
+      setLoading(false)
+      return
+    }
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      const allDevices = await deviceApi.getAllDevices()
+      const allDevices = await createSettingsDeviceApi(cloudConnection).getAllDevices()
       const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
       setDevices(claudeCodeDevices)
       if (claudeCodeDevices.some(isCloudDevice)) {
@@ -1006,46 +1167,141 @@ function ConnectionsDeviceSettingsPage({
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [cloudConnection])
 
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
   const localDevices = devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
+  const onlineCloudDeviceCount = cloudDevices.filter(device => device.status === 'online').length
 
   useEffect(() => {
     void Promise.resolve().then(fetchDevices)
   }, [fetchDevices])
 
+  if (!cloudConnection.isConnected) {
+    return (
+      <>
+        <div className="mx-auto w-full max-w-[760px]">
+          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
+            {t('workbench.connections_title', '云端设置')}
+          </h1>
+
+          <section className="mt-6 rounded-lg border border-border bg-background p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-text-primary">
+                  {t('workbench.cloud_connection_local_mode', '本地模式')}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-text-secondary">
+                  {t(
+                    'workbench.cloud_connection_local_mode_desc',
+                    '默认功能不依赖服务端：本机 Codex、本地任务服务、本地工作区和会话都会继续可用。'
+                  )}
+                </p>
+              </div>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                {t('workbench.cloud_connection_available', '可用')}
+              </span>
+            </div>
+          </section>
+
+          <section className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-text-primary">
+                  {t('workbench.cloud_connection_cloud_features', '连接云端后')}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-text-secondary">
+                  {t(
+                    'workbench.cloud_connection_cloud_features_desc',
+                    '服务端模型、云设备、云端 Codex auth.json 同步、代理和远程设备管理会加入现有工作台。'
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="settings-cloud-connect-button"
+                onClick={() => setConnectDialogOpen(true)}
+                className="inline-flex h-10 shrink-0 items-center justify-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+              >
+                {t('workbench.cloud_connection_connect_action', '连接云端')}
+              </button>
+            </div>
+          </section>
+        </div>
+
+        {connectDialogOpen && (
+          <CloudConnectionDialog
+            open
+            onlineCloudDeviceCount={0}
+            onClose={() => setConnectDialogOpen(false)}
+            onOpenSettings={() => undefined}
+          />
+        )}
+      </>
+    )
+  }
+
   return (
     <>
       <div className="mx-auto w-full max-w-[760px]">
         <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '连接')}
+          {t('workbench.connections_title', '云端设置')}
         </h1>
 
-        <div className="mt-9 flex border-b border-border">
-          {[t('workbench.connections_tab_this_mac', '连接设备')].map((tab, index) => (
+        <section
+          data-testid="cloud-connection-status-card"
+          className="mt-6 rounded-lg border border-border bg-background p-5"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-2 w-2 rounded-full bg-primary" />
+                <h2 className="text-sm font-semibold text-text-primary">
+                  {t('workbench.cloud_connection_status_connected', '已连接云端')}
+                </h2>
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-text-secondary">
+                <div>
+                  {t('workbench.cloud_connection_host', '当前域名')}:{' '}
+                  <span className="font-medium text-text-primary">
+                    {cloudHostLabel(cloudConnection.backendUrl)}
+                  </span>
+                </div>
+                <div>
+                  {t('workbench.cloud_connection_user', '云端用户')}:{' '}
+                  <span className="font-medium text-text-primary">
+                    {cloudConnection.user?.user_name ?? '-'}
+                  </span>
+                </div>
+                <div>
+                  {t('workbench.cloud_connection_online_devices', '在线云设备')}:{' '}
+                  <span className="font-medium text-text-primary">{onlineCloudDeviceCount}</span>
+                </div>
+              </div>
+            </div>
             <button
-              key={tab}
               type="button"
-              data-testid={`connections-tab-${index}`}
-              className={[
-                'h-10 px-6 text-sm font-medium',
-                index === 0
-                  ? 'border-b border-text-primary text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary',
-              ].join(' ')}
+              data-testid="settings-cloud-disconnect-button"
+              onClick={() => {
+                cloudConnection.disconnect()
+                setDevices([])
+              }}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
             >
-              {tab}
+              <LogOut className="h-4 w-4" />
+              {t('workbench.cloud_connection_disconnect', '断开连接')}
             </button>
-          ))}
-        </div>
+          </div>
+        </section>
 
         <section className="mt-6 space-y-5">
+          <CloudModelsSection cloudConnection={cloudConnection} />
+
           <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text-primary">
-                {t('workbench.connections_authorized_devices', '可连接的设备')}
+                {t('workbench.connections_authorized_devices', '云端设备')}
               </h2>
               {!loading && (
                 <button
@@ -1113,6 +1369,7 @@ function ConnectionsDeviceSettingsPage({
       <AddCloudDeviceDialog
         open={addDialogOpen}
         hasCloudDevice={cloudDevices.length > 0 || creating}
+        cloudConnection={cloudConnection}
         onClose={() => setAddDialogOpen(false)}
         onCreated={fetchDevices}
         onCreatingChange={setCreating}
@@ -1127,6 +1384,7 @@ export function ConnectionsSettingsPage({
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const usesOverlayTitlebar = isTauriRuntime()
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
   useEffect(() => {
@@ -1136,6 +1394,11 @@ export function ConnectionsSettingsPage({
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  const openCloudSettings = useCallback(() => {
+    setActiveNav('connections')
+    navigateTo(getSettingsNavPath('connections'))
+  }, [setActiveNav])
 
   return (
     <div
@@ -1148,7 +1411,10 @@ export function ConnectionsSettingsPage({
       >
         <DesktopTopBar
           testId="settings-sidebar-topbar"
-          className={cn('-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2', 'pl-2')}
+          className={cn(
+            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] bg-transparent pr-2 pl-2',
+            usesOverlayTitlebar && 'h-[76px] pt-6'
+          )}
           left={
             <button
               type="button"
@@ -1211,8 +1477,8 @@ export function ConnectionsSettingsPage({
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
-        ) : activeNav === 'codex-auth' ? (
-          <RuntimeConfigSettingsPage runtime="codex" />
+        ) : activeNav === 'model-settings' ? (
+          <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
         ) : activeNav === 'skills' ? (

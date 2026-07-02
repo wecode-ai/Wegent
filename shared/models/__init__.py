@@ -29,6 +29,11 @@ Block types for mixed content rendering:
 """
 
 from . import db
+from .attachment_sync import (
+    AttachmentSyncItem,
+    AttachmentSyncRequest,
+    AttachmentSyncResponse,
+)
 
 # Block types for mixed content rendering
 from .blocks import (
@@ -65,6 +70,7 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RetrievalScope,
 )
 
 # OpenAI Request Converter
@@ -137,6 +143,9 @@ __all__ = [
     "EventType",
     "ExecutionEvent",
     "ExecutionRequest",
+    "AttachmentSyncItem",
+    "AttachmentSyncRequest",
+    "AttachmentSyncResponse",
     "KnowledgeBaseScope",
     "BackendAttachmentStreamContentRef",
     "ContentRef",
@@ -156,6 +165,7 @@ __all__ = [
     "coerce_search_hints",
     "RemoteKnowledgeBaseQueryConfig",
     "RemoteKnowledgeBaseRetrievalOverride",
+    "RetrievalScope",
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",
     "RemotePurgeKnowledgeIndexRequest",

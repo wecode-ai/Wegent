@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { ProjectWorkBar } from './ProjectWorkBar'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 
 const project: ProjectWithTasks = {
@@ -49,6 +50,15 @@ const device: DeviceInfo = {
   bind_shell: 'claudecode',
   executor_version: '1.8.5',
   client_ip: '10.201.3.200',
+}
+
+const localDevice: DeviceInfo = {
+  ...device,
+  id: 3,
+  device_id: 'local-device',
+  name: 'Local Device',
+  device_type: 'local',
+  client_ip: '127.0.0.1',
 }
 
 const runtimeWork: RuntimeWorkListResponse = {
@@ -483,7 +493,7 @@ describe('ProjectWorkBar', () => {
     expect(onBindProjectWorkspace).not.toHaveBeenCalled()
   })
 
-  test('shows local mode but hides worktree controls when the project directory is not a git repository', async () => {
+  test('shows worktree controls for local workspaces even when current branch is empty', async () => {
     const user = userEvent.setup()
 
     render(
@@ -501,21 +511,19 @@ describe('ProjectWorkBar', () => {
         branchLoading={false}
         onListBranches={vi.fn().mockResolvedValue([])}
         onCheckoutBranch={vi.fn()}
-        worktreeBaseBranch={null}
-        onWorktreeBaseBranchChange={vi.fn()}
       />
     )
 
     const executionModeButton = screen.getByTestId('execution-mode-button')
     expect(executionModeButton).toHaveTextContent('本地模式')
-    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
 
     await user.click(executionModeButton)
 
-    expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toHaveTextContent('新工作树')
   })
 
-  test('falls back from worktree mode when the project directory is not a git repository', async () => {
+  test('does not fall back from worktree mode when current branch is empty', async () => {
     const onExecutionModeChange = vi.fn()
 
     render(
@@ -533,16 +541,75 @@ describe('ProjectWorkBar', () => {
         branchLoading={false}
         onListBranches={vi.fn().mockResolvedValue([])}
         onCheckoutBranch={vi.fn()}
-        worktreeBaseBranch={null}
-        onWorktreeBaseBranchChange={vi.fn()}
+        worktreeBranch={null}
+        onWorktreeBranchChange={vi.fn()}
       />
     )
 
-    await waitFor(() => expect(onExecutionModeChange).toHaveBeenCalledWith('current_workspace'))
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent('选择分支')
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(onExecutionModeChange).not.toHaveBeenCalled()
   })
 
-  test('shows source branch selector after selecting new worktree', async () => {
-    const onWorktreeBaseBranchChange = vi.fn()
+  test('does not show a branch selector in local execution mode', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch="develop"
+        onWorktreeBranchChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
+  })
+
+  test('does not invent a worktree branch when the current branch is unavailable', async () => {
+    const onWorktreeBranchChange = vi.fn()
+    const onListBranches = vi.fn().mockResolvedValue(['main', 'develop'])
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[device]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="git_worktree"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName=""
+        branchLoading={false}
+        onListBranches={onListBranches}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch={null}
+        onWorktreeBranchChange={onWorktreeBranchChange}
+      />
+    )
+
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent('选择分支')
+    expect(onListBranches).not.toHaveBeenCalled()
+    expect(onWorktreeBranchChange).not.toHaveBeenCalled()
+  })
+
+  test('uses the current project branch as the initial worktree branch', async () => {
+    const onWorktreeBranchChange = vi.fn()
     const onListBranches = vi.fn().mockResolvedValue(['main', 'develop'])
 
     render(
@@ -559,8 +626,8 @@ describe('ProjectWorkBar', () => {
         branchName="main"
         onListBranches={onListBranches}
         onCheckoutBranch={vi.fn()}
-        worktreeBaseBranch="main"
-        onWorktreeBaseBranchChange={onWorktreeBaseBranchChange}
+        worktreeBranch={null}
+        onWorktreeBranchChange={onWorktreeBranchChange}
       />
     )
 
@@ -575,6 +642,151 @@ describe('ProjectWorkBar', () => {
 
     await userEvent.click(within(menu).getByText('develop'))
 
-    expect(onWorktreeBaseBranchChange).toHaveBeenCalledWith('develop')
+    expect(onWorktreeBranchChange).toHaveBeenCalledWith('develop')
+  })
+
+  test('clears the explicit worktree branch when selecting the current branch', async () => {
+    const onWorktreeBranchChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[device]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="git_worktree"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch="develop"
+        onWorktreeBranchChange={onWorktreeBranchChange}
+      />
+    )
+
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent('develop')
+
+    await userEvent.click(screen.getByTestId('project-worktree-branch-button'))
+    const menu = await screen.findByTestId('project-worktree-branch-menu')
+    await userEvent.click(within(menu).getByText('main'))
+
+    expect(onWorktreeBranchChange).toHaveBeenCalledWith(null)
+  })
+
+  test('shows the project main directory current branch in worktree mode', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="git_worktree"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="runtime/worktree"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch={null}
+        onWorktreeBranchChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent(
+      'runtime/worktree'
+    )
+  })
+
+  test('allows worktree mode when the project main directory is detached', async () => {
+    const user = userEvent.setup()
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+        branchName=""
+        branchLoading={false}
+      />
+    )
+
+    await user.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+  })
+
+  test('shows worktree execution mode for runtime local projects with a git branch', async () => {
+    const user = userEvent.setup()
+    const runtimeLocalWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'local:/Users/me/Wegent',
+            name: 'Wegent',
+            description: '/Users/me/Wegent',
+          },
+          deviceWorkspaces: [
+            {
+              id: null,
+              projectId: null,
+              deviceId: 'local-device',
+              deviceName: 'Local Device',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/Users/me/Wegent',
+              workspaceKind: 'workspace',
+              mapped: true,
+              localTasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 0,
+    }
+    const projectId = runtimeProjectUiId(runtimeLocalWork.projects[0].project)
+
+    render(
+      <ProjectWorkBar
+        projects={[]}
+        devices={[localDevice]}
+        runtimeWork={runtimeLocalWork}
+        currentProjectId={projectId}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+        worktreeBranch={null}
+        onWorktreeBranchChange={vi.fn()}
+      />
+    )
+
+    await user.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toHaveTextContent('新工作树')
   })
 })

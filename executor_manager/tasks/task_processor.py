@@ -128,7 +128,9 @@ class TaskProcessor:
             task_dict = task
 
         task_id = get_metadata_field(task_dict, "task_id", -1)
+        subtask_id = get_metadata_field(task_dict, "subtask_id", -1)
         bot_config = get_metadata_field(task_dict, "bot", [])
+        attachments = get_metadata_field(task_dict, "attachments", []) or []
 
         # Set request context for log correlation
         from shared.telemetry.context import init_request_context
@@ -140,7 +142,26 @@ class TaskProcessor:
                 get_metadata_field(task_dict, "executor_type")
                 or config.EXECUTOR_DISPATCHER_MODE
             )
-            logger.info(f"Processing task: ID={task_id}, executor_type={executor_type}")
+            logger.info(
+                "Processing task: ID=%s, subtask_id=%s, executor_type=%s, "
+                "attachments=%d, attachment_ids=%s, has_auth_token=%s, "
+                "backend_url_present=%s",
+                task_id,
+                subtask_id,
+                executor_type,
+                len(attachments) if isinstance(attachments, list) else 0,
+                (
+                    [
+                        attachment.get("id")
+                        for attachment in attachments
+                        if isinstance(attachment, dict)
+                    ]
+                    if isinstance(attachments, list)
+                    else []
+                ),
+                bool(get_metadata_field(task_dict, "auth_token")),
+                bool(get_metadata_field(task_dict, "backend_url")),
+            )
 
             set_span_attribute("executor.type", executor_type)
 

@@ -12,9 +12,14 @@ import {
 interface EmbeddedLocalTerminalProps {
   sessionId: string
   active: boolean
+  testIdsEnabled?: boolean
 }
 
-export function EmbeddedLocalTerminal({ sessionId, active }: EmbeddedLocalTerminalProps) {
+export function EmbeddedLocalTerminal({
+  sessionId,
+  active,
+  testIdsEnabled = true,
+}: EmbeddedLocalTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -123,7 +128,7 @@ export function EmbeddedLocalTerminal({ sessionId, active }: EmbeddedLocalTermin
   return (
     <div
       ref={containerRef}
-      data-testid="embedded-local-terminal"
+      data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
       className="h-full min-h-0 w-full overflow-hidden bg-white px-2 py-2"
       hidden={!active}
     />

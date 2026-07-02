@@ -5,16 +5,37 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "core:window:allow-start-dragging",
+    "core:webview:allow-create-webview",
+    "core:webview:allow-webview-close",
+    "core:webview:allow-webview-hide",
+    "core:webview:allow-webview-show",
+    "core:webview:allow-set-webview-position",
+    "core:webview:allow-set-webview-size",
+    "core:webview:allow-set-webview-focus",
     "opener:allow-open-url",
     "opener:allow-default-urls",
+    "shell:allow-open",
     "updater:default",
     "process:allow-restart",
     {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/wegent-executor",
+          "sidecar": true,
+          "args": []
+        }
+      ]
+    },
+    {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://*.intra.weibo.com/*" },
-        { "url": "http://*.intra.weibo.com/*" },
+        { "url": "https://*/*" },
+        { "url": "http://*/*" },
+        { "url": "https://*:*/*" },
+        { "url": "http://*:*/*" },
         { "url": "http://localhost:*/*" },
         { "url": "http://127.0.0.1:*/*" }
       ]

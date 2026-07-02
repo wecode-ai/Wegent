@@ -1,8 +1,11 @@
 import type {
   Attachment,
+  CodexMemoryCitation,
+  CodexReference,
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
   Team,
   TurnFileChangesSummary,
@@ -13,6 +16,8 @@ import type {
   WorkbenchMessage as CoreWorkbenchMessage,
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
+  WorkbenchFileChangesBlock,
+  WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
@@ -33,14 +38,40 @@ export type ThinkingBlock = WorkbenchThinkingBlock
 
 export type TextBlock = WorkbenchTextBlock
 
-export type ProcessingBlock = WorkbenchProcessingBlock
+export type PlanBlock = WorkbenchPlanBlock
+
+export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
+
+export type ProcessingBlock = WorkbenchProcessingBlock<TurnFileChangesSummary>
 
 export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
 
 export type RuntimeWorkbenchMessageStatus = WorkbenchMessageStatus | 'cancelled'
 
-export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary> & {
+export type RuntimeSubagentStatusState = 'running' | 'done' | 'interrupted'
+
+export interface RuntimeSubagentStatus {
+  id: string
+  agentId: string
+  agentPath: string
+  agentName: string
+  status: RuntimeSubagentStatusState
+  kind?: string
+  updatedAtMs?: number | null
+}
+
+export type WorkbenchMessage = Omit<
+  CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>,
+  'blocks'
+> & {
+  blocks?: ProcessingBlock[]
+  runtimeMessageIndex?: number | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
+  completedAt?: string | number | null
+  stoppedNotice?: boolean | null
+  runtimeGoalRequest?: boolean | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
 }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
@@ -63,6 +94,40 @@ export interface GuidanceWorkbenchMessage {
   error?: string
 }
 
+export interface RuntimePaneTranscript {
+  messages: WorkbenchMessage[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
+  rangeStart?: number | null
+  rangeEnd?: number | null
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+  hasMoreAfter?: boolean
+  afterCursor?: string | null
+}
+
+export interface RuntimePaneTranscriptLoadOptions {
+  limit?: number
+  beforeCursor?: string | null
+  afterCursor?: string | null
+  refresh?: boolean
+}
+
+export type RuntimeTranscriptLoader = (
+  address: RuntimeTaskAddress,
+  options?: RuntimePaneTranscriptLoadOptions
+) => Promise<RuntimePaneTranscript>
+
+export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
+export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+
+export interface CloudWorkStatus {
+  availability: CloudWorkAvailability
+  checks: Record<CloudWorkCheckKey, CloudWorkCheckStatus>
+  error: string | null
+  updatedAt: string | null
+}
+
 export interface WorkbenchState {
   user: User | null
   defaultTeam: Team | null
@@ -75,8 +140,6 @@ export interface WorkbenchState {
   pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
   standaloneWorkspacePath: string | null
-  input: string
   isBootstrapping: boolean
-  isSending: boolean
   error: string | null
 }

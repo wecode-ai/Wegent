@@ -16,9 +16,114 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-frontend-e2e:
+    name: Build Frontend E2E Artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            node_modules
+            frontend/node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-24-frontend-
+
+      - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Next.js build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ./frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-e2e-
+
+      - name: Build frontend for E2E
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_TELEMETRY_DISABLED: 1
+          RUNTIME_INTERNAL_API_URL: http://localhost:8000
+          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
+        run: pnpm exec next build
+
+      - name: Archive frontend E2E build
+        run: .github/scripts/archive-frontend-e2e-build.sh
+
+      - name: Upload frontend E2E build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-next-build
+          path: .ci-artifacts/frontend-next-build.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build-executor-e2e-runtime:
+    name: Build Executor E2E Runtime Artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Build ClaudeCode Source Executor Image
+        run: |
+          docker build \
+            -t wegent/e2e-claudecode-executor:latest \
+            -f frontend/e2e/fixtures/claudecode-executor/Dockerfile \
+            .
+
+      - name: Extract ClaudeCode Executor Binary
+        run: |
+          mkdir -p executor/target/release
+          container_id="$(docker create wegent/e2e-claudecode-executor:latest)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
+          chmod 0755 executor/target/release/wegent-executor
+
+      - name: Archive executor E2E runtime
+        run: .github/scripts/archive-executor-e2e-runtime.sh
+
+      - name: Upload executor E2E runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: executor-e2e-runtime
+          path: |
+            .ci-artifacts/e2e-claudecode-executor-image.tar.zst
+            .ci-artifacts/wegent-executor
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    needs: build-frontend-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -88,13 +193,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -106,9 +209,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -136,27 +239,17 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
-      # Cache Next.js build
-      - name: Cache Next.js build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Download frontend E2E build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          path: |
-            ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-e2e-
+          name: frontend-next-build
+          path: .ci-artifacts
 
-      - name: Build frontend for E2E
-        working-directory: ./frontend
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
-          NEXT_TELEMETRY_DISABLED: 1
-          RUNTIME_INTERNAL_API_URL: http://localhost:8000
-          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm exec next build
+      - name: Restore frontend E2E build
+        run: .github/scripts/restore-frontend-e2e-build.sh
 
       # Cache Playwright browsers
       - name: Cache Playwright browsers
@@ -219,9 +312,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: |
-          nohup pnpm exec next start > next-dev.log 2>&1 &
-          echo $! > next-dev.pid
+        run: ../.github/scripts/start-frontend-e2e-server.sh
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -325,6 +416,7 @@ jobs:
 
   executor-e2e-tests:
     name: Executor E2E Tests
+    needs: [build-frontend-e2e, build-executor-e2e-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 35
 
@@ -373,6 +465,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Cache Python packages
         id: executor-python-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -380,23 +475,20 @@ jobs:
           path: |
             ~/.cache/uv
             backend/.venv
-            executor/.venv
             executor_manager/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor/pyproject.toml', 'executor/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
+          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-python-3.11-executor-e2e-
             ${{ runner.os }}-python-3.11-
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -408,9 +500,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Configure npm global cache path
         run: |
@@ -423,7 +515,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.npm-global
-          key: ${{ runner.os }}-node-20-claude-code-cli-2.1.142
+          key: ${{ runner.os }}-node-24-claude-code-cli-2.1.142
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -457,39 +549,22 @@ jobs:
           source .venv/bin/activate
           uv pip install -e ../shared
 
-      - name: Install executor dependencies
-        if: steps.executor-python-cache.outputs.cache-hit != 'true'
-        working-directory: ./executor
-        run: |
-          uv sync
-          source .venv/bin/activate
-          uv pip install -e ../shared
-
       - name: Install Claude Code CLI
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         run: npm install -g @anthropic-ai/claude-code@2.1.142
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Next.js build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Download frontend E2E build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          path: |
-            ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-e2e-
+          name: frontend-next-build
+          path: .ci-artifacts
 
-      - name: Build frontend for E2E
-        working-directory: ./frontend
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
-          NEXT_TELEMETRY_DISABLED: 1
-          RUNTIME_INTERNAL_API_URL: http://localhost:8000
-          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm exec next build
+      - name: Restore frontend E2E build
+        run: .github/scripts/restore-frontend-e2e-build.sh
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -507,6 +582,15 @@ jobs:
         working-directory: ./frontend
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
+
+      - name: Download executor E2E runtime
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: executor-e2e-runtime
+          path: .ci-artifacts
+
+      - name: Restore executor E2E runtime
+        run: .github/scripts/restore-executor-e2e-runtime.sh
 
       - name: Run database migrations
         working-directory: ./backend
@@ -564,22 +648,13 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: |
-          nohup pnpm exec next start > next-dev.log 2>&1 &
-          echo $! > next-dev.pid
+        run: ../.github/scripts/start-frontend-e2e-server.sh
 
       - name: Start Mock Model Server
         working-directory: ./frontend
         run: |
           pnpm exec tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
-
-      - name: Build ClaudeCode Source Executor Image
-        run: |
-          docker build \
-            -t wegent/e2e-claudecode-executor:latest \
-            -f frontend/e2e/fixtures/claudecode-executor/Dockerfile \
-            .
 
       - name: Start Local ClaudeCode Executor
         env:
@@ -652,9 +727,9 @@ jobs:
           print(token_response["access_token"])
           PY
           )
-          source executor/.venv/bin/activate
-          PYTHONPATH="$PWD" WEGENT_AUTH_TOKEN="$TOKEN" \
-            nohup python -m executor.main > executor/local-executor.log 2>&1 &
+          test -x executor/target/release/wegent-executor
+          WEGENT_AUTH_TOKEN="$TOKEN" \
+            nohup executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
           echo $! > executor/local-executor.pid
 
       - name: Start Executor Manager
@@ -672,8 +747,10 @@ jobs:
           DOCKER_HOST_ADDR: localhost
           NETWORK: bridge
           SERVICE_POOL: e2e-executor
+          EXECUTOR_WORKSPACE: ${{ runner.temp }}/wegent-executor-workspace
           OTEL_ENABLED: "false"
         run: |
+          mkdir -p "${EXECUTOR_WORKSPACE}"
           source .venv/bin/activate
           nohup uvicorn main:app --host 0.0.0.0 --port 8001 > executor_manager.log 2>&1 &
           echo $! > executor_manager.pid
@@ -809,13 +886,11 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-        with:
-          version: 10.34.3
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -827,9 +902,9 @@ jobs:
             node_modules
             frontend/node_modules
             packages/*/node_modules
-          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node-20-frontend-
+            ${{ runner.os }}-node-24-frontend-
 
       - name: Download all blob reports
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -839,6 +914,7 @@ jobs:
           merge-multiple: true
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Merge reports

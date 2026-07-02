@@ -2446,20 +2446,6 @@ class KnowledgeOrchestrator:
                 f"Knowledge base {knowledge_base_id} has incomplete RAG configuration"
             )
 
-        # Build metadata condition for document_ids filter
-        metadata_condition = None
-        if document_ids:
-            metadata_condition = {
-                "operator": "and",
-                "conditions": [
-                    {
-                        "key": "doc_ref",
-                        "operator": "in",
-                        "value": [str(doc_id) for doc_id in document_ids],
-                    }
-                ],
-            }
-
         # Use runtime resolver and gateway for retrieval (supports remote fallback)
         from app.services.rag.gateway_factory import get_query_gateway
         from app.services.rag.local_gateway import LocalRagGateway
@@ -2469,9 +2455,11 @@ class KnowledgeOrchestrator:
         )
         from app.services.rag.retrieval_service import RetrievalService
         from app.services.rag.runtime_resolver import RagRuntimeResolver
+        from shared.models import RetrievalScope
 
         runtime_resolver = RagRuntimeResolver()
         retrieval_service = RetrievalService()
+        scope = RetrievalScope(document_ids=document_ids) if document_ids else None
 
         # Build runtime spec for gateway routing
         runtime_spec = runtime_resolver.build_query_runtime_spec(
@@ -2479,7 +2467,7 @@ class KnowledgeOrchestrator:
             knowledge_base_ids=[knowledge_base_id],
             query=query,
             max_results=max_results,
-            document_ids=document_ids,
+            scope=scope,
             route_mode=route_mode,
             user_id=user.id,
             user_name=user.user_name,
@@ -2497,8 +2485,8 @@ class KnowledgeOrchestrator:
             knowledge_base_ids=[knowledge_base_id],
             db=db,
             route_mode=route_mode,
-            document_ids=document_ids,
-            metadata_condition=metadata_condition,
+            scope=scope,
+            metadata_condition=None,
             context_window=context_window,
             used_context_tokens=used_context_tokens,
             reserved_output_tokens=reserved_output_tokens,

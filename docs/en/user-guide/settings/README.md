@@ -64,6 +64,10 @@ Skills are Claude Code capability extension packages:
 - **Manage Skills**: View, download, update, delete
 - **Use Skills**: Reference Skills in Bots
 
+### Archived Chat Management
+
+Desktop Wework settings can show archived Project and Conversation chats. Deleting one archived chat or using **Delete all** first opens a confirmation dialog; the app only permanently deletes the selected local runtime conversation records after confirmation. Bulk deletion applies only to the items currently listed as archived and does not affect non-archived chats.
+
 ---
 
 ## 🚀 Configuration Workflow

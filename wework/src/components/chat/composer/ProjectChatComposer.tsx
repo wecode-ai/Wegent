@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { DragEventHandler } from 'react'
 import { useEffect, useRef } from 'react'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -32,6 +33,12 @@ interface ProjectChatComposerProps {
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
+  planModeActive?: boolean
+  onSetPlanMode?: () => void
+  onClearPlanMode?: () => void
+  onSetGoal?: () => void
+  goalDraftActive?: boolean
+  onCancelGoalDraft?: () => void
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
@@ -75,6 +82,12 @@ export function ProjectChatComposer({
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
+  planModeActive = false,
+  onSetPlanMode,
+  onClearPlanMode,
+  onSetGoal,
+  goalDraftActive = false,
+  onCancelGoalDraft,
   onRemoveAttachment,
   onClearCodeComments,
   onListLocalSkills,
@@ -139,11 +152,14 @@ export function ProjectChatComposer({
   }, [disabled, onFileSelect])
 
   return (
-    <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
+    <div className="relative w-full rounded-[26px] bg-[#f3f3f3] shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
       <form
         ref={formRef}
         data-testid="project-chat-composer-form"
-        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
+        className={cn(
+          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2',
+          showProjectWorkBar && 'border-b-border/35'
+        )}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onSubmit={event => {
@@ -177,7 +193,7 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
-          className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           selectedModel={selectedModel}
@@ -194,6 +210,12 @@ export function ProjectChatComposer({
           onSelectModelOption={onSelectModelOption}
           onBlockedModelSelect={onBlockedModelSelect}
           onFileSelect={onFileSelect}
+          planModeActive={planModeActive}
+          onSetPlanMode={onSetPlanMode}
+          onClearPlanMode={onClearPlanMode}
+          onSetGoal={onSetGoal}
+          goalDraftActive={goalDraftActive}
+          onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}
           onPause={onPause}
         />
@@ -222,9 +244,10 @@ export function ProjectChatComposer({
           onListBranches={projectWork.onListBranches}
           onCheckoutBranch={projectWork.onCheckoutBranch}
           onCreateBranch={projectWork.onCreateBranch}
-          worktreeBaseBranch={projectWork.worktreeBaseBranch}
-          onWorktreeBaseBranchChange={projectWork.onWorktreeBaseBranchChange}
-          className="min-h-11 px-4"
+          worktreeBranch={projectWork.worktreeBranch}
+          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+          className="min-h-10 rounded-b-[26px] bg-[#f3f3f3] px-4"
+          buttonClassName="h-9 px-2.5 text-[13px] leading-[18px] text-text-secondary hover:bg-surface/70 hover:text-text-primary"
         />
       )}
     </div>

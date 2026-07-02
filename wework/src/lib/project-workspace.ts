@@ -1,4 +1,5 @@
 import type { ProjectWithTasks } from '@/types/api'
+import { executorWorkspaceRoot, joinDevicePath } from './device-workspace-path'
 
 export interface ProjectWorkspaceRootApi {
   getProjectWorkspaceRoot(deviceId: string): Promise<string>
@@ -20,35 +21,6 @@ export function executionDeviceId(project: ProjectWithTasks): string | undefined
 
 function isGitWorkspace(project: ProjectWithTasks): boolean {
   return project.config?.workspace?.source === 'git'
-}
-
-function normalizeRelativeWorkspacePath(path: string): string {
-  const segments: string[] = []
-
-  for (const segment of path.trim().replace(/\\/g, '/').split('/')) {
-    if (!segment || segment === '.') continue
-    if (segment === '..') {
-      throw new Error('Workspace path cannot contain parent traversal')
-    }
-    segments.push(segment)
-  }
-
-  return segments.join('/')
-}
-
-function joinDevicePath(root: string, child: string): string {
-  const normalizedRoot = root.trim().replace(/\/+$/, '') || '/'
-  const normalizedChild = normalizeRelativeWorkspacePath(child.replace(/^\/+/, ''))
-  if (!normalizedChild) return normalizedRoot
-  return normalizedRoot === '/' ? `/${normalizedChild}` : `${normalizedRoot}/${normalizedChild}`
-}
-
-function executorWorkspaceRoot(projectWorkspaceRoot: string): string {
-  const normalizedRoot = projectWorkspaceRoot.trim().replace(/\/+$/, '') || '/'
-  if (normalizedRoot.split('/').pop() === 'projects') {
-    return normalizedRoot.slice(0, normalizedRoot.lastIndexOf('/')) || '/'
-  }
-  return normalizedRoot
 }
 
 export async function resolveProjectWorkspacePath(

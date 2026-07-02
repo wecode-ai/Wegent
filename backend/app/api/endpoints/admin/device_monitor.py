@@ -20,6 +20,10 @@ from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import BindShell, DeviceStatusEnum, DeviceType
+from app.services.device.admin_device_batch import (
+    AdminDeviceBatchTarget,
+    admin_device_batch_manager,
+)
 from app.services.device.admin_device_restart import restart_admin_device
 from app.services.device.local_provider import local_device_provider
 from app.services.device_service import DeviceService as device_service
@@ -40,6 +44,14 @@ class AdminDeviceUpgradeRequest(BaseModel):
     """Request schema for admin device upgrade."""
 
     user_id: int = Field(..., description="Device owner user ID")
+    force_stop_tasks: bool = Field(
+        False, description="Force stop running tasks before upgrade"
+    )
+
+
+class AdminDeviceBatchUpgradeRequest(BaseModel):
+    """Request schema for batch admin device upgrade."""
+
     force_stop_tasks: bool = Field(
         False, description="Force stop running tasks before upgrade"
     )
@@ -67,6 +79,39 @@ class AdminDeviceActionResponse(BaseModel):
     message: str = Field(..., description="Action result message")
 
 
+class AdminDeviceBatchStartResponse(BaseModel):
+    """Response schema for starting an admin device batch action."""
+
+    success: bool = Field(..., description="Whether the batch was accepted")
+    batch_id: str = Field(..., description="Batch action ID")
+    action: str = Field(..., description="Batch action type")
+    status: str = Field(..., description="Batch status")
+    total: int = Field(..., description="Total devices considered")
+    message: str = Field(..., description="Batch start message")
+
+
+class AdminDeviceBatchItemResponse(BaseModel):
+    """Response schema for one device inside an admin batch action."""
+
+    user_id: int = Field(..., description="Device owner user ID")
+    device_id: str = Field(..., description="Device unique identifier")
+    status: str = Field(..., description="Per-device batch status")
+    message: str = Field(..., description="Per-device batch message")
+
+
+class AdminDeviceBatchStatusResponse(AdminDeviceBatchStartResponse):
+    """Response schema for admin batch device action status."""
+
+    triggered: int = Field(..., description="Devices that accepted the action")
+    failed: int = Field(..., description="Devices that failed the action")
+    skipped: int = Field(..., description="Devices skipped as ineligible")
+    errors: List[str] = Field(default_factory=list, description="Per-device errors")
+    items: List[AdminDeviceBatchItemResponse] = Field(
+        default_factory=list,
+        description="Per-device batch action states",
+    )
+
+
 class AdminDeviceInfo(BaseModel):
     """Device information for admin monitoring."""
 
@@ -75,7 +120,7 @@ class AdminDeviceInfo(BaseModel):
     name: str = Field(..., description="Device name")
     status: DeviceStatusEnum = Field(..., description="Device online status")
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local or cloud)"
+        DeviceType.LOCAL, description="Device type (local, app, cloud, or remote)"
     )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE, description="Shell runtime binding"
@@ -105,7 +150,7 @@ class AdminDeviceStats(BaseModel):
         ..., description="Count by status (online, offline, busy)"
     )
     by_device_type: Dict[str, int] = Field(
-        ..., description="Count by device type (local, cloud)"
+        ..., description="Count by device type (local, app, cloud, remote)"
     )
     by_bind_shell: Dict[str, int] = Field(
         ..., description="Count by bind shell (claudecode, openclaw)"
@@ -123,7 +168,7 @@ def _build_device_query(
 
     Args:
         db: Database session
-        device_type: Filter by device type (local/cloud)
+        device_type: Filter by device type (local/app/cloud/remote)
         bind_shell: Filter by bind shell (claudecode/openclaw)
         search: Search by device name or device ID
         search_user_ids: User IDs matching the search term (for username search)
@@ -339,7 +384,7 @@ async def get_all_devices(
     Args:
         page: Page number (1-indexed)
         limit: Items per page
-        device_type: Filter by device type (local/cloud)
+        device_type: Filter by device type (local/app/cloud/remote)
         bind_shell: Filter by bind shell (claudecode/openclaw)
         search: Search by device name, device ID or username
         db: Database session
@@ -482,6 +527,7 @@ async def get_device_stats(
     }
     by_device_type: Dict[str, int] = {
         DeviceType.LOCAL.value: 0,
+        DeviceType.APP.value: 0,
         DeviceType.CLOUD.value: 0,
         DeviceType.REMOTE.value: 0,
     }
@@ -595,6 +641,58 @@ async def _get_device_for_action(
     return device_kind, online_info
 
 
+def _get_device_id(kind: Kind) -> str:
+    """Resolve a Device CRD's public device ID."""
+    spec = kind.json.get("spec", {}) if kind.json else {}
+    return spec.get("deviceId", kind.name)
+
+
+def _get_active_devices_by_type(db: Session, device_type: DeviceType) -> List[Kind]:
+    """Return active Device CRDs for the requested device type."""
+    device_kinds = (
+        db.query(Kind)
+        .filter(
+            and_(
+                Kind.kind == "Device",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+        )
+        .all()
+    )
+    return [
+        kind
+        for kind in device_kinds
+        if (kind.json.get("spec", {}) if kind.json else {}).get(
+            "deviceType", DeviceType.LOCAL.value
+        )
+        == device_type.value
+    ]
+
+
+def _get_local_claudecode_devices(db: Session) -> List[Kind]:
+    """Return local devices that use the ClaudeCode runtime binding."""
+    local_devices = _get_active_devices_by_type(db, DeviceType.LOCAL)
+    return [
+        kind
+        for kind in local_devices
+        if (kind.json.get("spec", {}) if kind.json else {}).get(
+            "bindShell", BindShell.CLAUDECODE.value
+        )
+        == BindShell.CLAUDECODE.value
+    ]
+
+
+def _get_upgrade_params(force_stop_tasks: bool) -> Dict[str, Any]:
+    """Build local executor upgrade command params."""
+    return {
+        "force": False,
+        "auto_confirm": True,
+        "verbose": False,
+        "force_stop_tasks": force_stop_tasks,
+    }
+
+
 @router.post(
     "/devices/{device_id}/upgrade",
     response_model=AdminDeviceActionResponse,
@@ -635,12 +733,7 @@ async def upgrade_device(
         from app.api.ws.device_namespace import device_namespace
 
         socket_id = online_info["socket_id"]
-        upgrade_params = {
-            "force": False,
-            "auto_confirm": True,
-            "verbose": False,
-            "force_stop_tasks": request.force_stop_tasks,
-        }
+        upgrade_params = _get_upgrade_params(request.force_stop_tasks)
 
         success = await device_namespace.emit_upgrade_command(socket_id, upgrade_params)
 
@@ -668,6 +761,36 @@ async def upgrade_device(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to trigger upgrade: {str(e)}",
         )
+
+
+@router.post(
+    "/devices/local/upgrade-all",
+    response_model=AdminDeviceBatchStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upgrade_all_local_devices(
+    request: AdminDeviceBatchUpgradeRequest = AdminDeviceBatchUpgradeRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_admin_user),
+):
+    """Start a batch upgrade for all eligible local ClaudeCode devices."""
+    local_devices = _get_local_claudecode_devices(db)
+    targets = [
+        AdminDeviceBatchTarget(user_id=kind.user_id, device_id=_get_device_id(kind))
+        for kind in local_devices
+    ]
+    batch = admin_device_batch_manager.start_local_upgrade(
+        targets=targets,
+        force_stop_tasks=request.force_stop_tasks,
+        admin_name=current_user.user_name,
+    )
+    logger.info(
+        "[Admin Device Batch Upgrade] Started: admin=%s, batch_id=%s, total=%d",
+        current_user.user_name,
+        batch.batch_id,
+        batch.total,
+    )
+    return AdminDeviceBatchStartResponse(**batch.to_start_dict())
 
 
 @router.post(
@@ -731,6 +854,55 @@ async def restart_device(
     return AdminDeviceActionResponse(
         success=result.success,
         message=result.message,
+    )
+
+
+@router.post(
+    "/devices/cloud/restart-all",
+    response_model=AdminDeviceBatchStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def restart_all_cloud_devices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_admin_user),
+):
+    """Start a batch restart for all cloud devices."""
+    cloud_devices = _get_active_devices_by_type(db, DeviceType.CLOUD)
+    targets = [
+        AdminDeviceBatchTarget(user_id=kind.user_id, device_id=_get_device_id(kind))
+        for kind in cloud_devices
+    ]
+    batch = admin_device_batch_manager.start_cloud_restart(
+        targets=targets,
+        admin_name=current_user.user_name,
+    )
+    logger.info(
+        "[Admin Device Batch Restart] Started: admin=%s, batch_id=%s, total=%d",
+        current_user.user_name,
+        batch.batch_id,
+        batch.total,
+    )
+    return AdminDeviceBatchStartResponse(**batch.to_start_dict())
+
+
+@router.get(
+    "/batches/{batch_id}",
+    response_model=AdminDeviceBatchStatusResponse,
+)
+async def get_device_batch_status(
+    batch_id: str = Path(..., description="Admin device batch action ID"),
+    current_user: User = Depends(security.get_admin_user),
+):
+    """Get status for an admin device batch action."""
+    batch = admin_device_batch_manager.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device batch not found: {batch_id}",
+        )
+
+    return AdminDeviceBatchStatusResponse(
+        **batch.to_status_dict(),
     )
 
 

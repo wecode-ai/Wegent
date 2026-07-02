@@ -47,6 +47,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/shared-skill-directory.md`](docs/en/developer-guide/shared-skill-directory.md)
 - Runtime local work (Project -> Device Workspace -> LocalTask without DB task rows): [`docs/zh/developer-guide/runtime-local-work.md`](docs/zh/developer-guide/runtime-local-work.md)
 - English version: [`docs/en/developer-guide/runtime-local-work.md`](docs/en/developer-guide/runtime-local-work.md)
+- Wework local-first cloud connection: [`docs/zh/developer-guide/wework-cloud-connection.md`](docs/zh/developer-guide/wework-cloud-connection.md)
+- English version: [`docs/en/developer-guide/wework-cloud-connection.md`](docs/en/developer-guide/wework-cloud-connection.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
@@ -284,6 +286,19 @@ When a dialog contains action buttons (e.g., Save, Create, Confirm), the main ac
   <Button onClick={onSave}>Save</Button>  // Missing variant="primary"
 </DialogFooter>
 ```
+
+### Wework Desktop UI Sizing
+
+⚠️ **Wework desktop workbench controls MUST use one compact size system.**
+
+- Default desktop button height: `h-8` (32px). This applies to sidebar rows, right workspace launcher buttons, right workspace tabs, review toolbar buttons, file toolbar buttons, menu triggers, and icon buttons.
+- Default desktop icon-only button: `h-8 w-8`.
+- Titlebar split controls should read as one button: one `h-8` rounded outer wrapper with a subtle border, a labeled primary segment with compact `gap-1.5` spacing, and a compact dropdown segment. Do not show a default divider between segments; use a subtle hover/active background on the dropdown segment to reveal the split only during interaction.
+- Default icon size inside desktop buttons: `h-4 w-4`. Use `h-3.5 w-3.5` only for low-emphasis inline adornments inside dense text rows, not for primary toolbar actions.
+- Default desktop button text: `text-[13px] leading-[18px]` for navigation/list actions, and `text-xs` only for dense metadata/toolbars.
+- Desktop titlebar action groups should use compact gaps (`gap-1` or `gap-1.5`) and keep a small right inset so the last icon is not pinned to the window edge.
+- Do not introduce `h-6`, `h-7`, `h-9`, or `h-12` for desktop workbench buttons unless the control is a documented exception such as a hidden close affordance, mobile touch target, form field, or content preview area.
+- Keep hover/active styling consistent within a toolbar or list: same radius, same icon size, same background token, and same disabled opacity.
 
 ### Typography
 

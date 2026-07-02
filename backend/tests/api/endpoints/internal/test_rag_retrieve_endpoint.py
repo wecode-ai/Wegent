@@ -21,6 +21,7 @@ from app.services.rag.sources import (
 )
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -65,7 +66,11 @@ def _make_runtime_spec(
 ) -> QueryRuntimeSpec:
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids or [1],
-        document_ids=document_ids,
+        scope=(
+            RetrievalScope(document_ids=document_ids)
+            if document_ids is not None
+            else None
+        ),
         query=query,
         route_mode=route_mode,
         knowledge_base_configs=[
@@ -331,7 +336,6 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
             "restricted_mode": False,
         },
     }
-
     with (
         patch(
             "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
@@ -403,7 +407,7 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
     assert response.status_code == 200
     mock_resolve.assert_called_once()
     mock_query.assert_awaited_once()
-    assert mock_query.await_args.args[0].document_ids == [101, 102]
+    assert mock_query.await_args.args[0].scope.document_ids == [101, 102]
 
 
 def test_internal_retrieve_returns_error_when_document_names_not_found(test_client):
@@ -780,7 +784,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
         knowledge_base_ids=[1],
         db=ANY,
         route_mode="auto",
-        document_ids=None,
+        scope=None,
         metadata_condition=None,
         context_window=10000,
         used_context_tokens=4200,

@@ -23,6 +23,9 @@ describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'backend',
+    }
     window.history.pushState({}, '', '/login')
   })
 

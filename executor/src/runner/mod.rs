@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{future::Future, pin::Pin};
+
+use crate::{
+    emitter::{EventEnvelope, ResponsesEventBuilder},
+    logging::{log_executor_event, task_fields},
+    protocol::{ExecutionRequest, TaskStatus},
+    server::{RunnerResult, TaskRunner},
+};
+
+pub trait AgentEngine: Clone + Send + Sync + 'static {
+    type RunFuture: Future<Output = ExecutionOutcome> + Send + 'static;
+
+    fn run(&self, request: ExecutionRequest) -> Self::RunFuture;
+
+    fn run_with_events<S>(
+        &self,
+        request: ExecutionRequest,
+        _sink: S,
+        _builder: ResponsesEventBuilder,
+    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+    where
+        S: EventSink,
+    {
+        Box::pin(self.run(request))
+    }
+}
+
+pub trait EventSink: Clone + Send + Sync + 'static {
+    type SendFuture: Future<Output = Result<(), String>> + Send + 'static;
+
+    fn send(&self, event: EventEnvelope) -> Self::SendFuture;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionOutcome {
+    Completed { content: String },
+    WaitingForUserInput { stop_reason: String },
+    Failed { message: String },
+    Running,
+    Cancelled { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct BackgroundTaskRunner<E, S> {
+    engine: E,
+    sink: S,
+}
+
+impl<E, S> BackgroundTaskRunner<E, S> {
+    pub fn new(engine: E, sink: S) -> Self {
+        Self { engine, sink }
+    }
+}
+
+impl<E, S> TaskRunner for BackgroundTaskRunner<E, S>
+where
+    E: AgentEngine,
+    S: EventSink,
+{
+    type SubmitFuture = Pin<Box<dyn Future<Output = RunnerResult> + Send>>;
+
+    fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture {
+        let engine = self.engine.clone();
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            let builder = event_builder(&request);
+            let fields = task_fields(request.task_id, request.subtask_id);
+            log_executor_event("sending response.created callback", &fields);
+            if let Err(message) = sink
+                .send(builder.response_created(request.resolved_shell_type().as_deref()))
+                .await
+            {
+                let mut failed_fields = fields.clone();
+                failed_fields.push(("error_len", message.len().to_string()));
+                failed_fields.push(("error", truncate_for_log(&message)));
+                log_executor_event("response.created callback failed", &failed_fields);
+                return RunnerResult {
+                    status: TaskStatus::Failed,
+                    message: Some(message),
+                };
+            }
+
+            log_executor_event("queued background task", &fields);
+            tokio::spawn(run_in_background(engine, sink, builder, request));
+            RunnerResult::accepted(TaskStatus::Running)
+        })
+    }
+}
+
+async fn run_in_background<E, S>(
+    engine: E,
+    sink: S,
+    builder: ResponsesEventBuilder,
+    request: ExecutionRequest,
+) where
+    E: AgentEngine,
+    S: EventSink,
+{
+    let fields = task_fields(request.task_id, request.subtask_id);
+    log_executor_event("background task started", &fields);
+    let outcome = engine
+        .run_with_events(request, sink.clone(), builder.clone())
+        .await;
+    let mut outcome_fields = fields.clone();
+    outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
+    log_executor_event("background task finished", &outcome_fields);
+
+    let event = match outcome {
+        ExecutionOutcome::Completed { content } => builder.response_completed(&content),
+        ExecutionOutcome::WaitingForUserInput { stop_reason } => {
+            builder.response_waiting_for_user_input(&stop_reason)
+        }
+        ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
+        ExecutionOutcome::Cancelled { message } => builder.error(&message, "cancelled"),
+        ExecutionOutcome::Running => return,
+    };
+    match sink.send(event).await {
+        Ok(()) => log_executor_event("final callback sent", &outcome_fields),
+        Err(message) => {
+            outcome_fields.push(("error_len", message.len().to_string()));
+            outcome_fields.push(("error", truncate_for_log(&message)));
+            log_executor_event("final callback failed", &outcome_fields);
+        }
+    }
+}
+
+fn truncate_for_log(value: &str) -> String {
+    const LIMIT: usize = 500;
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(LIMIT).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
+    let model = request
+        .model_config
+        .get("model_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    ResponsesEventBuilder::new(request.task_id, request.subtask_id, model)
+        .with_message_id(request.message_id)
+        .with_executor_info(
+            request.executor_name.as_deref(),
+            request.executor_namespace.as_deref(),
+        )
+}
+
+fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
+    match outcome {
+        ExecutionOutcome::Completed { .. } => "completed",
+        ExecutionOutcome::WaitingForUserInput { .. } => "waiting_for_user_input",
+        ExecutionOutcome::Failed { .. } => "failed",
+        ExecutionOutcome::Running => "running",
+        ExecutionOutcome::Cancelled { .. } => "cancelled",
+    }
+}

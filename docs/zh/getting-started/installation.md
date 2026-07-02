@@ -287,6 +287,8 @@ vim .env.local  # 编辑配置
 pnpm run dev
 ```
 
+仓库根目录的 `pnpm-workspace.yaml` 已声明 pnpm 安装所需的依赖构建脚本 allowlist，并关闭非交互环境下的 `node_modules` 重建确认。开发者和 Git hooks 应从仓库根目录运行 `pnpm install`，不要在子目录中单独维护 `approve-builds` 配置。
+
 ### 步骤 6: 安装 Executor Manager
 
 [本地开发](/executor_manager/README_zh.md)

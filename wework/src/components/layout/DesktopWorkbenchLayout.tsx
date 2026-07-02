@@ -1,48 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEventHandler } from 'react'
+import type { ProjectCreateMode } from '@/components/chat/ChatInput'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useAuth } from '@/features/auth/useAuth'
 import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-  WorkbenchMessage,
-  WorkbenchState,
-} from '@/types/workbench'
-import type {
-  ProjectChatControls,
-  ProjectCreateMode,
-  ProjectWorkControls,
-} from '@/components/chat/ChatInput'
-import type {
-  BindRuntimeTaskIMSessionsResponse,
-  CreateGitWorkspaceProjectRequest,
-  CreateProjectRequest,
-  DeleteDeviceWorkspaceRequest,
-  DeviceWorkspacePrepareRequest,
-  DeviceWorkspacePrepareResponse,
-  GitBranch,
-  GitRepoInfo,
   IMPrivateSession,
-  IMPrivateSessionListResponse,
   ProjectWithTasks,
   RuntimeTaskAddress,
-  RuntimeTaskForkTarget,
-  RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationSettingsResponse,
-  RuntimeTaskIMNotificationSubscriptionRequest,
-  RuntimeTaskIMNotificationSubscriptionResponse,
-  RuntimeWorkSearchRequest,
-  RuntimeWorkSearchResponse,
-  TurnFileChangesSummary,
 } from '@/types/api'
-import type { EnvironmentInfo } from '@/types/environment'
-import type { EnvironmentDiffMode } from '@/api/environment'
-import type { DeviceUpgradeState } from '@/types/device-events'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import {
-  resolveRuntimeWorkspaceContext,
-  resolveWorkspaceTarget,
-  workspaceTargetKey,
-} from '@/lib/workspace-target'
+import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import {
@@ -53,199 +22,66 @@ import {
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
-import { DesktopWindowControls } from './DesktopWindowControls'
 import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
-import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
+import {
+  useDesktopSidebarCollapsed,
+  useDesktopSidebarToggleRequest,
+} from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
-
-interface DesktopWorkbenchLayoutProps {
-  state: WorkbenchState
-  messages: WorkbenchMessage[]
-  queuedMessages?: QueuedWorkbenchMessage[]
-  guidanceMessages?: GuidanceWorkbenchMessage[]
-  codeCommentContexts?: CodeCommentContext[]
-  currentRuntimeTaskRunning?: boolean
-  isAwaitingAssistantStart?: boolean
-  isRuntimeTranscriptLoading?: boolean
-  runtimeTranscriptHasMoreBefore?: boolean
-  isRuntimeTranscriptLoadingMore?: boolean
-  upgradingDevices?: Record<string, DeviceUpgradeState>
-  activeItem?: 'chat' | 'plugins' | 'automation'
-  onNewChat: () => void
-  onStartStandaloneChat: () => void
-  onOpenPlugins: () => void
-  projectChat: ProjectChatControls
-  projectWork: ProjectWorkControls
-  onSelectProject: (projectId: number | null) => void
-  onStartNewProjectChat: (projectId: number) => void
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onSearchRuntimeWork?: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
-  onLoadOlderRuntimeTranscript?: () => Promise<void>
-  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void>
-  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onArchiveProjectConversations?: (runtimeProjectKey: string) => Promise<void>
-  onArchiveProjectsConversations?: (runtimeProjectKeys: string[]) => Promise<void>
-  onArchiveChatConversations?: (addresses: RuntimeTaskAddress[]) => Promise<void>
-  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
-  onRememberExecutionDevice?: (deviceId: string) => void
-  onOpenStandaloneWorkspace?: (
-    deviceId: string,
-    workspacePath: string,
-    label?: string
-  ) => Promise<void> | void
-  onRefreshDevices?: () => Promise<void>
-  onUpgradeDevice?: (deviceId: string) => Promise<void>
-  onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
-  onBindRuntimeTaskToImSessions?: (
-    address: RuntimeTaskAddress,
-    sessionKeys: string[]
-  ) => Promise<BindRuntimeTaskIMSessionsResponse>
-  onGetImNotificationSettings?: () => Promise<RuntimeIMNotificationSettingsResponse>
-  onUpdateGlobalImNotification?: (
-    data: RuntimeGlobalIMNotificationUpdateRequest
-  ) => Promise<RuntimeIMNotificationSettingsResponse>
-  onSubscribeRuntimeTaskNotifications?: (
-    data: RuntimeTaskIMNotificationSubscriptionRequest
-  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  onUnsubscribeRuntimeTaskNotifications?: (
-    address: RuntimeTaskAddress
-  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
-  onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
-  onPrepareDeviceWorkspace: (
-    data: DeviceWorkspacePrepareRequest
-  ) => Promise<DeviceWorkspacePrepareResponse>
-  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
-  onListGitRepositories: () => Promise<GitRepoInfo[]>
-  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
-  onUpdateProjectName: (projectId: number, name: string) => Promise<void>
-  onRemoveProject: (projectId: number) => Promise<void>
-  onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
-  onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
-  onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
-  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onLoadEnvironmentInfo: (
-    project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
-  ) => Promise<EnvironmentInfo>
-  onCommitEnvironmentChanges: (
-    project: ProjectWithTasks | null,
-    message: string,
-    workspaceTarget?: WorkspaceTarget | null
-  ) => Promise<void>
-  onLoadEnvironmentDiff?: (
-    project: ProjectWithTasks | null,
-    workspaceTarget: WorkspaceTarget,
-    mode?: EnvironmentDiffMode
-  ) => Promise<string>
-  onListEnvironmentBranches: (
-    project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
-  ) => Promise<string[]>
-  onCheckoutEnvironmentBranch: (
-    project: ProjectWithTasks | null,
-    branchName: string,
-    workspaceTarget?: WorkspaceTarget | null
-  ) => Promise<void>
-  onCreateEnvironmentBranch: (
-    project: ProjectWithTasks | null,
-    branchName: string,
-    workspaceTarget?: WorkspaceTarget | null
-  ) => Promise<void>
-  onInputChange: (value: string) => void
-  onSend: () => void
-  onRetryFailedMessage?: (messageId: string) => void
-  isResponseStreaming?: boolean
-  onPauseResponse?: () => void
-  onCancelQueuedMessage?: (id: string) => void
-  onSendQueuedAsGuidance?: (id: string) => void
-  onEditQueuedMessage?: (id: string) => void
-  onCancelGuidanceMessage?: (id: string) => void
-  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  onAddCodeComment?: (context: CodeCommentContext) => void
-  onClearCodeComments?: () => void
-  onRefreshWorkLists?: () => Promise<void>
-  onLogout: () => void
-}
+import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
-export function DesktopWorkbenchLayout({
-  state,
-  messages,
-  queuedMessages = [],
-  guidanceMessages = [],
-  codeCommentContexts = [],
-  currentRuntimeTaskRunning = false,
-  isAwaitingAssistantStart = false,
-  isRuntimeTranscriptLoading = false,
-  runtimeTranscriptHasMoreBefore = false,
-  isRuntimeTranscriptLoadingMore = false,
-  upgradingDevices = {},
-  activeItem = 'chat',
-  onNewChat,
-  onOpenPlugins,
-  projectChat,
-  projectWork,
-  onSelectProject,
-  onStartNewProjectChat,
-  onOpenRuntimeLocalTask,
-  onSearchRuntimeWork = async () => ({ items: [] }),
-  onLoadOlderRuntimeTranscript,
-  onRenameRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
-  onArchiveProjectConversations,
-  onArchiveProjectsConversations,
-  onArchiveChatConversations,
-  onForkCurrentRuntimeTask,
-  onRememberExecutionDevice,
-  onOpenStandaloneWorkspace,
-  onRefreshDevices,
-  onUpgradeDevice = async () => {},
-  onListImPrivateSessions,
-  onBindRuntimeTaskToImSessions,
-  onGetImNotificationSettings,
-  onUpdateGlobalImNotification,
-  onSubscribeRuntimeTaskNotifications,
-  onUnsubscribeRuntimeTaskNotifications,
-  onCreateProject,
-  onCreateGitWorkspaceProject,
-  onPrepareDeviceWorkspace,
-  onDeleteDeviceWorkspace,
-  onListGitRepositories,
-  onListGitBranches,
-  onUpdateProjectName,
-  onRemoveProject,
-  onGetDeviceHomeDirectory,
-  onGetProjectWorkspaceRoot,
-  onListDeviceDirectories,
-  onCreateDeviceDirectory,
-  onLoadEnvironmentInfo,
-  onCommitEnvironmentChanges,
-  onLoadEnvironmentDiff,
-  onListEnvironmentBranches,
-  onCheckoutEnvironmentBranch,
-  onCreateEnvironmentBranch,
-  onInputChange,
-  onSend,
-  onRetryFailedMessage,
-  isResponseStreaming = false,
-  onPauseResponse = () => {},
-  onCancelQueuedMessage = () => {},
-  onSendQueuedAsGuidance = () => {},
-  onEditQueuedMessage = () => {},
-  onCancelGuidanceMessage = () => {},
-  onLoadFileChangesDiff,
-  onRevertFileChanges,
-  onAddCodeComment = () => {},
-  onClearCodeComments,
-  onRefreshWorkLists,
-  onLogout,
-}: DesktopWorkbenchLayoutProps) {
+const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
+
+export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
+  const { logout: onLogout } = useAuth()
+  const {
+    state,
+    cloudWorkStatus,
+    upgradingDevices,
+    selectProject: onSelectProject,
+    selectStandaloneDevice,
+    openStandaloneWorkspace: onOpenStandaloneWorkspace,
+    startNewChat: onNewChat,
+    startNewProjectChat: onStartNewProjectChat,
+    openRuntimeLocalTask: onOpenRuntimeLocalTask,
+    searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
+    renameRuntimeLocalTask: onRenameRuntimeLocalTask,
+    archiveRuntimeLocalTask: onArchiveRuntimeLocalTask,
+    archiveProjectConversations: onArchiveProjectConversations,
+    archiveProjectsConversations: onArchiveProjectsConversations,
+    archiveChatConversations: onArchiveChatConversations,
+    rememberExecutionDevice: onRememberExecutionDevice,
+    refreshDevices: onRefreshDevices,
+    getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
+    refreshWorkLists: onRefreshWorkLists,
+    upgradeDevice: onUpgradeDevice = async () => {},
+    createProject: onCreateProject,
+    createGitWorkspaceProject: onCreateGitWorkspaceProject,
+    prepareDeviceWorkspace: onPrepareDeviceWorkspace,
+    deleteDeviceWorkspace: onDeleteDeviceWorkspace,
+    listGitRepositories: onListGitRepositories,
+    listGitBranches: onListGitBranches,
+    updateProjectName: onUpdateProjectName,
+    removeProject: onRemoveProject,
+    getDeviceHomeDirectory: onGetDeviceHomeDirectory,
+    getProjectWorkspaceRoot: onGetProjectWorkspaceRoot,
+    listDeviceDirectories: onListDeviceDirectories,
+    createDeviceDirectory: onCreateDeviceDirectory,
+    listImPrivateSessions: onListImPrivateSessions,
+    getImNotificationSettings: onGetImNotificationSettings,
+    updateGlobalImNotification: onUpdateGlobalImNotification,
+    subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
+    unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
+  } = useWorkbench()
+  const activeItem = 'chat'
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
+  const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
+  const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -256,15 +92,6 @@ export function DesktopWorkbenchLayout({
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
   )
-  const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
-    additions: '+0',
-    deletions: '-0',
-    executionTarget: 'local',
-  })
-  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
-  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
-  const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
-  const [continueInImOpen, setContinueInImOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
     useState<ImNotificationDialogMode | null>(null)
@@ -278,125 +105,7 @@ export function DesktopWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
-  const runtimeWorkspaceContext = useMemo(
-    () =>
-      resolveRuntimeWorkspaceContext({
-        currentRuntimeTask: state.currentRuntimeTask,
-        projects: state.projects,
-        runtimeWork: state.runtimeWork,
-      }),
-    [state.currentRuntimeTask, state.projects, state.runtimeWork]
-  )
-  const activeConversationProject = state.currentProject ?? runtimeWorkspaceContext?.project ?? null
-  const environmentProject = useMemo(() => {
-    if (state.currentRuntimeTask) {
-      return runtimeWorkspaceContext?.project ?? null
-    }
-    return (
-      activeConversationProject ??
-      state.projects.find(project => project.config?.mode === 'workspace') ??
-      null
-    )
-  }, [
-    activeConversationProject,
-    runtimeWorkspaceContext?.project,
-    state.currentRuntimeTask,
-    state.projects,
-  ])
-  const workspaceTargetResolverApi = useMemo(
-    () => ({ getProjectWorkspaceRoot: onGetProjectWorkspaceRoot }),
-    [onGetProjectWorkspaceRoot]
-  )
-  const hasEnvironmentProject = Boolean(environmentProject)
-  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
-  const workspaceTargetProject = environmentProject
-  const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
-  const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
-
-  useEffect(() => {
-    let cancelled = false
-
-    if (state.currentRuntimeTask) {
-      setWorkspaceTarget(current =>
-        workspaceTargetKey(current) === runtimeWorkspaceTargetKey ? current : runtimeWorkspaceTarget
-      )
-      setWorkspaceTargetError(runtimeWorkspaceTarget ? null : 'Workspace is not ready')
-      setWorkspaceTargetResolving(false)
-      return () => {
-        cancelled = true
-      }
-    }
-
-    setWorkspaceTargetResolving(true)
-    setWorkspaceTarget(null)
-    setWorkspaceTargetError(null)
-    resolveWorkspaceTarget({
-      currentProject: workspaceTargetProject,
-      api: workspaceTargetResolverApi,
-    })
-      .then(target => {
-        if (!cancelled) {
-          setWorkspaceTarget(current =>
-            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
-          )
-          setWorkspaceTargetError(null)
-          setWorkspaceTargetResolving(false)
-        }
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setWorkspaceTarget(null)
-          setWorkspaceTargetError(
-            error instanceof Error ? error.message : 'Failed to resolve workspace'
-          )
-          setWorkspaceTargetResolving(false)
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    runtimeWorkspaceTarget,
-    runtimeWorkspaceTargetKey,
-    state.currentRuntimeTask,
-    workspaceTargetProject,
-    workspaceTargetResolverApi,
-  ])
-
-  const refreshEnvironmentInfo = useCallback(async () => {
-    if (workspaceTargetResolving) {
-      setEnvironmentInfo(info => ({ ...info, loading: true }))
-      return
-    }
-
-    if (!environmentWorkspaceReady) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: workspaceTargetError ?? 'Workspace is not ready',
-      }))
-      return
-    }
-
-    setEnvironmentInfo(info => ({ ...info, loading: true }))
-    try {
-      const info = await onLoadEnvironmentInfo(environmentProject, workspaceTarget)
-      setEnvironmentInfo({ ...info, loading: false })
-    } catch (error) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load environment info',
-      }))
-    }
-  }, [
-    environmentProject,
-    environmentWorkspaceReady,
-    onLoadEnvironmentInfo,
-    workspaceTarget,
-    workspaceTargetError,
-    workspaceTargetResolving,
-  ])
+  const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
     const handlePopState = () => {
@@ -419,34 +128,22 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (settingsOpen && autoOpenAddCloudDeviceDialog) {
-      setAutoOpenAddCloudDeviceDialog(false)
+    const syncAutoCollapse = () => {
+      setSidebarAutoCollapsed(window.innerWidth <= SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH)
     }
-  }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
-  async function handleCommitEnvironmentChanges(message: string) {
-    if (!workspaceTarget) {
-      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
-    }
-    await onCommitEnvironmentChanges(environmentProject, message, workspaceTarget)
-    setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
-  }
+    syncAutoCollapse()
+    window.addEventListener('resize', syncAutoCollapse)
+    return () => window.removeEventListener('resize', syncAutoCollapse)
+  }, [])
 
-  async function handleCheckoutEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
-      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
-    }
-    await onCheckoutEnvironmentBranch(environmentProject, branchName, workspaceTarget)
-    setEnvironmentInfo(info => ({ ...info, branchName }))
-  }
-
-  async function handleCreateEnvironmentBranch(branchName: string) {
-    if (!workspaceTarget) {
-      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
-    }
-    await onCreateEnvironmentBranch(environmentProject, branchName, workspaceTarget)
-    setEnvironmentInfo(info => ({ ...info, branchName }))
-  }
+  useEffect(() => {
+    if (effectiveSidebarCollapsed || !sidebarPreviewOpen) return
+    const timer = window.setTimeout(() => {
+      setSidebarPreviewOpen(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveSidebarCollapsed, sidebarPreviewOpen])
 
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
@@ -471,6 +168,46 @@ export function DesktopWorkbenchLayout({
     },
     [onRefreshDevices, state.projects]
   )
+
+  const openCloudDeviceSettings = useCallback(() => {
+    setAutoOpenAddCloudDeviceDialog(true)
+    setSettingsOpen(true)
+    navigateTo('/settings')
+  }, [])
+
+  const openSidebarPreview = useCallback(() => {
+    if (!effectiveSidebarCollapsed) return
+    setSidebarPreviewOpen(true)
+  }, [effectiveSidebarCollapsed])
+
+  const closeSidebarPreview = useCallback(() => {
+    setSidebarPreviewOpen(false)
+  }, [])
+
+  const updateSidebarCollapsed = useCallback(
+    (collapsed: boolean) => {
+      setSidebarPreviewOpen(false)
+      if (!collapsed) {
+        setSidebarAutoCollapsed(false)
+      }
+      setSidebarCollapsed(collapsed)
+    },
+    [setSidebarCollapsed]
+  )
+
+  const collapseSidebar = useCallback(() => {
+    updateSidebarCollapsed(true)
+  }, [updateSidebarCollapsed])
+
+  useDesktopSidebarToggleRequest(() => {
+    updateSidebarCollapsed(!effectiveSidebarCollapsed)
+  })
+
+  useWorkbenchShellEventHandlers({
+    onCreateProjectMode: openProjectFromWorkMenu,
+    onBindProjectWorkspace: openProjectWorkspaceBinding,
+    onOpenCloudDeviceSettings: openCloudDeviceSettings,
+  })
 
   const loadImSessionsForDialog = useCallback(() => {
     const requestId = imSessionsRequestSequence.current + 1
@@ -507,59 +244,25 @@ export function DesktopWorkbenchLayout({
     return settings
   }, [onGetImNotificationSettings])
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Initial IM notification settings are hydrated from the connected workbench service. */
   useEffect(() => {
     void refreshImNotificationSettings().catch(() => undefined)
   }, [refreshImNotificationSettings])
-
-  const openContinueInImDialog = useCallback(() => {
-    if (!state.currentRuntimeTask) return
-
-    setImNotificationDialogMode(null)
-    setContinueInImOpen(true)
-    loadImSessionsForDialog()
-  }, [loadImSessionsForDialog, state.currentRuntimeTask])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
-      setContinueInImOpen(false)
       setImNotificationDialogMode(mode)
       loadImSessionsForDialog()
     },
     [loadImSessionsForDialog]
   )
 
-  const closeContinueInImDialog = useCallback(() => {
-    imSessionsRequestSequence.current += 1
-    setContinueInImOpen(false)
-    setImSessionsLoading(false)
-  }, [])
-
   const closeImNotificationDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
     setImNotificationDialogMode(null)
     setImSessionsLoading(false)
   }, [])
-
-  const submitContinueInIm = useCallback(
-    async (sessionKeys: string[]) => {
-      if (!state.currentRuntimeTask) return
-
-      setImSessionsSubmitting(true)
-      try {
-        if (!onBindRuntimeTaskToImSessions) {
-          throw new Error('IM bind handler is not available')
-        }
-        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
-        setContinueInImOpen(false)
-        setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
-      } catch {
-        setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
-      } finally {
-        setImSessionsSubmitting(false)
-      }
-    },
-    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
-  )
 
   const toggleGlobalImNotification = useCallback(async () => {
     if (!onUpdateGlobalImNotification) return
@@ -694,69 +397,105 @@ export function DesktopWorkbenchLayout({
     ]
   )
 
-  const projectWorkWithCreation: ProjectWorkControls = {
-    ...projectWork,
-    onCreateProjectMode: openProjectFromWorkMenu,
-    onBindProjectWorkspace: openProjectWorkspaceBinding,
-    branchName: environmentInfo.branchName,
-    branchLoading: environmentInfo.loading,
-    onRefreshBranch: undefined,
-    onListBranches: workspaceTarget
-      ? () => onListEnvironmentBranches(environmentProject, workspaceTarget)
-      : undefined,
-    onCheckoutBranch: handleCheckoutEnvironmentBranch,
-    onCreateBranch: handleCreateEnvironmentBranch,
-  }
+  const renderDesktopSidebar = ({
+    collapsed,
+    containerTestId,
+    hideResizeHandle = false,
+    onPointerEnter,
+    onPointerLeave,
+  }: {
+    collapsed: boolean
+    containerTestId?: string
+    hideResizeHandle?: boolean
+    onPointerEnter?: PointerEventHandler<HTMLElement>
+    onPointerLeave?: PointerEventHandler<HTMLElement>
+  }) => (
+    <DesktopSidebar
+      user={state.user}
+      projects={state.projects}
+      devices={state.devices}
+      cloudWorkStatus={cloudWorkStatus}
+      runtimeWork={state.runtimeWork}
+      currentRuntimeTask={state.currentRuntimeTask}
+      standaloneDeviceId={state.standaloneDeviceId}
+      standaloneWorkspacePath={state.standaloneWorkspacePath}
+      imNotificationSettings={imNotificationSettings}
+      preferredDeviceId={
+        state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+      }
+      activeItem={activeItem}
+      collapsed={collapsed}
+      containerTestId={containerTestId}
+      hideResizeHandle={hideResizeHandle}
+      onResizeCollapse={collapseSidebar}
+      onResizeStateChange={setSidebarResizing}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onNewChat={onNewChat}
+      onOpenSearch={() => setSearchOpen(true)}
+      onSelectProject={onSelectProject}
+      onStartNewProjectChat={onStartNewProjectChat}
+      onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+      onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
+      onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+      onArchiveProjectConversations={onArchiveProjectConversations}
+      onArchiveProjectsConversations={onArchiveProjectsConversations}
+      onArchiveChatConversations={onArchiveChatConversations}
+      onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
+      onToggleGlobalImNotification={toggleGlobalImNotification}
+      onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
+      onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      onSelectStandaloneDevice={selectStandaloneDevice}
+      onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
+      onOpenPlugins={() => navigateTo('/plugins')}
+      onRefreshDevices={onRefreshDevices}
+      onUpdateProjectName={onUpdateProjectName}
+      onRemoveProject={onRemoveProject}
+      onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+      onListDeviceDirectories={onListDeviceDirectories}
+      onCreateDeviceDirectory={onCreateDeviceDirectory}
+      onOpenSettings={options => {
+        setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+        setSettingsOpen(true)
+        navigateTo('/settings')
+      }}
+      onRefreshWorkLists={onRefreshWorkLists}
+      onLogout={onLogout}
+    />
+  )
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && !sidebarCollapsed && (
-        <DesktopSidebar
-          user={state.user}
-          projects={state.projects}
-          devices={state.devices}
-          runtimeWork={state.runtimeWork}
-          currentRuntimeTask={state.currentRuntimeTask}
-          standaloneDeviceId={state.standaloneDeviceId}
-          standaloneWorkspacePath={state.standaloneWorkspacePath}
-          imNotificationSettings={imNotificationSettings}
-          preferredDeviceId={
-            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-          }
-          upgradingDevices={upgradingDevices}
-          activeItem={activeItem}
-          onCollapse={() => setSidebarCollapsed(true)}
-          onNewChat={onNewChat}
-          onOpenSearch={() => setSearchOpen(true)}
-          onSelectProject={onSelectProject}
-          onStartNewProjectChat={onStartNewProjectChat}
-          onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-          onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-          onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
-          onArchiveProjectConversations={onArchiveProjectConversations}
-          onArchiveProjectsConversations={onArchiveProjectsConversations}
-          onArchiveChatConversations={onArchiveChatConversations}
-          onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
-          onToggleGlobalImNotification={toggleGlobalImNotification}
-          onOpenGlobalImNotificationSettings={() =>
-            openImNotificationTargetDialog({ type: 'global' })
-          }
-          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-          onOpenPlugins={onOpenPlugins}
-          onRefreshDevices={onRefreshDevices}
-          onUpdateProjectName={onUpdateProjectName}
-          onRemoveProject={onRemoveProject}
-          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onListDeviceDirectories={onListDeviceDirectories}
-          onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={options => {
-            setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-            setSettingsOpen(true)
-            navigateTo('/settings')
-          }}
-          onRefreshWorkLists={onRefreshWorkLists}
-          onLogout={onLogout}
-        />
+      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+      {!settingsOpen && effectiveSidebarCollapsed && (
+        <>
+          <div
+            data-testid="desktop-sidebar-hover-edge"
+            aria-hidden="true"
+            onPointerEnter={openSidebarPreview}
+            className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+          />
+          <div
+            data-testid="desktop-sidebar-preview"
+            aria-hidden={!sidebarPreviewOpen}
+            onPointerEnter={openSidebarPreview}
+            onPointerLeave={closeSidebarPreview}
+            className={cn(
+              'absolute left-0 top-0 z-popover h-full bg-background transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+              sidebarPreviewOpen
+                ? 'pointer-events-auto translate-x-0 opacity-100 shadow-[6px_0_24px_rgba(15,23,42,0.10)]'
+                : 'pointer-events-none -translate-x-full opacity-100'
+            )}
+          >
+            {renderDesktopSidebar({
+              collapsed: false,
+              containerTestId: 'desktop-sidebar-preview-panel',
+              hideResizeHandle: true,
+              onPointerEnter: openSidebarPreview,
+              onPointerLeave: closeSidebarPreview,
+            })}
+          </div>
+        </>
       )}
       {settingsOpen ? (
         <ConnectionsSettingsPage
@@ -769,83 +508,13 @@ export function DesktopWorkbenchLayout({
         />
       ) : (
         <DesktopWorkbenchMain
-          sidebarCollapsed={sidebarCollapsed}
-          isBootstrapping={state.isBootstrapping}
-          currentRuntimeTask={state.currentRuntimeTask}
-          runtimeWork={state.runtimeWork}
-          currentProject={activeConversationProject}
-          workspaceTarget={workspaceTarget}
-          workspaceTargetError={workspaceTargetError}
-          devices={state.devices}
-          upgradingDevices={upgradingDevices}
-          messages={messages}
-          isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
-          runtimeTranscriptHasMoreBefore={runtimeTranscriptHasMoreBefore}
-          isRuntimeTranscriptLoadingMore={isRuntimeTranscriptLoadingMore}
-          queuedMessages={queuedMessages}
-          guidanceMessages={guidanceMessages}
-          codeCommentContexts={codeCommentContexts}
-          currentRuntimeTaskRunning={currentRuntimeTaskRunning}
-          isWaitingForAssistant={state.isSending || isAwaitingAssistantStart}
-          projectChat={projectChat}
-          projectWork={projectWorkWithCreation}
-          input={state.input}
-          isSending={state.isSending}
-          error={state.error}
-          environmentInfo={environmentInfo}
-          onRefreshEnvironmentInfo={refreshEnvironmentInfo}
-          onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
-          onLoadEnvironmentDiff={
-            onLoadEnvironmentDiff
-              ? (workspaceTarget, mode) =>
-                  onLoadEnvironmentDiff(environmentProject, workspaceTarget, mode)
-              : undefined
-          }
-          onListEnvironmentBranches={() => {
-            if (!workspaceTarget) {
-              return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
-            }
-            return onListEnvironmentBranches(environmentProject, workspaceTarget)
+          sidebarCollapsed={effectiveSidebarCollapsed}
+          sidebarResizing={sidebarResizing}
+          onSidebarCollapsedChange={updateSidebarCollapsed}
+          activePane={{
+            currentRuntimeTask: state.currentRuntimeTask,
+            currentProject: state.currentProject,
           }}
-          onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
-          onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
-          onOpenCloudDeviceSettings={() => {
-            setAutoOpenAddCloudDeviceDialog(true)
-            setSettingsOpen(true)
-            navigateTo('/settings')
-          }}
-          onUpgradeDevice={onUpgradeDevice}
-          onInputChange={onInputChange}
-          onSend={onSend}
-          onRetryFailedMessage={onRetryFailedMessage}
-          onLoadOlderRuntimeTranscript={onLoadOlderRuntimeTranscript}
-          isResponseStreaming={isResponseStreaming}
-          onPauseResponse={onPauseResponse}
-          onCancelQueuedMessage={onCancelQueuedMessage}
-          onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-          onEditQueuedMessage={onEditQueuedMessage}
-          onCancelGuidanceMessage={onCancelGuidanceMessage}
-          onLoadFileChangesDiff={onLoadFileChangesDiff}
-          onRevertFileChanges={onRevertFileChanges}
-          onAddCodeComment={onAddCodeComment}
-          onClearCodeComments={onClearCodeComments}
-          onContinueInIm={openContinueInImDialog}
-          onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
-          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-          onListDeviceDirectories={onListDeviceDirectories}
-          onCreateDeviceDirectory={onCreateDeviceDirectory}
-          topBarLeftActions={
-            sidebarCollapsed ? (
-              <DesktopWindowControls
-                sidebarCollapsed
-                onToggleSidebar={() => setSidebarCollapsed(false)}
-                onNewChat={onNewChat}
-              />
-            ) : undefined
-          }
         />
       )}
       <StandaloneBlankProjectDialog
@@ -884,9 +553,7 @@ export function DesktopWorkbenchLayout({
         }}
         onOpenCloudDeviceSettings={() => {
           setProjectWorkEditProject(null)
-          setAutoOpenAddCloudDeviceDialog(true)
-          setSettingsOpen(true)
-          navigateTo('/settings')
+          openCloudDeviceSettings()
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
@@ -904,15 +571,6 @@ export function DesktopWorkbenchLayout({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
-      />
-      <ContinueInImDialog
-        key={continueInImOpen ? 'continue-im-open' : 'continue-im-closed'}
-        open={continueInImOpen}
-        loading={imSessionsLoading}
-        submitting={imSessionsSubmitting}
-        sessions={imSessions}
-        onClose={closeContinueInImDialog}
-        onSubmit={submitContinueInIm}
       />
       <ContinueInImDialog
         key={

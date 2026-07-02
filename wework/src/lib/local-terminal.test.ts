@@ -8,12 +8,14 @@ import {
   listenLocalTerminalExit,
   listenLocalTerminalOutput,
   localPathExists,
+  openLocalWorkspace,
   resizeLocalTerminal,
   startLocalTerminal,
   writeLocalTerminal,
 } from './local-terminal'
 
 vi.mock('@tauri-apps/api/core', () => ({
+  isTauri: vi.fn(() => false),
   invoke: vi.fn(),
 }))
 
@@ -163,6 +165,41 @@ describe('local-terminal', () => {
       rows: 30,
       cols: 100,
     })
+  })
+
+  test('opens a local workspace through the selected native app', async () => {
+    setNavigatorValue(
+      'userAgent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
+    )
+    setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue(undefined)
+
+    await openLocalWorkspace({ opener: 'vscode', path: ' /Users/me/project ' })
+
+    expect(invokeMock).toHaveBeenCalledWith('open_local_workspace', {
+      opener: 'vscode',
+      path: '/Users/me/project',
+    })
+  })
+
+  test('does not open a local workspace outside the macOS Tauri app', async () => {
+    setNavigatorValue(
+      'userAgent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
+    )
+    setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+
+    await expect(
+      openLocalWorkspace({ opener: 'vscode', path: '/Users/me/project' })
+    ).rejects.toThrow('Local workspace opening is unavailable outside the macOS Tauri app')
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 
   test('writes, resizes, and closes embedded local terminal sessions', async () => {

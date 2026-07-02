@@ -34,6 +34,57 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### Wework Packaged App Local-First Channel
+
+The packaged Wework Tauri App defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Tauri WebView, while the Tauri Rust side is only the app's internal command layer.
+
+Local-first mode needs only two local processes:
+
+```mermaid
+flowchart LR
+    subgraph "User's Computer"
+        APP["Wework Tauri App"]
+        UI["React UI"]
+        TAURI["Tauri Commands"]
+        EX["Executor Sidecar"]
+        FS["Local Files"]
+    end
+
+    UI --> TAURI
+    TAURI <-->|"local socket JSON"| EX
+    EX --> FS
+```
+
+Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor sidecar is not running yet, the App starts the executor with no arguments and retries the socket connection. Sidecars started by the App are owned by the Tauri process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. When no remote Backend address is configured, the executor only starts the local socket and does not connect to Backend. The App and executor only use newline-delimited JSON over the local socket. Executor logs are written to `~/.wegent-executor/logs/executor.log`, not to the protocol channel. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
+
+Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
+
+### Backend Device Chat Task REST Entrypoint
+
+The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:
+
+```text
+POST /api/device-chat/tasks
+```
+
+This entrypoint writes central `TaskResource` and `Subtask` rows, and reuses the same `create_chat_task`, device resolution, and `trigger_ai_response_unified` path as the device chat page. The request does not include `workspacePath` or `localTaskId`: regular device chat tasks do not have a project workspace concept. If `projectId` is provided, Backend resolves the target device from the Project config. If `projectId` is omitted, Backend resolves the target from explicit `deviceId`, the existing task device, Wework defaults, or the user's default local device.
+
+Creating a task only requires `teamId` and `message`; callers may also send `deviceId`, `projectId`, model options, and context fields. Continuing a task sends `taskId`; Backend verifies that the current user can access the task and then reuses the existing task's `client_origin`. The response returns the central task and message identifiers:
+
+```json
+{
+  "taskId": 2267,
+  "userSubtaskId": 3332,
+  "assistantSubtaskId": 3333,
+  "messageId": 5,
+  "aiTriggered": true,
+  "deviceId": "device-de8f474294621dd5acfd1287",
+  "chatUrl": "/devices/chat?taskId=2267"
+}
+```
+
+The OpenAPI schema is generated automatically by FastAPI from `DeviceChatTaskRequest` and `DeviceChatTaskResponse`; no static `docs/api` file needs to be maintained.
+
 ### Communication Architecture
 
 The following diagram shows how local devices communicate with the Wegent system:
@@ -97,6 +148,28 @@ After a remote Docker device starts, it sends `device:register` with `device_typ
 | `task:execute`     | Backend → Device | Task dispatch       |
 | `task:progress`    | Device → Backend | Task progress       |
 | `task:complete`    | Device → Backend | Task completion     |
+
+### Rust Executor Local Event Coverage
+
+The Rust executor Backend channel must remain event-compatible with the legacy
+Python local device runner. In addition to task execution and heartbeat events,
+the local device currently registers and handles:
+
+- `task:cancel`, `task:close-session`
+- `chat:message`
+- `device:execute_command`
+- `device:sync_capabilities`
+- `device:start_terminal_session`, `device:start_code_server_session`
+- `terminal:input`, `terminal:resize`, `terminal:close`
+- `runtime:rpc`
+- `device:upgrade`
+- `device:run_extension`
+
+The migration coverage matrix is tracked in
+`executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local
+device event, add coverage to
+`executor/tests/local_backend_device_migration_contract.rs` first, then update
+that migration matrix.
 
 ### Message Format
 
@@ -214,9 +287,32 @@ Backend can send desired global capability state to an online local device throu
 
 In `replace` mode, the executor only removes capabilities marked as `managed` in the Wegent manifest and missing from the desired state. Plugins installed directly by the user on the local machine are not removed by a Wegent sync.
 
+Capability package downloads are constrained to the configured Backend origin. The executor resolves relative package paths against `connection.backend_url`, rejects package URLs from other origins, and only attaches the device bearer token to same-origin Backend requests. Skill download URLs are built with encoded query parameters, and package extraction uses a per-sync staging directory before replacing the managed skill directory.
+
 When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
 
+Claude Code, Codex, and Agno runtimes receive a task identity environment set. `WEGENT_TASK_ID` identifies the current Task, `AUTH_TOKEN` provides the per-turn bearer token for Backend API access, and `WEGENT_SKILL_IDENTITY_TOKEN` plus `WEGENT_SKILL_USER_NAME` identify task-scoped Skill operations. The executor does not inject `WEGENT_SUBTASK_ID` into these child runtimes; code that needs turn-level identity should keep using Responses events, artifact metadata, or existing task/subtask protocol fields instead of environment variables.
+
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
+
+### Chat Task Device Resolution And Claude Code Launch Context
+
+When a regular chat Task runs through the local executor, Backend resolves the actual dispatch device before creating or continuing the task. Resolution order is:
+
+1. The `device_id` explicitly provided by the current request.
+2. The current Project local execution config, such as `config.execution.targetType = local` and `config.execution.deviceId`.
+3. The `deviceId` already stored in the existing Task spec.
+
+The `appDeviceId` used by frontend App IPC is only the local process identity. Backend maps it to the executor Socket.IO `name` stored on the Device CRD before dispatching. If the resolved local device is stale or offline and the current user has exactly one online local executor, Backend switches the task to that online device so a stale id does not block local execution. Unknown device ids are not silently rewritten.
+
+Before launching a Claude Code child process, the executor prepares the task context:
+
+- It downloads turn attachments into the task directory. Project workspaces use `.wegent/attachments/<taskId>/<subtaskId>/`; non-Project tasks use an attachment subdirectory under the executor task directory.
+- It restores plugin packages from `~/.claude/plugins/cache` when they are still enabled in `enabledPlugins` but their install directory is missing, and it repairs plugin hook permissions.
+- It deploys task-selected Skills into `SKILLS_DIR`. Regular Project tasks use global `~/.claude/skills`; standalone local work with `project_id = 0` and task Skills uses task-level `.claude/skills` so the global directory is not polluted.
+- If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts.
+
+The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
 
 ---
 
@@ -294,11 +390,13 @@ flowchart LR
 | **User Isolation**     | Devices can only execute tasks from their owner |
 | **Hardware Binding**   | Device ID generated from hardware identifiers   |
 
+Backend-triggered terminal and code-server sessions resolve relative paths under the configured local workspace root. Backend-triggered upgrades must stop running local tasks before restarting the executor: if `force_stop_tasks` is not set, the upgrade is rejected as busy; if forced cancellation fails for any task, the upgrade is aborted and an error status is emitted instead of proceeding to restart.
+
 ### Local Executor Connection Configuration
 
-On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. The `mode` field selects the startup mode, while `connection.backend_url` and `connection.auth_token` are used to connect to the Backend and authenticate the device.
+On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also starts the local App IPC socket and, after `connection.backend_url` or `WEGENT_BACKEND_URL` is set, connects to Backend, using `connection.auth_token` or `WEGENT_AUTH_TOKEN` for authentication. Wework App only manages executors it starts itself; if a user starts an executor outside the App, the App attaches to the existing socket and does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path, because a later process can replace the socket path and make ownership ambiguous.
 
-`EXECUTOR_MODE` overrides `mode`, `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require those environment variables; if the device config already contains valid mode and connection settings, the executor can start directly.
+`EXECUTOR_MODE` overrides `mode`. `docker` starts only the HTTP server and skips socket startup; other values keep the local default, which starts both HTTP server and socket. `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require executor home; if the device config already contains valid mode and connection settings, the executor can start directly.
 
 ### Cloud Device Bootstrap Identity Variables
 

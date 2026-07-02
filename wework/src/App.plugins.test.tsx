@@ -1,9 +1,21 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import './i18n'
 import App from './App'
+
+vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  connectLocalExecutorToBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  disconnectLocalExecutorFromBackend: vi
+    .fn()
+    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+}))
 
 const mockViewport = vi.hoisted(() => ({
   isMobile: false,
@@ -24,16 +36,25 @@ const workbenchValue: WorkbenchContextValue = {
     isSending: false,
     error: null,
   },
+  isStartupReady: true,
   messages: [],
   queuedMessages: [],
   guidanceMessages: [],
   codeCommentContexts: [],
+  workspaceFileApi: {
+    listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
+    readWorkspaceTextFile: vi.fn(),
+  },
+  currentRuntimeTaskRunning: false,
+  isAwaitingAssistantStart: false,
   isRuntimeTranscriptLoading: false,
+  runtimeTranscriptHasMoreBefore: false,
+  isRuntimeTranscriptLoadingMore: false,
   upgradingDevices: {},
   projectExecutionMode: 'current_workspace',
   setProjectExecutionMode: vi.fn(),
-  projectWorktreeBaseBranch: null,
-  setProjectWorktreeBaseBranch: vi.fn(),
+  projectWorktreeBranch: null,
+  setProjectWorktreeBranch: vi.fn(),
   projectChat: {
     models: [],
     skills: [],
@@ -56,12 +77,20 @@ const workbenchValue: WorkbenchContextValue = {
     listLocalSkills: vi.fn().mockResolvedValue([]),
   },
   selectProject: vi.fn(),
+  selectProjectWorkspace: vi.fn(),
   selectStandaloneDevice: vi.fn(),
+  openStandaloneWorkspace: vi.fn(),
   startNewChat: vi.fn(),
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
   openRuntimeLocalTask: vi.fn(),
+  searchRuntimeWork: vi.fn(),
+  loadOlderRuntimeTranscript: vi.fn(),
+  renameRuntimeLocalTask: vi.fn(),
   archiveRuntimeLocalTask: vi.fn(),
+  archiveProjectConversations: vi.fn(),
+  archiveProjectsConversations: vi.fn(),
+  archiveChatConversations: vi.fn(),
   forkCurrentRuntimeTask: vi.fn(),
   listImPrivateSessions: vi.fn(),
   bindRuntimeTaskToImSessions: vi.fn(),
@@ -72,10 +101,12 @@ const workbenchValue: WorkbenchContextValue = {
   rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
+  getRemoteDeviceStartupCommand: vi.fn(),
   upgradeDevice: vi.fn(),
   createProject: vi.fn(),
   createGitWorkspaceProject: vi.fn(),
   prepareDeviceWorkspace: vi.fn(),
+  deleteDeviceWorkspace: vi.fn(),
   listGitRepositories: vi.fn(),
   listGitBranches: vi.fn(),
   updateProjectName: vi.fn(),
@@ -177,11 +208,21 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  WorkbenchProvider: ({
+    children,
+    onStartupReadyChange,
+  }: {
+    children: React.ReactNode
+    onStartupReadyChange?: (ready: boolean) => void
+  }) => {
+    queueMicrotask(() => onStartupReadyChange?.(true))
+    return <>{children}</>
+  },
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => workbenchValue,
+  useWorkbenchPaneContext: () => workbenchValue,
 }))
 
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -511,8 +552,13 @@ describe('App plugins route', () => {
   beforeEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     mockSystemSkillsFetch()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test('does not expose the plugins page from the desktop sidebar', async () => {
@@ -721,12 +767,15 @@ describe('App plugins route', () => {
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
-    await userEvent.type(screen.getByTestId('custom-mcp-name-input'), 'local-docs')
-    await userEvent.type(screen.getByTestId('custom-mcp-display-name-input'), 'Local Docs')
-    await userEvent.type(
-      screen.getByTestId('custom-mcp-url-input'),
-      'https://mcp.example.com/local'
-    )
+    fireEvent.change(screen.getByTestId('custom-mcp-name-input'), {
+      target: { value: 'local-docs' },
+    })
+    fireEvent.change(screen.getByTestId('custom-mcp-display-name-input'), {
+      target: { value: 'Local Docs' },
+    })
+    fireEvent.change(screen.getByTestId('custom-mcp-url-input'), {
+      target: { value: 'https://mcp.example.com/local' },
+    })
     await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 2' }))
@@ -757,7 +806,9 @@ describe('App plugins route', () => {
 
     await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
     expect(screen.getByText('MCP Router')).toBeInTheDocument()
-    await userEvent.type(screen.getByTestId('mcp-provider-token-mcp_router'), 'token')
+    fireEvent.change(screen.getByTestId('mcp-provider-token-mcp_router'), {
+      target: { value: 'token' },
+    })
     await userEvent.click(screen.getByTestId('mcp-provider-save-token-mcp_router'))
 
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()

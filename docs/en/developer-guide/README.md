@@ -29,6 +29,11 @@ Welcome to the Wegent Developer Guide! This guide will help you understand how t
 - [MCP Refactoring Guide](./mcp-refactoring-guide.md) - Knowledge MCP tool refactoring architecture
 - [External Knowledge MCP](./external-knowledge-mcp.md) - Knowledge MCP integration for trusted external systems
 
+### 💬 Chat Shell
+
+- [Chat Shell Context Governance](./chat-shell-context-governance.md) - Overview of the three-stage Chat Shell context-governance rollout
+- [Chat Shell Graceful Shutdown](./chat-shell-graceful-shutdown.md) - Service shutdown and streaming cleanup behavior
+
 ### 📊 Observability
 
 - [OpenTelemetry](./opentelemetry.md) - Tracing and observability setup

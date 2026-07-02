@@ -73,23 +73,9 @@ irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_
 - 下载适合您平台的二进制文件
 - 将二进制文件添加到系统 PATH
 
-#### Linux AMD64 无内置 Claude 版本
+#### Linux AMD64 Claude CLI 要求
 
-GitHub Release 同时提供 `wegent-executor-linux-amd64-no-claude`。这个二进制不会把 Claude CLI 打包进 executor，适用于以下场景：
-
-- 云设备或本地设备 Docker 镜像已经通过 npm、基础镜像或其他方式安装 `claude` 命令
-- 希望减小 executor 二进制体积
-- 需要由镜像或宿主环境统一管理 Claude Code 版本
-
-如果选择这个版本，请确保运行环境中已经存在可执行的 `claude` 命令，并满足 Wegent 要求的 Claude Code 最低版本。标准 `wegent-executor-linux-amd64` 仍会内置 Claude CLI，适合直接下载安装到普通 Linux 主机。
-
-手动下载示例：
-
-```bash
-curl -fL -o wegent-executor \
-  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
-chmod +x wegent-executor
-```
+Rust executor 二进制不会内置 Claude CLI。运行环境中必须存在可执行的 `claude` 命令，并满足 Wegent 要求的 Claude Code 最低版本。安装脚本和设备镜像会在 executor 二进制之外单独安装或升级 Claude Code。
 
 #### 使用个人 Codex CLI 配置
 
@@ -124,7 +110,7 @@ docker buildx build --platform linux/amd64 \
   --load .
 ```
 
-如果镜像中已经安装 Claude Code，建议使用 `wegent-executor-linux-amd64-no-claude` 作为 `executor/dist/wegent-executor` 的输入，避免在 executor 二进制和镜像中重复携带 Claude CLI。
+executor 二进制不包含 Claude Code，因此通过 npm、基础镜像或其他方式安装 Claude Code 的镜像可以直接复用 `executor/dist/wegent-executor`。
 
 运行设备镜像时通过环境变量传入 executor 连接信息，不要把 token 写入镜像：
 
@@ -133,7 +119,6 @@ docker run -d --platform linux/amd64 \
   --name wegent-device \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
-  -e EXECUTOR_MODE=local \
   -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
@@ -156,8 +141,8 @@ docker run -d --platform linux/amd64 \
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
-  -e EXECUTOR_MODE=local \
   -e DEVICE_TYPE=remote \
+  -e EXECUTOR_MODE=local \
   -e DEVICE_ID=<generated-device-id> \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
@@ -227,7 +212,16 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；如果没有传 `EXECUTOR_MODE`、`WEGENT_BACKEND_URL` 或 `WEGENT_AUTH_TOKEN`，executor 会读取该文件中的 `mode`、`connection.backend_url` 和 `connection.auth_token`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会启动本机 socket，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后连接 Backend。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 executor home 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
+
+#### Claude Code 执行超时
+
+本地 executor 启动 Claude Code 子进程时，默认最长等待 1 小时。长时间代码生成、依赖安装或文件处理任务可以在这个时间内继续运行。若需要为特定环境调整该限制，可在启动 executor 前设置 `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS`。该配置只影响 Claude Code 子进程，不影响 native Codex app-server；Codex RPC 超时由 `WEGENT_CODEX_RPC_TIMEOUT_SECONDS` 控制。
+
+```bash
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+wegent-executor
+```
 
 ### 获取 JWT Token
 
@@ -325,10 +319,10 @@ wegent-executor
 
 在线云设备支持直接打开交互式会话：
 
-| 操作 | 后端接口 | 说明 |
-|------|----------|------|
-| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE** | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话 |
+| 操作     | 后端接口                                    | 说明                                                                                                                                 |
+| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话                                                                                                                |
 
 终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
 
@@ -339,6 +333,19 @@ wegent-executor
 | **重命名**   | 点击设备名称或编辑图标，保存后会刷新列表           |
 | **重启设备** | 需要二次确认；设备会短暂离线，进行中的连接可能中断 |
 | **删除设备** | 需要二次确认；云资源会被释放                       |
+
+### 系统管理设备监控
+
+管理员可在 **系统管理** → **设备监控** 查看所有用户的设备。该页面支持按状态、设备类型、Shell 类型、版本和关键词筛选设备，并提供单设备升级、云设备重启等操作。
+
+页面顶部提供两个批量操作：
+
+| 操作                 | 作用范围                                                              | 说明                                                                   |
+| -------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **升级全部本地设备** | 在线、`bindShell=claudecode`、executor 版本满足自动升级要求的本地设备 | 向符合条件的设备发送升级命令；离线、版本过低或正在运行任务的设备会跳过 |
+| **重启全部云设备**   | 所有云设备                                                            | 通过部署侧云设备重启实现批量触发；没有配置重启实现时会返回未配置结果   |
+
+批量操作提交后，接口会立即返回批次 ID，页面会轮询批次状态，避免长时间占用 HTTP 请求。批次完成后，页面会刷新设备列表和统计数据；状态结果包含总数、已触发数量、失败数量、跳过数量和逐设备错误信息，便于管理员判断是否需要按单台设备继续处理。
 
 ### 设备信息
 

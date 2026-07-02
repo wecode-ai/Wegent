@@ -71,23 +71,9 @@ The installation script will:
 - Download the appropriate binary for your platform
 - Add the binary to your PATH
 
-#### Linux AMD64 Without Bundled Claude
+#### Linux AMD64 Claude CLI Requirement
 
-GitHub Releases also provide `wegent-executor-linux-amd64-no-claude`. This binary does not bundle the Claude CLI into the executor and is intended for these cases:
-
-- Cloud device or local device Docker images already install the `claude` command through npm, the base image, or another provisioning path
-- You want a smaller executor binary
-- The image or host environment should manage the Claude Code version centrally
-
-When using this variant, make sure the runtime environment already has an executable `claude` command that meets Wegent's minimum Claude Code version requirement. The standard `wegent-executor-linux-amd64` still bundles the Claude CLI and is better for direct installation on regular Linux hosts.
-
-Manual download example:
-
-```bash
-curl -fL -o wegent-executor \
-  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
-chmod +x wegent-executor
-```
+The Rust executor binary does not bundle the Claude CLI. The runtime environment must provide an executable `claude` command that meets Wegent's minimum Claude Code version requirement. The installation script and device images install or upgrade Claude Code separately from the executor binary.
 
 #### Use Personal Codex CLI Configuration
 
@@ -122,7 +108,7 @@ docker buildx build --platform linux/amd64 \
   --load .
 ```
 
-If the image already installs Claude Code, use `wegent-executor-linux-amd64-no-claude` as the input for `executor/dist/wegent-executor` to avoid carrying the Claude CLI in both the executor binary and the image.
+The executor binary does not include Claude Code, so `executor/dist/wegent-executor` can be reused in images that install Claude Code through npm, the base image, or another provisioning path.
 
 Pass executor connection settings as runtime environment variables when running the device image. Do not bake the token into the image:
 
@@ -131,7 +117,6 @@ docker run -d --platform linux/amd64 \
   --name wegent-device \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
-  -e EXECUTOR_MODE=local \
   -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
@@ -154,8 +139,8 @@ The generated command contains parameters like:
 docker run -d \
   --name wegent-remote-device \
   --restart unless-stopped \
-  -e EXECUTOR_MODE=local \
   -e DEVICE_TYPE=remote \
+  -e EXECUTOR_MODE=local \
   -e DEVICE_ID=<generated-device-id> \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
@@ -225,7 +210,16 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. On later startups, if `EXECUTOR_MODE`, `WEGENT_BACKEND_URL`, or `WEGENT_AUTH_TOKEN` is not set, the executor reads `mode`, `connection.backend_url`, and `connection.auth_token` from that file.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also starts the local socket and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
+
+#### Claude Code Execution Timeout
+
+When the local executor starts a Claude Code child process, it waits up to 1 hour by default. Long-running code generation, dependency installation, or file processing tasks can continue within that window. To tune the limit for a specific environment, set `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` before starting the executor. This setting only affects Claude Code child processes, not the native Codex app-server path; Codex RPC timeouts are controlled by `WEGENT_CODEX_RPC_TIMEOUT_SECONDS`.
+
+```bash
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+wegent-executor
+```
 
 ### Getting JWT Token
 
@@ -323,10 +317,10 @@ Local devices display device name, online status, and executor version. They do 
 
 Online cloud devices can open interactive sessions directly:
 
-| Action | Backend API | Description |
-|--------|-------------|-------------|
-| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
+| Action       | Backend API                                 | Description                                                                                                                                                                                           |
+| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal** | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
+| **IDE**      | `POST /api/devices/{device_id}/code-server` | Opens a code-server session                                                                                                                                                                           |
 
 Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
 
@@ -337,6 +331,19 @@ The more menu contains lower-frequency management actions:
 | **Rename**         | Click the device name or edit icon; the list refreshes after saving                              |
 | **Restart Device** | Requires confirmation; the device briefly goes offline and active connections may be interrupted |
 | **Delete Device**  | Requires confirmation; the cloud resources are released                                          |
+
+### System Administration Device Monitor
+
+Administrators can open **System Administration** -> **Device Monitor** to view devices across all users. The page supports filtering by status, device type, shell type, version, and keyword, and it includes single-device actions such as upgrade and cloud-device restart.
+
+The page header provides two bulk actions:
+
+| Action                        | Scope                                                                                               | Description                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Upgrade All Local Devices** | Online local devices with `bindShell=claudecode` and an executor version that supports auto-upgrade | Sends upgrade commands to eligible devices; offline, outdated, or task-running devices are skipped                                 |
+| **Restart All Cloud Devices** | All cloud devices                                                                                   | Triggers the deployment-specific cloud restart implementation in bulk; returns an unconfigured result if restart is not configured |
+
+After a bulk action is submitted, the API immediately returns a batch ID and the page polls batch status so long-running work does not occupy the HTTP request. When the batch completes, the page refreshes device statistics and the device list. The status response includes total, triggered, failed, skipped, and per-device error details so administrators can decide whether individual follow-up is needed.
 
 ### Device Information
 

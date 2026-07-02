@@ -9,12 +9,28 @@ import DeviceMonitorPanel from '@/features/admin/components/DeviceMonitorPanel'
 import { adminApis } from '@/apis/admin'
 import { toast } from 'sonner'
 
-const mockT = (key: string) => key
+const mockAdminTranslations: Record<string, string> = {
+  'common.cancel': '取消',
+  'device_monitor.actions.upgrade_all_local': '升级全部本地设备',
+  'device_monitor.actions.restart_all_cloud': '重启全部云设备',
+  'device_monitor.errors.upgrade_all_local_failed': '批量升级本地设备失败',
+  'device_monitor.confirm.upgrade_all_local_title': '确认升级全部本地设备',
+  'device_monitor.confirm.upgrade_all_local_message':
+    '将向所有符合条件的本地设备发送升级命令，可能影响正在运行的任务。请确认后继续。',
+  'device_monitor.confirm.upgrade_all_local_confirm': '确认升级',
+  'device_monitor.confirm.restart_all_cloud_title': '确认重启全部云设备',
+  'device_monitor.confirm.restart_all_cloud_message':
+    '将向所有云设备发送重启命令，可能中断正在运行的任务。请确认后继续。',
+  'device_monitor.confirm.restart_all_cloud_confirm': '确认重启',
+}
+const mockAdminT = (key: string) => mockAdminTranslations[key] ?? key
+const mockFallbackT = (key: string) => key
+const mockUseTranslation = jest.fn((namespace?: string | string[]) => ({
+  t: namespace === 'admin' ? mockAdminT : mockFallbackT,
+}))
 
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: mockT,
-  }),
+  useTranslation: (namespace?: string | string[]) => mockUseTranslation(namespace),
 }))
 
 jest.mock('sonner', () => ({
@@ -25,15 +41,25 @@ jest.mock('sonner', () => ({
   },
 }))
 
-jest.mock('@/apis/admin', () => ({
-  adminApis: {
-    getDeviceStats: jest.fn(),
-    getDevices: jest.fn(),
-    upgradeDevice: jest.fn(),
-    restartDevice: jest.fn(),
-    migrateDevice: jest.fn(),
-  },
-}))
+jest.mock('@/apis/admin', () => {
+  const restartAllCloudDevices = jest.fn()
+  const upgradeAllLocalDevices = jest.fn()
+
+  return {
+    restartAllCloudDevices,
+    upgradeAllLocalDevices,
+    adminApis: {
+      getDeviceStats: jest.fn(),
+      getDevices: jest.fn(),
+      upgradeDevice: jest.fn(),
+      restartDevice: jest.fn(),
+      migrateDevice: jest.fn(),
+      restartAllCloudDevices,
+      upgradeAllLocalDevices,
+      getDeviceBatchStatus: jest.fn(),
+    },
+  }
+})
 
 jest.mock('@/contexts/SocketContext', () => ({
   useSocket: () => ({
@@ -47,6 +73,35 @@ jest.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+jest.mock('@/components/ui/alert-dialog', () => ({
+  AlertDialog: ({ open, children }: { open?: boolean; children: React.ReactNode }) =>
+    open ? <div>{children}</div> : null,
+  AlertDialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
+  AlertDialogDescription: ({ children }: { children: React.ReactNode }) => <p>{children}</p>,
+  AlertDialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  AlertDialogCancel: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button {...props}>{children}</button>
+  ),
+  AlertDialogAction: ({
+    asChild,
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    asChild?: boolean
+    children: React.ReactNode
+  }) =>
+    asChild && React.isValidElement(children) ? (
+      React.cloneElement(
+        children as React.ReactElement<React.ButtonHTMLAttributes<HTMLButtonElement>>,
+        props
+      )
+    ) : (
+      <button {...props}>{children}</button>
+    ),
 }))
 
 jest.mock('@/components/ui/select', () => {
@@ -170,10 +225,10 @@ describe('DeviceMonitorPanel', () => {
     jest.clearAllMocks()
 
     mockedAdminApis.getDeviceStats.mockResolvedValue({
-      total: 1,
+      total: 2,
       user_count: 1,
       by_status: { online: 1, offline: 0, busy: 0 },
-      by_device_type: { local: 1, cloud: 0 },
+      by_device_type: { local: 1, cloud: 1 },
       by_bind_shell: { claudecode: 1, openclaw: 0 },
     })
 
@@ -197,6 +252,30 @@ describe('DeviceMonitorPanel', () => {
         },
       ],
     })
+
+    mockedAdminApis.getDeviceBatchStatus.mockImplementation(batchId =>
+      Promise.resolve({
+        success: true,
+        batch_id: batchId,
+        action: 'local_upgrade',
+        status: 'running',
+        total: 1,
+        message: 'Batch running',
+        triggered: 0,
+        failed: 0,
+        skipped: 0,
+        errors: [],
+        items: [],
+      })
+    )
+  })
+
+  it('renders bulk action labels from the admin namespace', async () => {
+    render(<DeviceMonitorPanel />)
+
+    expect(await screen.findByText('升级全部本地设备')).toBeInTheDocument()
+    expect(screen.getByText('重启全部云设备')).toBeInTheDocument()
+    expect(mockUseTranslation).toHaveBeenCalledWith('admin')
   })
 
   it('refreshes only the device list when search changes', async () => {
@@ -301,5 +380,118 @@ describe('DeviceMonitorPanel', () => {
       undefined,
       undefined
     )
+  })
+
+  it('requires confirmation before triggering bulk cloud restart', async () => {
+    mockedAdminApis.restartAllCloudDevices.mockResolvedValue({
+      success: true,
+      batch_id: 'cloud-batch-1',
+      action: 'cloud_restart',
+      status: 'pending',
+      message: 'Restart queued',
+      total: 1,
+    })
+    mockedAdminApis.getDeviceBatchStatus.mockResolvedValue({
+      success: true,
+      batch_id: 'cloud-batch-1',
+      action: 'cloud_restart',
+      status: 'completed',
+      message: 'cloud_restart completed: 1 triggered, 0 failed, 0 skipped',
+      total: 1,
+      triggered: 1,
+      failed: 0,
+      skipped: 0,
+      errors: [],
+      items: [],
+    })
+
+    render(<DeviceMonitorPanel />)
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByTestId('restart-all-cloud-devices-button'))
+
+    expect(mockedAdminApis.restartAllCloudDevices).not.toHaveBeenCalled()
+    expect(screen.getByText('确认重启全部云设备')).toBeInTheDocument()
+    expect(
+      screen.getByText('将向所有云设备发送重启命令，可能中断正在运行的任务。请确认后继续。')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('confirm-restart-all-cloud-devices-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.restartAllCloudDevices).toHaveBeenCalledTimes(1)
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith('Restart queued')
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDeviceBatchStatus).toHaveBeenCalledWith('cloud-batch-1')
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith(
+      'cloud_restart completed: 1 triggered, 0 failed, 0 skipped'
+    )
+  })
+
+  it('requires confirmation before triggering bulk local upgrade', async () => {
+    mockedAdminApis.upgradeAllLocalDevices.mockResolvedValue({
+      success: true,
+      batch_id: 'local-batch-1',
+      action: 'local_upgrade',
+      status: 'pending',
+      message: 'Upgrade queued',
+      total: 1,
+    })
+
+    render(<DeviceMonitorPanel />)
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+    })
+
+    fireEvent.click(screen.getByTestId('upgrade-all-local-devices-button'))
+
+    expect(mockedAdminApis.upgradeAllLocalDevices).not.toHaveBeenCalled()
+    expect(screen.getByText('确认升级全部本地设备')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '将向所有符合条件的本地设备发送升级命令，可能影响正在运行的任务。请确认后继续。'
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('confirm-upgrade-all-local-devices-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.upgradeAllLocalDevices).toHaveBeenCalledTimes(1)
+    })
+    expect(mockedToast.success).toHaveBeenCalledWith('Upgrade queued')
+
+    await waitFor(() => {
+      expect(mockedAdminApis.getDeviceBatchStatus).toHaveBeenCalledWith('local-batch-1')
+    })
+    expect(screen.getByTestId('device-batch-local-batch-1')).toBeInTheDocument()
+  })
+
+  it('shows a localized error when bulk local upgrade fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockedAdminApis.upgradeAllLocalDevices.mockRejectedValue(new Error('request failed'))
+
+    try {
+      render(<DeviceMonitorPanel />)
+
+      await waitFor(() => {
+        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+      })
+
+      fireEvent.click(screen.getByTestId('upgrade-all-local-devices-button'))
+      fireEvent.click(screen.getByTestId('confirm-upgrade-all-local-devices-button'))
+
+      await waitFor(() => {
+        expect(mockedToast.error).toHaveBeenCalledWith('批量升级本地设备失败')
+      })
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
   })
 })

@@ -487,6 +487,28 @@ export interface AdminDeviceActionResponse {
   message: string
 }
 
+export interface AdminDeviceBatchStartResponse extends AdminDeviceActionResponse {
+  batch_id: string
+  action: string
+  status: string
+  total: number
+}
+
+export interface AdminDeviceBatchItemResponse {
+  user_id: number
+  device_id: string
+  status: string
+  message: string
+}
+
+export interface AdminDeviceBatchStatusResponse extends AdminDeviceBatchStartResponse {
+  triggered: number
+  failed: number
+  skipped: number
+  errors: string[]
+  items: AdminDeviceBatchItemResponse[]
+}
+
 // Template Resource Types
 export interface TemplateResourceGhostConfig {
   systemPrompt: string
@@ -574,11 +596,31 @@ export interface AdminTemplateUpdate {
   resources?: TemplateResources
 }
 
+/**
+ * Upgrade all eligible local devices (admin only)
+ */
+export async function upgradeAllLocalDevices(
+  forceStopTasks: boolean = false
+): Promise<AdminDeviceBatchStartResponse> {
+  return apiClient.post('/admin/device-monitor/devices/local/upgrade-all', {
+    force_stop_tasks: forceStopTasks,
+  })
+}
+
+/**
+ * Restart all cloud devices (admin only)
+ */
+export async function restartAllCloudDevices(): Promise<AdminDeviceBatchStartResponse> {
+  return apiClient.post('/admin/device-monitor/devices/cloud/restart-all')
+}
+
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
   getQuickLaunchFunctionsConfig,
   updateQuickLaunchFunctionsConfig,
+  upgradeAllLocalDevices,
+  restartAllCloudDevices,
 
   // ==================== User Management ====================
 
@@ -1143,6 +1185,13 @@ export const adminApis = {
     return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/restart`, {
       user_id: userId,
     })
+  },
+
+  /**
+   * Get admin device batch action status
+   */
+  async getDeviceBatchStatus(batchId: string): Promise<AdminDeviceBatchStatusResponse> {
+    return apiClient.get(`/admin/device-monitor/batches/${encodeURIComponent(batchId)}`)
   },
 
   /**

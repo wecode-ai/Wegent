@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -8,11 +8,39 @@ import '@/i18n'
 
 const tauriCoreMock = vi.hoisted(() => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
+  invoke: vi.fn(),
+  isTauri: vi.fn(() => false),
 }))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 
 describe('MessageList', () => {
+  test('marks message rows for offscreen rendering containment', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-contained',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+          {
+            id: 'assistant-contained',
+            role: 'assistant',
+            content: 'world',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
+    expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
+  })
+
   test('renders one assistant turn file changes under its message', () => {
     render(
       <MessageList
@@ -30,7 +58,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-21',
-            subtaskId: 21,
+            turnId: 21,
             role: 'assistant',
             content: 'Done',
             status: 'done',
@@ -59,13 +87,14 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('已编辑 main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
   test('renders cancelled assistant turns like stopped Codex turns', () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',
-      subtaskId: 21,
+      turnId: 21,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'pnpm test' },
@@ -89,7 +118,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-stopped',
-            subtaskId: 21,
+            turnId: 21,
             role: 'assistant',
             content: 'interrupted',
             status: 'done',
@@ -124,8 +153,500 @@ describe('MessageList', () => {
     expect(screen.getByTestId('processing-activity-group-toggle')).toHaveTextContent(
       '已运行 1 条命令'
     )
-    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('已编辑 main.ts')
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
+  })
+
+  test('renders tagged proposed plan content as regular assistant markdown', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan',
+            role: 'assistant',
+            content:
+              '<proposed_plan>\n1. Inspect the desktop chat width.\n2. Match the reference task.\n</proposed_plan>',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
+    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
+  })
+
+  test('renders Codex plan implementation user messages as the chosen option label', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-plan-implementation',
+            role: 'user',
+            content: [
+              'PLEASE IMPLEMENT THIS PLAN:',
+              '# Wework 输入框 Codex 化视觉优化计划',
+              '',
+              '## Summary',
+              '- 保持输入框视觉与 Codex App 一致。',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('是的，执行此计划')
+    expect(screen.queryByText(/PLEASE IMPLEMENT THIS PLAN/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Wework 输入框 Codex 化视觉优化计划/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+  })
+
+  test('renders answered request user input as an assistant question summary', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-question',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'request-1',
+                turnId: 11,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+                renderPayload: {
+                  kind: 'request_user_input',
+                  request_id: 42,
+                  questions: [
+                    {
+                      id: 'direction',
+                      question: '这个计划想落在哪个方向?',
+                    },
+                  ],
+                  response: {
+                    requestId: 42,
+                    answers: {
+                      direction: { answers: ['随便，我就想看看样式'] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('已询问 1 个问题')
+    expect(screen.getByText('这个计划想落在哪个方向?')).toBeInTheDocument()
+    expect(screen.getByText('随便，我就想看看样式')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-user')).not.toBeInTheDocument()
+  })
+
+  test('renders explicit plan blocks as an assistant plan card', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const onOpenAssistantPlan = vi.fn()
+    const planContent = [
+      '# Wegent 代码质量与前端一致性巡检计划',
+      '',
+      '## Summary',
+      '- 目标：做一轮低风险工程改进。',
+      '',
+      '## Key Changes',
+      '- 扫描前端直接导入。',
+      '',
+      '## Test Plan',
+      '- 运行 lint。',
+    ].join('\n')
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        onOpenAssistantPlan={onOpenAssistantPlan}
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 11,
+                type: 'plan',
+                content: planContent,
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const planCard = screen.getByTestId('assistant-plan-card')
+    expect(planCard).toHaveTextContent('计划')
+    expect(planCard).toHaveAttribute('role', 'button')
+    expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
+    expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
+    expect(screen.queryByText('套餐')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-like-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-dislike-button')).not.toBeInTheDocument()
+    URL.createObjectURL = vi.fn(() => 'blob:assistant-plan-markdown')
+    URL.revokeObjectURL = vi.fn()
+    await user.click(screen.getByTestId('assistant-plan-download-button'))
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    await user.click(screen.getByTestId('assistant-plan-copy-button'))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
+    expect(onOpenAssistantPlan).not.toHaveBeenCalled()
+    await user.click(planCard)
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    await user.click(screen.getByTestId('assistant-plan-expand-button'))
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
+  })
+
+  test('downloads explicit plan blocks through the Tauri native command', async () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/test/Downloads/plan.md')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 11,
+                type: 'plan',
+                content: '# Native plan\n\n- Save through Tauri.',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-download-button'))
+
+    await waitFor(() => {
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('save_text_file_to_downloads', {
+        filename: 'plan.md',
+        content: '# Native plan\n\n- Save through Tauri.',
+      })
+    })
+  })
+
+  test('renders streaming plan blocks as an assistant plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-streaming',
+                turnId: 11,
+                type: 'plan',
+                content: '# 流式计划\n\n- 正在生成第一步。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+  })
+
+  test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-untagged-plan',
+            role: 'assistant',
+            content: [
+              '# Wegent 代码质量与前端一致性巡检计划',
+              '',
+              '## Summary',
+              '- 目标：做一轮低风险工程改进。',
+              '',
+              '## Test Plan',
+              '- 运行 lint。',
+            ].join('\n'),
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+  })
+
+  test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tagged-markdown-document',
+            role: 'assistant',
+            content: [
+              '<proposed_plan>',
+              '```md',
+              '# 产品需求文档示例',
+              '',
+              '## 概述',
+              '本文档用于描述一个轻量级任务管理工具的核心需求。',
+              '```',
+              '</proposed_plan>',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('md')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
+  })
+
+  test('renders streaming tagged markdown documents without a plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-tagged-markdown-document',
+            role: 'assistant',
+            content: [
+              '<proposed_plan>',
+              '```md',
+              '# 产品需求文档示例',
+              '',
+              '## 概述',
+              '本文档用于描述一个轻量级任务管理工具的核心需求。',
+            ].join('\n'),
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('md')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
+  })
+
+  test('shows stopped duration from completed time and keeps partial assistant content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-with-content',
+            role: 'assistant',
+            content: '停止前已经生成的内容。',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
+    expect(screen.getByText('停止前已经生成的内容。')).toBeInTheDocument()
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+  })
+
+  test('renders stopped assistant process text and activity rows in original order', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        turnId: 21,
+        type: 'text',
+        content: '我先看你提到的 package.json。',
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:10Z'),
+      },
+      {
+        id: 'call-1',
+        turnId: 21,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'cat package.json' },
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:20Z'),
+      },
+      {
+        id: 'process-2',
+        turnId: 21,
+        type: 'text',
+        content: '从常用目录看，可能的前端仓库很多。',
+        status: 'done',
+        createdAt: Date.parse('2026-06-11T10:00:30Z'),
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-interleaved',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks,
+          },
+        ]}
+      />
+    )
+
+    const firstText = screen.getByText('我先看你提到的 package.json。')
+    const activityRow = screen.getByTestId('processing-activity-group-toggle')
+    const secondText = screen.getByText('从常用目录看，可能的前端仓库很多。')
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
+    expect(activityRow).toHaveTextContent('已读取 1 个文件')
+    expect(firstText.compareDocumentPosition(activityRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(activityRow.compareDocumentPosition(secondText) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.queryByText(/已处理/)).not.toBeInTheDocument()
+  })
+
+  test('shows one stopped notice for split stopped assistant turns and keeps guidance visible', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-first',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            stoppedNotice: true,
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks: [
+              {
+                id: 'process-1',
+                turnId: 21,
+                type: 'text',
+                content: '我先看 package.json。',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+          {
+            id: 'user-guidance',
+            role: 'user',
+            content: 'pnpm-lock.yaml',
+            status: 'done',
+            createdAt: '2026-06-11T10:01:00Z',
+          },
+          {
+            id: 'assistant-stopped-continuation',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            stoppedNotice: false,
+            createdAt: '2026-06-11T10:00:00Z',
+            completedAt: '2026-06-11T10:02:12Z',
+            blocks: [
+              {
+                id: 'guidance-1',
+                turnId: 21,
+                type: 'tool',
+                toolName: 'conversation_guidance',
+                toolInput: { message: 'pnpm-lock.yaml' },
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:01:00Z'),
+              },
+              {
+                id: 'process-2',
+                turnId: 21,
+                type: 'text',
+                content: '我会继续看 lockfile。',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:01:05Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByTestId('assistant-stopped-notice')).toHaveLength(1)
+    expect(screen.getByText('我先看 package.json。')).toBeInTheDocument()
+    expect(screen.getByText('pnpm-lock.yaml')).toBeInTheDocument()
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
+  })
+
+  test('keeps cancelled assistant turns even when no processing blocks were persisted', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-stopped-empty',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 0s 后停止了')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
@@ -151,7 +672,32 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getAllByTestId('message-hover-time')[0].parentElement).toHaveClass('min-h-5')
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-8', 'pb-2')
+    expect(screen.getByTestId('user-message-content')).toHaveClass('py-1.5')
+    expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
+  })
+
+  test('renders a goal badge on goal-first user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-goal',
+            role: 'user',
+            content: '实现 goal 功能',
+            status: 'done',
+            createdAt: '2026-06-10T08:00:00Z',
+            runtimeGoalRequest: true,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('user-message-goal-badge')).toHaveTextContent('目标')
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('实现 goal 功能')
+    expect(screen.getByTestId('user-message-content').lastElementChild).toContainElement(
+      screen.getByTestId('user-message-goal-badge')
+    )
   })
 
   const originalCreateObjectUrl = URL.createObjectURL
@@ -163,10 +709,20 @@ describe('MessageList', () => {
     tauriCoreMock.convertFileSrc = vi.fn(
       (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`
     )
+    tauriCoreMock.invoke = vi.fn()
+    tauriCoreMock.isTauri = vi.fn(() => false)
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
+    delete (navigator as unknown as { clipboard?: Clipboard }).clipboard
   })
+
+  function stubClipboardWriteText(writeText: ReturnType<typeof vi.fn>) {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+  }
 
   test('renders user and assistant messages', () => {
     const { container } = render(
@@ -241,7 +797,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
-        subtaskId: 11,
+        turnId: 11,
         type: 'thinking',
         content: '正在执行 pwd',
         status: 'done',
@@ -268,6 +824,231 @@ describe('MessageList', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
     fireEvent.click(screen.getByTestId('thinking-toggle-button'))
     expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
+  })
+
+  test('keeps completed process text collapsed when the assistant has final content', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        turnId: 11,
+        type: 'text',
+        content: '我会先看这个 skill 当前的流程结构和相关记忆。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        turnId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'rg -n workflow' },
+        toolOutput: 'ok',
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-with-process',
+            role: 'assistant',
+            content: '最终建议放在 PR flow 里。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('最终建议放在 PR flow 里。')).toBeInTheDocument()
+    expect(
+      screen
+        .getByRole('button', { name: /已处理/ })
+        .compareDocumentPosition(screen.getByText('最终建议放在 PR flow 里。')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(collapseContent).toHaveClass('opacity-0')
+    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('我会先看这个 skill 当前的流程结构和相关记忆。')).toBeInTheDocument()
+  })
+
+  test('collapses streaming processing as soon as final answer appears', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-with-process',
+            role: 'assistant',
+            content: '这是正在流式输出的最终答案。',
+            status: 'streaming',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const finalAnswer = screen.getByText('这是正在流式输出的最终答案。')
+    const processStatus = screen.getByRole('button', { name: /已处理/ })
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+
+    expect(
+      processStatus.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(processStatus).toHaveAttribute('aria-expanded', 'false')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.click(processStatus)
+
+    expect(processStatus).toHaveAttribute('aria-expanded', 'true')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('正在运行 pwd')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+  })
+
+  test('renders final answer web search sources as a Codex-style source chip', async () => {
+    const user = userEvent.setup()
+    const openWindowMock = vi.fn()
+    vi.stubGlobal('open', openWindowMock)
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'web-search-1',
+        turnId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'search',
+          query: 'site:weather.com weather today Beijing China',
+        },
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'web-query-url-1',
+        turnId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'search',
+          query: 'https://www.weather.com/weather/today/l/Beijing+China',
+        },
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+      {
+        id: 'web-open-1',
+        turnId: 11,
+        type: 'tool',
+        toolName: 'web_search',
+        toolInput: {
+          type: 'open_page',
+          url: 'https://www.weather.com/weather/today/l/Beijing+China',
+        },
+        status: 'done',
+        createdAt: 1770000002000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-web-sources',
+            role: 'assistant',
+            content: '北京今天适合室内活动。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('北京今天适合室内活动。')).toBeInTheDocument()
+    expect(screen.getByTestId('web-search-sources-chip')).toHaveTextContent('来源')
+    expect(screen.getByTestId('web-search-source-popup')).toHaveTextContent(
+      'weather.com/weather/today/l/Beijing+China'
+    )
+    expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(1)
+
+    await user.click(screen.getByTestId('web-search-source-popup-row'))
+
+    await waitFor(() =>
+      expect(openWindowMock).toHaveBeenCalledWith(
+        'https://www.weather.com/weather/today/l/Beijing+China',
+        '_blank',
+        'noopener,noreferrer'
+      )
+    )
+  })
+
+  test('keeps processing expansion state scoped to each conversation', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'tool-1',
+        turnId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+    ]
+    const buildMessage = (id: string): Parameters<typeof MessageList>[0]['messages'][number] => ({
+      id,
+      role: 'assistant',
+      content: 'Done',
+      status: 'done',
+      blocks,
+      createdAt: '2026-06-24T08:00:01.000Z',
+    })
+
+    const { rerender } = render(
+      <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+
+    rerender(
+      <MessageList conversationKey="conversation-b" messages={[buildMessage('assistant-b')]} />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+
+    rerender(
+      <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
   })
 
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
@@ -343,8 +1124,88 @@ describe('MessageList', () => {
 
     // A filesystem path must not render as a navigating anchor.
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('renders assistant file link line numbers without passing them to open-file actions', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-file-line-link',
+            role: 'assistant',
+            content:
+              '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveTextContent(
+      'references/github-pr-flow.md (line 18)'
+    )
+    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveClass(
+      'max-w-[min(36rem,calc(100vw-3rem))]',
+      'break-all'
+    )
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md')
+  })
+
+  test('renders assistant file links with extension-specific Codex-style icons', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-file-type-links',
+            role: 'assistant',
+            content:
+              '[`scripts/build-mac-app.sh`](/Users/crystal/dev/git/Wegent/wework/scripts/build-mac-app.sh:49) and [package.json](/Users/crystal/dev/git/Wegent/wework/package.json:15)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const links = screen.getAllByTestId('assistant-markdown-link')
+    const icons = screen.getAllByTestId('assistant-markdown-link-icon')
+
+    expect(icons[0]).toHaveTextContent('$')
+    expect(icons[1]).toHaveTextContent('{}')
+    expect(links[0]).toHaveClass('[&_code]:!bg-transparent', '[&_code]:!rounded-none')
+    expect(links[0]).toHaveTextContent('scripts/build-mac-app.sh(line 49)')
+    expect(links[1]).toHaveTextContent('package.json(line 15)')
+  })
+
+  test('keeps normal assistant inline code styled as code chips', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-code',
+            role: 'assistant',
+            content: 'Use `.env` and `pnpm run tauri:build` for local configuration.',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-markdown-link')).not.toBeInTheDocument()
+    const inlineCodes = Array.from(container.querySelectorAll('.assistant-markdown code'))
+    expect(inlineCodes).toHaveLength(2)
+    expect(inlineCodes[0]).toHaveTextContent('.env')
+    expect(inlineCodes[0]).toHaveClass('rounded', 'bg-muted')
+    expect(inlineCodes[1]).toHaveTextContent('pnpm run tauri:build')
+    expect(inlineCodes[1]).toHaveClass('rounded', 'bg-muted')
   })
 
   test('routes assistant file links to the turn diff review focused on that file', async () => {
@@ -360,7 +1221,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-changed-file-link',
-            subtaskId: 42,
+            turnId: 42,
             role: 'assistant',
             content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md)',
             status: 'done',
@@ -389,16 +1250,278 @@ describe('MessageList', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('assistant-markdown-link'))
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
     expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
     const request = onOpenFileChangesReview.mock.calls[0][0]
-    expect(request.subtaskId).toBe(42)
+    expect(request.turnId).toBe(42)
     expect(request.focusFilePath).toBe('docs/zh/user-guide/chat/managing-tasks.md')
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
     await request.loadDiff()
     expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
+  })
+
+  test('renders Codex memory citations and one-column deduped file references', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-codex-rich',
+            role: 'assistant',
+            content:
+              'Updated [SKILL.md](/workspace/project/SKILL.md), [github-pr-flow.md](/workspace/project/references/github-pr-flow.md:18), [paas-context.log](/workspace/project/logs/paas-context.log), and [notify_pr_ready.sh](/workspace/project/scripts/notify_pr_ready.sh).',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            references: [
+              { path: '/workspace/project/SKILL.md' },
+              { path: '/workspace/project/references/github-pr-flow.md', lineStart: 18 },
+              { path: '/workspace/project/SKILL.md:22' },
+              { path: '/workspace/project/logs/paas-context.log' },
+              { path: '/workspace/project/scripts/notify_pr_ready.sh' },
+            ],
+            memoryCitations: [
+              {
+                entries: [
+                  {
+                    path: 'MEMORY.md',
+                    lineStart: 10,
+                    lineEnd: 12,
+                    note: 'repo guidance',
+                  },
+                ],
+                threadIds: ['thread-1'],
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByText('引用文件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-memory-citations')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-reference-list')).toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('codex-memory-citations')
+        .compareDocumentPosition(screen.getByTestId('codex-reference-list')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    const referenceCards = screen.getAllByTestId('codex-reference-card')
+    expect(referenceCards).toHaveLength(2)
+    expect(screen.getByTestId('codex-reference-list')).not.toHaveTextContent('paas-context.log')
+    expect(screen.getByTestId('codex-reference-list')).not.toHaveTextContent('notify_pr_ready.sh')
+    expect(referenceCards[0]).toHaveTextContent('SKILL.md')
+    expect(referenceCards[0]).toHaveTextContent('文档 · MD')
+    expect(referenceCards[0]).toHaveTextContent('打开预览')
+    expect(screen.getAllByTestId('codex-reference-kind-label')[0]).toHaveClass(
+      'group-hover/reference-card:opacity-0'
+    )
+    expect(screen.getAllByTestId('codex-reference-preview-label')[0]).toHaveClass(
+      'opacity-0',
+      'group-hover/reference-card:opacity-100'
+    )
+    expect(referenceCards[1]).toHaveTextContent('github-pr-flow.md')
+
+    await userEvent.click(referenceCards[1])
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/workspace/project/references/github-pr-flow.md'
+    )
+
+    expect(screen.getByTestId('codex-memory-citations-toggle')).toHaveTextContent('1 条记忆引用')
+    await userEvent.click(screen.getByTestId('codex-memory-citations-toggle'))
+    const memoryEntry = screen.getByTestId('codex-memory-citation-entry')
+    expect(memoryEntry).toHaveTextContent('MEMORY.md')
+    expect(memoryEntry).toHaveTextContent('10-12 行')
+    expect(memoryEntry).toHaveTextContent('repo guidance')
+    expect(memoryEntry).toHaveAttribute('aria-label', '打开 MEMORY.md')
+    expect(screen.getByTestId('codex-memory-citation-tooltip')).toHaveTextContent('MEMORY.md')
+    expect(screen.getByTestId('codex-memory-citation-tooltip')).toHaveClass(
+      'max-w-[min(28rem,calc(100vw-3rem))]',
+      'break-all'
+    )
+
+    onOpenWorkspaceFile.mockClear()
+    await userEvent.click(memoryEntry)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
+  })
+
+  test('waits until streaming finishes before rendering final answer artifacts', () => {
+    render(
+      <MessageList
+        onOpenWorkspaceFile={vi.fn()}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-streaming-artifacts',
+            subtaskId: 42,
+            role: 'assistant',
+            content: 'See [README.md](/workspace/project/README.md) for details.',
+            status: 'streaming',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            references: [{ path: '/workspace/project/README.md' }],
+            memoryCitations: [
+              {
+                entries: [{ path: 'MEMORY.md', lineStart: 10, note: 'repo guidance' }],
+                threadIds: ['thread-1'],
+              },
+            ],
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-42',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 2,
+              deletions: 0,
+              files: [
+                {
+                  path: 'README.md',
+                  change_type: 'modified',
+                  additions: 2,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/See/)).toBeInTheDocument()
+    expect(screen.queryByTestId('codex-reference-list')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('codex-memory-citations')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('file-changes-card')).not.toBeInTheDocument()
+  })
+
+  test('adds deduped document references from turn file changes and expands hidden references', async () => {
+    render(
+      <MessageList
+        onOpenWorkspaceFile={vi.fn()}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-file-change-documents',
+            turnId: 42,
+            role: 'assistant',
+            content:
+              'Updated [SKILL.md](/workspace/project/SKILL.md) and [wegent-merged-env.md](/workspace/project/references/wegent-merged-env.md).',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-42',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 10,
+              additions: 64,
+              deletions: 130,
+              files: [
+                {
+                  path: 'SKILL.md',
+                  change_type: 'modified',
+                  additions: 12,
+                  deletions: 12,
+                  binary: false,
+                },
+                {
+                  path: 'scripts/run_on_integration_env.sh',
+                  change_type: 'deleted',
+                  additions: 0,
+                  deletions: 58,
+                  binary: false,
+                },
+                {
+                  path: 'references/acceptance-validation-contract.md',
+                  change_type: 'modified',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+                {
+                  path: 'references/browser-validation.md',
+                  change_type: 'modified',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+                {
+                  path: 'references/github-pr-flow.md',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 3,
+                  binary: false,
+                },
+                {
+                  path: 'references/post-review-follow-up.md',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 9,
+                  binary: false,
+                },
+                {
+                  path: 'references/pr-review-notification.md',
+                  change_type: 'modified',
+                  additions: 2,
+                  deletions: 2,
+                  binary: false,
+                },
+                {
+                  path: 'references/wegent-integration-test-env.md',
+                  change_type: 'modified',
+                  additions: 22,
+                  deletions: 23,
+                  binary: false,
+                },
+                {
+                  path: 'references/wegent-merged-env.md',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 4,
+                  binary: false,
+                },
+                {
+                  path: 'scripts/start_executor_local.sh',
+                  change_type: 'renamed',
+                  additions: 1,
+                  deletions: 1,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByTestId('codex-reference-card')).toHaveLength(3)
+    expect(screen.getByTestId('toggle-codex-reference-list-button')).toHaveTextContent(
+      '显示另外 5 个'
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-codex-reference-list-button'))
+
+    const expandedReferenceCards = screen.getAllByTestId('codex-reference-card')
+    expect(expandedReferenceCards).toHaveLength(8)
+    expect(screen.getByTestId('toggle-codex-reference-list-button')).toHaveTextContent('收起文件')
+    expect(expandedReferenceCards.map(card => card.textContent)).toEqual([
+      expect.stringContaining('SKILL.md'),
+      expect.stringContaining('acceptance-validation-contract.md'),
+      expect.stringContaining('browser-validation.md'),
+      expect.stringContaining('github-pr-flow.md'),
+      expect.stringContaining('post-review-follow-up.md'),
+      expect.stringContaining('pr-review-notification.md'),
+      expect.stringContaining('wegent-integration-test-env.md'),
+      expect.stringContaining('wegent-merged-env.md'),
+    ])
   })
 
   test('renders IM source badge for user messages with channel label', () => {
@@ -612,6 +1735,97 @@ describe('MessageList', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  test('renders local path image attachment previews through Tauri asset URLs', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'screenshot.png',
+      file_size: 0,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'local-codex-image',
+            role: 'user',
+            content: '解释一下些图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/var/folders/tmp/codex-clipboard/screenshot.png'
+    )
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+    expect(screen.getByTestId('user-message-content').parentElement).toHaveClass('max-w-[80%]')
+    expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'justify-end',
+      'overflow-visible'
+    )
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('justify-start')
+    expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
+      'ml-auto',
+      'justify-end'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('downloads local path image attachments through the Tauri native command', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/crystal/Downloads/screenshot.png')
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'screenshot.png',
+      file_size: 0,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_preview_url: '/var/folders/tmp/codex-clipboard/screenshot.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'local-codex-image',
+            role: 'user',
+            content: '解释一下这张图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('message-image-preview'))
+    await screen.findByTestId('attachment-image-lightbox-image')
+    await userEvent.click(screen.getByTestId('attachment-image-download'))
+
+    await waitFor(() => {
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('download_local_file_to_downloads', {
+        sourcePath: '/var/folders/tmp/codex-clipboard/screenshot.png',
+        filename: 'screenshot.png',
+      })
+    })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test('prefers persisted image attachments over stale Codex local image mentions', async () => {
     vi.stubGlobal('fetch', vi.fn())
 
@@ -656,7 +1870,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('发出去图片')
   })
 
-  test('renders Codex local image file mentions as user image previews after refresh', () => {
+  test('renders Codex local image file mentions as user image previews after refresh', async () => {
     render(
       <MessageList
         messages={[
@@ -678,11 +1892,80 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-local-image-preview')).toHaveAttribute(
+    expect(await screen.findByTestId('message-local-image-preview')).toHaveAttribute(
       'src',
       'asset://localhost/Users/yunpeng7/.wegent-executor/workspace/attachments/10406026969952/0/image.png'
     )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+    expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+  })
+
+  test('renders Codex local non-image file mentions as compact file chips', () => {
+    const onOpenWorkspaceFile = vi.fn()
+
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'codex-file-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## package.json: /Users/crystal/package.json',
+              '',
+              '## My request for Codex:',
+              '看看',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveTextContent('package.json')
+    expect(screen.getByTestId('message-codex-file-braces-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-document-icon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveAttribute(
+      'title',
+      '/Users/crystal/package.json'
+    )
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('看看')
+    expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('message-codex-file-mention'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
+  })
+
+  test('renders file-only Codex mentions without the raw markdown wrapper', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-file-only-mention',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## pnpm-lock.yaml: /Users/crystal/pnpm-lock.yaml',
+              '',
+              '## My request for Codex:',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-codex-file-mention')).toHaveTextContent('pnpm-lock.yaml')
+    expect(screen.getByTestId('message-codex-file-document-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-braces-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('user-message-content')).not.toBeInTheDocument()
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
@@ -715,7 +1998,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
-  test('hides Codex local image previews when the converted file URL fails to load', () => {
+  test('hides Codex local image previews when the converted file URL fails to load', async () => {
     render(
       <MessageList
         messages={[
@@ -737,9 +2020,39 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.error(screen.getByTestId('message-local-image-preview'))
+    fireEvent.error(await screen.findByTestId('message-local-image-preview'))
 
     expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
+  })
+
+  test('does not create Tauri asset previews for transient Codex clipboard images', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-transient-clipboard-image',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## codex-clipboard-c73483f7-dfe5-413b-a30f-787bb2814c21.png: /var/folders/fp/l62gd0z17ys57j9s7t0dfq3w0000gn/T/codex-clipboard-c73483f7-dfe5-413b-a30f-787bb2814c21.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('message-codex-file-mention')).not.toBeInTheDocument()
+    expect(tauriCoreMock.convertFileSrc).not.toHaveBeenCalledWith(
+      expect.stringContaining('codex-clipboard-c73483f7')
+    )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
@@ -804,7 +2117,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
   })
 
-  test('opens an enlarged image from a user message attachment preview', async () => {
+  test('opens an enlarged preview from a user message image attachment', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
@@ -843,33 +2156,100 @@ describe('MessageList', () => {
     await userEvent.click(await screen.findByTestId('message-image-preview'))
 
     const lightbox = screen.getByTestId('attachment-image-lightbox')
-    const lightboxImage = screen.getByTestId('attachment-image-lightbox-image')
+    const lightboxImage = await screen.findByTestId('attachment-image-lightbox-image')
 
     expect(lightbox).toBeInTheDocument()
     expect(lightbox.parentElement).toBe(document.body)
-    expect(lightbox).toHaveClass('h-dvh', 'w-dvw', 'p-0')
-    expect(lightbox).toHaveClass('overflow-hidden')
-    expect(lightboxImage).toHaveClass(
-      'max-h-[calc(100dvh-6rem)]',
-      'max-w-[calc(100dvw-2rem)]',
-      'object-contain'
-    )
-    expect(lightboxImage).not.toHaveClass('h-full', 'w-full')
-    expect(screen.getByTestId('attachment-image-lightbox-close')).toHaveClass('z-20')
     expect(lightboxImage).toHaveAttribute('src', 'blob:message-image-preview')
     expect(lightboxImage).toHaveAttribute('alt', 'diagram.png')
     expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+    expect(screen.getByTestId('attachment-image-download')).toBeEnabled()
+    expect(screen.getByTestId('attachment-image-zoom-controls')).toHaveClass('bottom-6')
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('100%')
 
     await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
 
     expect(lightboxImage).toHaveStyle({ transform: 'scale(1.25)' })
-
-    await userEvent.click(screen.getByTestId('attachment-image-zoom-reset'))
-
-    expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
-  test('keeps image attachments compact and allows extras to wrap', async () => {
+  test('navigates between images in the enlarged preview gallery', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachments: Attachment[] = [
+      {
+        id: 43,
+        filename: 'first.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+        local_preview_url: 'blob:first-image',
+      },
+      {
+        id: 44,
+        filename: 'second.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+        local_preview_url: 'blob:second-image',
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '分析下这些图片',
+            status: 'done',
+            attachments,
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    const previews = await screen.findAllByTestId('message-image-preview')
+    await userEvent.click(previews[0])
+
+    expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'alt',
+      'first.png'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-next'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'blob:second-image'
+      )
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'alt',
+        'second.png'
+      )
+    })
+
+    await userEvent.click(screen.getByTestId('attachment-image-previous'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'src',
+        'blob:first-image'
+      )
+      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+        'alt',
+        'first.png'
+      )
+    })
+  })
+
+  test('keeps image attachments in a single horizontal strip', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
@@ -938,12 +2318,22 @@ describe('MessageList', () => {
 
     expect(previews).toHaveLength(4)
     expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'w-full',
       'flex-row',
-      'flex-wrap',
+      'flex-nowrap',
+      'overflow-x-auto',
+      'scrollbar-none'
+    )
+    expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
+      'ml-auto',
+      'w-max',
+      'flex-nowrap',
       'justify-end'
     )
-    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('overflow-x-auto')
-    expect(previews[0]).toHaveClass('max-h-36', 'max-w-[180px]', 'shrink-0', 'rounded-xl')
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('justify-start')
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('flex-wrap')
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+    expect(previews[0]).toHaveClass('h-20', 'w-20', 'shrink-0', 'rounded-xl', 'object-cover')
   })
 
   test('renders document attachments in user messages', () => {
@@ -976,7 +2366,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-document-attachment')).toHaveTextContent('PDF')
   })
 
-  test('shows user message hover actions with time and copy', async () => {
+  test('shows user message hover actions with time, copy label, and resettable success icon', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
@@ -994,28 +2384,60 @@ describe('MessageList', () => {
       />
     )
 
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    const hoverActions = screen.getByTestId('message-hover-actions')
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(hoverActions).not.toHaveClass(
+      'group-hover/message:opacity-100',
+      'group-focus-within/message:opacity-100'
+    )
+    expect(hoverRegion).toHaveClass('max-w-[80%]')
+
+    fireEvent.pointerEnter(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-100', 'pointer-events-auto')
+
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
+    expect(screen.getByTestId('copy-message-label')).toHaveClass(
+      'opacity-0',
+      'group-hover/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-label')).not.toHaveClass(
+      'group-focus-within/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
 
     vi.useRealTimers()
 
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
 
     const copyButton = screen.getByTestId('copy-message-button')
-    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+    expect(copyButton).toHaveAttribute('title', '复制')
+    expect(copyButton).not.toHaveClass('opacity-0')
 
     await userEvent.click(copyButton)
 
     expect(writeText).toHaveBeenCalledWith('对 bind_shell=openclaw 直接跳过')
+    expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
+    expect(copyButton).toHaveClass('bg-text-primary', 'text-background/70')
+
+    fireEvent.mouseLeave(hoverActions)
+    fireEvent.pointerLeave(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
+    fireEvent.transitionEnd(screen.getByTestId('copy-message-label'), { propertyName: 'opacity' })
+    expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
+    fireEvent.transitionEnd(hoverActions, { propertyName: 'opacity' })
+    expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
   })
 
   test('collapses long user messages without changing copied content', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
     const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
 
     render(
@@ -1044,6 +2466,10 @@ describe('MessageList', () => {
     expect(messageContent).not.toHaveClass('max-h-44')
     expect(toggleButton).toHaveAttribute('aria-expanded', 'true')
     expect(toggleButton).toHaveTextContent('收起')
+
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    expect(hoverRegion).toHaveClass('max-w-[80%]')
+    fireEvent.pointerEnter(hoverRegion)
 
     await userEvent.click(screen.getByTestId('copy-message-button'))
     expect(writeText).toHaveBeenCalledWith(content)
@@ -1094,7 +2520,82 @@ describe('MessageList', () => {
     }
   })
 
-  test('shows assistant message hover actions with time and copy', async () => {
+  test('shows weekday and clock time for messages created within seven days', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-29T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '昨天的消息',
+              status: 'done',
+              createdAt: '2026-06-28T15:27:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('星期日15:27')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows date and clock time for messages not created today in the current year', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '昨天的消息',
+              status: 'done',
+              createdAt: '2026-06-18T12:04:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('6月18日 12:04')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows year for messages not created this year', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '去年的消息',
+              status: 'done',
+              createdAt: '2025-06-18T12:04:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('2025年6月18日 12:04')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows assistant message hover actions with time and icon-hover copy label', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
@@ -1112,17 +2613,39 @@ describe('MessageList', () => {
       />
     )
 
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    const hoverActions = screen.getByTestId('message-hover-actions')
+    expect(hoverActions).toHaveClass('opacity-0', 'pointer-events-none')
+    expect(hoverActions).not.toHaveClass(
+      'group-hover/message:opacity-100',
+      'group-focus-within/message:opacity-100'
+    )
+    expect(hoverRegion).toHaveClass('w-full', 'max-w-full')
+
+    fireEvent.pointerEnter(hoverRegion)
+    expect(hoverActions).toHaveClass('opacity-100', 'pointer-events-auto')
+
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
+    expect(screen.getByTestId('copy-message-label')).toHaveClass(
+      'opacity-0',
+      'group-hover/copy:opacity-100'
+    )
+    expect(screen.getByTestId('copy-message-label')).not.toHaveClass(
+      'group-focus-within/copy:opacity-100'
+    )
 
     vi.useRealTimers()
 
     const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    stubClipboardWriteText(writeText)
 
     const copyButton = screen.getByTestId('copy-message-button')
-    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+    expect(copyButton).toHaveAttribute('title', '复制')
+    expect(copyButton).not.toHaveClass('opacity-0')
 
     await userEvent.click(copyButton)
 
@@ -1149,7 +2672,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
-  test('renders a compact thinking indicator before the first streamed block arrives', () => {
+  test('renders only thinking before the first streamed response arrives', () => {
     render(
       <MessageList
         messages={[
@@ -1169,6 +2692,55 @@ describe('MessageList', () => {
     expect(thinkingIndicator).toHaveTextContent('正在思考')
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows full-width processing status once final text starts streaming', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '我先',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    const status = screen.getByText('已处理 1 秒')
+
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+    expect(status.parentElement).toHaveClass('w-full', 'border-b')
+    expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
+  })
+
+  test('starts the live processing timer when the first visible response appears', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:46:08.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '2',
+              role: 'assistant',
+              content: '我先',
+              status: 'streaming',
+              createdAt: '2026-05-25T18:46:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByText('已处理 1 秒')).toBeInTheDocument()
+      expect(screen.queryByText('已处理 8 秒')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('shows thinking in the message list while waiting for the assistant response', () => {
@@ -1194,10 +2766,10 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
+  test('uses running tool rows instead of a generic thinking indicator when blocks are visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'rg -n "foo" src' },
@@ -1220,13 +2792,14 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getAllByText('正在思考')).toHaveLength(1)
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在运行 rg -n "foo" src')).toBeInTheDocument()
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'done',
@@ -1234,7 +2807,7 @@ describe('MessageList', () => {
     }
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
-      subtaskId: 1,
+      turnId: 1,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'ls' },
@@ -1263,10 +2836,10 @@ describe('MessageList', () => {
     expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  test('does not duplicate a text block that matches the final assistant content', () => {
+  test('keeps process text even when it matches the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
-      subtaskId: 1,
+      turnId: 1,
       type: 'text',
       content: '这是最终回答。',
       status: 'done',
@@ -1288,8 +2861,10 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
-    expect(screen.getByText('这是最终回答。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
+    expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {
@@ -1470,7 +3045,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('网络连接失败：请检查网络连接后重试')).not.toBeInTheDocument()
   })
 
-  test('keeps regular long content inside the page while tables and code scroll locally', () => {
+  test('keeps regular long content inside the page while tables and highlighted code scroll locally', () => {
     const longToken = 'a'.repeat(120)
     const { container } = render(
       <MessageList
@@ -1492,8 +3067,8 @@ describe('MessageList', () => {
               '| --- |',
               `| ${longToken} |`,
               '',
-              '```text',
-              longToken,
+              '```css',
+              `.collapsible { color: ${longToken}; }`,
               '```',
             ].join('\n'),
             status: 'done',
@@ -1513,7 +3088,9 @@ describe('MessageList', () => {
       'overflow-x-auto',
       'max-w-full'
     )
-    expect(container.querySelector('pre')).toHaveClass('max-w-full', 'overflow-hidden')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
+    expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
   })
 
   test('renders local skill markdown links in user messages', () => {

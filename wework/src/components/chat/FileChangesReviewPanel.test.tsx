@@ -1,5 +1,5 @@
 import '@/i18n'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
@@ -95,25 +95,28 @@ describe('FileChangesReviewPanel', () => {
 
     expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
     await waitFor(() => {
-      expect(getRenderedDiffText()).toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
 
     const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
     expect(fileToggles).toHaveLength(2)
 
-    await userEvent.click(fileToggles[0])
+    fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
     await waitFor(() => {
-      expect(getRenderedDiffText()).not.toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).not.toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
 
-    await userEvent.click(fileToggles[0])
+    fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => {
-      expect(getRenderedDiffText()).toContain('new alpha')
-      expect(getRenderedDiffText()).toContain('new beta')
+      const diffText = getRenderedDiffText()
+      expect(diffText).toContain('new alpha')
+      expect(diffText).toContain('new beta')
     })
   })
 
@@ -153,6 +156,7 @@ describe('FileChangesReviewPanel', () => {
     expect(screen.getByText(/This diff is large|此差异较大/)).toBeInTheDocument()
     expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
     expect(screen.queryByTestId('file-changes-review-file-tree')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('toggle-file-tree-button')).not.toBeInTheDocument()
 
     const diff = screen.getByTestId('file-changes-review-diff')
     await waitFor(() => {
@@ -160,9 +164,6 @@ describe('FileChangesReviewPanel', () => {
       expect(getRenderedDiffText()).toContain('new 1')
       expect(getRenderedDiffText()).not.toContain('new 2')
     })
-
-    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
-    expect(screen.getByTestId('pierre-file-tree')).toBeInTheDocument()
 
     rerender(
       <FileChangesReviewPanel
@@ -256,10 +257,7 @@ describe('FileChangesReviewPanel', () => {
 
     await userEvent.click(screen.getByTestId('refresh-review-diff-button'))
     expect(onRefresh).toHaveBeenCalledTimes(1)
-
-    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
-    expect(screen.queryByTestId('file-changes-review-file-tree')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
+    expect(screen.queryByTestId('toggle-file-tree-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('file-changes-review-file-tree')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('toggle-line-wrap-button'))

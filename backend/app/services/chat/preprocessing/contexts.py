@@ -267,6 +267,7 @@ def _process_attachment_context(
     image_contents: List[dict],
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    inline_attachment_content: bool = True,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -278,7 +279,18 @@ def _process_attachment_context(
         image_contents: List to append image content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        inline_attachment_content: Whether to include parsed text/image content.
     """
+    if not inline_attachment_content:
+        header = _build_attachment_metadata_header(
+            context=context,
+            task_id=task_id,
+            subtask_id=subtask_id,
+        )
+        if header:
+            text_contents.append(f"[Attachment {idx}]\n{header}\n\n")
+        return
+
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
         # Build image attachment metadata
@@ -319,6 +331,27 @@ def _process_attachment_context(
         )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
+
+
+def _build_attachment_metadata_header(
+    context: SubtaskContext,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
+) -> Optional[str]:
+    """Build attachment metadata without parsed text or image content."""
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return None
+
+    filename = context.original_filename
+    sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+    return build_attachment_header(
+        attachment_id=context.id,
+        filename=filename,
+        mime_type=context.mime_type or "unknown",
+        file_size=context.file_size or 0,
+        sandbox_path=sandbox_path,
+        is_image=context_service.is_image_context(context),
+    )
 
 
 async def process_attachments(
@@ -1119,6 +1152,7 @@ async def prepare_contexts_for_chat(
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
+    inline_attachment_content: bool = True,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -1142,6 +1176,9 @@ async def prepare_contexts_for_chat(
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
         model_config: Optional model configuration used by restricted KB safe summary.
+        inline_attachment_content: Whether to inject parsed attachment contents
+            into the prompt. Executor runtimes set this to False because they can
+            parse/read downloaded files inside the runtime.
     Returns:
         ChatContextsResult with processed message, table info, and KB results.
     """
@@ -1188,6 +1225,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
+        inline_attachment_content=inline_attachment_content,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1310,6 +1348,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    inline_attachment_content: bool = True,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1319,6 +1358,8 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        inline_attachment_content: Whether parsed attachment content should be
+            injected. When False, only attachment metadata is included.
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images
@@ -1338,6 +1379,7 @@ async def _process_attachment_contexts_for_message(
                 image_contents,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                inline_attachment_content=inline_attachment_content,
             )
         except Exception as e:
             logger.exception(f"Error processing attachment context {context.id}: {e}")

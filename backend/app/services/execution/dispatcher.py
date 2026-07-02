@@ -43,6 +43,7 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
+from .attachment_sync import apply_attachment_sync_response, sync_executor_attachments
 from .emitters import (
     ResultEmitter,
     ResultEmitterFactory,
@@ -133,9 +134,8 @@ def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
-    Shared by :class:`ResponsesAPIEventParser` and
-    :class:`EmitterBridgeTransport` so the field list is maintained in one
-    place.
+    Shared by :class:`ResponsesAPIEventParser` and response bridge transport so
+    the field list is maintained in one place.
     """
     # Extract text content from response output
     value = ""
@@ -194,17 +194,24 @@ class ResponsesAPIEventParser:
 
     def __init__(self) -> None:
         self._tool_contexts: dict[str, dict[str, Any]] = {}
+        self._reasoning_buffers: dict[str, str] = {}
 
     @staticmethod
     def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
         """Build a stable context key scoped to the request lifecycle."""
         return f"{task_id}:{subtask_id}:{tool_use_id}"
 
+    @staticmethod
+    def _request_key(task_id: int, subtask_id: int) -> str:
+        """Build a stable request key for stream-scoped state."""
+        return f"{task_id}:{subtask_id}"
+
     def _clear_task_contexts(self, task_id: int, subtask_id: int) -> None:
         prefix = f"{task_id}:{subtask_id}:"
         stale_keys = [key for key in self._tool_contexts if key.startswith(prefix)]
         for key in stale_keys:
             self._tool_contexts.pop(key, None)
+        self._reasoning_buffers.pop(self._request_key(task_id, subtask_id), None)
 
     def parse(
         self,
@@ -227,6 +234,19 @@ class ResponsesAPIEventParser:
             Parsed ExecutionEvent or None if event should be skipped
         """
         # Map OpenAI Responses API events to internal EventType
+        if event_type == ResponsesAPIStreamEvents.RESPONSE_CREATED.value:
+            start_data = {}
+            for key in ("shell_type", "bot_name"):
+                if data.get(key) is not None:
+                    start_data[key] = data.get(key)
+            return ExecutionEvent(
+                type=EventType.START,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=start_data,
+                message_id=message_id,
+            )
+
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
             # response.output_text.delta -> CHUNK
             # Wegent extension: offset field tracks cumulative text position
@@ -260,13 +280,18 @@ class ResponsesAPIEventParser:
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
+            result = extract_completed_result(response_data)
+            request_key = self._request_key(task_id, subtask_id)
+            buffered_reasoning = self._reasoning_buffers.get(request_key)
+            if not result.get("reasoning_content") and buffered_reasoning:
+                result["reasoning_content"] = buffered_reasoning
             self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content="",
-                result=extract_completed_result(response_data),
+                result=result,
                 message_id=message_id,
             )
 
@@ -401,6 +426,10 @@ class ResponsesAPIEventParser:
         ):
             reasoning_content = _extract_reasoning_event_content(event_type, data)
             if reasoning_content is not None:
+                request_key = self._request_key(task_id, subtask_id)
+                self._reasoning_buffers[request_key] = (
+                    self._reasoning_buffers.get(request_key, "") + reasoning_content
+                )
                 return ExecutionEvent(
                     type=EventType.THINKING,
                     task_id=task_id,
@@ -664,7 +693,6 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type in (
-            ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
@@ -1560,8 +1588,9 @@ class ExecutionDispatcher:
     ) -> None:
         """Dispatch task via in-process execution (standalone mode).
 
-        Directly executes tasks within the Backend process. For Chat shell type,
-        uses chat_shell module. For ClaudeCode/Agno, uses executor module.
+        Directly executes Chat tasks within the Backend process when chat_shell
+        package mode is enabled. ClaudeCode/Agno are executed by the Rust
+        executor through HTTP callback mode.
 
         Args:
             request: Execution request
@@ -1588,11 +1617,10 @@ class ExecutionDispatcher:
             # Use chat_shell module for Chat type
             await self._dispatch_inprocess_chat(request, emitter)
         else:
-            # Use executor module for ClaudeCode/Agno
-            from .inprocess_executor import InprocessExecutor
-
-            executor = InprocessExecutor()
-            await executor.execute(request, emitter)
+            raise RuntimeError(
+                "Non-Chat standalone execution must be routed to the Rust "
+                "local executor device"
+            )
 
         logger.info(
             f"[ExecutionDispatcher] In-process dispatch completed: "
@@ -1693,6 +1721,8 @@ class ExecutionDispatcher:
             f"base_url={base_url}"
         )
 
+        await self._sync_attachments_before_executor_dispatch(request)
+
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
@@ -1743,6 +1773,36 @@ class ExecutionDispatcher:
             subtask_id=request.subtask_id,
             message_id=request.message_id,
             data=self._build_start_event_data(request),
+        )
+
+    async def _sync_attachments_before_executor_dispatch(
+        self, request: ExecutionRequest
+    ) -> None:
+        """Prepare attachments in executor runtime before formal dispatch."""
+        if not request.attachments:
+            return
+        shell_type = self._get_shell_type(request)
+        if shell_type not in {"ClaudeCode", "Agno", "CodeX", "Codex"}:
+            return
+
+        logger.info(
+            "[ExecutionDispatcher] Syncing attachments before executor dispatch: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d",
+            request.task_id,
+            request.subtask_id,
+            shell_type,
+            len(request.attachments),
+        )
+        sync_response = await sync_executor_attachments(request)
+        apply_attachment_sync_response(request, sync_response)
+        logger.info(
+            "[ExecutionDispatcher] Attachment sync applied: task_id=%s, "
+            "subtask_id=%s, executor_name=%s, success_count=%d, failed_count=%d",
+            request.task_id,
+            request.subtask_id,
+            request.executor_name,
+            sync_response.success_count,
+            sync_response.failed_count,
         )
 
     def parse_callback_event(
@@ -1798,43 +1858,9 @@ class ExecutionDispatcher:
         elif target.mode == CommunicationMode.POLLING:
             return await self._cancel_sse(request, target)
         elif target.mode == CommunicationMode.INPROCESS:
-            return await self._cancel_inprocess(request, target)
+            return False
         else:
             return await self._cancel_http(request, target)
-
-    async def _cancel_inprocess(
-        self,
-        request: ExecutionRequest,
-        target: ExecutionTarget,
-    ) -> bool:
-        """Cancel in-process task.
-
-        For in-process mode, we directly call the executor's cancel method.
-
-        Args:
-            request: Execution request
-            target: Execution target configuration (not used, kept for interface consistency)
-
-        Returns:
-            True if cancel was successful
-        """
-        from .inprocess_executor import InprocessExecutor
-
-        try:
-            executor = InprocessExecutor()
-            success = await executor.cancel(request.task_id)
-            if success:
-                logger.info(
-                    f"[ExecutionDispatcher] In-process task cancelled: "
-                    f"task_id={request.task_id}"
-                )
-            return success
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to cancel in-process task: "
-                f"task_id={request.task_id}, error={e}"
-            )
-            return False
 
     async def _cancel_sse(
         self,

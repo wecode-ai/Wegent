@@ -209,6 +209,44 @@ export function buildPullRequestUrl(remoteUrl: string, branchName: string): stri
   return undefined
 }
 
+export async function workspaceHasUncommittedChanges(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string
+): Promise<boolean> {
+  const porcelain = await runGitCommand(api, deviceId, 'git_status_porcelain', path, {
+    maxOutputBytes: 64 * 1024,
+  })
+  return porcelain.length > 0
+}
+
+export async function removeGitWorktree(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string
+): Promise<void> {
+  await runGitCommand(api, deviceId, 'git_worktree_remove', path, {
+    args: [path, path],
+    timeoutSeconds: 30,
+    maxOutputBytes: 8192,
+  })
+}
+
+function prioritizeBranches(
+  branches: string[],
+  preferredBranches: Array<string | null | undefined>
+): string[] {
+  const preferred = preferredBranches
+    .map(branch => branch?.trim())
+    .filter((branch): branch is string => Boolean(branch))
+
+  const uniqueBranches = [...new Set(branches)].filter(Boolean)
+  const preferredSet = new Set(preferred)
+  const orderedPreferred = preferred.filter(branch => uniqueBranches.includes(branch))
+  const remaining = uniqueBranches.filter(branch => !preferredSet.has(branch))
+  return [...orderedPreferred, ...remaining]
+}
+
 async function runGitCommand(
   api: DeviceCommandApi,
   deviceId: string,
@@ -447,16 +485,19 @@ export async function listProjectBranches(
   target?: EnvironmentWorkspaceTarget | null
 ): Promise<string[]> {
   const { deviceId, path } = await commandContext(api, project, target)
-  const output = await runGitCommand(api, deviceId, 'git_branch_list', path, {
-    timeoutSeconds: 15,
-    maxOutputBytes: 1024 * 64,
-  })
+  const [output, currentBranch] = await Promise.all([
+    runGitCommand(api, deviceId, 'git_branch_list', path, {
+      timeoutSeconds: 15,
+      maxOutputBytes: 1024 * 64,
+    }),
+    runGitCommand(api, deviceId, 'git_branch', path).catch(() => ''),
+  ])
 
-  return output
+  const branches = output
     .split('\n')
     .map(branch => branch.trim())
     .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right))
+  return prioritizeBranches(branches, [currentBranch])
 }
 
 export async function checkoutProjectBranch(

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
+use crate::process_environment;
+
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
@@ -120,6 +122,7 @@ fn process_utf8_locale_value(name: &str, default: &str) -> String {
 fn configure_terminal_environment(command: &mut CommandBuilder) {
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    command.env("PATH", process_environment::normalized_current_path());
     command.env("LANG", process_utf8_locale_value("LANG", DEFAULT_UTF8_LANG));
     command.env(
         "LC_CTYPE",

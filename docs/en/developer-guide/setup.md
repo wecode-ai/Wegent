@@ -253,6 +253,16 @@ pnpm --filter wecode-ai-assistant run build
 pnpm --filter wecode-ai-assistant run start
 ```
 
+#### Wework and Local Rust Build Cache
+
+The Wework macOS development scripts configure shared Cargo target directories for Tauri and the local executor so multiple Git worktrees do not repeatedly rebuild the same dependencies from scratch:
+
+- `pnpm --dir wework run dev:mac` and `pnpm --dir wework run build:mac` use `$XDG_CACHE_HOME/wegent/cargo-target/wework-src-tauri` by default, or `~/.cache/wegent/cargo-target/wework-src-tauri` when `XDG_CACHE_HOME` is not set.
+- The development executor sidecar and `executor/local.sh build` use the `executor` subdirectory under the same cache root by default.
+- Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose a different shared cache root.
+- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to restore Cargo's default per-worktree `target/` behavior.
+- When `CARGO_TARGET_DIR` is set explicitly, the scripts respect that value and do not choose an automatic shared directory.
+
 ---
 
 ### 5️⃣ Executor Manager Development
