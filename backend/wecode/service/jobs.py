@@ -273,7 +273,7 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
     )
 
     # Delay initial run so executor_manager has time to finish starting up.
-    await asyncio.sleep(130)
+    await asyncio.sleep(30)
 
     while not stop_event.is_set():
         try:
@@ -297,7 +297,7 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                             db,
                             older_than_hours=ORPHAN_POD_MIN_AGE_HOURS,
                             stale_hours=ORPHAN_POD_CLEANUP_STALE_HOURS,
-                            dry_run=True,
+                            dry_run=False,
                         )
         except Exception as e:
             logger.error("+++ [job] orphan pod cleanup error: %s", e)

@@ -171,6 +171,10 @@ async def cleanup_orphan_pods(
         logger.info("+++ [executor_job] No old pods found for orphan cleanup")
         return result
 
+    # TEMP: cap real deletions per run for safe rollout. Manually adjust or
+    # set to None to disable.
+    max_deletions: Optional[int] = 0
+
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
         task_id_str: Optional[str] = pod_info.get("task_id")
@@ -218,6 +222,22 @@ async def cleanup_orphan_pods(
         if dry_run:
             result["skipped"].append(
                 {"task_id": task_id, "pod_name": pod_name, "reason": "dry_run"}
+            )
+            continue
+
+        if max_deletions is not None and len(result["deleted"]) >= max_deletions:
+            logger.info(
+                "+++ [executor_job] Max deletions reached, skipping pod "
+                "task_id=%s pod_name=%s",
+                task_id,
+                pod_name,
+            )
+            result["skipped"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "max_deletions_reached",
+                }
             )
             continue
 
