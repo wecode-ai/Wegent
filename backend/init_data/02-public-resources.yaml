@@ -500,6 +500,7 @@ metadata:
   namespace: default
 spec:
   skills:
+    - interactive
     - mermaid-diagram
     - browser
   mcpServers: {}
