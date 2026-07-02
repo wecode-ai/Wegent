@@ -80,6 +80,7 @@ interface TeamEditDialogProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  onSaved?: () => void | Promise<void>
 }
 
 const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task'])
@@ -146,6 +147,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     toast,
     scope = 'personal',
     groupName,
+    onSaved,
   } = props
 
   const { t } = useTranslation()
@@ -181,6 +183,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
+
+  const handleAfterTeamSave = useCallback(async () => {
+    await onSaved?.()
+    refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
+    setUnsavedPrompts({})
+    onClose()
+  }, [onSaved, refreshTeams, onClose])
 
   // Store requireConfirmation settings for pipeline mode (botId -> boolean)
   const [requireConfirmationMap, setRequireConfirmationMap] = useState<Record<number, boolean>>({})
@@ -221,6 +230,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
+  const previousResetDepsRef = useRef<{
+    open: boolean
+    formTeamId: number | null
+  } | null>(null)
 
   // Load shells data on mount
   useEffect(() => {
@@ -293,6 +306,20 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Reset form when dialog opens
   useEffect(() => {
     if (!open) return
+
+    const previous = previousResetDepsRef.current
+    const current = {
+      open,
+      formTeamId: formTeam?.id ?? null,
+    }
+    previousResetDepsRef.current = current
+
+    const onlyNewTeamBotsChanged =
+      !formTeam && previous?.open === current.open && previous?.formTeamId === current.formTeamId
+
+    if (onlyNewTeamBotsChanged) {
+      return
+    }
 
     if (formTeam) {
       setName(formTeam.name)
@@ -688,9 +715,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         setTeams(prev => [created, ...prev])
       }
 
-      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
-      setUnsavedPrompts({})
-      onClose()
+      await handleAfterTeamSave()
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -791,11 +816,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             setTeams(prev => [created, ...prev])
           }
 
-          // Refresh TeamContext so Chat page gets updated bot agent_config
-          refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
-
-          setUnsavedPrompts({})
-          onClose()
+          await handleAfterTeamSave()
         } catch (error) {
           toast({
             variant: 'destructive',
@@ -892,10 +913,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         })
         setTeams(prev => [created, ...prev])
       }
-      // Refresh TeamContext so Chat page gets updated bot agent_config
-      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
-      setUnsavedPrompts({})
-      onClose()
+      await handleAfterTeamSave()
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -915,7 +933,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && onClose()}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent
+          className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+          preventOutsideClick={editingBotDrawerVisible}
+        >
           <DialogHeader>
             <DialogTitle>
               {isEditing ? t('common:teams.edit_title') : t('common:teams.create_title')}
