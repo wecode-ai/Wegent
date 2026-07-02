@@ -15,16 +15,14 @@ from app.services.media_understanding import media_understanding_service
 
 @mcp_tool(
     name="understand_media",
-    description=(
-        "Understand media using a fixed multimodal model. Current backend input support is video URL or video attachment."
-    ),
+    description=("Understand image or video media using a fixed multimodal model."),
     server="media",
     exclude_params=["token_info"],
     param_descriptions={
         "context_id": "Alias of attachment_id. It is the metadata header ID parsed as SubtaskContext.id, not fid.",
-        "attachment_id": "Preferred for video attachments. Use the ID shown in the video attachment metadata header; do not pass fid.",
-        "media_url": "HTTP(S) video URL when no attachment context is available.",
-        "media_type": "Media type. Only 'video' is supported.",
+        "attachment_id": "Preferred for image or video attachments. Use the ID shown in the attachment metadata header; do not pass fid.",
+        "media_url": "HTTP(S) image or video URL when no attachment context is available.",
+        "media_type": "Media type. Supported values are 'image' and 'video'.",
         "question": "The user's original question about the media.",
         "instruction": "Optional analysis instruction for the media understanding model.",
         "context": "Optional background context such as title, description, transcript, metadata, and related texts.",
