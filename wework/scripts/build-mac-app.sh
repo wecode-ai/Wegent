@@ -16,6 +16,7 @@ BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 TAURI_BUNDLES="${WEWORK_TAURI_BUNDLES:-}"
 NO_SIGN="${WEWORK_NO_SIGN:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Options:
   --profile <dev|release>  Build profile. Default: release.
   --target <target>        macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
   --bundles <bundles>      Tauri bundles to package, e.g. app or app,dmg.
+  --devtools               Enable Web Inspector support in release builds.
   --sign                   Allow signing in dev profile.
   --no-sign                Skip code signing.
   -h, --help               Show this help message.
@@ -33,11 +35,13 @@ Environment:
   WEWORK_BUILD_PROFILE     Default profile when --profile is not provided.
   MACOS_BUILD_TARGET       Default macOS Rust/Tauri target.
   WEWORK_TAURI_BUNDLES     Default bundle list when --bundles is not provided.
+  WEWORK_RELEASE_DEVTOOLS  Set to 1 to compile Tauri devtools into release builds.
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
 
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
   bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
+  WEWORK_RELEASE_DEVTOOLS=1 bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
 EOF
 }
 
@@ -89,6 +93,10 @@ while [ "$#" -gt 0 ]; do
       TAURI_BUNDLES="${1#*=}"
       shift
       ;;
+    --devtools)
+      RELEASE_DEVTOOLS="1"
+      shift
+      ;;
     --sign)
       NO_SIGN="0"
       shift
@@ -132,6 +140,7 @@ echo "  PROFILE=$BUILD_PROFILE"
 echo "  BACKEND_PORT=$BACKEND_PORT"
 echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
 echo "  TAURI_BUNDLES=${TAURI_BUNDLES:-<default>}"
+echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  NO_SIGN=${NO_SIGN:-0}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
@@ -145,6 +154,9 @@ cd "$WEWORK_DIR"
 TAURI_ARGS=(build)
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
+fi
+if [ "$RELEASE_DEVTOOLS" = "1" ]; then
+  TAURI_ARGS+=(--features release-devtools)
 fi
 if [ -n "$MACOS_BUILD_TARGET" ]; then
   TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")

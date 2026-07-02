@@ -1,5 +1,9 @@
+import { invoke } from '@tauri-apps/api/core'
+import { isTauriRuntime } from './runtime-environment'
+
 const PERFORMANCE_DIAGNOSTICS_STORAGE_KEY = 'wework:perf-debug'
 const PERFORMANCE_DIAGNOSTICS_QUERY_PARAM = 'weworkPerf'
+const PROCESS_SNAPSHOT_COMMAND = 'get_wework_process_snapshot'
 const TOGGLE_SHORTCUT_KEY = 'P'
 const MAX_EVENTS = 300
 const SAMPLE_INTERVAL_MS = 5000
@@ -21,6 +25,30 @@ interface MemorySnapshot {
   jsHeapSizeLimit?: number
 }
 
+interface ProcessDiagnosticsProcess {
+  pid: number
+  ppid: number
+  group: string
+  rss_kib: number
+  cpu_percent: number
+  command: string
+}
+
+interface ProcessDiagnosticsGroup {
+  group: string
+  process_count: number
+  rss_kib: number
+  cpu_percent: number
+  pids: number[]
+}
+
+interface ProcessDiagnosticsSnapshot {
+  timestamp_ms: number
+  main_pid: number
+  groups: ProcessDiagnosticsGroup[]
+  processes: ProcessDiagnosticsProcess[]
+}
+
 interface DiagnosticsSnapshot {
   timestamp: number
   url: string
@@ -28,6 +56,7 @@ interface DiagnosticsSnapshot {
   domNodeCount: number
   activeElement: string | null
   memory: MemorySnapshot | null
+  processMemory: ProcessDiagnosticsSnapshot | null
   resourceCount: number
   navigation: Record<string, number | string | null>
   recentEvents: DiagnosticsEvent[]
@@ -37,6 +66,7 @@ export interface PerformanceDiagnosticsController {
   enabled: boolean
   mark: (name: string, data?: Record<string, unknown>) => void
   snapshot: () => DiagnosticsSnapshot
+  processSnapshot: () => Promise<ProcessDiagnosticsSnapshot | null>
   stop: () => void
   getEvents: () => DiagnosticsEvent[]
 }
@@ -52,12 +82,9 @@ declare global {
 }
 
 let controller: PerformanceDiagnosticsController | null = null
-
-export function installPerformanceDiagnosticsToggle() {
-  window.addEventListener('keydown', handlePerformanceDiagnosticsToggleKeyDown, {
-    capture: true,
-  })
-}
+let latestProcessDiagnostics: ProcessDiagnosticsSnapshot | null = null
+let processDiagnosticsInFlight: Promise<ProcessDiagnosticsSnapshot | null> | null = null
+let processDiagnosticsWarned = false
 
 export function isPerformanceDiagnosticsEnabled(): boolean {
   const queryValue = new URLSearchParams(window.location.search).get(
@@ -78,22 +105,22 @@ export function isPerformanceDiagnosticsEnabled(): boolean {
   )
 }
 
-function handlePerformanceDiagnosticsToggleKeyDown(event: KeyboardEvent) {
-  if (!event.shiftKey || !event.altKey || !(event.metaKey || event.ctrlKey)) return
-  if (event.code !== `Key${TOGGLE_SHORTCUT_KEY}`) return
-
-  event.preventDefault()
-  event.stopPropagation()
-
-  const enabled = localStorage.getItem(PERFORMANCE_DIAGNOSTICS_STORAGE_KEY) === '1'
+export function setPerformanceDiagnosticsEnabled(enabled: boolean) {
   if (enabled) {
-    localStorage.removeItem(PERFORMANCE_DIAGNOSTICS_STORAGE_KEY)
-    console.info('[Wework perf] diagnostics disabled. Reloading...')
-  } else {
     localStorage.setItem(PERFORMANCE_DIAGNOSTICS_STORAGE_KEY, '1')
-    console.info('[Wework perf] diagnostics enabled. Reloading...')
+    return
   }
-  window.location.reload()
+
+  localStorage.removeItem(PERFORMANCE_DIAGNOSTICS_STORAGE_KEY)
+}
+
+export function isPerformanceDiagnosticsShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.shiftKey &&
+    event.altKey &&
+    (event.metaKey || event.ctrlKey) &&
+    event.code === `Key${TOGGLE_SHORTCUT_KEY}`
+  )
 }
 
 export function installPerformanceDiagnostics(): PerformanceDiagnosticsController | null {
@@ -127,6 +154,7 @@ export function installPerformanceDiagnostics(): PerformanceDiagnosticsControlle
     domNodeCount: document.getElementsByTagName('*').length,
     activeElement: describeElement(document.activeElement),
     memory: getMemorySnapshot(),
+    processMemory: latestProcessDiagnostics,
     resourceCount: performance.getEntriesByType('resource').length,
     navigation: getNavigationSnapshot(),
     recentEvents: [...events],
@@ -136,6 +164,7 @@ export function installPerformanceDiagnostics(): PerformanceDiagnosticsControlle
     enabled: true,
     mark: (name, data = {}) => pushEvent('mark', { name, ...data }),
     snapshot,
+    processSnapshot: () => refreshProcessDiagnostics(),
     stop: () => {
       stopped = true
       cleanupCallbacks.splice(0).forEach(cleanup => cleanup())
@@ -150,6 +179,7 @@ export function installPerformanceDiagnostics(): PerformanceDiagnosticsControlle
 
   installLongTaskObserver(pushEvent, cleanupCallbacks)
   installPeriodicSampler(pushEvent, cleanupCallbacks)
+  installProcessDiagnosticsSampler(cleanupCallbacks)
   installEventLoopLagSampler(pushEvent, cleanupCallbacks)
 
   console.info(
@@ -208,6 +238,7 @@ function installPeriodicSampler(
   const sample = () => {
     pushEvent('sample', {
       memory: getMemorySnapshot(),
+      processMemory: summarizeProcessDiagnostics(latestProcessDiagnostics),
       domNodeCount: document.getElementsByTagName('*').length,
       resourceCount: performance.getEntriesByType('resource').length,
       visibilityState: document.visibilityState,
@@ -218,6 +249,48 @@ function installPeriodicSampler(
   sample()
   const timer = window.setInterval(sample, SAMPLE_INTERVAL_MS)
   cleanupCallbacks.push(() => window.clearInterval(timer))
+}
+
+function installProcessDiagnosticsSampler(cleanupCallbacks: Array<() => void>) {
+  if (!isTauriRuntime()) return
+
+  void refreshProcessDiagnostics()
+  const timer = window.setInterval(() => {
+    void refreshProcessDiagnostics()
+  }, SAMPLE_INTERVAL_MS)
+  cleanupCallbacks.push(() => window.clearInterval(timer))
+}
+
+function refreshProcessDiagnostics(): Promise<ProcessDiagnosticsSnapshot | null> {
+  if (!isTauriRuntime()) return Promise.resolve(null)
+  if (processDiagnosticsInFlight) return processDiagnosticsInFlight
+
+  processDiagnosticsInFlight = invoke<ProcessDiagnosticsSnapshot>(PROCESS_SNAPSHOT_COMMAND)
+    .then(snapshot => {
+      latestProcessDiagnostics = snapshot
+      return snapshot
+    })
+    .catch(error => {
+      if (!processDiagnosticsWarned) {
+        console.warn('[Wework perf] process diagnostics unavailable', error)
+        processDiagnosticsWarned = true
+      }
+      return null
+    })
+    .finally(() => {
+      processDiagnosticsInFlight = null
+    })
+
+  return processDiagnosticsInFlight
+}
+
+function summarizeProcessDiagnostics(snapshot: ProcessDiagnosticsSnapshot | null) {
+  if (!snapshot) return null
+  return {
+    timestamp_ms: snapshot.timestamp_ms,
+    main_pid: snapshot.main_pid,
+    groups: snapshot.groups,
+  }
 }
 
 function installEventLoopLagSampler(
