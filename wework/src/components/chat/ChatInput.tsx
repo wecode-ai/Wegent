@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
   DeviceInfo,
@@ -6,6 +7,7 @@ import type {
   ModelOptions,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeGoal,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -15,6 +17,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
+import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
@@ -33,6 +36,8 @@ export interface ProjectChatControls {
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelOption: (optionId: string, value: string) => void
+  getSelectedModel?: () => UnifiedModel | null
+  getSelectedModelOptions?: () => ModelOptions
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
@@ -89,6 +94,14 @@ interface ChatInputProps {
   onClearCodeComments?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  goal?: RuntimeGoal | null
+  goalDraftActive?: boolean
+  onSetGoal?: () => void
+  onCancelGoalDraft?: () => void
+  onEditGoal?: () => void
+  onPauseGoal?: () => void
+  onResumeGoal?: () => void
+  onClearGoal?: () => void
 }
 
 export function ChatInput({
@@ -113,9 +126,20 @@ export function ChatInput({
   onClearCodeComments,
   isStreaming = false,
   onPause,
+  goal,
+  goalDraftActive = false,
+  onSetGoal,
+  onCancelGoalDraft,
+  onEditGoal,
+  onPauseGoal,
+  onResumeGoal,
+  onClearGoal,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
-  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
+  const displayedGoal = visibleRuntimeGoal(goal)
+  const inputPlaceholder = goalDraftActive
+    ? t('workbench.goal_input_placeholder', 'WeWork 应该往哪个方向努力?')
+    : (placeholder ?? t('workbench.input_placeholder', '随心输入'))
   const controls: ProjectChatControls = projectChat ?? {
     models: [],
     skills: [],
@@ -135,6 +159,17 @@ export function ChatInput({
     handleFileSelect: async () => {},
     removeAttachment: async () => {},
     listLocalSkills: async () => [],
+  }
+
+  const planModeActive = controls.selectedModelOptions.collaborationMode === 'plan'
+  const handleSetPlanMode = () => {
+    if (goalDraftActive) {
+      onCancelGoalDraft?.()
+    }
+    controls.setSelectedModelOption('collaborationMode', 'plan')
+  }
+  const handleClearPlanMode = () => {
+    controls.setSelectedModelOption('collaborationMode', 'default')
   }
 
   const composerProps = {
@@ -170,6 +205,15 @@ export function ChatInput({
       <div className="w-full">
         {queuePanel}
         {errorBanner}
+        {displayedGoal && !goalDraftActive && (
+          <GoalStatusBar
+            goal={displayedGoal}
+            onEditGoal={onEditGoal}
+            onPauseGoal={onPauseGoal}
+            onResumeGoal={onResumeGoal}
+            onClearGoal={onClearGoal}
+          />
+        )}
         <ProjectChatComposer
           {...composerProps}
           models={controls.models}
@@ -187,6 +231,12 @@ export function ChatInput({
           onFileSelect={files => {
             void controls.handleFileSelect(files)
           }}
+          planModeActive={planModeActive}
+          onSetPlanMode={handleSetPlanMode}
+          onClearPlanMode={handleClearPlanMode}
+          onSetGoal={onSetGoal}
+          goalDraftActive={goalDraftActive}
+          onCancelGoalDraft={onCancelGoalDraft}
           onRemoveAttachment={attachmentId => {
             void controls.removeAttachment(attachmentId)
           }}
@@ -224,6 +274,15 @@ export function ChatInput({
     <div className="w-full">
       {queuePanel}
       {errorBanner}
+      {displayedGoal && !goalDraftActive && (
+        <GoalStatusBar
+          goal={displayedGoal}
+          onEditGoal={onEditGoal}
+          onPauseGoal={onPauseGoal}
+          onResumeGoal={onResumeGoal}
+          onClearGoal={onClearGoal}
+        />
+      )}
       <CompactChatComposer
         {...composerProps}
         attachments={controls.attachments}
@@ -233,6 +292,12 @@ export function ChatInput({
         onFileSelect={files => {
           void controls.handleFileSelect(files)
         }}
+        planModeActive={planModeActive}
+        onSetPlanMode={handleSetPlanMode}
+        onClearPlanMode={handleClearPlanMode}
+        onSetGoal={onSetGoal}
+        goalDraftActive={goalDraftActive}
+        onCancelGoalDraft={onCancelGoalDraft}
         onRemoveAttachment={attachmentId => {
           void controls.removeAttachment(attachmentId)
         }}

@@ -209,6 +209,31 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('settles a streamed assistant message without replacing its content', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        turnId: 9
+      }),
+      {
+        type: 'assistant_chunk',
+        turnId: 9,
+        content: 'streamed answer'
+      }
+    )
+
+    const done = reduceWorkbenchMessages(state, {
+      type: 'assistant_done',
+      turnId: 9
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'streamed answer',
+      status: 'done'
+    })
+  })
+
   test('marks all streaming assistant messages cancelled when no turn is specified', () => {
     const state = [
       {
@@ -300,6 +325,52 @@ describe('reduceWorkbenchMessages', () => {
         toolOutput: 'still running'
       }
     ])
+  })
+
+  test('preserves custom tool render payload on block create and update', () => {
+    const requestPayload = {
+      kind: 'request_user_input',
+      request_id: 12,
+      questions: [{ id: 'goal', question: 'What should I prioritize?' }],
+    }
+    const updatedPayload = {
+      ...requestPayload,
+      submitted: true,
+    }
+
+    const state = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      turnId: 9,
+      block: {
+        id: 'request-1',
+        turnId: 9,
+        type: 'tool',
+        toolName: 'request_user_input',
+        renderPayload: requestPayload,
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+    const updated = reduceWorkbenchMessages(state, {
+      type: 'block_updated',
+      turnId: 9,
+      blockId: 'request-1',
+      updates: {
+        status: 'done',
+        renderPayload: updatedPayload,
+      },
+    })
+
+    expect(state[0].blocks?.[0]).toMatchObject({
+      type: 'tool',
+      toolName: 'request_user_input',
+      renderPayload: requestPayload,
+    })
+    expect(updated[0].blocks?.[0]).toMatchObject({
+      type: 'tool',
+      status: 'done',
+      renderPayload: updatedPayload,
+    })
   })
 
   test('keeps a specific assistant error when a later generic task status error arrives', () => {

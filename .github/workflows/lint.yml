@@ -16,6 +16,9 @@ on:
       - master
       - develop
 
+permissions:
+  contents: read
+
 jobs:
   lint-backend:
     name: Lint Backend (Black & isort)
@@ -141,7 +144,7 @@ jobs:
         run: pnpm --filter wework lint
 
       - name: Run TypeScript check
-        run: pnpm --filter wework exec tsc --noEmit
+        run: pnpm --filter wework typecheck
 
   check-settings-config:
     name: Check Settings Configuration

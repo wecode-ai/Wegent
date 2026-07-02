@@ -7,9 +7,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.admin_executor import AdminExecutor
 from knowledge_runtime.services.config_resolver import AdminResolvedConfig
+
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -34,9 +34,8 @@ def mock_retriever_config():
 
 @pytest.fixture
 def admin_executor():
-    """Create an AdminExecutor instance with a mock db session."""
-    mock_db = MagicMock()
-    return AdminExecutor(db=mock_db)
+    """Create an AdminExecutor instance with a mock config loader."""
+    return AdminExecutor(config_loader=MagicMock())
 
 
 class TestAdminExecutor:
@@ -63,10 +62,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 
@@ -100,10 +98,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 
@@ -133,10 +130,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 
@@ -182,10 +178,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 
@@ -215,10 +210,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 
@@ -246,10 +240,9 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminResolvedConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
+            admin_executor._config_loader.resolve_admin_config.return_value = (
+                AdminResolvedConfig(
+                    index_owner_user_id=7, retriever_config=mock_retriever_config
                 )
             )
 

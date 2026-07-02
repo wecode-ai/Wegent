@@ -447,7 +447,7 @@ class TaskRequestBuilder:
             task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
-            backend_url="",
+            backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,

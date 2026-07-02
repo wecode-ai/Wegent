@@ -13,7 +13,7 @@ from knowledge_engine.retrieval.hierarchical import (
     merge_parent_records,
 )
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
-from shared.models import RuntimeRetrievalConfig, SearchHints
+from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ class QueryExecutor:
         query_plan: dict[str, Any] | None = None,
         search_hints: SearchHints | dict[str, Any] | None = None,
         retrieval_config: RuntimeRetrievalConfig | dict[str, Any],
+        scope: RetrievalScope | dict[str, Any] | None = None,
         metadata_condition: dict[str, Any] | None = None,
         user_id: int | None = None,
     ) -> dict[str, Any]:
@@ -42,6 +43,8 @@ class QueryExecutor:
             search_hints=search_hints,
         )
         resolved_queries = resolve_search_queries(query, retrieval_setting)
+        resolved_scope = self._normalize_scope(scope)
+        self._ensure_retrieval_scope_supported(resolved_scope)
         logger.info(
             "[QueryExecutor] knowledge_id=%s, retrieval_mode=%s, hint_source=%s, hints_present=%s, dense_query=%s, sparse_query=%s",
             knowledge_id,
@@ -61,6 +64,7 @@ class QueryExecutor:
             query=query,
             embed_model=self.embed_model,
             retrieval_setting=retrieval_setting,
+            scope=resolved_scope,
             metadata_condition=metadata_condition,
             **kwargs,
         )
@@ -112,6 +116,29 @@ class QueryExecutor:
                 else dict(search_hints)
             )
         return retrieval_setting
+
+    @staticmethod
+    def _normalize_scope(
+        scope: RetrievalScope | dict[str, Any] | None,
+    ) -> RetrievalScope | None:
+        if scope is None or isinstance(scope, RetrievalScope):
+            return scope
+        return RetrievalScope.model_validate(scope)
+
+    def _ensure_retrieval_scope_supported(
+        self,
+        scope: RetrievalScope | None,
+    ) -> None:
+        if not scope or not scope.document_ids:
+            return
+
+        if bool(getattr(self.storage_backend, "supports_retrieval_scope", False)):
+            return
+
+        raise ValueError(
+            "Retrieval scope is not supported by this storage backend; "
+            "document_ids would otherwise be ignored."
+        )
 
     async def _merge_hierarchical_records(
         self,

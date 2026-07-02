@@ -1,41 +1,10 @@
 import { useState } from 'react'
-import { Archive, Box, ChevronDown, ChevronUp, FileText } from 'lucide-react'
+import { Box, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type {
-  CodexContextEvent,
-  CodexMemoryCitation,
-  CodexMemoryCitationEntry,
-  CodexReference,
-} from '@/types/api'
+import type { CodexMemoryCitation, CodexMemoryCitationEntry, CodexReference } from '@/types/api'
 import { basename, fileExtension, getDisplayCodexReferences } from './codexReferences'
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3
-
-export function CodexContextEvents({ events }: { events: CodexContextEvent[] }) {
-  const { t } = useTranslation('chat')
-  const visibleEvents = events.filter(event => isContextCompactionEvent(event))
-  if (visibleEvents.length === 0) return null
-
-  return (
-    <div className="my-4 flex min-w-0 flex-col gap-2" data-testid="codex-context-events">
-      {visibleEvents.map(event => {
-        const isRunning = event.status === 'pending' || event.status === 'streaming'
-        return (
-          <div key={event.id} className="flex min-w-0 items-center gap-3 text-xs text-text-muted">
-            <span className="h-px min-w-6 flex-1 bg-border" />
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <Archive className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
-              <span className="truncate">
-                {isRunning ? t('codex_context.compacting') : t('codex_context.compacted')}
-              </span>
-            </span>
-            <span className="h-px min-w-6 flex-1 bg-border" />
-          </div>
-        )
-      })}
-    </div>
-  )
-}
 
 export function CodexMemoryCitations({
   citations,
@@ -182,11 +151,6 @@ function formatReferenceKind(
   const extension = fileExtension(path)
   if (!extension) return t('codex_references.kind')
   return t('codex_references.kind_with_extension', { extension: extension.toUpperCase() })
-}
-
-function isContextCompactionEvent(event: CodexContextEvent): boolean {
-  const type = event.type.toLowerCase().replace(/[_-]/g, '')
-  return type === 'contextcompaction'
 }
 
 function MemoryCitationEntryRow({

@@ -19,6 +19,7 @@ const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'dark:text-blue-300 dark:hover:text-blue-200',
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
+const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
 
 interface AssistantMarkdownProps {
   content: string
@@ -26,6 +27,8 @@ interface AssistantMarkdownProps {
 }
 
 export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProps) {
+  const displayContent = normalizeAssistantMarkdownContent(content)
+
   return (
     <div className="assistant-markdown min-w-0 overflow-x-hidden break-words">
       <ReactMarkdown
@@ -98,10 +101,14 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
           img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
         }}
       >
-        {content}
+        {displayContent}
       </ReactMarkdown>
     </div>
   )
+}
+
+function normalizeAssistantMarkdownContent(content: string): string {
+  return content.replace(CODEX_PLAN_TAG_PATTERN, '')
 }
 
 function formatMarkdownLineLabel(target: Extract<MarkdownLinkTarget, { kind: 'file' }>): string {

@@ -20,7 +20,8 @@ use super::{
     store::RuntimeWorkStore,
     transcript::{tool_block_from_notification, tool_update_from_notification},
     util::{
-        extract_text, integer_field, now_ms, raw_string_field, reasoning_content, string_field,
+        extract_text, integer_field, is_completed_plan_item, item_id, now_ms, raw_string_field,
+        reasoning_content, string_field,
     },
 };
 
@@ -140,6 +141,21 @@ impl CodexNotificationCacheMapper {
                     }
                 }
             }
+            "item/plan/delta" => {
+                if let Some(delta) =
+                    raw_string_field(params, "delta").filter(|delta| !delta.is_empty())
+                {
+                    append_runtime_assistant_process_delta(
+                        store,
+                        local_task_id,
+                        request,
+                        "plan",
+                        "plan",
+                        notification_item_id(params),
+                        delta,
+                    );
+                }
+            }
             "item/started" => {
                 self.observe_root_thread(params);
                 if self.is_subagent_delta(params) {
@@ -158,6 +174,11 @@ impl CodexNotificationCacheMapper {
                     self.agent_message_phases.forget_item(params);
                     return;
                 }
+                if let Some(text) = plan_item_text(params) {
+                    cache_runtime_assistant_plan_item(store, local_task_id, request, params, text);
+                    self.agent_message_phases.forget_item(params);
+                    return;
+                }
                 if let Some((block_id, updates)) = tool_update_from_notification(params) {
                     update_runtime_assistant_block(
                         store,
@@ -172,6 +193,9 @@ impl CodexNotificationCacheMapper {
             "thread/started" => {
                 self.observe_root_thread(params);
                 cache_runtime_thread_id(store, local_task_id, params);
+            }
+            "context/compaction" => {
+                cache_runtime_context_compaction(store, local_task_id, request, params)
             }
             "turn/completed" if is_root_codex_turn_event(params) => {
                 complete_runtime_assistant_message(store, local_task_id, request)
@@ -406,6 +430,51 @@ fn cache_runtime_assistant_block(
     });
 }
 
+fn cache_runtime_assistant_plan_item(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+    content: String,
+) {
+    let block_id = plan_block_id(params);
+    let process_item_id = notification_item_id(params);
+    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+        if let Some(block) = blocks.iter_mut().find(|block| {
+            block_identity(block).as_deref() == Some(block_id.as_str())
+                || process_block_accepts_delta_for_item(
+                    block,
+                    "plan",
+                    "plan",
+                    process_item_id.as_deref(),
+                )
+        }) {
+            if let Some(object) = block.as_object_mut() {
+                object.insert("id".to_owned(), Value::String(block_id.clone()));
+                object.insert("process_kind".to_owned(), Value::String("plan".to_owned()));
+                object.insert("content".to_owned(), Value::String(content));
+                object.insert("status".to_owned(), Value::String("done".to_owned()));
+            }
+            return;
+        }
+
+        let mut block = json!({
+            "id": block_id,
+            "type": "plan",
+            "process_kind": "plan",
+            "content": content,
+            "status": "done",
+            "timestamp": now_ms(),
+        });
+        if let Some(process_item_id) = process_item_id {
+            if let Some(object) = block.as_object_mut() {
+                object.insert("process_item_id".to_owned(), Value::String(process_item_id));
+            }
+        }
+        blocks.push(block);
+    });
+}
+
 fn update_runtime_assistant_block(
     store: &RuntimeWorkStore,
     local_task_id: &str,
@@ -548,6 +617,51 @@ fn mutate_existing_cached_assistant_message(
         link.updated_at = now_ms();
         set_runtime_handle_messages(&mut link.runtime_handle, messages);
     });
+}
+
+fn cache_runtime_context_compaction(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+) {
+    cache_runtime_assistant_block(
+        store,
+        local_task_id,
+        request,
+        context_compaction_block(params),
+    );
+}
+
+fn context_compaction_block(params: &Value) -> Value {
+    let block_id = item_id(params, "context_compaction");
+    json!({
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": now_ms(),
+    })
+}
+
+fn plan_item_text(params: &Value) -> Option<String> {
+    if !is_completed_plan_item(params) {
+        return None;
+    }
+    params
+        .get("item")
+        .and_then(extract_text)
+        .or_else(|| extract_text(params))
+}
+
+fn plan_block_id(params: &Value) -> String {
+    let item = params.get("item").unwrap_or(params);
+    let plan_item_id = string_field(params, "itemId")
+        .or_else(|| string_field(params, "item_id"))
+        .or_else(|| string_field(item, "id"))
+        .unwrap_or_else(|| item_id(item, "plan"));
+    format!("plan-{plan_item_id}")
 }
 
 fn merge_cached_message_fields(mut codex_message: Value, cached_message: &Value) -> Value {
@@ -918,7 +1032,7 @@ fn complete_open_process_blocks(blocks: &mut Vec<Value>) {
         let Some(block_type) = string_field(block, "type") else {
             continue;
         };
-        if !matches!(block_type.as_str(), "thinking" | "text")
+        if !matches!(block_type.as_str(), "thinking" | "text" | "plan")
             || !process_block_accepts_delta(block, &block_type)
         {
             continue;
@@ -1019,6 +1133,49 @@ mod tests {
         assert_eq!(messages[0]["blocks"][2]["tool_name"], "exec_command");
         assert_eq!(messages[0]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[0]["blocks"][2]["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_preserves_context_compaction_as_tool_block() {
+        let index_path = temp_index_path("context-compaction-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "id": "ctx-1",
+                    "type": "context_compacted"
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
+        assert_eq!(messages[0]["blocks"][0]["type"], "tool");
+        assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
+        assert_eq!(messages[0]["blocks"][0]["status"], "done");
 
         let _ = fs::remove_file(index_path);
     }
@@ -1248,6 +1405,117 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["content"], "Current directory: /tmp/project");
         assert_eq!(messages[0]["blocks"].as_array().map(Vec::len), Some(0));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_appends_completed_plan_item_as_plan_block() {
+        let index_path = temp_index_path("completed-plan-item");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "");
+        let blocks = messages[0]["blocks"]
+            .as_array()
+            .expect("plan block should be cached");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["id"], "plan-turn-1-plan");
+        assert_eq!(blocks[0]["type"], "plan");
+        assert_eq!(blocks[0]["status"], "done");
+        assert_eq!(blocks[0]["content"], "# Plan\n\n- Inspect the repo.");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_updates_streaming_plan_block_on_completion() {
+        let index_path = temp_index_path("streaming-plan-item");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/plan/delta",
+                "params": {
+                    "itemId": "turn-1-plan",
+                    "delta": "# Plan\n"
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let blocks = messages[0]["blocks"]
+            .as_array()
+            .expect("plan block should be cached");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["id"], "plan-turn-1-plan");
+        assert_eq!(blocks[0]["type"], "plan");
+        assert_eq!(blocks[0]["process_kind"], "plan");
+        assert_eq!(blocks[0]["status"], "done");
+        assert_eq!(blocks[0]["content"], "# Plan\n\n- Inspect the repo.");
 
         let _ = fs::remove_file(index_path);
     }

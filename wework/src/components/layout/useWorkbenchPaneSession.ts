@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   findActiveAssistantMessage,
@@ -9,9 +10,19 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import {
+  applyRequestUserInputResponseToMessages,
+  requestUserInputPayloadKey,
+  requestUserInputResponseKey,
+} from '@/components/chat/requestUserInputMessages'
+import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
   ModelOptions,
+  RequestUserInputResponse,
+  RuntimeGoal,
+  RuntimeGoalCreateInput,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -37,6 +48,12 @@ interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
+  runtimeGoalRequest?: boolean
+}
+
+interface SendRequestUserInputResponseOptions {
+  appendUserMessage?: boolean
+  forceDefaultCollaborationMode?: boolean
 }
 
 interface LoadedTranscriptRange {
@@ -44,8 +61,15 @@ interface LoadedTranscriptRange {
   end: number
 }
 
+interface PendingRuntimeGoalState {
+  goal: RuntimeGoal
+  targetKey: string | null
+  targetIdentityKey: string | null
+}
+
 const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
+const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
@@ -53,6 +77,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     projectChat,
     loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,
+    getRuntimeGoal,
+    setRuntimeGoal,
+    clearRuntimeGoal,
+    setWorkbenchError,
     sendRuntimePaneMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
@@ -64,6 +92,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [waitingForAssistant, setWaitingForAssistant] = useState(false)
+  const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
   const [transcriptLoading, setTranscriptLoading] = useState(() => Boolean(currentRuntimeTask))
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
@@ -71,6 +102,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
+  const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
+  const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
+  const [goalDraftActive, setGoalDraftActive] = useState(false)
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
   const loadRuntimeTranscriptForPaneRef = useRef(loadRuntimeTranscriptForPane)
   const subscribeRuntimeTaskStreamRef = useRef(subscribeRuntimeTaskStream)
@@ -110,11 +144,30 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const activeAssistantMessage = useMemo(() => findActiveAssistantMessage(messages), [messages])
   const hasActiveAssistant = Boolean(activeAssistantMessage)
   const busy = sending || waitingForAssistant || hasActiveAssistant
+  const goal = useMemo(() => {
+    const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
+    if (visibleThreadGoal) return visibleThreadGoal
+    if (!pendingGoalState) return null
+    if (!runtimeTaskLoadTarget && isUnboundPendingGoalState(pendingGoalState)) {
+      return visibleRuntimeGoal(pendingGoalState.goal)
+    }
+    if (
+      runtimeTaskLoadTarget &&
+      isPendingGoalVisibleForRuntimeTarget(pendingGoalState, runtimeTaskLoadTarget.address)
+    ) {
+      return visibleRuntimeGoal(pendingGoalState.goal)
+    }
+    return null
+  }, [pendingGoalState, runtimeTaskLoadTarget, threadGoal])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  useEffect(() => {
+    setAnsweredRequestUserInputIds(new Set())
+  }, [runtimeTaskLoadTarget?.key])
 
   useEffect(() => {
     loadedTranscriptRangesRef.current = loadedTranscriptRanges
@@ -131,6 +184,54 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     refreshWorkListsRef.current = refreshWorkLists
   }, [refreshWorkLists])
+
+  useEffect(() => {
+    if (!runtimeTaskLoadTarget) {
+      setThreadGoal(null)
+      return
+    }
+
+    const seededGoal = getRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
+    if (seededGoal) {
+      setPendingGoalState(current =>
+        current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+          ? current
+          : seededGoal
+      )
+    }
+
+    let cancelled = false
+    setThreadGoal(null)
+    void getRuntimeGoal(runtimeTaskLoadTarget.address)
+      .then(response => {
+        if (!cancelled) {
+          const loadedGoal = response.accepted ? response.goal : null
+          setThreadGoal(loadedGoal)
+          if (loadedGoal) {
+            clearRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
+            setPendingGoalState(current =>
+              current &&
+              isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+                ? null
+                : current
+            )
+          }
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setThreadGoal(null)
+          console.error('[Wework] Runtime goal load failed', {
+            address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
+            error,
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [getRuntimeGoal, runtimeTaskLoadTarget])
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
@@ -234,6 +335,26 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onAssistantSettled: () => {
         setWaitingForAssistant(false)
         setSubagentStatuses(markRuntimeSubagentsSettled)
+        void getRuntimeGoal(address)
+          .then(response => {
+            const loadedGoal = response.accepted ? response.goal : null
+            setThreadGoal(loadedGoal)
+            if (loadedGoal) {
+              clearRuntimePaneGoalSeed(address)
+              setPendingGoalState(current =>
+                current &&
+                isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+                  ? null
+                  : current
+              )
+            }
+          })
+          .catch(error => {
+            console.error('[Wework] Runtime goal refresh failed', {
+              address: runtimeAddressDebug(address),
+              error,
+            })
+          })
       },
       onRefreshWorkLists: () => {
         void refreshWorkListsRef.current().catch(() => undefined)
@@ -241,9 +362,28 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onSubagentActivity: activity => {
         setSubagentStatuses(current => updateRuntimeSubagentStatuses(current, activity))
       },
+      onRuntimeGoalUpdated: payload => {
+        const loadedGoal = payload.goal ?? null
+        setThreadGoal(loadedGoal)
+        clearRuntimePaneGoalSeed(address)
+        setPendingGoalState(current =>
+          current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+            ? null
+            : current
+        )
+      },
+      onRuntimeGoalCleared: () => {
+        setThreadGoal(null)
+        clearRuntimePaneGoalSeed(address)
+        setPendingGoalState(current =>
+          current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+            ? null
+            : current
+        )
+      },
     })
     return unsubscribe
-  }, [dispatchMessages, runtimeTaskLoadTarget])
+  }, [dispatchMessages, getRuntimeGoal, runtimeTaskLoadTarget])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (!runtimeTaskLoadTarget || !transcriptBeforeCursor || transcriptLoadingMoreBefore) return
@@ -347,19 +487,50 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [dispatchMessages, runtimeTaskLoadTarget]
   )
 
-  const getRuntimeModelFields = useCallback(() => {
-    const selectedModel = projectChat.selectedModel ?? resolveAutomaticModel(projectChat.models)
-    return selectedModelExecutionFields(selectedModel, projectChat.selectedModelOptions)
-  }, [projectChat.models, projectChat.selectedModel, projectChat.selectedModelOptions])
+  const getRuntimeModelFields = useCallback(
+    (modelOptionsOverride?: ModelOptions) => {
+      const selectedModel =
+        projectChat.getSelectedModel?.() ??
+        projectChat.selectedModel ??
+        resolveAutomaticModel(projectChat.models)
+      const selectedModelOptions =
+        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      return selectedModelExecutionFields(selectedModel, {
+        ...selectedModelOptions,
+        ...modelOptionsOverride,
+      })
+    },
+    [projectChat]
+  )
 
   const appendLocalUserMessage = useCallback(
-    (content: string, attachments?: Attachment[]) => {
+    (content: string, attachments?: Attachment[], options?: CreateLocalUserMessageOptions) => {
       dispatchMessages({
         type: 'user_added',
-        message: createLocalUserMessage(content, attachments),
+        message: createLocalUserMessage(content, attachments, options),
       })
     },
     [dispatchMessages]
+  )
+
+  const applyLocalRequestUserInputResponse = useCallback(
+    (response: RequestUserInputResponse) => {
+      setMessages(currentMessages => {
+        const nextMessages = applyRequestUserInputResponseToMessages(currentMessages, response)
+        if (currentRuntimeTask) {
+          snapshotRuntimePaneMessages(currentRuntimeTask, nextMessages)
+          debugRuntimePaneMessageFlow('request-user-input-response-applied', {
+            address: runtimeAddressDebug(currentRuntimeTask),
+            requestUserInputKey: requestUserInputResponseKey(response),
+            previousCount: currentMessages.length,
+            nextCount: nextMessages.length,
+            nextMessages: summarizeWorkbenchMessages(nextMessages),
+          })
+        }
+        return nextMessages
+      })
+    },
+    [currentRuntimeTask]
   )
 
   const sendRuntimeMessage = useCallback(
@@ -367,7 +538,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (!currentRuntimeTask) return false
 
       setWaitingForAssistant(true)
-      appendLocalUserMessage(message.content, message.attachments)
+      appendLocalUserMessage(message.content, message.attachments, {
+        runtimeGoalRequest: message.runtimeGoalRequest,
+      })
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
@@ -378,9 +551,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           ? {
               modelId: message.modelId,
               modelType: message.modelType,
-              ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
             }
           : {}),
+        ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       })
@@ -390,6 +563,106 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return sent
     },
     [appendLocalUserMessage, currentRuntimeTask, sendRuntimePaneMessage]
+  )
+
+  const sendRequestUserInputResponse = useCallback(
+    async (
+      response: RequestUserInputResponse,
+      options: SendRequestUserInputResponseOptions = {}
+    ): Promise<boolean> => {
+      if (!currentRuntimeTask) return false
+
+      const message = requestUserInputResponseText(response)
+      const requestUserInputKey = requestUserInputResponseKey(response)
+      setWaitingForAssistant(true)
+      const runtimeModelOverride = options.forceDefaultCollaborationMode
+        ? { collaborationMode: 'default' }
+        : undefined
+      if (options.forceDefaultCollaborationMode) {
+        projectChat.setSelectedModelOption('collaborationMode', 'default')
+      }
+      if (options.appendUserMessage) {
+        appendLocalUserMessage(message)
+      }
+      if (requestUserInputKey) {
+        setAnsweredRequestUserInputIds(current => {
+          if (current.has(requestUserInputKey)) return current
+          const next = new Set(current)
+          next.add(requestUserInputKey)
+          return next
+        })
+      }
+      applyLocalRequestUserInputResponse(response)
+      const runtimeModelFields = options.appendUserMessage
+        ? getRuntimeModelFields(runtimeModelOverride)
+        : {}
+      const sent = await sendRuntimePaneMessage({
+        address: currentRuntimeTask,
+        message,
+        ...runtimeModelFields,
+        ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
+      })
+      if (!sent) {
+        setWaitingForAssistant(false)
+        if (requestUserInputKey) {
+          setAnsweredRequestUserInputIds(current => {
+            if (!current.has(requestUserInputKey)) return current
+            const next = new Set(current)
+            next.delete(requestUserInputKey)
+            return next
+          })
+        }
+      }
+      return sent
+    },
+    [
+      appendLocalUserMessage,
+      applyLocalRequestUserInputResponse,
+      currentRuntimeTask,
+      getRuntimeModelFields,
+      projectChat,
+      sendRuntimePaneMessage,
+    ]
+  )
+
+  const ignoreRequestUserInput = useCallback(
+    async (payload: RequestUserInputPayload) => {
+      const requestUserInputKey = requestUserInputPayloadKey(payload)
+      if (requestUserInputKey) {
+        setAnsweredRequestUserInputIds(current => {
+          if (current.has(requestUserInputKey)) return current
+          const next = new Set(current)
+          next.add(requestUserInputKey)
+          return next
+        })
+      }
+
+      if (!currentRuntimeTask) {
+        setWaitingForAssistant(false)
+        return
+      }
+
+      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      setWaitingForAssistant(false)
+      if (!cancelled) {
+        if (requestUserInputKey) {
+          setAnsweredRequestUserInputIds(current => {
+            if (!current.has(requestUserInputKey)) return current
+            const next = new Set(current)
+            next.delete(requestUserInputKey)
+            return next
+          })
+        }
+        return
+      }
+
+      if (!activeAssistantMessage) return
+
+      dispatchMessages({
+        type: 'assistant_cancelled',
+      })
+    },
+    [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages]
   )
 
   useEffect(() => {
@@ -423,7 +696,131 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const submittedInput = input.trim()
     const currentAttachments = projectChat.attachments
     const hasCodeComments = codeCommentContexts.length > 0
-    if (!submittedInput && currentAttachments.length === 0 && !hasCodeComments) {
+
+    if (goalDraftActive) {
+      if (!submittedInput) {
+        setWorkbenchError(i18n.t('workbench.goal_objective_required'))
+        return
+      }
+      if (hasCodeComments) {
+        setWorkbenchError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
+        return
+      }
+
+      setInput('')
+      setSending(true)
+      try {
+        if (currentRuntimeTask) {
+          const response = await setRuntimeGoal({
+            address: currentRuntimeTask,
+            objective: submittedInput,
+            status: 'active',
+          })
+          if (!response.accepted) {
+            setWorkbenchError(response.error || i18n.t('workbench.goal_set_failed'))
+            return
+          }
+          setThreadGoal(response.goal)
+          setGoalDraftActive(false)
+          const queuedMessage: RuntimePaneQueuedMessage = {
+            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+            content: submittedInput,
+            status: 'queued',
+            createdAt: new Date().toISOString(),
+            attachments: currentAttachments,
+            runtimeGoalRequest: true,
+            ...getRuntimeModelFields(),
+          }
+
+          projectChat.resetAttachments()
+          if (busy) {
+            setQueuedMessages(messages => [...messages, queuedMessage])
+            return
+          }
+
+          const sent = await sendRuntimeMessage(queuedMessage)
+          if (sent) {
+            setCodeCommentContexts([])
+          }
+          return
+        }
+
+        const draftGoal = createPendingRuntimeGoal(submittedInput)
+        const initialGoal = runtimeGoalCreateInput(draftGoal)
+        setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
+        setGoalDraftActive(false)
+        setWaitingForAssistant(true)
+        const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
+          runtimeGoalRequest: true,
+        })
+        let seededGoalAddress: RuntimeTaskAddress | null = null
+        const sent = await sendCurrentInput(submittedInput, {
+          initialGoal,
+          onRuntimeTaskOptimisticOpen: (address, context) => {
+            setPendingGoalState(current =>
+              current
+                ? {
+                    ...current,
+                    targetKey: runtimeTranscriptPaneKey(address),
+                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+                  }
+                : current
+            )
+            const previousMessages = context?.previousAddress
+              ? getRuntimePaneMessageSnapshot(context.previousAddress)
+              : []
+            seedRuntimePaneGoal(address, draftGoal)
+            seededGoalAddress = address
+            const seededMessages =
+              previousMessages.length > 0 ? previousMessages : [optimisticMessage]
+            debugRuntimePaneMessageFlow('seed-goal-first-open', {
+              address: runtimeAddressDebug(address),
+              previousAddress: context?.previousAddress
+                ? runtimeAddressDebug(context.previousAddress)
+                : null,
+              previousCount: previousMessages.length,
+              seededCount: seededMessages.length,
+              seededMessages: summarizeWorkbenchMessages(seededMessages),
+            })
+            seedRuntimePaneMessages(address, seededMessages)
+          },
+        })
+        if (sent) {
+          if (!isRuntimeTaskAddress(sent)) {
+            appendLocalUserMessage(submittedInput, currentAttachments, {
+              runtimeGoalRequest: true,
+            })
+          } else {
+            setPendingGoalState(current =>
+              current
+                ? {
+                    ...current,
+                    targetKey: runtimeTranscriptPaneKey(sent),
+                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
+                  }
+                : current
+            )
+          }
+        } else {
+          if (seededGoalAddress) {
+            clearRuntimePaneGoalSeed(seededGoalAddress)
+          }
+          setGoalDraftActive(true)
+          setPendingGoalState(null)
+          setWaitingForAssistant(false)
+        }
+        return
+      } finally {
+        setSending(false)
+      }
+    }
+
+    const pendingInitialGoal =
+      !currentRuntimeTask && pendingGoalState && isUnboundPendingGoalState(pendingGoalState)
+        ? runtimeGoalCreateInput(pendingGoalState.goal)
+        : null
+    const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
+    if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
       void sendCurrentInput('', { codeCommentContexts })
       return
     }
@@ -433,13 +830,32 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     try {
       if (!currentRuntimeTask) {
         setWaitingForAssistant(true)
-        const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments)
-        const sent = await sendCurrentInput(submittedInput, {
+        const optimisticMessage = createLocalUserMessage(
+          effectiveSubmittedInput,
+          currentAttachments,
+          { runtimeGoalRequest: Boolean(pendingInitialGoal) }
+        )
+        const sent = await sendCurrentInput(effectiveSubmittedInput, {
           codeCommentContexts,
+          initialGoal: pendingInitialGoal,
           onRuntimeTaskOptimisticOpen: (address, context) => {
+            if (pendingInitialGoal) {
+              setPendingGoalState(current =>
+                current
+                  ? {
+                      ...current,
+                      targetKey: runtimeTranscriptPaneKey(address),
+                      targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+                    }
+                  : current
+              )
+            }
             const previousMessages = context?.previousAddress
               ? getRuntimePaneMessageSnapshot(context.previousAddress)
               : []
+            if (pendingInitialGoal && pendingGoalState) {
+              seedRuntimePaneGoal(address, pendingGoalState.goal)
+            }
             const seededMessages =
               previousMessages.length > 0 ? previousMessages : [optimisticMessage]
             debugRuntimePaneMessageFlow('seed-optimistic-open', {
@@ -456,7 +872,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         })
         if (sent) {
           if (!isRuntimeTaskAddress(sent)) {
-            appendLocalUserMessage(submittedInput, currentAttachments)
+            appendLocalUserMessage(effectiveSubmittedInput, currentAttachments, {
+              runtimeGoalRequest: Boolean(pendingInitialGoal),
+            })
+          } else if (pendingInitialGoal) {
+            setPendingGoalState(current =>
+              current
+                ? {
+                    ...current,
+                    targetKey: runtimeTranscriptPaneKey(sent),
+                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
+                  }
+                : current
+            )
           }
           setCodeCommentContexts([])
         } else {
@@ -497,12 +925,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     busy,
     codeCommentContexts,
     currentRuntimeTask,
+    goalDraftActive,
     getRuntimeModelFields,
     input,
+    pendingGoalState,
     projectChat,
     queuedMessages.length,
     sendCurrentInput,
     sendRuntimeMessage,
+    setRuntimeGoal,
+    setWorkbenchError,
   ])
 
   const addCodeComment = useCallback((context: CodeCommentContext) => {
@@ -575,9 +1007,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (activeAssistantMessage) {
         const action: RuntimePaneMessageAction = {
           type: 'assistant_cancelled',
-          messageId: activeAssistantMessage.id,
-          turnId: activeAssistantMessage.turnId,
-          content: activeAssistantMessage.content,
         }
         dispatchMessages(action)
       }
@@ -614,6 +1043,94 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     })
   }, [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages])
 
+  const setCurrentGoal = useCallback(async () => {
+    projectChat.setSelectedModelOption('collaborationMode', 'default')
+    setGoalDraftActive(true)
+    return true
+  }, [projectChat])
+
+  const cancelGoalDraft = useCallback(() => {
+    setGoalDraftActive(false)
+  }, [])
+
+  const editCurrentGoal = useCallback(() => {
+    if (!goal) return
+    setInput(goal.objective)
+    setGoalDraftActive(true)
+  }, [goal])
+
+  const updateCurrentGoalStatus = useCallback(
+    async (status: RuntimeGoal['status']) => {
+      if (!goal) return false
+      if (!currentRuntimeTask) {
+        setPendingGoalState(current =>
+          current
+            ? {
+                ...current,
+                goal: {
+                  ...current.goal,
+                  status,
+                  updatedAt: Date.now(),
+                },
+              }
+            : current
+        )
+        return true
+      }
+
+      try {
+        const response = await setRuntimeGoal({
+          address: currentRuntimeTask,
+          status,
+        })
+        if (!response.accepted) return false
+
+        setThreadGoal(response.goal)
+        return true
+      } catch (error) {
+        console.error('[Wework] Runtime goal status update failed', {
+          address: runtimeAddressDebug(currentRuntimeTask),
+          status,
+          error,
+        })
+        return false
+      }
+    },
+    [currentRuntimeTask, goal, setRuntimeGoal]
+  )
+
+  const pauseCurrentGoal = useCallback(
+    () => updateCurrentGoalStatus('paused'),
+    [updateCurrentGoalStatus]
+  )
+
+  const resumeCurrentGoal = useCallback(
+    () => updateCurrentGoalStatus('active'),
+    [updateCurrentGoalStatus]
+  )
+
+  const clearCurrentGoal = useCallback(async () => {
+    if (!goal) return false
+    if (!currentRuntimeTask) {
+      setPendingGoalState(null)
+      return true
+    }
+
+    try {
+      const response = await clearRuntimeGoal(currentRuntimeTask)
+      if (!response.accepted) return false
+
+      setThreadGoal(null)
+      return true
+    } catch (error) {
+      console.error('[Wework] Runtime goal clear failed', {
+        address: runtimeAddressDebug(currentRuntimeTask),
+        error,
+      })
+      return false
+    }
+  }, [clearRuntimeGoal, currentRuntimeTask, goal])
+
   const cancelGuidanceMessage = useCallback(() => undefined, [])
 
   return {
@@ -625,15 +1142,20 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setInput,
     sending,
     waitingForAssistant,
+    answeredRequestUserInputIds,
     transcriptLoading,
     transcriptHasMoreBefore,
     transcriptLoadingMoreBefore,
     turnNavigation,
     subagentStatuses,
+    goal,
+    goalDraftActive,
     loadMoreTranscriptBefore,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
+    sendRequestUserInputResponse,
+    ignoreRequestUserInput,
     addCodeComment,
     clearCodeComments,
     cancelQueuedMessage,
@@ -641,6 +1163,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     editQueuedMessage,
     cancelGuidanceMessage,
     pauseCurrentResponse,
+    setCurrentGoal,
+    cancelGoalDraft,
+    editCurrentGoal,
+    pauseCurrentGoal,
+    resumeCurrentGoal,
+    clearCurrentGoal,
   }
 }
 
@@ -648,6 +1176,51 @@ export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.localTaskId}:${address.workspacePath ?? ''}`
+}
+
+function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
+  return `${address.deviceId}:${address.localTaskId}`
+}
+
+function isPendingGoalVisibleForRuntimeTarget(
+  pendingGoalState: PendingRuntimeGoalState,
+  address: RuntimeTaskAddress
+): boolean {
+  if (!pendingGoalState.targetKey && !pendingGoalState.targetIdentityKey) return true
+  return (
+    pendingGoalState.targetKey === runtimeTranscriptPaneKey(address) ||
+    pendingGoalState.targetIdentityKey === runtimeTranscriptPaneIdentityKey(address)
+  )
+}
+
+function isUnboundPendingGoalState(pendingGoalState: PendingRuntimeGoalState): boolean {
+  return !pendingGoalState.targetKey && !pendingGoalState.targetIdentityKey
+}
+
+function pendingRuntimeGoalState(
+  goal: RuntimeGoal,
+  address: RuntimeTaskAddress
+): PendingRuntimeGoalState {
+  return {
+    goal,
+    targetKey: runtimeTranscriptPaneKey(address),
+    targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+  }
+}
+
+function seedRuntimePaneGoal(address: RuntimeTaskAddress, goal: RuntimeGoal) {
+  runtimePaneGoalSeeds.set(
+    runtimeTranscriptPaneIdentityKey(address),
+    pendingRuntimeGoalState(goal, address)
+  )
+}
+
+function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoalState | null {
+  return runtimePaneGoalSeeds.get(runtimeTranscriptPaneIdentityKey(address)) ?? null
+}
+
+function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
+  runtimePaneGoalSeeds.delete(runtimeTranscriptPaneIdentityKey(address))
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -682,7 +1255,15 @@ function isRuntimeDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
 }
 
-function createLocalUserMessage(content: string, attachments?: Attachment[]): WorkbenchMessage {
+interface CreateLocalUserMessageOptions {
+  runtimeGoalRequest?: boolean
+}
+
+function createLocalUserMessage(
+  content: string,
+  attachments?: Attachment[],
+  options: CreateLocalUserMessageOptions = {}
+): WorkbenchMessage {
   return {
     id: `runtime-local-pane-${Date.now()}`,
     role: 'user',
@@ -690,6 +1271,7 @@ function createLocalUserMessage(content: string, attachments?: Attachment[]): Wo
     attachments,
     status: 'done',
     createdAt: new Date().toISOString(),
+    runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,
   }
 }
 
@@ -935,4 +1517,34 @@ function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RuntimeTaskAddress>
   return typeof candidate.deviceId === 'string' && typeof candidate.localTaskId === 'string'
+}
+
+function createPendingRuntimeGoal(objective: string): RuntimeGoal {
+  const now = Date.now()
+  return {
+    threadId: 'pending',
+    objective,
+    status: 'active',
+    tokenBudget: null,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function runtimeGoalCreateInput(goal: RuntimeGoal): RuntimeGoalCreateInput {
+  return {
+    objective: goal.objective,
+    status: goal.status,
+    tokenBudget: goal.tokenBudget,
+  }
+}
+
+function requestUserInputResponseText(response: RequestUserInputResponse): string {
+  const answers = Object.values(response.answers)
+    .flatMap(answer => answer.answers)
+    .map(answer => answer.trim())
+    .filter(Boolean)
+  return answers.length > 0 ? answers.join('\n') : '继续'
 }

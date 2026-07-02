@@ -287,6 +287,8 @@ vim .env.local  # Edit configuration
 pnpm run dev
 ```
 
+The repository root `pnpm-workspace.yaml` declares the dependency build-script allowlist required by pnpm and disables `node_modules` rebuild confirmation in non-interactive environments. Developers and Git hooks should run `pnpm install` from the repository root and should not maintain separate `approve-builds` settings in subdirectories.
+
 ### Step 6: Install Executor Manager
 
 [Local Development](/executor_manager/README.md)

@@ -70,6 +70,7 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RetrievalScope,
 )
 
 # OpenAI Request Converter
@@ -164,6 +165,7 @@ __all__ = [
     "coerce_search_hints",
     "RemoteKnowledgeBaseQueryConfig",
     "RemoteKnowledgeBaseRetrievalOverride",
+    "RetrievalScope",
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",
     "RemotePurgeKnowledgeIndexRequest",

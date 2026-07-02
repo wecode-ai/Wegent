@@ -39,6 +39,7 @@ import {
   getRuntimeTaskWorkspaceTitle,
   getRuntimeSidebarTaskItems,
   getVisibleRuntimeSidebarTaskItems,
+  hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
@@ -505,9 +506,10 @@ export function MobileDrawer({
                             taskItems,
                             runtimeTaskVisibleLimit
                           )
-                          const canCollapseTasks =
-                            taskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT &&
-                            visibleTaskItems.length > RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+                          const canCollapseTasks = hasExpandedRuntimeSidebarTaskItems(
+                            taskItems,
+                            runtimeTaskVisibleLimit
+                          )
 
                           return (
                             <>

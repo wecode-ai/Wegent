@@ -22,9 +22,13 @@ import {
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
-import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
+import {
+  TITLEBAR_ACTIONS_PORTAL_ID,
+  TITLEBAR_RIGHT_PANEL_PORTAL_ID,
+} from '@/components/topnav/TitlebarActionsPortal'
+import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
@@ -413,10 +417,20 @@ describe('DesktopWorkbenchLayout', () => {
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
     tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID)?.remove()
+    screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
+    const titlebarRightWorkspaceZone = document.createElement('div')
+    titlebarRightWorkspaceZone.dataset.testid = 'titlebar-right-workspace-zone'
+    titlebarRightWorkspaceZone.className =
+      'pointer-events-none absolute right-0 top-[3px] z-chrome flex h-[calc(100%-3px)] items-center'
     const titlebarActions = document.createElement('div')
     titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
     titlebarActions.dataset.testid = 'titlebar-actions'
-    document.body.appendChild(titlebarActions)
+    const titlebarRightPanel = document.createElement('div')
+    titlebarRightPanel.id = TITLEBAR_RIGHT_PANEL_PORTAL_ID
+    titlebarRightPanel.dataset.testid = 'titlebar-right-panel'
+    titlebarRightWorkspaceZone.append(titlebarRightPanel, titlebarActions)
+    document.body.appendChild(titlebarRightWorkspaceZone)
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
     window.history.pushState({}, '', '/')
@@ -560,7 +574,37 @@ describe('DesktopWorkbenchLayout', () => {
       ),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
+    onRequestUserInputSubmit: vi.fn().mockResolvedValue(true),
     onLogout: vi.fn(),
+  }
+
+  function createPendingRequestUserInputMessage(): WorkbenchMessage {
+    return {
+      id: 'assistant-request',
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      createdAt: '2026-06-30T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'request-1',
+          type: 'tool',
+          toolName: 'request_user_input',
+          status: 'pending',
+          renderPayload: {
+            kind: 'request_user_input',
+            request_id: 42,
+            questions: [
+              {
+                id: 'implement',
+                question: '执行此计划?',
+                options: [{ label: '是的，执行此计划' }],
+              },
+            ],
+          },
+        },
+      ],
+    }
   }
 
   type LegacyDesktopWorkbenchLayoutProps = {
@@ -569,6 +613,7 @@ describe('DesktopWorkbenchLayout', () => {
     queuedMessages?: unknown[]
     guidanceMessages?: unknown[]
     codeCommentContexts?: unknown[]
+    subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
     currentRuntimeTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
@@ -612,6 +657,7 @@ describe('DesktopWorkbenchLayout', () => {
     onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
     onInputChange?: (input: string) => void
     onSend?: () => void | Promise<void>
+    onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
     onLogout?: () => void
   }
 
@@ -857,11 +903,16 @@ describe('DesktopWorkbenchLayout', () => {
       transcriptLoading: Boolean(props.isRuntimeTranscriptLoading),
       transcriptHasMoreBefore: Boolean(props.runtimeTranscriptHasMoreBefore),
       transcriptLoadingMoreBefore: Boolean(props.isRuntimeTranscriptLoadingMore),
+      subagentStatuses: props.subagentStatuses ?? [],
       turnNavigation: [],
       loadMoreTranscriptBefore: vi.fn().mockResolvedValue(undefined),
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
       loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
       send: props.onSend ?? baseProps.onSend,
+      sendRequestUserInputResponse:
+        props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
+      ignoreRequestUserInput: vi.fn(),
+      answeredRequestUserInputIds: new Set(),
       addCodeComment: vi.fn(),
       clearCodeComments: vi.fn(),
       cancelQueuedMessage: vi.fn(),
@@ -942,6 +993,140 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  test('submits implementation plan confirmation as a user message response', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          implement: { answers: ['是的，执行此计划'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('ignores the implementation plan confirmation through the pane session', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
+    )
+  })
+
+  test('does not open assistant markdown as a plan in the right workspace panel', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'assistant-plan',
+            role: 'assistant',
+            content: [
+              '# Wegent 体验计划',
+              '',
+              '## Summary',
+              '- 优先修复流式展示。',
+              '',
+              '## Test Plan',
+              '- 运行相关前端测试。',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-30T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-expand-button')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent 体验计划')).toBeInTheDocument()
+  })
+
+  test('opens explicit assistant plan blocks in the right workspace panel', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-30T00:00:01.000Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 1,
+                type: 'plan',
+                content: [
+                  '# Wegent 体验计划',
+                  '',
+                  '## Summary',
+                  '- 优先修复流式展示。',
+                  '',
+                  '## Test Plan',
+                  '- 运行相关前端测试。',
+                ].join('\n'),
+                status: 'done',
+                createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('Wegent 体验计划')
+
+    await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('Wegent 体验计划')
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('运行相关前端测试')
+  })
+
   test('renders project-specific empty prompt after selecting a project', () => {
     render(
       <DesktopWorkbenchLayout
@@ -985,7 +1170,11 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
+    const desktopContent = screen.getByTestId('desktop-workbench-content')
+    expect(desktopContent).toHaveClass('pt-11')
+    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe(
+      '136px'
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-x-hidden',
@@ -1020,6 +1209,39 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('renders subagent status below the top bar without shifting messages', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        subagentStatuses={[
+          {
+            id: 'subagent-1',
+            agentId: 'thread:019f17ae-8295-7072-84e0-94ca0ffa96e5',
+            agentPath: 'thread:019f17ae-8295-7072-84e0-94ca0ffa96e5',
+            agentName: 'worker',
+            status: 'running',
+            updatedAtMs: 12345,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    const statusRow = screen.getByTestId('workbench-subagent-status-row')
+    expect(statusRow).toContainElement(screen.getByTestId('subagent-status-toggle-button'))
+    expect(statusRow).toHaveClass('right-3', 'top-14')
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
@@ -1417,7 +1639,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.scroll(scroller)
 
     expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
-      'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)]',
+      'bottom-[var(--desktop-floating-composer-clearance)]',
       'z-popover'
     )
   })
@@ -1490,7 +1712,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('desktop-sidebar-hover-edge')).toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
     expect(document.body.style.cursor).toBe('')
     expect(document.body.style.userSelect).toBe('')
   })
@@ -1532,13 +1754,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
   })
 
+  test('expands an auto-collapsed sidebar from the titlebar toggle request', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 920,
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '0px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+
+    let handled = false
+    act(() => {
+      handled = requestDesktopSidebarToggle()
+    })
+
+    expect(handled).toBe(true)
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '240px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+  })
+
   test('collapses and expands the sidebar', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
-    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -1565,7 +1809,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
     )
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5', 'ml-1.5')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass(
       'transition-[margin]',
       'duration-[300ms]',
@@ -1595,7 +1840,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const main = getDesktopWorkbenchMainElement()
     const preview = screen.getByTestId('desktop-sidebar-preview')
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('desktop-sidebar-hover-edge')).toHaveClass('w-4')
     expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
 
@@ -1603,7 +1848,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
 
     fireEvent.pointerEnter(preview)
 
@@ -1612,7 +1857,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerLeave(preview)
 
     expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
-    expect(main).toHaveClass('ml-1.5')
+    expect(main).not.toHaveClass('ml-1.5')
   })
 
   test('keeps sidebar controls out of the page chrome in Tauri', async () => {
@@ -1630,8 +1875,56 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('environment-info-button')
     )
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('mb-1.5', 'mr-1.5')
-    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
+  })
+
+  test('keeps a collapsed Tauri task title clear of titlebar controls', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [
+              {
+                deviceId: 'device-1',
+                deviceName: 'Runtime Device',
+                workspacePath: '/workspace/project-alpha',
+                workspaceKind: 'workspace',
+                localTasks: [
+                  {
+                    localTaskId: 'runtime-empty',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Fix pane title',
+                    runtime: 'codex',
+                    createdAt: '2026-06-20T00:00:00.000Z',
+                    updatedAt: '2026-06-20T00:00:00.000Z',
+                    running: true,
+                  },
+                ],
+              },
+            ],
+            totalLocalTasks: 1,
+          },
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Fix pane title')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -2786,9 +3079,9 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-8', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-9', 'w-9')
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
   test('toggles an empty project task list without selecting the project', async () => {
@@ -2897,16 +3190,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveAttribute('role', 'separator')
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
       'absolute',
-      'w-5',
+      'bottom-[-6px]',
+      'top-0',
+      'w-1.5',
       '-translate-x-1/2',
       'cursor-col-resize'
     )
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '422px' })
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '640px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
@@ -2916,8 +3212,8 @@ describe('DesktopWorkbenchLayout', () => {
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
 
-    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 640 })
-    fireEvent.pointerMove(document, { clientX: 580 })
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    fireEvent.pointerMove(document, { clientX: 582 })
     fireEvent.pointerUp(document)
 
     expect(content).toHaveStyle({ width: '580px' })
@@ -3005,19 +3301,19 @@ describe('DesktopWorkbenchLayout', () => {
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
 
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '640px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
 
-    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 640 })
-    fireEvent.pointerMove(document, { clientX: 700 })
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    fireEvent.pointerMove(document, { clientX: 702 })
 
     expect(content).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
     expect(content).toHaveStyle({ width: '700px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
 
-    fireEvent.pointerMove(document, { clientX: 900 })
+    fireEvent.pointerMove(document, { clientX: 902 })
 
     await waitFor(() => {
       expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
@@ -3030,8 +3326,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(content).toHaveStyle({ width: '640px' })
-    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
   })
 
@@ -3196,15 +3492,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(content).toHaveClass(
       'flex-none',
-      'border-r',
       'transition-[width]',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
+    expect(content).not.toHaveClass('border-r')
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '640px' })
-      expect(topBar).toHaveStyle({ width: '640px' })
-      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 640px)' })
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(topBar).toHaveStyle({ width: '420px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(rightPanelShell).toHaveClass('opacity-100')
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
@@ -3214,7 +3510,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-7')
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-8', 'gap-1')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
       'min-w-0',
       'flex-1',
@@ -3224,17 +3520,14 @@ describe('DesktopWorkbenchLayout', () => {
       'ease-out'
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]'
-    )
-    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]'
+      'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(72rem,calc(100%_-_1.5rem))]',
+      'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_2rem)]',
       'px-0'
     )
   })
@@ -3253,22 +3546,117 @@ describe('DesktopWorkbenchLayout', () => {
     expect(fileTab).toHaveAttribute('role', 'tab')
     expect(fileTab).toHaveAttribute('aria-selected', 'true')
     expect(fileTab).toHaveTextContent(/^文件$/)
-    expect(fileTab).toHaveClass('group')
-    const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
+    expect(fileTab).toHaveClass('group/tab')
+    const closeButton = within(fileTab).getByTestId('right-workspace-file-tab-close-button')
+    expect(closeButton.parentElement).toHaveClass(
+      'absolute',
+      'right-1',
+      'opacity-0',
+      'group-hover/tab:opacity-100',
+      'focus-within:opacity-100'
+    )
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
-      'absolute',
-      'right-1',
       'rounded-full',
-      'opacity-0',
-      'group-hover:opacity-100',
-      'focus-visible:opacity-100'
+      'hover:bg-black/70',
+      'hover:text-white'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('moves right workspace tabs into the titlebar in Tauri', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
+        'absolute',
+        'right-0',
+        'top-[3px]',
+        'h-[calc(100%-3px)]'
+      )
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('border-l')
+      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass('after:bg-border')
+      const tabbar = screen.getByTestId('right-workspace-tabbar')
+      expect(titlebarRightPanel).toContainElement(tabbar)
+      expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+      expect(titlebarRightPanel).toContainElement(
+        screen.getByTestId('right-workspace-new-tab-button')
+      )
+      expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
+        'h-[38px]',
+        'bg-background'
+      )
+      expect(screen.getByTestId('right-workspace-titlebar-spacer')).not.toHaveClass('border-b')
+      expect(
+        document.documentElement.style.getPropertyValue('--right-workspace-titlebar-width')
+      ).toBe('580px')
+
+      await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+      expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
+  test('removes right workspace tabs from the titlebar when the Tauri panel is closed', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+      const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+      expect(rightPanelShell).toHaveStyle({ width: '0px' })
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+      expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+      expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
   })
 
   test('right workspace panel restores the previous tab after closing and reopening', async () => {
@@ -3403,18 +3791,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(reviewTab).toHaveAttribute('aria-selected', 'true')
     expect(reviewTab).toHaveTextContent('审查')
     expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
-    const closeButton = within(reviewTab).getByTestId('close-right-workspace-panel-button')
+    const closeButton = within(reviewTab).getByTestId('right-workspace-review-tab-close-button')
+    expect(reviewTab).toHaveClass('group/tab')
+    expect(closeButton.parentElement).toHaveClass(
+      'absolute',
+      'right-1',
+      'opacity-0',
+      'group-hover/tab:opacity-100',
+      'focus-within:opacity-100'
+    )
     expect(closeButton).toHaveClass(
       'h-[18px]',
       'w-[18px]',
-      'absolute',
-      'right-1',
       'rounded-full',
-      'opacity-0',
       'hover:bg-black/70',
-      'hover:text-white',
-      'group-hover:opacity-100',
-      'focus-visible:opacity-100'
+      'hover:text-white'
     )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
@@ -3463,7 +3854,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(
       within(screen.getByTestId('right-workspace-review-tab')).getByTestId(
-        'close-right-workspace-panel-button'
+        'right-workspace-review-tab-close-button'
       )
     )
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))

@@ -306,12 +306,13 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
     let _wegent_workspace_root = EnvGuard::remove("WEGENT_WORKSPACE_ROOT");
     let _local_workspace_root = EnvGuard::remove("LOCAL_WORKSPACE_ROOT");
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 2201,
         subtask_id: 3212,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!([
             {
@@ -386,11 +387,13 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 86,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with task skill"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
@@ -457,11 +460,13 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     );
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: 87,
-        backend_url: Some(backend_url),
+        backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with bot skill"),
         bot: json!([{
@@ -807,6 +812,115 @@ PY
         .unwrap()
         .iter()
         .all(|matcher| matcher == "Write|Edit|MultiEdit|NotebookEdit"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_process_engine_writes_default_claude_settings_before_claude() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-default-settings-home");
+    let workspace_root = unique_dir("claude-default-settings-workspace-root");
+    let fake_claude = write_fake_executable(
+        "fake-claude-default-settings",
+        r#"#!/bin/sh
+settings="$CLAUDE_CONFIG_DIR/settings.json"
+python3 - "$settings" <<'PY'
+import json
+import sys
+
+settings_path = sys.argv[1]
+with open(settings_path, "r", encoding="utf-8") as handle:
+    settings = json.load(handle)
+payload = {
+    "includeCoAuthoredBy": settings.get("includeCoAuthoredBy"),
+    "skipDangerousModePermissionPrompt": settings.get("skipDangerousModePermissionPrompt"),
+    "env": settings.get("env", {}),
+}
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
+PY
+"#,
+    );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 86,
+        prompt: json!("inspect default settings"),
+        bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let content = match outcome {
+        ExecutionOutcome::Completed { content } => content,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let payload: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(payload["includeCoAuthoredBy"], true);
+    assert_eq!(payload["skipDangerousModePermissionPrompt"], false);
+    assert_eq!(
+        payload["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+        "0"
+    );
+    assert_eq!(payload["env"]["CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY"], "0");
+    assert_eq!(
+        payload["env"]["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"],
+        "0"
+    );
+    assert_eq!(payload["env"]["ENABLE_TOOL_SEARCH"], "true");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_process_engine_uses_process_env_for_claude_settings_env() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-settings-env-home");
+    let workspace_root = unique_dir("claude-settings-env-workspace-root");
+    let fake_claude = write_fake_executable(
+        "fake-claude-settings-env",
+        r#"#!/bin/sh
+settings="$CLAUDE_CONFIG_DIR/settings.json"
+python3 - "$settings" <<'PY'
+import json
+import sys
+
+settings_path = sys.argv[1]
+with open(settings_path, "r", encoding="utf-8") as handle:
+    settings = json.load(handle)
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(settings.get("env", {}), sort_keys=True)}]}}))
+PY
+"#,
+    );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _disable_traffic = EnvGuard::set("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
+    let _disable_survey = EnvGuard::set("CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY", "1");
+    let _disable_fallback = EnvGuard::set("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1");
+    let _tool_search = EnvGuard::set("ENABLE_TOOL_SEARCH", "false");
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 87,
+        prompt: json!("inspect process env settings"),
+        bot: json!([{"id": 327, "shell_type": "ClaudeCode"}]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let content = match outcome {
+        ExecutionOutcome::Completed { content } => content,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let env: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1");
+    assert_eq!(env["CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY"], "1");
+    assert_eq!(env["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"], "1");
+    assert_eq!(env["ENABLE_TOOL_SEARCH"], "false");
 }
 
 #[cfg(unix)]

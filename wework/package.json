@@ -14,6 +14,7 @@
     "build:ios": "bash scripts/build-ios-app.sh",
     "tauri:build": "tauri build",
     "lint": "eslint .",
+    "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

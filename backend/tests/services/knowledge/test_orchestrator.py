@@ -15,6 +15,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
 )
+from app.services.context import context_service
 from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
@@ -1288,14 +1289,12 @@ class TestKnowledgeOrchestrator:
 
         with (
             patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
-            patch(
-                "app.services.context.context_service.context_service"
-            ) as mock_ctx_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
             patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
         ):
             mock_svc.update_document_content.return_value = document
             mock_svc.get_knowledge_base.return_value = (kb, True)
-            mock_ctx_svc.delete_context.return_value = True
+            mock_delete_context.return_value = True
 
             result = orchestrator.update_document_content(
                 db=mock_db,
@@ -1307,7 +1306,7 @@ class TestKnowledgeOrchestrator:
         assert result["success"] is True
         # Reference cleared so reindex uses the freshly-overwritten source
         assert document.converted_attachment_id is None
-        mock_ctx_svc.delete_context.assert_called_once_with(
+        mock_delete_context.assert_called_once_with(
             db=mock_db, context_id=999, user_id=42
         )
         mock_db.commit.assert_called()
@@ -1330,14 +1329,12 @@ class TestKnowledgeOrchestrator:
 
         with (
             patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
-            patch(
-                "app.services.context.context_service.context_service"
-            ) as mock_ctx_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
             patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
         ):
             mock_svc.update_document_content.return_value = document
             mock_svc.get_knowledge_base.return_value = (kb, True)
-            mock_ctx_svc.delete_context.return_value = False  # physical delete failed
+            mock_delete_context.return_value = False  # physical delete failed
 
             result = orchestrator.update_document_content(
                 db=mock_db,
@@ -1349,7 +1346,7 @@ class TestKnowledgeOrchestrator:
         assert result["success"] is True
         # Reference cleared unconditionally — reindex must not see the stale id
         assert document.converted_attachment_id is None
-        mock_ctx_svc.delete_context.assert_called_once_with(
+        mock_delete_context.assert_called_once_with(
             db=mock_db, context_id=999, user_id=42
         )
         mock_schedule.assert_called_once()
@@ -1371,16 +1368,12 @@ class TestKnowledgeOrchestrator:
 
         with (
             patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
-            patch(
-                "app.services.context.context_service.context_service"
-            ) as mock_ctx_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
             patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
         ):
             mock_svc.update_document_content.return_value = document
             mock_svc.get_knowledge_base.return_value = (kb, True)
-            mock_ctx_svc.delete_context.side_effect = RuntimeError(
-                "storage unavailable"
-            )
+            mock_delete_context.side_effect = RuntimeError("storage unavailable")
 
             result = orchestrator.update_document_content(
                 db=mock_db,
@@ -1392,7 +1385,7 @@ class TestKnowledgeOrchestrator:
         assert result["success"] is True
         # Reference cleared unconditionally — reindex must not see the stale id
         assert document.converted_attachment_id is None
-        mock_ctx_svc.delete_context.assert_called_once_with(
+        mock_delete_context.assert_called_once_with(
             db=mock_db, context_id=999, user_id=42
         )
         mock_schedule.assert_called_once()

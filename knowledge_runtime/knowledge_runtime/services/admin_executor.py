@@ -10,14 +10,9 @@ import asyncio
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 
-from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_resolver import (
-    AdminResolvedConfig,
-    ConfigResolver,
-)
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -42,9 +37,8 @@ class AdminExecutor:
     - test_connection: Test storage backend connection
     """
 
-    def __init__(self, db: Session) -> None:
-        self._db = db
-        self._config_resolver = ConfigResolver()
+    def __init__(self, config_loader: RuntimeConfigLoader | None = None) -> None:
+        self._config_loader = config_loader or RuntimeConfigLoader()
 
     @trace_async(
         span_name="delete_document_index",
@@ -55,8 +49,7 @@ class AdminExecutor:
         request: RemoteDeleteDocumentIndexRequest,
     ) -> dict[str, Any]:
         """Delete a document's index from a knowledge base."""
-        config = self._config_resolver.resolve_admin_config(
-            self._db,
+        config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
         )
 
@@ -89,8 +82,7 @@ class AdminExecutor:
         request: RemotePurgeKnowledgeIndexRequest,
     ) -> dict[str, Any]:
         """Delete all chunks for a knowledge base."""
-        config = self._config_resolver.resolve_admin_config(
-            self._db,
+        config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
         )
 
@@ -121,8 +113,7 @@ class AdminExecutor:
         request: RemoteDropKnowledgeIndexRequest,
     ) -> dict[str, Any]:
         """Physically drop the index/collection for a knowledge base."""
-        config = self._config_resolver.resolve_admin_config(
-            self._db,
+        config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
         )
 
@@ -153,8 +144,7 @@ class AdminExecutor:
         request: RemoteListChunksRequest,
     ) -> RemoteListChunksResponse:
         """List all chunks in a knowledge base."""
-        config = self._config_resolver.resolve_admin_config(
-            self._db,
+        config = self._config_loader.resolve_admin_config(
             knowledge_base_id=request.knowledge_base_id,
         )
 

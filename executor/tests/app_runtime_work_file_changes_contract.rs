@@ -170,7 +170,7 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
     assert_eq!(assistant["role"], "assistant");
     assert_eq!(assistant["content"], "Done");
     assert!(assistant["subtaskId"].as_i64().unwrap() < 0);
-    assert_eq!(assistant["blocks"].as_array().unwrap().len(), 4);
+    assert_eq!(assistant["blocks"].as_array().unwrap().len(), 5);
     assert_eq!(assistant["blocks"][0]["type"], "thinking");
     assert_eq!(assistant["blocks"][1]["type"], "text");
     assert_eq!(assistant["blocks"][1]["content"], "I checked the files.");
@@ -181,7 +181,7 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
         assistant["blocks"][3]["file_changes"]["files"][0]["path"],
         "src/lib.rs"
     );
-    assert_eq!(assistant["blocks"][3]["timestamp"], 1780000007000_i64);
+    assert_eq!(assistant["blocks"][3]["timestamp"], 1780000000000_i64);
     assert_eq!(assistant["fileChanges"]["device_id"], "device-1");
     assert_eq!(assistant["fileChanges"]["workspace_path"], "/tmp/project");
     assert_eq!(assistant["fileChanges"]["file_count"], 1);
@@ -197,7 +197,10 @@ async fn runtime_transcript_normalizes_codex_rich_turn_items() {
         assistant["memoryCitations"][0]["entries"][0]["path"],
         "MEMORY.md"
     );
-    assert_eq!(assistant["contextEvents"][0]["type"], "context_compaction");
+    assert_eq!(assistant["blocks"][4]["type"], "tool");
+    assert_eq!(assistant["blocks"][4]["tool_name"], "context_compaction");
+    assert_eq!(assistant["blocks"][4]["status"], "done");
+    assert_eq!(assistant["blocks"][4]["timestamp"], 1780000007000_i64);
 }
 
 #[tokio::test]
@@ -839,7 +842,7 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Rich transcript","preview":"rich","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-rich","startedAt":1780000000,"durationMs":7000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"inspect"}}]}},{{"id":"reason-1","type":"reasoning","summary":["thinking"]}},{{"id":"agent-progress","type":"agentMessage","text":"I checked the files.","phase":"analysis"}},{{"type":"function_call","name":"exec_command","arguments":"{{\"cmd\":\"rg -n test\"}}","call_id":"call-1"}},{{"type":"function_call_output","call_id":"call-1","output":"ok"}},{{"id":"patch-1","type":"patch_apply_end","success":true,"changes":{{"/tmp/project/src/lib.rs":{{"type":"update","unified_diff":"@@ -1 +1 @@\n-old\n+new\n","move_path":null}}}}}},{{"id":"ctx-1","type":"contextCompaction"}},{{"id":"agent-1","type":"agentMessage","text":"Done","phase":"final_answer","memoryCitation":{{"entries":[{{"path":"MEMORY.md","lineStart":1,"lineEnd":2,"note":"note"}}],"threadIds":["thread-a"]}}}}]}}]}}}}}}'
+      printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Rich transcript","preview":"rich","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-rich","startedAt":1780000000,"durationMs":7000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"inspect"}}]}},{{"id":"reason-1","type":"reasoning","summary":["thinking"]}},{{"id":"agent-progress","type":"agentMessage","text":"I checked the files.","phase":"analysis"}},{{"type":"function_call","name":"exec_command","arguments":"{{\"cmd\":\"rg -n test\"}}","call_id":"call-1"}},{{"type":"function_call_output","call_id":"call-1","output":"ok"}},{{"id":"patch-1","type":"patch_apply_end","success":true,"changes":{{"/tmp/project/src/lib.rs":{{"type":"update","unified_diff":"@@ -1 +1 @@\n-old\n+new\n","move_path":null}}}}}},{{"type":"event_msg","payload":{{"id":"ctx-1","type":"context_compacted"}}}},{{"id":"agent-1","type":"agentMessage","text":"Done","phase":"final_answer","memoryCitation":{{"entries":[{{"path":"MEMORY.md","lineStart":1,"lineEnd":2,"note":"note"}}],"threadIds":["thread-a"]}}}}]}}]}}}}}}'
       exit 0
       ;;
   esac

@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -39,6 +40,11 @@ import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import {
+  isImplementationPlanRequestUserInput,
+  requestUserInputPayloadKey,
+} from '@/components/chat/requestUserInputMessages'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import {
   CachedWorkbenchPaneStack,
   getWorkbenchPaneKey,
   WorkbenchPaneActiveOnly,
@@ -60,23 +66,20 @@ import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width,max-width]'
-const DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
-const DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(72rem,calc(100%_-_1.5rem))] max-w-[calc(100%_-_1.5rem)]`
-const DESKTOP_CENTERED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} -translate-y-12`
-const DESKTOP_DOCKED_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} -translate-y-12`
+const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
+const DESKTOP_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-2 left-1/2 z-chrome -translate-x-1/2'
-const DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS}`
-const DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS}`
-const DESKTOP_CENTERED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_CENTERED_CONTENT_WIDTH_CLASS} px-0`
-const DESKTOP_DOCKED_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_DOCKED_CONTENT_WIDTH_CLASS} px-0`
+const DESKTOP_FLOATING_COMPOSER_LAYER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_CONTENT_WIDTH_CLASS}`
+const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} px-0`
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
   'pointer-events-none absolute left-0 right-8 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-[calc(var(--desktop-floating-composer-height)_+_2rem)] z-popover bg-background/95 shadow-md'
+  'bottom-[var(--desktop-floating-composer-clearance)] z-popover bg-background/95 shadow-md'
 const DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS = 'pb-[var(--desktop-floating-composer-clearance)]'
 const DEFAULT_FLOATING_COMPOSER_HEIGHT_PX = 112
-const FLOATING_COMPOSER_CLEARANCE_GAP_PX = 104
+const FLOATING_COMPOSER_BOTTOM_OFFSET_PX = 8
+const FLOATING_COMPOSER_MESSAGE_GAP_PX = 16
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
 const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
@@ -84,6 +87,7 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
+const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
@@ -170,12 +174,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
+  const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const [workbenchMainWidth, setWorkbenchMainWidth] = useState(0)
   const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
   const [floatingComposerHeight, setFloatingComposerHeight] = useState(
     DEFAULT_FLOATING_COMPOSER_HEIGHT_PX
@@ -203,10 +209,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
+  const rightPanelTitlebarWidth =
+    rightPanelOpen && workbenchMainWidth > rightSplitChatWidth
+      ? `${workbenchMainWidth - rightSplitChatWidth}px`
+      : 'auto'
   const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
-  const contentDockedChatContentWidth = rightPanelOpen
   const chatContentResizing = sidebarResizing || rightSplitResizing
-  const floatingComposerClearance = floatingComposerHeight + FLOATING_COMPOSER_CLEARANCE_GAP_PX
+  const floatingComposerClearance =
+    floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
   const workspaceTargetDevice = workspaceTarget?.deviceId
     ? devices.find(device => device.device_id === workspaceTarget.deviceId)
     : undefined
@@ -220,6 +230,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     workspaceTarget?.source !== 'runtime' &&
     !workspaceTargetUsesRemoteDevice &&
     !workspaceTargetUsesRemoteSource
+
+  useLayoutEffect(() => {
+    const main = workbenchMainRef.current
+    if (!main) return
+
+    const updateMainWidth = () => {
+      setWorkbenchMainWidth(main.getBoundingClientRect().width)
+    }
+
+    updateMainWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateMainWidth)
+    observer.observe(main)
+    return () => observer.disconnect()
+  }, [])
+
   const bottomPanelWorkspaceKey = [
     currentRuntimeTask
       ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}:${
@@ -286,6 +313,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible?: boolean
   } | null>(null)
   const paneMessages = paneSession.messages
+  const pendingRequestUserInput = pendingRequestUserInputPayload(
+    paneMessages,
+    paneSession.answeredRequestUserInputIds
+  )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -314,6 +345,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
     })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const activeDeviceSupportsGoal = Boolean(
+    activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
+  )
+  const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const composerSupportsGoal = currentRuntimeTask
+    ? currentRuntimeTaskSupportsGoal
+    : activeDeviceSupportsGoal
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -360,6 +398,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
     setRightPanelView(tab)
   }, [])
+  const openAssistantPlan = useCallback(
+    (content: string) => {
+      setRightPanelPlanContent(content)
+      openRightPanelTab('plan')
+    },
+    [openRightPanelTab]
+  )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelTabs(current => {
@@ -478,6 +523,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab('terminal')
+  }, [openRightPanelTab])
+  const selectPlanView = useCallback(() => {
+    openRightPanelTab('plan')
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
@@ -651,6 +699,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </>
     ) : undefined
   const showPageTopBar = !isTauri || Boolean(topBarLeftContent)
+  const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
@@ -695,6 +744,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setHasPreviousTurnReview(false)
     setRightPanelView('launcher')
     setRightPanelTabs([])
+    setRightPanelPlanContent(null)
     setReviewState({
       loading: false,
       diff: '',
@@ -739,19 +789,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-0 mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'absolute inset-0 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[margin]',
         sidebarResizing && 'transition-none',
-        !isTauri && 'mt-1.5',
-        sidebarCollapsed && 'ml-1.5'
+        !isTauri && 'mt-1.5'
       )}
     >
       <WorkbenchPaneActiveOnly>
+        {isTauri && (
+          <RightWorkspaceTitlebarLayoutSync open={rightPanelOpen} width={rightPanelTitlebarWidth} />
+        )}
         {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
         {!isTauri && (
           <div
             data-testid="workspace-panel-floating-actions"
-            className="pointer-events-auto absolute right-7 top-1.5 z-popover flex shrink-0 items-center gap-2"
+            className="pointer-events-auto absolute right-8 top-1.5 z-popover flex shrink-0 items-center gap-1"
           >
             {topRightActions}
           </div>
@@ -760,22 +812,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pl-4 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
             leftClassName="min-w-0 max-w-[calc(100%-12rem)] gap-2"
-            right={
-              (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
-                <SubagentStatusIndicator
-                  statuses={paneSession.subagentStatuses}
-                  availableWidth={chatColumnWidth}
-                />
-              ) : null
-            }
-            rightClassName="gap-2"
           />
+        )}
+        {showPageTopBar && hasSubagentStatuses && (
+          <div
+            data-testid="workbench-subagent-status-row"
+            className={cn(
+              'pointer-events-none absolute right-3 top-14 z-chrome flex items-start',
+              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+            )}
+          >
+            <SubagentStatusIndicator
+              statuses={paneSession.subagentStatuses}
+              availableWidth={rightPanelOpen ? rightSplitChatWidth : null}
+              className="pointer-events-auto"
+            />
+          </div>
         )}
       </WorkbenchPaneActiveOnly>
       <div
@@ -783,8 +842,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'relative flex min-w-0 flex-none flex-col overflow-hidden',
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
-          showPageTopBar && 'pt-11',
-          rightPanelOpen && 'border-r border-border'
+          showPageTopBar && 'pt-11'
         )}
         style={
           {
@@ -816,14 +874,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               className="h-full"
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
-              messageListClassName={
-                contentDockedChatContentWidth
-                  ? cn(DESKTOP_DOCKED_MESSAGE_LIST_CLASS, chatContentResizing && 'transition-none')
-                  : cn(
-                      DESKTOP_CENTERED_MESSAGE_LIST_CLASS,
-                      chatContentResizing && 'transition-none'
-                    )
-              }
+              messageListClassName={cn(
+                DESKTOP_MESSAGE_LIST_CLASS,
+                chatContentResizing && 'transition-none'
+              )}
               scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
               devices={devices}
               onRetryFailedMessage={message => {
@@ -851,23 +905,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 })
               }}
               onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+              onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+              onOpenAssistantPlan={openAssistantPlan}
+              hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+              hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
               data-testid="desktop-floating-composer-backdrop"
             />
             <div
-              className={
-                contentDockedChatContentWidth
-                  ? cn(
-                      DESKTOP_DOCKED_FLOATING_COMPOSER_CLASS,
-                      chatContentResizing && 'transition-none'
-                    )
-                  : cn(
-                      DESKTOP_CENTERED_FLOATING_COMPOSER_CLASS,
-                      chatContentResizing && 'transition-none'
-                    )
-              }
+              className={cn(
+                DESKTOP_FLOATING_COMPOSER_LAYER_CLASS,
+                chatContentResizing && 'transition-none'
+              )}
               data-testid="desktop-floating-composer-layer"
             >
               <div
@@ -893,49 +945,67 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     className="mb-2"
                   />
                 )}
-                <ChatInput
-                  value={paneSession.input}
-                  onChange={paneSession.setInput}
-                  onSubmit={paneSession.send}
-                  disabled={composerDisabled}
-                  error={errorMessage}
-                  disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                  variant="desktop"
-                  projectChat={projectChatWithModelSelectorSignal}
-                  projectWork={paneProjectWork}
-                  showProjectWorkBar={false}
-                  queuedMessages={paneQueuedMessages}
-                  guidanceMessages={paneGuidanceMessages}
-                  codeComments={paneSession.codeCommentContexts}
-                  isStreaming={paneIsResponseStreaming}
-                  onPause={() => void paneSession.pauseCurrentResponse()}
-                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                  onEditQueuedMessage={paneSession.editQueuedMessage}
-                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                  onClearCodeComments={paneSession.clearCodeComments}
-                />
+                {pendingRequestUserInput ? (
+                  <RequestUserInputCard
+                    key={
+                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                    }
+                    payload={pendingRequestUserInput}
+                    onSubmit={response => {
+                      const shouldImplementPlan =
+                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                      return paneSession.sendRequestUserInputResponse(response, {
+                        appendUserMessage: shouldImplementPlan,
+                        forceDefaultCollaborationMode: shouldImplementPlan,
+                      })
+                    }}
+                    onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
+                  />
+                ) : (
+                  <ChatInput
+                    value={paneSession.input}
+                    onChange={paneSession.setInput}
+                    onSubmit={paneSession.send}
+                    disabled={composerDisabled}
+                    error={errorMessage}
+                    disabledReason={inlineComposerDisabledReason}
+                    placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                    variant="desktop"
+                    projectChat={projectChatWithModelSelectorSignal}
+                    projectWork={paneProjectWork}
+                    showProjectWorkBar={false}
+                    queuedMessages={paneQueuedMessages}
+                    guidanceMessages={paneGuidanceMessages}
+                    codeComments={paneSession.codeCommentContexts}
+                    isStreaming={paneIsResponseStreaming}
+                    onPause={() => void paneSession.pauseCurrentResponse()}
+                    goal={paneSession.goal}
+                    goalDraftActive={paneSession.goalDraftActive}
+                    onSetGoal={
+                      composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                    }
+                    onCancelGoalDraft={paneSession.cancelGoalDraft}
+                    onEditGoal={paneSession.editCurrentGoal}
+                    onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                    onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                    onClearGoal={() => void paneSession.clearCurrentGoal()}
+                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                    onEditQueuedMessage={paneSession.editQueuedMessage}
+                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                    onClearCodeComments={paneSession.clearCodeComments}
+                  />
+                )}
               </div>
             </div>
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
             <div
-              className={
-                contentDockedChatContentWidth
-                  ? cn(
-                      DESKTOP_DOCKED_COMPOSER_FRAME_CLASS,
-                      chatContentResizing && 'transition-none'
-                    )
-                  : cn(
-                      DESKTOP_CENTERED_COMPOSER_FRAME_CLASS,
-                      chatContentResizing && 'transition-none'
-                    )
-              }
+              className={cn(DESKTOP_COMPOSER_FRAME_CLASS, chatContentResizing && 'transition-none')}
               data-testid="desktop-empty-composer-frame"
             >
-              <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
+              <h1 className="mb-10 text-center text-[28px] font-normal leading-9 tracking-normal text-text-primary/95">
                 {emptyTitle}
               </h1>
               <DeviceStatusPrompt
@@ -955,7 +1025,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 disabled={composerDisabled}
                 error={errorMessage}
                 disabledReason={inlineComposerDisabledReason}
-                placeholder={t('workbench.input_placeholder', '尽管问')}
+                placeholder={t('workbench.input_placeholder', '随心输入')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={paneProjectWork}
@@ -964,6 +1034,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
+                goal={paneSession.goal}
+                goalDraftActive={paneSession.goalDraftActive}
+                onSetGoal={
+                  composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                }
+                onCancelGoalDraft={paneSession.cancelGoalDraft}
+                onEditGoal={paneSession.editCurrentGoal}
+                onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                onClearGoal={() => void paneSession.clearCurrentGoal()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1001,10 +1081,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           aria-label={t('workbench.resize_right_workspace_panel')}
           aria-controls="right-workspace-panel-shell"
           className={cn(
-            'absolute top-0 z-popover h-full w-5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:left-1/2 after:top-0 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+            'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
           )}
-          style={{ left: rightSplitChatWidth }}
+          style={{ left: rightSplitChatWidth + 2 }}
           onPointerDown={handleRightSplitResizeStart}
         />
       )}
@@ -1012,7 +1092,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id="right-workspace-panel-shell"
         data-testid="right-workspace-panel-shell"
         className={cn(
-          'min-w-0 shrink-0 overflow-hidden bg-background',
+          'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
           rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
@@ -1032,6 +1112,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
+            planContent={rightPanelPlanContent}
             reviewViewOptions={reviewViewOptions}
             canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={paneSession.addCodeComment}
@@ -1039,6 +1120,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             onSelectTerminal={selectTerminalView}
             onSelectBrowser={selectBrowserView}
             onSelectFiles={selectFilesView}
+            onSelectPlan={selectPlanView}
             onCloseTab={closeRightPanelTab}
             onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
           />
@@ -1078,3 +1160,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </main>
   )
 })
+
+function RightWorkspaceTitlebarLayoutSync({ open, width }: { open: boolean; width: string }) {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR, open ? width : 'auto')
+
+    return () => {
+      root.style.removeProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR)
+    }
+  }, [open, width])
+
+  return null
+}

@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
     time::Duration,
 };
 
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{mpsc, oneshot, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex},
     time::timeout,
 };
 
@@ -53,6 +53,18 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 ];
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
+pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
+
+#[derive(Default)]
+pub struct CodexAppServerTurnOptions {
+    pub resume_thread_id: Option<String>,
+    pub initial_thread_name: Option<String>,
+    pub initial_thread_goal: Option<Value>,
+    pub notifications: Option<CodexNotificationSender>,
+    pub cancellation: Option<oneshot::Receiver<()>>,
+    pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    pub thread_started: Option<CodexThreadStartedCallback>,
+}
 
 pub trait CodexTurnInterrupter: Send + Sync {
     fn interrupt_turn<'a>(
@@ -122,6 +134,8 @@ pub struct CodexAppServerTurn {
     pub outcome: ExecutionOutcome,
 }
 
+pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
+
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
     binary: String,
@@ -141,7 +155,7 @@ impl AgentEngine for CodexAppServerEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let binary = self.binary.clone();
         Box::pin(async move {
-            match run_codex_app_server_turn(&binary, request, None, None, None).await {
+            match run_codex_app_server_turn(&binary, request, None, None, None, None).await {
                 Ok(turn) => turn.outcome,
                 Err(message) => ExecutionOutcome::Failed { message },
             }
@@ -152,79 +166,311 @@ impl AgentEngine for CodexAppServerEngine {
 #[derive(Clone)]
 pub struct CodexAppServerClient {
     binary: String,
-    server: Arc<Mutex<Option<CodexAppServerProcess>>>,
+    state: Arc<Mutex<CodexAppServerSharedState>>,
 }
 
 impl CodexAppServerClient {
     pub fn new(binary: impl Into<String>) -> Self {
+        let binary = resolve_codex_binary(&binary.into());
         Self {
-            binary: resolve_codex_binary(&binary.into()),
-            server: Arc::new(Mutex::new(None)),
+            state: shared_codex_app_server_state(&binary),
+            binary,
         }
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        let result = self.request_once(method, params.clone()).await;
-        if result.is_err() && codex_app_server_request_is_retryable(method) {
-            return self.request_once(method, params).await;
-        }
-        result
-    }
-
-    async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let mut server = self.server.lock().await;
-        if server.is_none() {
-            *server = Some(start_persistent_codex_app_server(&self.binary).await?);
+        let (request_id, handle, response_rx) = self.prepare_request().await?;
+        let message = json!({
+            "method": method,
+            "id": request_id,
+            "params": params,
+        });
+        if let Err(error) = handle.write_message(message).await {
+            handle.remove_pending(request_id).await;
+            return Err(error);
         }
 
-        let result = {
-            let server = server
-                .as_mut()
-                .expect("persistent Codex app-server was initialized");
-            with_rpc_timeout(
-                method,
-                timeout_seconds,
-                server.rpc.request_ignoring_notifications(method, params),
-            )
-            .await
-        };
+        with_rpc_timeout(method, timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await
+    }
 
-        if result.is_err() {
-            if let Some(server) = server.take() {
-                server.shutdown().await;
+    async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+        let message = json!({
+            "method": method,
+            "id": request_id,
+            "params": params,
+        });
+        if let Err(error) = handle.write_message(message).await {
+            handle.remove_pending(request_id).await;
+            return Err(error);
+        }
+
+        with_rpc_timeout(method, timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await
+    }
+
+    pub async fn run_turn_with_cancel(
+        &self,
+        request: ExecutionRequest,
+        options: CodexAppServerTurnOptions,
+    ) -> Result<CodexAppServerTurn, String> {
+        run_codex_app_server_turn_on_shared_client(self, request, options).await
+    }
+
+    async fn prepare_request(
+        &self,
+    ) -> Result<
+        (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        String,
+    > {
+        self.prepare_request_with_process(true).await
+    }
+
+    async fn prepare_existing_request(
+        &self,
+    ) -> Result<
+        (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        String,
+    > {
+        self.prepare_request_with_process(false).await
+    }
+
+    async fn prepare_request_with_process(
+        &self,
+        start_if_missing: bool,
+    ) -> Result<
+        (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        String,
+    > {
+        let mut state = self.state.lock().await;
+        if state
+            .process
+            .as_mut()
+            .is_some_and(|process| process.has_exited())
+        {
+            state.process = None;
+        }
+        if state.process.is_none() {
+            if !start_if_missing {
+                return Err("codex app-server is not running".to_owned());
             }
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id).await?;
+            state.process = Some(process);
+            state.next_id = next_id;
         }
 
-        result
+        let request_id = state.next_id;
+        state.next_id += 1;
+        let handle = state
+            .process
+            .as_ref()
+            .expect("persistent Codex app-server should be initialized")
+            .handle();
+        let (tx, rx) = oneshot::channel();
+        handle.pending.lock().await.insert(request_id, tx);
+        Ok((request_id, handle, rx))
+    }
+
+    async fn send_response(&self, request_id: u64, result: Value) -> Result<(), String> {
+        let handle = self.existing_process().await?;
+        handle
+            .write_message(json!({
+                "id": request_id,
+                "result": result,
+            }))
+            .await
+    }
+
+    pub(crate) async fn subscribe_notifications(
+        &self,
+    ) -> Result<broadcast::Receiver<Value>, String> {
+        Ok(self.ensure_process().await?.notifications.subscribe())
+    }
+
+    async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
+        let mut state = self.state.lock().await;
+        if state
+            .process
+            .as_mut()
+            .is_some_and(|process| process.has_exited())
+        {
+            state.process = None;
+        }
+        Ok(state
+            .process
+            .as_ref()
+            .ok_or_else(|| "codex app-server is not running".to_owned())?
+            .handle())
+    }
+
+    async fn mark_thread_active(&self, thread_id: &str) {
+        self.state
+            .lock()
+            .await
+            .active_threads
+            .insert(thread_id.to_owned());
+    }
+
+    async fn mark_thread_idle(&self, thread_id: &str) {
+        self.state.lock().await.active_threads.remove(thread_id);
+    }
+
+    async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
+        let state = self.state.lock().await;
+        state.active_threads.len() == 1 && state.active_threads.contains(thread_id)
+    }
+
+    async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
+        let mut state = self.state.lock().await;
+        if state
+            .process
+            .as_mut()
+            .is_some_and(|process| process.has_exited())
+        {
+            state.process = None;
+        }
+        if state.process.is_none() {
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id).await?;
+            state.process = Some(process);
+            state.next_id = next_id;
+        }
+        Ok(state
+            .process
+            .as_ref()
+            .expect("persistent Codex app-server should be initialized")
+            .handle())
     }
 }
 
-fn codex_app_server_request_is_retryable(method: &str) -> bool {
-    matches!(method, "thread/list" | "thread/read")
+fn shared_codex_app_server_state(binary: &str) -> Arc<Mutex<CodexAppServerSharedState>> {
+    static STATES: OnceLock<StdMutex<HashMap<String, Arc<Mutex<CodexAppServerSharedState>>>>> =
+        OnceLock::new();
+    let states = STATES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut states = states
+        .lock()
+        .expect("Codex app-server shared state registry should not be poisoned");
+    states
+        .entry(binary.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(CodexAppServerSharedState::default())))
+        .clone()
 }
+
+#[allow(dead_code)]
+fn codex_app_server_request_is_retryable(method: &str) -> bool {
+    matches!(
+        method,
+        "thread/list" | "thread/read" | "config/read" | "model/list"
+    )
+}
+
+struct CodexAppServerSharedState {
+    process: Option<CodexAppServerProcess>,
+    next_id: u64,
+    active_threads: HashSet<String>,
+}
+
+impl Default for CodexAppServerSharedState {
+    fn default() -> Self {
+        Self {
+            process: None,
+            next_id: 1,
+            active_threads: HashSet::new(),
+        }
+    }
+}
+
+type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
 struct CodexAppServerProcess {
     child: Child,
-    rpc: JsonRpcConnection,
+    stdin: Arc<Mutex<ChildStdin>>,
+    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    notifications: broadcast::Sender<Value>,
+    reader_task: tokio::task::JoinHandle<()>,
 }
 
 impl CodexAppServerProcess {
-    async fn shutdown(mut self) {
-        terminate_codex_app_server_child(&mut self.child).await;
+    fn handle(&self) -> CodexAppServerHandle {
+        CodexAppServerHandle {
+            stdin: Arc::clone(&self.stdin),
+            pending: Arc::clone(&self.pending),
+            notifications: self.notifications.clone(),
+        }
+    }
+
+    fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
     }
 }
 
 impl Drop for CodexAppServerProcess {
     fn drop(&mut self) {
+        self.reader_task.abort();
         signal_codex_app_server_child(&mut self.child);
     }
 }
 
-async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServerProcess, String> {
-    let launch_config = CodexLaunchConfig::default();
+#[derive(Clone)]
+struct CodexAppServerHandle {
+    stdin: Arc<Mutex<ChildStdin>>,
+    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    notifications: broadcast::Sender<Value>,
+}
+
+impl CodexAppServerHandle {
+    async fn write_message(&self, message: Value) -> Result<(), String> {
+        let mut line = serde_json::to_vec(&message)
+            .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
+        line.push(b'\n');
+        let mut stdin = self.stdin.lock().await;
+        stdin
+            .write_all(&line)
+            .await
+            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+    }
+
+    async fn remove_pending(&self, request_id: u64) {
+        self.pending.lock().await.remove(&request_id);
+    }
+}
+
+async fn start_persistent_codex_app_server(
+    binary: &str,
+    next_id: u64,
+) -> Result<(CodexAppServerProcess, u64), String> {
+    let mut launch_config = CodexLaunchConfig::default();
+    launch_config.config_overrides.push("goals=true".to_owned());
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
-    let result: Result<JsonRpcConnection, String> = async {
+    let result: Result<(ChildStdin, BufReader<ChildStdout>, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = child
             .stdin
@@ -234,7 +480,7 @@ async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServe
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new(stdin, stdout);
+        let mut rpc = JsonRpcConnection::new_with_next_id(stdin, stdout, next_id);
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -247,12 +493,30 @@ async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServe
             rpc.notify("initialized", json!({})),
         )
         .await?;
-        Ok(rpc)
+        Ok((rpc.stdin, rpc.stdout, rpc.next_id))
     }
     .await;
 
     match result {
-        Ok(rpc) => Ok(CodexAppServerProcess { child, rpc }),
+        Ok((stdin, stdout, next_id)) => {
+            let pending = Arc::new(Mutex::new(HashMap::new()));
+            let (notifications, _) = broadcast::channel(2048);
+            let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
+                stdout,
+                Arc::clone(&pending),
+                notifications.clone(),
+            ));
+            Ok((
+                CodexAppServerProcess {
+                    child,
+                    stdin: Arc::new(Mutex::new(stdin)),
+                    pending,
+                    notifications,
+                    reader_task,
+                },
+                next_id,
+            ))
+        }
         Err(error) => {
             terminate_codex_app_server_child(&mut child).await;
             Err(error)
@@ -260,33 +524,287 @@ async fn start_persistent_codex_app_server(binary: &str) -> Result<CodexAppServe
     }
 }
 
+async fn read_persistent_codex_app_server_stdout(
+    mut stdout: BufReader<ChildStdout>,
+    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    notifications: broadcast::Sender<Value>,
+) {
+    loop {
+        let mut line = String::new();
+        let message = match stdout.read_line(&mut line).await {
+            Ok(0) => {
+                notify_shared_process_closed(
+                    &notifications,
+                    "codex app-server exited while shared process was running",
+                );
+                fail_all_pending(
+                    &pending,
+                    "codex app-server exited while shared process was running".to_owned(),
+                )
+                .await;
+                break;
+            }
+            Ok(_) => match serde_json::from_str::<Value>(&line) {
+                Ok(message) => message,
+                Err(error) => {
+                    notify_shared_process_closed(
+                        &notifications,
+                        &format!("failed to parse codex JSON-RPC message: {error}"),
+                    );
+                    fail_all_pending(
+                        &pending,
+                        format!("failed to parse codex JSON-RPC message: {error}"),
+                    )
+                    .await;
+                    break;
+                }
+            },
+            Err(error) => {
+                notify_shared_process_closed(
+                    &notifications,
+                    &format!("failed to read codex JSON-RPC message: {error}"),
+                );
+                fail_all_pending(
+                    &pending,
+                    format!("failed to read codex JSON-RPC message: {error}"),
+                )
+                .await;
+                break;
+            }
+        };
+
+        if is_json_rpc_response(&message) {
+            if let Some(request_id) = response_id(&message) {
+                if let Some(sender) = pending.lock().await.remove(&request_id) {
+                    let _ = sender.send(response_result(message));
+                    continue;
+                }
+            }
+        }
+
+        let _ = notifications.send(message);
+    }
+}
+
+fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
+    let _ = notifications.send(json!({
+        "method": "codex/app-server/exited",
+        "params": {
+            "message": message,
+        }
+    }));
+}
+
+async fn fail_all_pending(
+    pending: &Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    message: String,
+) {
+    let pending = std::mem::take(&mut *pending.lock().await);
+    for (_, sender) in pending {
+        let _ = sender.send(Err(message.clone()));
+    }
+}
+
+fn is_json_rpc_response(message: &Value) -> bool {
+    response_id(message).is_some() && message.get("method").is_none()
+}
+
 pub async fn run_codex_app_server_turn(
     binary: &str,
     request: ExecutionRequest,
     resume_thread_id: Option<String>,
     initial_thread_name: Option<String>,
+    initial_thread_goal: Option<Value>,
     notifications: Option<CodexNotificationSender>,
 ) -> Result<CodexAppServerTurn, String> {
     run_codex_app_server_turn_with_cancel(
         binary,
         request,
-        resume_thread_id,
-        initial_thread_name,
-        notifications,
-        None,
+        CodexAppServerTurnOptions {
+            resume_thread_id,
+            initial_thread_name,
+            initial_thread_goal,
+            notifications,
+            ..CodexAppServerTurnOptions::default()
+        },
     )
     .await
+}
+
+async fn run_codex_app_server_turn_on_shared_client(
+    client: &CodexAppServerClient,
+    request: ExecutionRequest,
+    options: CodexAppServerTurnOptions,
+) -> Result<CodexAppServerTurn, String> {
+    let prepared = prepare_codex_execution_request(request);
+    let CodexAppServerTurnOptions {
+        resume_thread_id,
+        initial_thread_name,
+        initial_thread_goal,
+        notifications,
+        cancellation,
+        request_user_input_answers,
+        thread_started,
+    } = options;
+    let launch_config = build_codex_launch_config(&prepared.request);
+    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    fields.push(("binary", client.binary.clone()));
+    if let Some(cwd) = prepared.request.cwd() {
+        fields.push(("cwd", cwd.to_owned()));
+    }
+    log_executor_event("codex shared app-server turn starting", &fields);
+
+    let result: Result<CodexAppServerTurn, String> = async {
+        let request = &prepared.request;
+        let mut notification_rx = client.subscribe_notifications().await?;
+        let mut state = CodexRunState::default();
+        let resuming_thread = resume_thread_id.is_some();
+        let (thread_operation, thread_params) = if let Some(thread_id) = resume_thread_id {
+            (
+                "thread/resume",
+                thread_resume_params(&thread_id, request, &launch_config),
+            )
+        } else {
+            ("thread/start", thread_start_params(request, &launch_config))
+        };
+        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
+        thread_fields.push(("operation", thread_operation.to_owned()));
+        log_executor_event("codex shared thread request started", &thread_fields);
+        let thread = client.request(thread_operation, thread_params).await?;
+        let thread_id = thread
+            .get("thread")
+            .and_then(|thread| thread.get("id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
+            .to_owned();
+        state.set_root_thread_id(thread_id.clone());
+        if let Some(callback) = thread_started {
+            callback(thread_id.clone());
+        }
+        thread_fields.push(("thread_id", thread_id.clone()));
+        log_executor_event("codex shared thread request finished", &thread_fields);
+        if let Some(sender) = &notifications {
+            let _ = sender.send(json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": thread_id.clone()
+                    }
+                }
+            }));
+        }
+
+        let mut goal_run_active = false;
+        if let Some(goal) = initial_thread_goal.as_ref() {
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            if goal_response_goal_is_active(&goal_response) {
+                goal_run_active = true;
+                state.set_goal_status("active");
+            }
+        } else if resuming_thread {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                if goal_response_goal_is_active(&goal_response) {
+                    goal_run_active = true;
+                    state.set_goal_status("active");
+                }
+            }
+        }
+
+        if let Some(name) = initial_thread_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            client
+                .request(
+                    "thread/name/set",
+                    json!({"threadId": thread_id.clone(), "name": name}),
+                )
+                .await?;
+        }
+
+        let turn_input = turn_input(&request.prompt);
+        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        turn_fields.push(("thread_id", thread_id.clone()));
+        turn_fields.push(("input_items", turn_input.len().to_string()));
+        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+        if let Some(cwd) = request.cwd() {
+            turn_fields.push(("cwd", cwd.to_owned()));
+        }
+        if let Some(model) = model_id(request) {
+            turn_fields.push(("model", model));
+        }
+        log_executor_event("codex shared turn request started", &turn_fields);
+        client.mark_thread_active(&thread_id).await;
+        let turn = match client
+            .request(
+                "turn/start",
+                turn_start_params(&thread_id, request, &launch_config, turn_input),
+            )
+            .await
+        {
+            Ok(turn) => turn,
+            Err(error) => {
+                client.mark_thread_idle(&thread_id).await;
+                return Err(error);
+            }
+        };
+        let active_turn_id = turn_start_response_turn_id(&turn);
+        let outcome_result = read_shared_turn_notifications(
+            client,
+            &mut notification_rx,
+            &thread_id,
+            &mut state,
+            SharedTurnNotificationOptions {
+                active_turn_id,
+                notifications,
+                cancellation,
+                request_user_input_answers,
+                goal_run_active,
+            },
+        )
+        .await;
+        client.mark_thread_idle(&thread_id).await;
+        let outcome = outcome_result?;
+        turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
+        if let ExecutionOutcome::Failed { message } = &outcome {
+            turn_fields.push(("error", message.clone()));
+            turn_fields.push(("error_len", message.len().to_string()));
+        }
+        log_executor_event("codex shared turn request finished", &turn_fields);
+        Ok(CodexAppServerTurn { thread_id, outcome })
+    }
+    .await;
+
+    if let Err(error) = &result {
+        let mut failed_fields = fields.clone();
+        failed_fields.push(("error", error.clone()));
+        failed_fields.push(("error_len", error.len().to_string()));
+        log_executor_event("codex shared app-server turn failed", &failed_fields);
+    }
+    cleanup_generated_files(&prepared.generated_files);
+    result
 }
 
 pub async fn run_codex_app_server_turn_with_cancel(
     binary: &str,
     request: ExecutionRequest,
-    resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
-    notifications: Option<CodexNotificationSender>,
-    mut cancellation: Option<oneshot::Receiver<()>>,
+    options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
+    let CodexAppServerTurnOptions {
+        resume_thread_id,
+        initial_thread_name,
+        initial_thread_goal,
+        notifications,
+        mut cancellation,
+        request_user_input_answers,
+        ..
+    } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
@@ -371,6 +889,15 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 }
             }));
         }
+        if let Some(goal) = initial_thread_goal.as_ref() {
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            with_rpc_timeout(
+                "thread/goal/set",
+                timeout_seconds,
+                rpc.request("thread/goal/set", goal_params, &mut state),
+            )
+            .await?;
+        }
         if let Some(name) = initial_thread_name
             .as_deref()
             .map(str::trim)
@@ -411,12 +938,22 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {
-                outcome = rpc.read_turn(turn_request_id, &mut state, notifications) => outcome?,
+                outcome = rpc.read_turn(
+                    turn_request_id,
+                    &mut state,
+                    notifications,
+                    request_user_input_answers,
+                ) => outcome?,
                 _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
             }
         } else {
-            rpc.read_turn(turn_request_id, &mut state, notifications)
-                .await?
+            rpc.read_turn(
+                turn_request_id,
+                &mut state,
+                notifications,
+                request_user_input_answers,
+            )
+            .await?
         };
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
@@ -448,6 +985,206 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
         ExecutionOutcome::Running => "running",
         ExecutionOutcome::Cancelled { .. } => "cancelled",
     }
+}
+
+struct SharedTurnNotificationOptions {
+    active_turn_id: Option<String>,
+    notifications: Option<CodexNotificationSender>,
+    cancellation: Option<oneshot::Receiver<()>>,
+    request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+    goal_run_active: bool,
+}
+
+async fn read_shared_turn_notifications(
+    client: &CodexAppServerClient,
+    notification_rx: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    state: &mut CodexRunState,
+    mut options: SharedTurnNotificationOptions,
+) -> Result<ExecutionOutcome, String> {
+    let mut cancel_requested = false;
+    let mut last_outcome: Option<ExecutionOutcome> = None;
+    loop {
+        let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
+            tokio::select! {
+                _ = cancel_rx => {
+                    options.cancellation = None;
+                    cancel_requested = true;
+                    if let Some(turn_id) = options.active_turn_id.as_deref() {
+                        interrupt_shared_turn(client, thread_id, turn_id).await?;
+                    }
+                    continue;
+                }
+                message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
+            }
+        } else {
+            shared_notification_result(notification_rx.recv().await, last_outcome.clone())?
+        };
+        let message = match notification {
+            SharedNotification::Message(message) => message,
+            SharedNotification::Completed(outcome) => return Ok(outcome),
+        };
+        if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
+            if let Some(outcome) = last_outcome {
+                return Ok(outcome);
+            }
+            return Err(message
+                .get("params")
+                .and_then(|params| params.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex app-server exited before completing the turn")
+                .to_owned());
+        }
+
+        if !notification_belongs_to_thread(client, &message, thread_id).await {
+            continue;
+        }
+        log_codex_raw_turn_message(&message);
+
+        if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+            options.active_turn_id = Some(turn_id);
+            if cancel_requested {
+                if let Some(turn_id) = options.active_turn_id.as_deref() {
+                    interrupt_shared_turn(client, thread_id, turn_id).await?;
+                }
+            }
+        }
+
+        if let Some(sender) = &options.notifications {
+            let _ = sender.send(message.clone());
+        }
+
+        if message
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(|method| method == "item/tool/requestUserInput")
+        {
+            answer_shared_request_user_input(
+                client,
+                &message,
+                &mut options.request_user_input_answers,
+            )
+            .await?;
+            continue;
+        }
+
+        if let Some(outcome) = state.handle_message(&message) {
+            options.active_turn_id = None;
+            if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
+                return Ok(outcome);
+            }
+            if !options.goal_run_active || !state.goal_is_active() {
+                return Ok(outcome);
+            }
+            last_outcome = Some(outcome);
+            state.reset_turn_output();
+        }
+    }
+}
+
+enum SharedNotification {
+    Message(Value),
+    Completed(ExecutionOutcome),
+}
+
+fn shared_notification_result(
+    result: Result<Value, broadcast::error::RecvError>,
+    last_outcome: Option<ExecutionOutcome>,
+) -> Result<SharedNotification, String> {
+    match result {
+        Ok(message) => Ok(SharedNotification::Message(message)),
+        Err(broadcast::error::RecvError::Lagged(_)) => {
+            Err("codex app-server notification stream lagged".to_owned())
+        }
+        Err(broadcast::error::RecvError::Closed) => last_outcome
+            .map(SharedNotification::Completed)
+            .ok_or_else(|| {
+                "codex app-server notification stream closed before completing the turn".to_owned()
+            }),
+    }
+}
+
+async fn interrupt_shared_turn(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<(), String> {
+    client
+        .request_existing(
+            "turn/interrupt",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+            }),
+        )
+        .await
+        .map(|_| ())
+}
+
+async fn answer_shared_request_user_input(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+) -> Result<(), String> {
+    let request_id = response_id(message)
+        .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
+    let Some(receiver) = request_user_input_answers else {
+        return Err("request_user_input requires a runtime response channel".to_owned());
+    };
+    let response = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
+    client
+        .send_response(request_id, request_user_input_result(response))
+        .await
+}
+
+async fn notification_belongs_to_thread(
+    client: &CodexAppServerClient,
+    message: &Value,
+    thread_id: &str,
+) -> bool {
+    match stream_thread_id(message_params(message)).or_else(|| stream_thread_id(message)) {
+        Some(message_thread_id) => message_thread_id == thread_id,
+        None => {
+            client
+                .unscoped_notification_belongs_to_thread(thread_id)
+                .await
+        }
+    }
+}
+
+fn turn_start_response_turn_id(response: &Value) -> Option<String> {
+    response
+        .get("turn")
+        .and_then(|turn| string_value(turn, "id"))
+        .or_else(|| string_value(response, "turnId"))
+        .or_else(|| string_value(response, "turn_id"))
+}
+
+fn turn_started_notification_turn_id(message: &Value) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+        return None;
+    }
+    let params = message_params(message);
+    params
+        .get("turn")
+        .and_then(|turn| string_value(turn, "id"))
+        .or_else(|| string_value(params, "turnId"))
+        .or_else(|| string_value(params, "turn_id"))
+}
+
+fn goal_response_goal_is_active(response: &Value) -> bool {
+    response
+        .get("goal")
+        .and_then(|goal| goal.get("status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+}
+
+fn string_value(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
 fn spawn_codex_app_server(
@@ -546,10 +1283,14 @@ struct JsonRpcConnection {
 
 impl JsonRpcConnection {
     fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
+        Self::new_with_next_id(stdin, stdout, 1)
+    }
+
+    fn new_with_next_id(stdin: ChildStdin, stdout: ChildStdout, next_id: u64) -> Self {
         Self {
             stdin,
             stdout: BufReader::new(stdout),
-            next_id: 1,
+            next_id,
         }
     }
 
@@ -615,6 +1356,7 @@ impl JsonRpcConnection {
         turn_request_id: u64,
         state: &mut CodexRunState,
         notifications: Option<CodexNotificationSender>,
+        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
         loop {
@@ -628,6 +1370,15 @@ impl JsonRpcConnection {
             if let Some(sender) = &notifications {
                 let _ = sender.send(message.clone());
             }
+            if message
+                .get("method")
+                .and_then(Value::as_str)
+                .is_some_and(|method| method == "item/tool/requestUserInput")
+            {
+                self.answer_request_user_input(&message, &mut request_user_input_answers)
+                    .await?;
+                continue;
+            }
             if let Some(outcome) = state.handle_message(&message) {
                 return Ok(outcome);
             }
@@ -635,6 +1386,27 @@ impl JsonRpcConnection {
                 continue;
             }
         }
+    }
+
+    async fn answer_request_user_input(
+        &mut self,
+        message: &Value,
+        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    ) -> Result<(), String> {
+        let request_id = response_id(message)
+            .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
+        let Some(receiver) = request_user_input_answers else {
+            return Err("request_user_input requires a runtime response channel".to_owned());
+        };
+        let response = receiver
+            .recv()
+            .await
+            .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
+        self.write_message(json!({
+            "id": request_id,
+            "result": request_user_input_result(response),
+        }))
+        .await
     }
 
     async fn write_message(&mut self, message: Value) -> Result<(), String> {
@@ -672,11 +1444,28 @@ struct CodexRunState {
     saw_delta: bool,
     agent_message_phases: CodexAgentMessagePhaseTracker,
     root_thread_id: Option<String>,
+    goal_status: Option<String>,
 }
 
 impl CodexRunState {
     fn set_root_thread_id(&mut self, thread_id: impl Into<String>) {
         self.root_thread_id = Some(thread_id.into());
+    }
+
+    fn set_goal_status(&mut self, status: impl Into<String>) {
+        self.goal_status = Some(status.into().to_ascii_lowercase());
+    }
+
+    fn goal_is_active(&self) -> bool {
+        self.goal_status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    }
+
+    fn reset_turn_output(&mut self) {
+        self.final_text.clear();
+        self.saw_delta = false;
+        self.agent_message_phases = CodexAgentMessagePhaseTracker::default();
     }
 
     fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
@@ -687,6 +1476,26 @@ impl CodexRunState {
                         self.root_thread_id = Some(thread_id);
                     }
                 }
+                None
+            }
+            Some("turn/started") => {
+                if !self.is_subagent_message(message_params(message)) {
+                    self.reset_turn_output();
+                }
+                None
+            }
+            Some("thread/goal/updated") => {
+                if let Some(status) = message_params(message)
+                    .get("goal")
+                    .and_then(|goal| goal.get("status"))
+                    .and_then(Value::as_str)
+                {
+                    self.set_goal_status(status);
+                }
+                None
+            }
+            Some("thread/goal/cleared") => {
+                self.goal_status = None;
                 None
             }
             Some("item/started") => {
@@ -791,6 +1600,18 @@ impl CodexRunState {
             .unwrap_or("")
             .replace('_', "")
             .to_ascii_lowercase();
+        if item_type == "plan" {
+            let text = extract_text(item).unwrap_or_default();
+            log_codex_run_state_text(
+                "completed",
+                "skip_plan",
+                phase.as_deref(),
+                params,
+                item,
+                &text,
+            );
+            return;
+        }
         if !matches!(item_type.as_str(), "agentmessage" | "message") {
             log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
             return;
@@ -1059,6 +1880,9 @@ fn initialize_params() -> Value {
             "name": "wegent_executor",
             "title": "Wegent Executor",
             "version": crate::version::get_version(),
+        },
+        "capabilities": {
+            "experimentalApi": true,
         }
     })
 }
@@ -2041,6 +2865,44 @@ fn toml_json_value(value: &Value) -> String {
     }
 }
 
+fn config_override_entry(value: &str) -> Option<(String, Value)> {
+    let (key, raw_value) = value.split_once('=')?;
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    Some((
+        key.to_owned(),
+        parse_config_override_value(raw_value.trim()),
+    ))
+}
+
+fn parse_config_override_value(value: &str) -> Value {
+    if value.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if value.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
+    }
+    if let Ok(number) = value.parse::<i64>() {
+        return json!(number);
+    }
+    if let Ok(number) = value.parse::<f64>() {
+        return json!(number);
+    }
+    if value.starts_with('[') && value.ends_with(']') {
+        if let Ok(parsed) = serde_json::from_str::<Value>(value) {
+            return parsed;
+        }
+    }
+    if value.starts_with('"') && value.ends_with('"') {
+        if let Ok(parsed) = serde_json::from_str::<String>(value) {
+            return Value::String(parsed);
+        }
+    }
+    Value::String(value.to_owned())
+}
+
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .map(PathBuf::from)
@@ -2084,6 +2946,30 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     Value::Object(params)
 }
 
+fn thread_goal_set_params(thread_id: &str, goal: &Value) -> Result<Value, String> {
+    let objective = goal
+        .get("objective")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|objective| !objective.is_empty())
+        .ok_or_else(|| "initial goal objective is required".to_owned())?;
+    let mut params = serde_json::Map::new();
+    params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    params.insert("objective".to_owned(), Value::String(objective.to_owned()));
+    if let Some(status) = goal
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|status| !status.is_empty())
+    {
+        params.insert("status".to_owned(), Value::String(status.to_owned()));
+    }
+    if let Some(token_budget) = goal.get("tokenBudget").or_else(|| goal.get("token_budget")) {
+        params.insert("tokenBudget".to_owned(), token_budget.clone());
+    }
+    Ok(Value::Object(params))
+}
+
 fn thread_resume_params(
     thread_id: &str,
     request: &ExecutionRequest,
@@ -2115,11 +3001,14 @@ fn append_thread_launch_params(
             Value::String(model_provider.clone()),
         );
     }
-    if !launch_config.thread_config.is_empty() {
-        params.insert(
-            "config".to_owned(),
-            Value::Object(launch_config.thread_config.clone()),
-        );
+    let mut config = launch_config.thread_config.clone();
+    for override_value in &launch_config.config_overrides {
+        if let Some((key, value)) = config_override_entry(override_value) {
+            config.insert(key, value);
+        }
+    }
+    if !config.is_empty() {
+        params.insert("config".to_owned(), Value::Object(config));
     }
 }
 
@@ -2152,7 +3041,38 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
+    if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
+        params.insert("collaborationMode".to_owned(), collaboration_mode);
+    }
     Value::Object(params)
+}
+
+fn codex_collaboration_mode_payload(
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> Option<Value> {
+    let mode = match codex_collaboration_mode(request)? {
+        mode if mode.eq_ignore_ascii_case("plan") => "plan",
+        mode if mode.eq_ignore_ascii_case("default") => "default",
+        _ => return None,
+    };
+
+    Some(json!({
+        "mode": mode,
+        "settings": {
+            "model": model_id(request),
+            "reasoningEffort": launch_config.effort,
+            "developerInstructions": Value::Null,
+        }
+    }))
+}
+
+fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("collaborationMode")
+        .or_else(|| request.extra.get("collaboration_mode"))
+        .and_then(Value::as_str)
 }
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
@@ -2224,6 +3144,15 @@ fn response_result(message: Value) -> Result<Value, String> {
             .unwrap_or_else(|| error.to_string()));
     }
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
+}
+
+fn request_user_input_result(response: Value) -> Value {
+    if response.get("answers").is_some() {
+        return json!({
+            "answers": response.get("answers").cloned().unwrap_or_else(|| json!({})),
+        });
+    }
+    response
 }
 
 fn message_params(message: &Value) -> &Value {
@@ -2363,6 +3292,42 @@ mod tests {
     }
 
     #[test]
+    fn codex_run_state_keeps_completed_plan_out_of_final_content() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Execute the steps."
+                    }
+                }
+            }))
+            .is_none());
+
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "turn": {
+                        "status": "completed"
+                    }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert_eq!(
+            outcome,
+            ExecutionOutcome::Completed {
+                content: String::new()
+            }
+        );
+    }
+
+    #[test]
     fn codex_run_state_routes_item_id_deltas_by_started_phase() {
         let mut state = CodexRunState::default();
 
@@ -2460,6 +3425,105 @@ mod tests {
                 content: "Current directory: /tmp/project".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("plan this".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5",
+            }),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "collaborationMode".to_owned(),
+            Value::String("plan".to_owned()),
+        );
+        let launch_config = CodexLaunchConfig {
+            effort: Some("high".to_owned()),
+            ..CodexLaunchConfig::default()
+        };
+
+        let params = turn_start_params(
+            "thread-1",
+            &request,
+            &launch_config,
+            vec![json!({"type": "text", "text": "plan this"})],
+        );
+
+        assert_eq!(params["collaborationMode"]["mode"], "plan");
+        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+        assert_eq!(
+            params["collaborationMode"]["settings"]["reasoningEffort"],
+            "high"
+        );
+        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn turn_start_params_includes_default_collaboration_mode_when_requested() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("continue this".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5",
+            }),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "collaborationMode".to_owned(),
+            Value::String("default".to_owned()),
+        );
+        let launch_config = CodexLaunchConfig {
+            effort: Some("medium".to_owned()),
+            ..CodexLaunchConfig::default()
+        };
+
+        let params = turn_start_params(
+            "thread-1",
+            &request,
+            &launch_config,
+            vec![json!({"type": "text", "text": "continue this"})],
+        );
+
+        assert_eq!(params["collaborationMode"]["mode"], "default");
+        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+        assert_eq!(
+            params["collaborationMode"]["settings"]["reasoningEffort"],
+            "medium"
+        );
+        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn thread_goal_set_params_maps_initial_goal() {
+        let params = thread_goal_set_params(
+            "thread-1",
+            &json!({
+                "objective": "ship the feature",
+                "status": "paused",
+                "tokenBudget": 1200,
+            }),
+        )
+        .expect("initial goal should map to Codex goal params");
+
+        assert_eq!(
+            params,
+            json!({
+                "threadId": "thread-1",
+                "objective": "ship the feature",
+                "status": "paused",
+                "tokenBudget": 1200,
+            })
+        );
+    }
+
+    #[test]
+    fn thread_goal_set_params_rejects_empty_objective() {
+        let error = thread_goal_set_params("thread-1", &json!({"objective": "   "}))
+            .expect_err("empty objective should be rejected");
+
+        assert_eq!(error, "initial goal objective is required");
     }
 
     #[test]

@@ -604,7 +604,7 @@ export function ProjectWorkBar({
               isMobile
                 ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                 : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-              !isMobile && (menuLayout.placement === 'below' ? 'top-11' : 'bottom-11'),
+              !isMobile && (menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'),
               !isMobile && menuClassName
             )}
             style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
@@ -890,8 +890,8 @@ export function ProjectWorkBar({
           data-testid="project-work-button"
           onClick={handleToggleMenu}
           className={cn(
-            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-            open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
             buttonClassName
           )}
           aria-expanded={open}
@@ -993,9 +993,9 @@ export function ProjectWorkBar({
             data-testid="execution-mode-button"
             onClick={handleToggleExecutionModeMenu}
             className={cn(
-              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               executionModeOpen &&
-                'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
+                'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
             )}
             aria-expanded={executionModeOpen}
             aria-label={t('workbench.execution_mode_label', '启动模式')}

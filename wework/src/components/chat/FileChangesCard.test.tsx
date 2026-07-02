@@ -126,10 +126,13 @@ describe('FileChangesCard', () => {
       act(() => vi.advanceTimersByTime(1))
       const preview = screen.getByTestId('file-change-diff-preview')
       expect(preview).toHaveAttribute('data-placement', 'below')
+      expect(preview).toHaveStyle({ width: '640px' })
       expect(preview).toHaveClass('fixed', 'z-[9999]', 'pointer-events-auto', 'select-text')
       expect(preview).not.toHaveClass('pointer-events-none')
-      expect(preview).toHaveTextContent('github-pr-flow.md')
-      expect(preview.firstElementChild).not.toHaveTextContent('references/')
+      expect(preview.lastElementChild).toHaveClass('max-h-[min(24rem,calc(100vh-9rem))]')
+      expect(preview.firstElementChild).toHaveTextContent(
+        '/workspace/project/references/github-pr-flow.md'
+      )
       expect(preview).toHaveTextContent('+3')
       expect(preview).toHaveTextContent('-0')
       expect(preview).toHaveTextContent('After the PR is created')
@@ -153,7 +156,7 @@ describe('FileChangesCard', () => {
     }
   })
 
-  test('shows only the file name in the diff preview header for absolute paths', () => {
+  test('shows the absolute file path in the diff preview header', () => {
     vi.useFakeTimers()
     try {
       renderCard({
@@ -184,8 +187,54 @@ describe('FileChangesCard', () => {
       act(() => vi.advanceTimersByTime(500))
 
       const previewHeader = screen.getByTestId('file-change-diff-preview').firstElementChild
-      expect(previewHeader).toHaveTextContent('SKILL.md')
-      expect(previewHeader).not.toHaveTextContent('/Users/crystal/dev/git')
+      expect(previewHeader).toHaveTextContent(
+        '/Users/crystal/dev/git/if/skills/wegent-dev/SKILL.md'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('keeps more than the first fourteen diff lines available in the scroll preview', () => {
+    vi.useFakeTimers()
+    try {
+      renderCard({
+        summary: {
+          ...summary,
+          file_count: 1,
+          additions: 20,
+          deletions: 0,
+          files: [
+            {
+              path: 'executor/src/runtime_work/mod.rs',
+              change_type: 'modified',
+              additions: 20,
+              deletions: 0,
+              binary: false,
+            },
+          ],
+          diff: [
+            '@@ -1,2 +1,22 @@',
+            ' fn demo() {',
+            ...Array.from(
+              { length: 20 },
+              (_, index) => `+    let value_${index + 1} = ${index + 1};`
+            ),
+            ' }',
+          ].join('\n'),
+        },
+      })
+
+      fireEvent.pointerEnter(screen.getByTestId('file-change-trigger'))
+      act(() => vi.advanceTimersByTime(500))
+
+      const preview = screen.getByTestId('file-change-diff-preview')
+      expect(preview.firstElementChild).toHaveTextContent(
+        '/workspace/project/executor/src/runtime_work/mod.rs'
+      )
+      expect(preview).toHaveTextContent('let value_1 = 1;')
+      expect(preview).toHaveTextContent('let value_20 = 20;')
+      expect(preview).not.toHaveTextContent('...')
     } finally {
       vi.useRealTimers()
     }

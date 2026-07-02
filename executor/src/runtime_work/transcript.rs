@@ -7,10 +7,11 @@ use std::{collections::HashSet, path::Path};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    bool_field, codex_wrapped_item_payload, extract_text, integer_field, is_codex_tool_item_type,
-    is_codex_tool_output_item_type, is_likely_codex_tool_item_type,
-    is_likely_codex_tool_output_item_type, item_id, item_type, normalize_workspace_path, now_ms,
-    raw_string_field, reasoning_content, string_field, timestamp_ms_field,
+    bool_field, codex_wrapped_item_payload, extract_text, integer_field,
+    is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
+    is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
+    normalize_workspace_path, now_ms, raw_string_field, reasoning_content, string_field,
+    timestamp_ms_field,
 };
 
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
@@ -89,6 +90,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     }
                 }
                 "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
+                "plan" => assistant.blocks.push(plan_block(&item, created_at)),
                 "commandexecution" => assistant.blocks.push(command_block(&item, created_at)),
                 "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
                 | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
@@ -133,12 +135,10 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             merge_file_changes(assistant.file_changes.take(), summary);
                     }
                 }
-                "contextcompaction" => {
-                    assistant.context_events.push(context_event(
+                item_type if is_codex_context_compaction_item_type(item_type) => {
+                    assistant.blocks.push(context_compaction_block(
                         &item,
-                        created_at,
-                        "context_compaction",
-                        "done",
+                        item_timestamp(&item).unwrap_or(created_at),
                     ));
                 }
                 "agentmessage" => {
@@ -345,6 +345,9 @@ fn transcript_item(item: &Value) -> Value {
     let Some(payload) = codex_wrapped_item_payload(item) else {
         return item.clone();
     };
+    if let Some(plan_item) = completed_plan_event_item(item, payload) {
+        return plan_item;
+    }
     let Some(payload_object) = payload.as_object() else {
         return item.clone();
     };
@@ -358,6 +361,60 @@ fn transcript_item(item: &Value) -> Value {
         }
     }
     Value::Object(object)
+}
+
+fn completed_plan_event_item(item: &Value, payload: &Value) -> Option<Value> {
+    if item_type(item) != "eventmsg" || item_type(payload) != "itemcompleted" {
+        return None;
+    }
+    let nested_item = payload.get("item")?;
+    if item_type(nested_item) != "plan" {
+        return None;
+    }
+    let mut object = nested_item.as_object()?.clone();
+    copy_missing_fields(
+        &mut object,
+        item,
+        &[
+            "timestamp",
+            "createdAt",
+            "created_at",
+            "threadId",
+            "thread_id",
+        ],
+    );
+    copy_missing_fields(
+        &mut object,
+        payload,
+        &[
+            "threadId",
+            "thread_id",
+            "turnId",
+            "turn_id",
+            "agentPath",
+            "agent_path",
+        ],
+    );
+    if !object.contains_key("createdAt") && !object.contains_key("created_at") {
+        if let Some(completed_at) = payload
+            .get("completed_at_ms")
+            .or_else(|| payload.get("completedAtMs"))
+            .cloned()
+        {
+            object.insert("createdAt".to_owned(), completed_at);
+        }
+    }
+    Some(Value::Object(object))
+}
+
+fn copy_missing_fields(object: &mut Map<String, Value>, source: &Value, keys: &[&str]) {
+    for key in keys {
+        if !object.contains_key(*key) {
+            if let Some(value) = source.get(*key).cloned() {
+                object.insert((*key).to_owned(), value);
+            }
+        }
+    }
 }
 
 fn is_root_transcript_item(item: &Value) -> bool {
@@ -487,8 +544,9 @@ fn is_substantive_process_item_type(item_type: &str) -> bool {
         || is_likely_codex_tool_item_type(item_type)
         || matches!(
             item_type,
-            "reasoning" | "filechange" | "patchapplyend" | "contextcompaction"
+            "reasoning" | "plan" | "filechange" | "patchapplyend"
         )
+        || is_codex_context_compaction_item_type(item_type)
 }
 
 fn is_default_tool_item(item: &Value) -> bool {
@@ -499,13 +557,14 @@ fn is_default_tool_item(item: &Value) -> bool {
             | "usermessage"
             | "agentmessage"
             | "agentmessageevent"
+            | "plan"
             | "reasoning"
             | "filechange"
             | "patchapplyend"
-            | "contextcompaction"
-    ) && (is_likely_codex_tool_item_type(&item_type)
-        || string_field(item, "call_id").is_some()
-        || string_field(item, "callId").is_some())
+    ) && !is_codex_context_compaction_item_type(&item_type)
+        && (is_likely_codex_tool_item_type(&item_type)
+            || string_field(item, "call_id").is_some()
+            || string_field(item, "callId").is_some())
 }
 
 fn is_default_tool_output_item(item: &Value) -> bool {
@@ -601,7 +660,6 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
 struct AssistantTurnAccumulation {
     blocks: Vec<Value>,
     file_changes: Option<Value>,
-    context_events: Vec<Value>,
     assistant_parts: Vec<String>,
     memory_citations: Vec<Value>,
 }
@@ -611,7 +669,6 @@ impl AssistantTurnAccumulation {
         Self {
             blocks: Vec::new(),
             file_changes,
-            context_events: Vec::new(),
             assistant_parts: Vec::new(),
             memory_citations: Vec::new(),
         }
@@ -619,7 +676,6 @@ impl AssistantTurnAccumulation {
 
     fn has_non_file_output(&self) -> bool {
         !self.blocks.is_empty()
-            || !self.context_events.is_empty()
             || !self.assistant_parts.is_empty()
             || !self.memory_citations.is_empty()
     }
@@ -631,7 +687,6 @@ impl AssistantTurnAccumulation {
     fn clear_after_emit(&mut self) {
         self.blocks.clear();
         self.file_changes = None;
-        self.context_events.clear();
         self.assistant_parts.clear();
         self.memory_citations.clear();
     }
@@ -678,7 +733,6 @@ fn push_accumulated_assistant(
         stopped_notice,
         blocks: &assistant.blocks,
         file_changes: assistant.file_changes.clone(),
-        context_events: &assistant.context_events,
         assistant_parts: &assistant.assistant_parts,
         memory_citations: &assistant.memory_citations,
     }));
@@ -886,6 +940,17 @@ fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) 
     }
 }
 
+fn plan_block(item: &Value, fallback_timestamp: i64) -> Value {
+    json!({
+        "id": format!("plan-{}", item_id(item, "plan")),
+        "type": "plan",
+        "process_kind": "plan",
+        "content": extract_text(item).unwrap_or_default(),
+        "status": "done",
+        "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
+    })
+}
+
 fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
@@ -904,7 +969,9 @@ fn collect_assistant_message(
                     blocks.push(process_text_block(item, content, fallback_timestamp));
                 }
                 AssistantMessagePhase::Final => {
-                    assistant_parts.push(content);
+                    if !duplicates_completed_plan_block(&content, blocks) {
+                        assistant_parts.push(content);
+                    }
                 }
             }
         }
@@ -912,6 +979,23 @@ fn collect_assistant_message(
     if let Some(memory_citation) = memory_citation(item) {
         memory_citations.push(memory_citation);
     }
+}
+
+fn duplicates_completed_plan_block(content: &str, blocks: &[Value]) -> bool {
+    let Some(plan_content) = proposed_plan_content(content) else {
+        return false;
+    };
+    blocks.iter().any(|block| {
+        item_type(block) == "plan"
+            && string_field(block, "content")
+                .is_some_and(|content| content.trim() == plan_content.trim())
+    })
+}
+
+fn proposed_plan_content(content: &str) -> Option<&str> {
+    let trimmed = content.trim();
+    let without_open = trimmed.strip_prefix("<proposed_plan>")?.trim_start();
+    Some(without_open.strip_suffix("</proposed_plan>")?.trim_end())
 }
 
 enum AssistantMessagePhase {
@@ -986,7 +1070,6 @@ struct AssistantMessageDraft<'a> {
     stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
-    context_events: &'a [Value],
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
 }
@@ -1021,14 +1104,6 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
             if let Some(object) = message.as_object_mut() {
                 object.insert("fileChanges".to_owned(), file_changes);
             }
-        }
-    }
-    if !draft.context_events.is_empty() {
-        if let Some(object) = message.as_object_mut() {
-            object.insert(
-                "contextEvents".to_owned(),
-                Value::Array(draft.context_events.to_vec()),
-            );
         }
     }
     if !draft.memory_citations.is_empty() {
@@ -1837,12 +1912,15 @@ fn diff_git_path(prefix: &str, path: &str) -> String {
     }
 }
 
-fn context_event(item: &Value, timestamp: i64, event_type: &str, status: &str) -> Value {
+fn context_compaction_block(item: &Value, timestamp: i64) -> Value {
+    let block_id = item_id(item, "context_compaction");
     json!({
-        "id": item_id(item, event_type),
-        "type": event_type,
-        "status": status,
-        "createdAt": timestamp,
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": timestamp,
     })
 }
 
@@ -1978,6 +2056,127 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "completedAt": 1_780_000_010,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "user-1",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "make a plan"}]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "id": "plan-1",
+                                "type": "plan",
+                                "text": "# Plan\n\n- Inspect the repo."
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "");
+        assert_eq!(messages[1]["blocks"][0]["id"], "plan-plan-1");
+        assert_eq!(messages[1]["blocks"][0]["type"], "plan");
+        assert_eq!(messages[1]["blocks"][0]["process_kind"], "plan");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
+        assert_eq!(messages[1]["blocks"][0]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_unwraps_completed_plan_events_and_skips_duplicate_final_text() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "completedAt": 1_780_000_010,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "user-1",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "make a plan"}]
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "type": "item_completed",
+                                "completed_at_ms": 1_780_000_003,
+                                "item": {
+                                    "id": "turn-1-plan",
+                                    "type": "Plan",
+                                    "text": "# Plan\n\n- Inspect the repo."
+                                }
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_004,
+                            "payload": {
+                                "id": "assistant-final",
+                                "type": "message",
+                                "role": "assistant",
+                                "phase": "final_answer",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "<proposed_plan>\n# Plan\n\n- Inspect the repo.\n</proposed_plan>"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "");
+        assert_eq!(messages[1]["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["blocks"][0]["id"], "plan-turn-1-plan");
+        assert_eq!(messages[1]["blocks"][0]["type"], "plan");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
     }
 
     #[test]

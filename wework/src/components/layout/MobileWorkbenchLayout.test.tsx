@@ -115,6 +115,36 @@ type LegacyMobileWorkbenchLayoutProps = {
   onCheckoutEnvironmentBranch?: (...args: unknown[]) => Promise<void>
   onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
   onUpgradeDevice?: (...args: unknown[]) => Promise<void>
+  onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
+}
+
+function createPendingRequestUserInputMessage(): WorkbenchMessage {
+  return {
+    id: 'assistant-request',
+    role: 'assistant',
+    content: '',
+    status: 'streaming',
+    createdAt: '2026-06-30T00:00:01.000Z',
+    blocks: [
+      {
+        id: 'request-1',
+        type: 'tool',
+        toolName: 'request_user_input',
+        status: 'pending',
+        renderPayload: {
+          kind: 'request_user_input',
+          request_id: 42,
+          questions: [
+            {
+              id: 'implement',
+              question: '执行此计划?',
+              options: [{ label: '是的，执行此计划' }],
+            },
+          ],
+        },
+      },
+    ],
+  }
 }
 
 function MobileWorkbenchLayout(props: LegacyMobileWorkbenchLayoutProps) {
@@ -283,6 +313,9 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
+    sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
+    ignoreRequestUserInput: vi.fn(),
+    answeredRequestUserInputIds: new Set(),
     addCodeComment: vi.fn(),
     clearCodeComments: vi.fn(),
     cancelQueuedMessage: vi.fn(),
@@ -455,6 +488,70 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-chat-input-dock')).toBeInTheDocument()
     expect(screen.queryByTestId('mobile-empty-state-content')).not.toBeInTheDocument()
+  })
+
+  test('submits implementation plan confirmation as a user message response on mobile', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+        projectChat={baseProjectChat}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          implement: { answers: ['是的，执行此计划'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('ignores the implementation plan confirmation through the pane session on mobile', async () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+        projectChat={baseProjectChat}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
+    )
   })
 
   test('shows an offline device notice above mobile conversations', () => {

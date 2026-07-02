@@ -3,10 +3,16 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { DeviceInfo, RuntimeTurnNavigationItem, TurnFileChangesSummary } from '@/types/api'
+import type {
+  DeviceInfo,
+  RequestUserInputResponse,
+  RuntimeTurnNavigationItem,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
+import type { RequestUserInputPayload } from './RequestUserInputCard'
 
 const BOTTOM_THRESHOLD = 48
 const MAX_CACHED_MESSAGE_PANES = 3
@@ -56,6 +62,11 @@ interface ScrollableMessageAreaProps {
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
@@ -142,6 +153,19 @@ function areScrollableMessageAreaPropsEqual(
       ? 'onOpenFileChangesReview'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
+      ? 'onRequestUserInputSubmit'
+      : null,
+    previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
+      ? 'onRequestUserInputIgnore'
+      : null,
+    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
+      ? 'hideRequestUserInputBlocks'
+      : null,
+    previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
+      ? 'hiddenRequestUserInputIds'
+      : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
@@ -242,6 +266,11 @@ function ScrollableMessagePaneContent({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  onOpenAssistantPlan,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
@@ -273,7 +302,7 @@ function ScrollableMessagePaneContent({
 
     const blockSignature = (lastMessage.blocks ?? [])
       .map(block => {
-        if (block.type === 'thinking' || block.type === 'text') {
+        if (block.type === 'thinking' || block.type === 'text' || block.type === 'plan') {
           return `${block.id}:${block.status}:${block.content.length}`
         }
         if (block.type === 'file_changes') {
@@ -745,6 +774,11 @@ function ScrollableMessagePaneContent({
                 onRevertFileChanges={onRevertFileChanges}
                 onOpenFileChangesReview={onOpenFileChangesReview}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onRequestUserInputSubmit={onRequestUserInputSubmit}
+                onRequestUserInputIgnore={onRequestUserInputIgnore}
+                onOpenAssistantPlan={onOpenAssistantPlan}
+                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
             </>

@@ -36,6 +36,13 @@ const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
 const CLAUDE_TASK_SKILL_DOWNLOAD_CONCURRENCY: usize = 4;
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
+const DEFAULT_HAIKU_MODEL_ENV: &str = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
+const DEFAULT_CLAUDE_SETTINGS_ENV: &[&str] = &[
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
+    "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK",
+    "ENABLE_TOOL_SEARCH",
+];
 
 pub(super) fn restore_claude_plugin_cache(request: &ExecutionRequest, spec: &CommandSpec) {
     let Some(config_dir) = spec
@@ -90,6 +97,71 @@ pub(super) fn configure_claude_file_edit_hooks(request: &ExecutionRequest, spec:
             fields.push(("error_len", error.len().to_string()));
             log_executor_event("claude file edit hooks failed", &fields);
         }
+    }
+}
+
+pub(super) fn configure_claude_default_settings(request: &ExecutionRequest, spec: &CommandSpec) {
+    let Some(config_dir) = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    let settings_path = PathBuf::from(config_dir).join("settings.json");
+    let fields = task_fields(request.task_id, request.subtask_id);
+
+    match write_claude_default_settings(&settings_path) {
+        Ok(()) => log_executor_event("claude default settings configured", &fields),
+        Err(error) => {
+            let mut failed_fields = fields;
+            failed_fields.push(("error_len", error.len().to_string()));
+            log_executor_event("claude default settings failed", &failed_fields);
+        }
+    }
+}
+
+fn write_claude_default_settings(settings_path: &PathBuf) -> Result<(), String> {
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let mut settings = read_claude_settings(settings_path);
+    let Some(settings_object) = settings.as_object_mut() else {
+        return Err("Claude settings root must be an object".to_owned());
+    };
+    settings_object.insert("includeCoAuthoredBy".to_owned(), Value::Bool(true));
+    settings_object.insert(
+        "skipDangerousModePermissionPrompt".to_owned(),
+        Value::Bool(false),
+    );
+
+    let env = object_field(&mut settings, "env");
+    for key in DEFAULT_CLAUDE_SETTINGS_ENV {
+        env.insert(
+            (*key).to_owned(),
+            Value::String(claude_settings_env_value(key)),
+        );
+    }
+
+    let content = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    fs::write(settings_path, format!("{content}\n")).map_err(|error| error.to_string())
+}
+
+fn claude_settings_env_value(key: &str) -> String {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_claude_settings_env_value(key).to_owned())
+}
+
+fn default_claude_settings_env_value(key: &str) -> &'static str {
+    match key {
+        "ENABLE_TOOL_SEARCH" => "true",
+        _ => "0",
     }
 }
 
@@ -375,7 +447,35 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
         }
     }
 
+    spec = apply_default_haiku_model_environment(spec, request);
+
     spec
+}
+
+fn apply_default_haiku_model_environment(
+    mut spec: CommandSpec,
+    request: &ExecutionRequest,
+) -> CommandSpec {
+    if spec.envs().contains_key(DEFAULT_HAIKU_MODEL_ENV) {
+        return spec;
+    }
+
+    let value = model_string(request, DEFAULT_HAIKU_MODEL_ENV)
+        .or_else(process_default_haiku_model)
+        .or_else(|| model_id(request));
+
+    if let Some(value) = value {
+        spec = spec.env(DEFAULT_HAIKU_MODEL_ENV, value);
+    }
+
+    spec
+}
+
+fn process_default_haiku_model() -> Option<String> {
+    env::var(DEFAULT_HAIKU_MODEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn apply_task_identity_environment(
@@ -709,19 +809,11 @@ fn write_claude_task_skill_marker(
     )
 }
 
-fn task_backend_url(request: &ExecutionRequest) -> Option<String> {
-    request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
+fn task_backend_url(_request: &ExecutionRequest) -> Option<String> {
+    env::var("WEGENT_BACKEND_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            env::var("WEGENT_BACKEND_URL")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        })
         .or_else(|| {
             env::var("TASK_API_DOMAIN")
                 .ok()
@@ -1031,6 +1123,7 @@ mod tests {
 
     #[test]
     fn task_backend_url_falls_back_to_task_api_domain() {
+        let _lock = crate::test_env::lock();
         let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
         let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend.local:8000");
 
@@ -1039,6 +1132,23 @@ mod tests {
         assert_eq!(
             task_backend_url(&request),
             Some("http://backend.local:8000".to_owned())
+        );
+    }
+
+    #[test]
+    fn task_backend_url_prefers_env_over_payload_backend_url() {
+        let _lock = crate::test_env::lock();
+        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
+
+        let request = ExecutionRequest {
+            backend_url: Some("http://payload-backend.invalid".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            task_backend_url(&request),
+            Some("http://env-backend.local:8000".to_owned())
         );
     }
 }

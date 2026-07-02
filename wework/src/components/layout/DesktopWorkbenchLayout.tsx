@@ -23,7 +23,10 @@ import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
-import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
+import {
+  useDesktopSidebarCollapsed,
+  useDesktopSidebarToggleRequest,
+} from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
@@ -195,6 +198,10 @@ export function DesktopWorkbenchLayout() {
   const collapseSidebar = useCallback(() => {
     updateSidebarCollapsed(true)
   }, [updateSidebarCollapsed])
+
+  useDesktopSidebarToggleRequest(() => {
+    updateSidebarCollapsed(!effectiveSidebarCollapsed)
+  })
 
   useWorkbenchShellEventHandlers({
     onCreateProjectMode: openProjectFromWorkMenu,
