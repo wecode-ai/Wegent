@@ -56,6 +56,27 @@ fn ndjson_parser_maps_error_event_to_failed_outcome() {
 }
 
 #[test]
+fn ndjson_parser_recoverable_midstream_error_yields_to_success_result() {
+    // GLM streaming can emit "Tool call preview did not complete before the
+    // turn ended" as a mid-stream `type:error` while the SDK still finishes the
+    // turn successfully. The success `type:result` must win.
+    let output = r#"
+{"type":"assistant","message":{"content":[{"type":"text","text":"editing"}]}}
+{"type":"error","message":"Tool call preview did not complete before the turn ended"}
+{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s1"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "editing".to_owned()
+        }
+    );
+}
+
+#[test]
 fn ndjson_parser_maps_interactive_form_waiting_result_to_waiting_outcome() {
     let output = r#"
 {"type":"assistant","message":{"content":[{"type":"text","text":"please fill the form"}]}}
