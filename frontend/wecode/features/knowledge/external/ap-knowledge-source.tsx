@@ -31,7 +31,6 @@ registerExternalKnowledgeSource(AP_PROVIDER, {
   label: 'WeiboAP',
   capabilities: {
     supportsKnowledgeBaseSelection: true,
-    supportsFolderSelection: false,
     supportsDocumentSelection: true,
     supportsDocumentTree: true,
     supportsScopedRetrieval: false,
