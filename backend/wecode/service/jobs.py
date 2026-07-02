@@ -272,6 +272,9 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
         ORPHAN_POD_MIN_AGE_HOURS,
     )
 
+    # Delay initial run so executor_manager has time to finish starting up.
+    await asyncio.sleep(130)
+
     while not stop_event.is_set():
         try:
             async with distributed_lock.acquire_watchdog_context_async(
