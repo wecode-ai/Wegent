@@ -75,7 +75,9 @@ class TestWebSocketResultEmitter:
             mock_get.return_value = mock_ws
 
             emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
-            await emitter.emit_chunk(task_id=1, subtask_id=1, content="Hello", offset=0)
+            await emitter.emit_chunk(
+                task_id=1, subtask_id=1, content="Hello", offset=0, message_id=100
+            )
 
             mock_ws.emit_chat_chunk.assert_called_once()
             call_kwargs = mock_ws.emit_chat_chunk.call_args[1]
@@ -83,6 +85,7 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["subtask_id"] == 1
             assert call_kwargs["content"] == "Hello"
             assert call_kwargs["offset"] == 0
+            assert call_kwargs["message_id"] == 100
 
     @pytest.mark.asyncio
     async def test_emit_done(self):
