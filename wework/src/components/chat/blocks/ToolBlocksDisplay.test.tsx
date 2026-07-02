@@ -627,14 +627,14 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
-  test('shows a thinking placeholder while streaming with only completed activity', () => {
+  test('leaves generic thinking placeholders to the message list', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
       'aria-hidden',
       'false'
     )
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('collapses streaming processing once final content is visible', () => {
