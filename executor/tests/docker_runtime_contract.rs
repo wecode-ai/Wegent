@@ -5,7 +5,7 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 #[cfg(unix)]
@@ -28,9 +28,11 @@ use wegent_executor::{
     server::create_docker_router_from_env,
 };
 
-fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
 }
 
 struct EnvGuard {
@@ -65,12 +67,12 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 "#,
     );
     let callback = CallbackCapture::start().await;
-    let app = {
-        let _lock = env_lock();
-        let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
-        let _callback = EnvGuard::set("CALLBACK_URL", &callback.url);
-        create_docker_router_from_env().unwrap()
-    };
+    let _lock = env_lock().await;
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let _callback = EnvGuard::set("CALLBACK_URL", &callback.url);
+    let _executor_name = EnvGuard::set("EXECUTOR_NAME", "pod-from-env");
+    let _executor_namespace = EnvGuard::set("EXECUTOR_NAMESPACE", "namespace-from-env");
+    let app = create_docker_router_from_env().unwrap();
     let response = app
         .oneshot(
             Request::builder()
@@ -103,6 +105,8 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
     assert_eq!(events[0]["event_type"], "response.created");
     assert_eq!(events[0]["task_id"], 91);
+    assert_eq!(events[0]["executor_name"], "pod-from-env");
+    assert_eq!(events[0]["executor_namespace"], "namespace-from-env");
     assert_eq!(events[1]["event_type"], "response.output_text.delta");
     assert_eq!(events[1]["data"]["delta"], "docker done");
     assert_eq!(events[2]["event_type"], "response.completed");
@@ -116,7 +120,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 async fn docker_heartbeat_posts_to_sandbox_endpoint_from_python_env_contract() {
     let heartbeat = HeartbeatCapture::start().await;
     let config = {
-        let _lock = env_lock();
+        let _lock = env_lock().await;
         let _enabled = EnvGuard::set("HEARTBEAT_ENABLED", "true");
         let _id = EnvGuard::set("HEARTBEAT_ID", "sandbox-1385");
         let _kind = EnvGuard::set("HEARTBEAT_TYPE", "sandbox");

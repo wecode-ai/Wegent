@@ -128,6 +128,7 @@ class ExecutionRequest:
     knowledge_base_ids: Optional[list] = None
     document_ids: Optional[list] = None
     knowledge_base_scopes: list[KnowledgeBaseScope] = field(default_factory=list)
+    external_knowledge_refs: Optional[list[dict]] = None
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL

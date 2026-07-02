@@ -9,14 +9,21 @@ API endpoints for task knowledge bases (group chat) binding management.
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from app.schemas.external_knowledge import ExternalKnowledgeRef
+from app.services.chat.external_knowledge_refs import (
+    extract_task_external_knowledge_refs,
+    remove_task_external_knowledge_ref,
+)
 from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.rag.sources import ExternalRefValidationError
+from app.stores.tasks import task_access_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -62,6 +69,43 @@ class UnbindKnowledgeBaseResponse(BaseModel):
     message: str
     kb_name: str
     kb_namespace: str
+
+
+class BoundExternalKnowledgeRefListResponse(BaseModel):
+    """Response for task-level external knowledge refs."""
+
+    items: List[ExternalKnowledgeRef]
+    total: int
+
+
+class RemoveExternalKnowledgeRefRequest(BaseModel):
+    """Request to remove one task-level external knowledge ref."""
+
+    ref: ExternalKnowledgeRef
+
+
+class RemoveExternalKnowledgeRefResponse(BaseModel):
+    """Response for removing one external knowledge ref."""
+
+    message: str
+    items: List[ExternalKnowledgeRef]
+    total: int
+
+
+def _get_accessible_task_or_404(db: Session, task_id: int, user_id: int):
+    """Return an active task if the user owns or can access it."""
+    if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    task = task_access_store.get_task(db, task_id=task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return task
 
 
 # ============ API Endpoints ============
@@ -162,4 +206,61 @@ def unbind_knowledge_base(
         message="Knowledge base unbound successfully",
         kb_name=kb_name,
         kb_namespace=kb_namespace,
+    )
+
+
+@router.get(
+    "/{task_id}/external-knowledge-refs",
+    response_model=BoundExternalKnowledgeRefListResponse,
+)
+def get_bound_external_knowledge_refs(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get external knowledge refs bound to a task.
+    User must have access to the task to view.
+    """
+    task = _get_accessible_task_or_404(db, task_id, current_user.id)
+    refs = extract_task_external_knowledge_refs(task)
+    return BoundExternalKnowledgeRefListResponse(items=refs, total=len(refs))
+
+
+@router.post(
+    "/{task_id}/external-knowledge-refs/remove",
+    response_model=RemoveExternalKnowledgeRefResponse,
+)
+def remove_bound_external_knowledge_ref(
+    task_id: int,
+    request: RemoveExternalKnowledgeRefRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove one external knowledge ref from a task-level binding.
+    User must have access to the task to modify bindings.
+    """
+    task = _get_accessible_task_or_404(db, task_id, current_user.id)
+    try:
+        refs = remove_task_external_knowledge_ref(
+            db,
+            task,
+            request.ref.model_dump(exclude_none=True),
+        )
+        db.commit()
+    except ExternalRefValidationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    return RemoveExternalKnowledgeRefResponse(
+        message="External knowledge ref removed successfully",
+        items=refs,
+        total=len(refs),
     )

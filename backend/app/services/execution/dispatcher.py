@@ -162,6 +162,7 @@ def extract_completed_result(response_data: dict) -> dict:
         "value": value,
         "usage": response_data.get("usage"),
         "sources": response_data.get("sources"),
+        "retrieval_summary": response_data.get("retrieval_summary"),
         "blocks": response_data.get("blocks"),
         "silent_exit": response_data.get("silent_exit"),
         "silent_exit_reason": response_data.get("silent_exit_reason"),

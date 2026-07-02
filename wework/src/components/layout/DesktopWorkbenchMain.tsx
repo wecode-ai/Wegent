@@ -789,7 +789,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-0 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'absolute inset-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[margin]',
         sidebarResizing && 'transition-none',
         !isTauri && 'mt-1.5'
@@ -837,295 +837,302 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           </div>
         )}
       </WorkbenchPaneActiveOnly>
-      <div
-        data-testid="desktop-workbench-content"
-        className={cn(
-          'relative flex min-w-0 flex-none flex-col overflow-hidden',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
-          showPageTopBar && 'pt-11'
-        )}
-        style={
-          {
-            width: chatColumnWidth,
-            '--desktop-floating-composer-height': `${floatingComposerHeight}px`,
-            '--desktop-floating-composer-clearance': `${floatingComposerClearance}px`,
-          } as CSSProperties
-        }
-      >
-        {isBootstrapping ? (
-          <div className="flex flex-1" data-testid="desktop-workbench-loading" />
-        ) : hasConversation ? (
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            <ScrollableMessageArea
-              messages={paneMessages}
-              loading={paneSession.transcriptLoading}
-              isWaitingForAssistant={paneSession.waitingForAssistant}
-              hasMoreBefore={paneSession.transcriptHasMoreBefore}
-              loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
-              turnNavigation={paneSession.turnNavigation}
-              onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-              onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
-              onLoadTranscriptGap={paneSession.loadTranscriptGap}
-              conversationKey={
-                currentRuntimeTask
-                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
-                  : null
-              }
-              className="h-full"
-              scrollTestId="desktop-chat-scroll"
-              scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
-              messageListClassName={cn(
-                DESKTOP_MESSAGE_LIST_CLASS,
-                chatContentResizing && 'transition-none'
-              )}
-              scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
-              devices={devices}
-              onRetryFailedMessage={message => {
-                void retryFailedMessage(message.id, paneMessages)
-              }}
-              onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
-              onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
-              onOpenFileChangesReview={({
-                loadDiff,
-                reviewTitle,
-                defaultFileTreeVisible,
-                focusFilePath,
-              }) => {
-                previousTurnReviewRef.current = {
-                  loadDiff,
-                  defaultFileTreeVisible,
+      <div className="relative flex min-h-0 flex-1 overflow-visible">
+        <div
+          data-testid="desktop-workbench-content"
+          className={cn(
+            'relative flex min-w-0 flex-none flex-col overflow-hidden',
+            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
+            showPageTopBar && 'pt-11'
+          )}
+          style={
+            {
+              width: chatColumnWidth,
+              '--desktop-floating-composer-height': `${floatingComposerHeight}px`,
+              '--desktop-floating-composer-clearance': `${floatingComposerClearance}px`,
+            } as CSSProperties
+          }
+        >
+          {isBootstrapping ? (
+            <div className="flex flex-1" data-testid="desktop-workbench-loading" />
+          ) : hasConversation ? (
+            <div className="relative min-h-0 flex-1 overflow-hidden">
+              <ScrollableMessageArea
+                messages={paneMessages}
+                loading={paneSession.transcriptLoading}
+                isWaitingForAssistant={paneSession.waitingForAssistant}
+                hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
+                turnNavigation={paneSession.turnNavigation}
+                onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+                onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
+                onLoadTranscriptGap={paneSession.loadTranscriptGap}
+                conversationKey={
+                  currentRuntimeTask
+                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+                    : null
                 }
-                setHasPreviousTurnReview(true)
-                void openReviewFromDiffLoader(loadDiff, {
+                className="h-full"
+                scrollTestId="desktop-chat-scroll"
+                scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
+                messageListClassName={cn(
+                  DESKTOP_MESSAGE_LIST_CLASS,
+                  chatContentResizing && 'transition-none'
+                )}
+                scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
+                devices={devices}
+                onRetryFailedMessage={message => {
+                  void retryFailedMessage(message.id, paneMessages)
+                }}
+                onSwitchModelForFailedMessage={() =>
+                  setModelSelectorOpenSignal(signal => signal + 1)
+                }
+                onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
+                onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
+                onOpenFileChangesReview={({
+                  loadDiff,
                   reviewTitle,
-                  reviewMode: 'previous-turn',
                   defaultFileTreeVisible,
                   focusFilePath,
-                })
-              }}
-              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
-              onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-              onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
-              onOpenAssistantPlan={openAssistantPlan}
-              hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
-              hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
-            />
-            <div
-              className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
-              data-testid="desktop-floating-composer-backdrop"
-            />
-            <div
-              className={cn(
-                DESKTOP_FLOATING_COMPOSER_LAYER_CLASS,
-                chatContentResizing && 'transition-none'
-              )}
-              data-testid="desktop-floating-composer-layer"
-            >
+                }) => {
+                  previousTurnReviewRef.current = {
+                    loadDiff,
+                    defaultFileTreeVisible,
+                  }
+                  setHasPreviousTurnReview(true)
+                  void openReviewFromDiffLoader(loadDiff, {
+                    reviewTitle,
+                    reviewMode: 'previous-turn',
+                    defaultFileTreeVisible,
+                    focusFilePath,
+                  })
+                }}
+                onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+                onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+                onOpenAssistantPlan={openAssistantPlan}
+                hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+                hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+              />
               <div
-                ref={floatingComposerCardRef}
-                className="pointer-events-auto"
-                data-testid="desktop-floating-composer-card"
+                className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
+                data-testid="desktop-floating-composer-backdrop"
+              />
+              <div
+                className={cn(
+                  DESKTOP_FLOATING_COMPOSER_LAYER_CLASS,
+                  chatContentResizing && 'transition-none'
+                )}
+                data-testid="desktop-floating-composer-layer"
               >
-                {showConversationDeviceBanner ? (
-                  <ConversationDeviceOfflineBanner
-                    device={activeDevice}
-                    deviceId={activeDeviceId}
-                    className="mb-2"
-                  />
-                ) : (
-                  <DeviceStatusPrompt
-                    devices={devices}
-                    upgradingDevices={upgradingDevices}
-                    onUpgradeDevice={upgradeDevice}
-                    onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                    activeDeviceId={activeDeviceId}
-                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                    hideAvailableUpdates
-                    className="mb-2"
-                  />
-                )}
-                {pendingRequestUserInput ? (
-                  <RequestUserInputCard
-                    key={
-                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
-                    }
-                    payload={pendingRequestUserInput}
-                    onSubmit={response => {
-                      const shouldImplementPlan =
-                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                      return paneSession.sendRequestUserInputResponse(response, {
-                        appendUserMessage: shouldImplementPlan,
-                        forceDefaultCollaborationMode: shouldImplementPlan,
-                      })
-                    }}
-                    onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
-                  />
-                ) : (
-                  <ChatInput
-                    value={paneSession.input}
-                    onChange={paneSession.setInput}
-                    onSubmit={paneSession.send}
-                    disabled={composerDisabled}
-                    error={errorMessage}
-                    disabledReason={inlineComposerDisabledReason}
-                    placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                    variant="desktop"
-                    projectChat={projectChatWithModelSelectorSignal}
-                    projectWork={paneProjectWork}
-                    showProjectWorkBar={false}
-                    queuedMessages={paneQueuedMessages}
-                    guidanceMessages={paneGuidanceMessages}
-                    codeComments={paneSession.codeCommentContexts}
-                    isStreaming={paneIsResponseStreaming}
-                    onPause={() => void paneSession.pauseCurrentResponse()}
-                    goal={paneSession.goal}
-                    goalDraftActive={paneSession.goalDraftActive}
-                    onSetGoal={
-                      composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
-                    }
-                    onCancelGoalDraft={paneSession.cancelGoalDraft}
-                    onEditGoal={paneSession.editCurrentGoal}
-                    onPauseGoal={() => void paneSession.pauseCurrentGoal()}
-                    onResumeGoal={() => void paneSession.resumeCurrentGoal()}
-                    onClearGoal={() => void paneSession.clearCurrentGoal()}
-                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                    onEditQueuedMessage={paneSession.editQueuedMessage}
-                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                    onClearCodeComments={paneSession.clearCodeComments}
-                  />
-                )}
+                <div
+                  ref={floatingComposerCardRef}
+                  className="pointer-events-auto"
+                  data-testid="desktop-floating-composer-card"
+                >
+                  {showConversationDeviceBanner ? (
+                    <ConversationDeviceOfflineBanner
+                      device={activeDevice}
+                      deviceId={activeDeviceId}
+                      className="mb-2"
+                    />
+                  ) : (
+                    <DeviceStatusPrompt
+                      devices={devices}
+                      upgradingDevices={upgradingDevices}
+                      onUpgradeDevice={upgradeDevice}
+                      onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                      activeDeviceId={activeDeviceId}
+                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                      hideAvailableUpdates
+                      className="mb-2"
+                    />
+                  )}
+                  {pendingRequestUserInput ? (
+                    <RequestUserInputCard
+                      key={
+                        requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                      }
+                      payload={pendingRequestUserInput}
+                      onSubmit={response => {
+                        const shouldImplementPlan =
+                          isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                        return paneSession.sendRequestUserInputResponse(response, {
+                          appendUserMessage: shouldImplementPlan,
+                          forceDefaultCollaborationMode: shouldImplementPlan,
+                        })
+                      }}
+                      onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
+                    />
+                  ) : (
+                    <ChatInput
+                      value={paneSession.input}
+                      onChange={paneSession.setInput}
+                      onSubmit={paneSession.send}
+                      disabled={composerDisabled}
+                      error={errorMessage}
+                      disabledReason={inlineComposerDisabledReason}
+                      placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                      variant="desktop"
+                      projectChat={projectChatWithModelSelectorSignal}
+                      projectWork={paneProjectWork}
+                      showProjectWorkBar={false}
+                      queuedMessages={paneQueuedMessages}
+                      guidanceMessages={paneGuidanceMessages}
+                      codeComments={paneSession.codeCommentContexts}
+                      isStreaming={paneIsResponseStreaming}
+                      onPause={() => void paneSession.pauseCurrentResponse()}
+                      goal={paneSession.goal}
+                      goalDraftActive={paneSession.goalDraftActive}
+                      onSetGoal={
+                        composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                      }
+                      onCancelGoalDraft={paneSession.cancelGoalDraft}
+                      onEditGoal={paneSession.editCurrentGoal}
+                      onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                      onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                      onClearGoal={() => void paneSession.clearCurrentGoal()}
+                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                      onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                      onEditQueuedMessage={paneSession.editQueuedMessage}
+                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                      onClearCodeComments={paneSession.clearCodeComments}
+                    />
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center px-10">
-            <div
-              className={cn(DESKTOP_COMPOSER_FRAME_CLASS, chatContentResizing && 'transition-none')}
-              data-testid="desktop-empty-composer-frame"
-            >
-              <h1 className="mb-10 text-center text-[28px] font-normal leading-9 tracking-normal text-text-primary/95">
-                {emptyTitle}
-              </h1>
-              <DeviceStatusPrompt
-                devices={devices}
-                upgradingDevices={upgradingDevices}
-                onUpgradeDevice={upgradeDevice}
-                onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                activeDeviceId={activeDeviceId}
-                requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                hideAvailableUpdates
-                className="mb-3"
-              />
-              <ChatInput
-                value={paneSession.input}
-                onChange={paneSession.setInput}
-                onSubmit={paneSession.send}
-                disabled={composerDisabled}
-                error={errorMessage}
-                disabledReason={inlineComposerDisabledReason}
-                placeholder={t('workbench.input_placeholder', '随心输入')}
-                variant="desktop"
-                projectChat={projectChatWithModelSelectorSignal}
-                projectWork={paneProjectWork}
-                queuedMessages={paneQueuedMessages}
-                guidanceMessages={paneGuidanceMessages}
-                codeComments={paneSession.codeCommentContexts}
-                isStreaming={paneIsResponseStreaming}
-                onPause={() => void paneSession.pauseCurrentResponse()}
-                goal={paneSession.goal}
-                goalDraftActive={paneSession.goalDraftActive}
-                onSetGoal={
-                  composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
-                }
-                onCancelGoalDraft={paneSession.cancelGoalDraft}
-                onEditGoal={paneSession.editCurrentGoal}
-                onPauseGoal={() => void paneSession.pauseCurrentGoal()}
-                onResumeGoal={() => void paneSession.resumeCurrentGoal()}
-                onClearGoal={() => void paneSession.clearCurrentGoal()}
-                onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                onEditQueuedMessage={paneSession.editQueuedMessage}
-                onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                onClearCodeComments={paneSession.clearCodeComments}
-              />
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-10">
+              <div
+                className={cn(
+                  DESKTOP_COMPOSER_FRAME_CLASS,
+                  chatContentResizing && 'transition-none'
+                )}
+                data-testid="desktop-empty-composer-frame"
+              >
+                <h1 className="mb-10 text-center text-[28px] font-normal leading-9 tracking-normal text-text-primary/95">
+                  {emptyTitle}
+                </h1>
+                <DeviceStatusPrompt
+                  devices={devices}
+                  upgradingDevices={upgradingDevices}
+                  onUpgradeDevice={upgradeDevice}
+                  onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                  activeDeviceId={activeDeviceId}
+                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                  hideAvailableUpdates
+                  className="mb-3"
+                />
+                <ChatInput
+                  value={paneSession.input}
+                  onChange={paneSession.setInput}
+                  onSubmit={paneSession.send}
+                  disabled={composerDisabled}
+                  error={errorMessage}
+                  disabledReason={inlineComposerDisabledReason}
+                  placeholder={t('workbench.input_placeholder', '随心输入')}
+                  variant="desktop"
+                  projectChat={projectChatWithModelSelectorSignal}
+                  projectWork={paneProjectWork}
+                  queuedMessages={paneQueuedMessages}
+                  guidanceMessages={paneGuidanceMessages}
+                  codeComments={paneSession.codeCommentContexts}
+                  isStreaming={paneIsResponseStreaming}
+                  onPause={() => void paneSession.pauseCurrentResponse()}
+                  goal={paneSession.goal}
+                  goalDraftActive={paneSession.goalDraftActive}
+                  onSetGoal={
+                    composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
+                  }
+                  onCancelGoalDraft={paneSession.cancelGoalDraft}
+                  onEditGoal={paneSession.editCurrentGoal}
+                  onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                  onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                  onClearGoal={() => void paneSession.clearCurrentGoal()}
+                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                  onEditQueuedMessage={paneSession.editQueuedMessage}
+                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                  onClearCodeComments={paneSession.clearCodeComments}
+                />
+              </div>
             </div>
-          </div>
-        )}
-        {bottomPanelContextsToRender.map(context => {
-          const active = context.key === bottomPanelWorkspaceKey
-          return (
-            <BottomWorkspacePanel
-              key={context.key}
-              open={active && (bottomPanelOpenByKey[context.key] ?? false)}
-              active={active}
-              preserveContent
-              testIdsEnabled={active}
-              currentProject={context.currentProject}
-              devices={context.devices}
-              workspaceTarget={context.workspaceTarget}
-              preferLocalTerminal={context.preferLocalTerminal}
-              onRequestClose={() => {
-                setBottomPanelOpenByKey(current => ({ ...current, [context.key]: false }))
-              }}
-            />
-          )
-        })}
-      </div>
-      {rightPanelOpen && (
-        <div
-          data-testid="right-workspace-resize-handle"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('workbench.resize_right_workspace_panel')}
-          aria-controls="right-workspace-panel-shell"
-          className={cn(
-            'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
-            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
           )}
-          style={{ left: rightSplitChatWidth + 2 }}
-          onPointerDown={handleRightSplitResizeStart}
-        />
-      )}
-      <div
-        id="right-workspace-panel-shell"
-        data-testid="right-workspace-panel-shell"
-        className={cn(
-          'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
-          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
-          rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
-        )}
-        style={{ width: rightPanelShellWidth }}
-        aria-hidden={!rightPanelOpen}
-      >
-        {shouldRenderRightPanel && (
-          <RightWorkspacePanel
-            visible={rightPanelOpen}
-            activeView={rightPanelView}
-            openTabs={rightPanelTabs}
-            currentProject={workspaceProject}
-            devices={devices}
-            workspaceTarget={workspaceTarget}
-            preferLocalTerminal={preferLocalWorkspaceTerminal}
-            workspaceFileApi={workspaceFileApi}
-            openFileRequest={openFileRequest}
-            workspaceTargetError={workspaceTargetError}
-            review={reviewState}
-            planContent={rightPanelPlanContent}
-            reviewViewOptions={reviewViewOptions}
-            canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
-            onAddCodeComment={paneSession.addCodeComment}
-            onSelectReview={selectReviewView}
-            onSelectTerminal={selectTerminalView}
-            onSelectBrowser={selectBrowserView}
-            onSelectFiles={selectFilesView}
-            onSelectPlan={selectPlanView}
-            onCloseTab={closeRightPanelTab}
-            onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+        </div>
+        {rightPanelOpen && (
+          <div
+            data-testid="right-workspace-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('workbench.resize_right_workspace_panel')}
+            aria-controls="right-workspace-panel-shell"
+            className={cn(
+              'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
+            )}
+            style={{ left: rightSplitChatWidth + 2 }}
+            onPointerDown={handleRightSplitResizeStart}
           />
         )}
+        <div
+          id="right-workspace-panel-shell"
+          data-testid="right-workspace-panel-shell"
+          className={cn(
+            'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
+            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
+            rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+          )}
+          style={{ width: rightPanelShellWidth }}
+          aria-hidden={!rightPanelOpen}
+        >
+          {shouldRenderRightPanel && (
+            <RightWorkspacePanel
+              visible={rightPanelOpen}
+              activeView={rightPanelView}
+              openTabs={rightPanelTabs}
+              currentProject={workspaceProject}
+              devices={devices}
+              workspaceTarget={workspaceTarget}
+              preferLocalTerminal={preferLocalWorkspaceTerminal}
+              workspaceFileApi={workspaceFileApi}
+              openFileRequest={openFileRequest}
+              workspaceTargetError={workspaceTargetError}
+              review={reviewState}
+              planContent={rightPanelPlanContent}
+              reviewViewOptions={reviewViewOptions}
+              canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
+              onAddCodeComment={paneSession.addCodeComment}
+              onSelectReview={selectReviewView}
+              onSelectTerminal={selectTerminalView}
+              onSelectBrowser={selectBrowserView}
+              onSelectFiles={selectFilesView}
+              onSelectPlan={selectPlanView}
+              onCloseTab={closeRightPanelTab}
+              onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+            />
+          )}
+        </div>
       </div>
+      {bottomPanelContextsToRender.map(context => {
+        const active = context.key === bottomPanelWorkspaceKey
+        return (
+          <BottomWorkspacePanel
+            key={context.key}
+            open={active && (bottomPanelOpenByKey[context.key] ?? false)}
+            active={active}
+            preserveContent
+            testIdsEnabled={active}
+            currentProject={context.currentProject}
+            devices={context.devices}
+            workspaceTarget={context.workspaceTarget}
+            preferLocalTerminal={context.preferLocalTerminal}
+            onRequestClose={() => {
+              setBottomPanelOpenByKey(current => ({ ...current, [context.key]: false }))
+            }}
+          />
+        )
+      })}
       <WorkbenchPaneActiveOnly>
         <TaskForkDialog
           key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}

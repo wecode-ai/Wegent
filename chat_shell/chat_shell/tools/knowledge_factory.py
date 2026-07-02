@@ -22,6 +22,23 @@ from shared.telemetry.decorators import add_span_event, set_span_attribute, trac
 logger = logging.getLogger(__name__)
 
 
+def _get_kb_max_calls(kb_tool: Any) -> int:
+    """Read KB tool call limits, falling back to the shared default."""
+    from chat_shell.tools.builtin.knowledge_base import (
+        DEFAULT_MAX_CALLS_PER_CONVERSATION,
+    )
+
+    try:
+        max_calls, _ = kb_tool._get_kb_limits()
+    except Exception as exc:
+        logger.debug(
+            "[knowledge_factory] Using default KB max_calls because limits are unavailable: %s",
+            exc,
+        )
+        return DEFAULT_MAX_CALLS_PER_CONVERSATION
+    return max_calls
+
+
 async def prepare_knowledge_base_tools(
     knowledge_base_ids: Optional[list[int]],
     user_id: int,
@@ -39,6 +56,7 @@ async def prepare_knowledge_base_tools(
     user_name: Optional[str] = None,
     auth_token: str = "",
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL,
+    external_knowledge_refs: Optional[list[dict]] = None,
 ) -> KnowledgeBaseToolsResult:
     """Prepare knowledge base tools and enhanced system prompt.
 
@@ -58,8 +76,10 @@ async def prepare_knowledge_base_tools(
     """
     extra_tools: list = []
     enhanced_system_prompt = base_system_prompt
+    internal_kb_ids = knowledge_base_ids or []
+    external_refs = external_knowledge_refs or []
 
-    if not knowledge_base_ids:
+    if not internal_kb_ids and not external_refs:
         return KnowledgeBaseToolsResult(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
@@ -67,10 +87,11 @@ async def prepare_knowledge_base_tools(
         )
 
     logger.info(
-        "[knowledge_factory] Creating KB tools for %d knowledge bases: %s, "
+        "[knowledge_factory] Creating KB tools for %d knowledge bases and %d external refs: %s, "
         "is_user_selected=%s, document_ids=%s, model_id=%s, context_window=%s",
-        len(knowledge_base_ids),
-        knowledge_base_ids,
+        len(internal_kb_ids),
+        len(external_refs),
+        internal_kb_ids,
         is_user_selected,
         document_ids,
         model_id,
@@ -83,6 +104,7 @@ async def prepare_knowledge_base_tools(
         KbLsTool,
         KBToolCallCounter,
         KnowledgeBaseTool,
+        KnowledgeListDocumentsTool,
         ScopedKnowledgeBaseTool,
     )
 
@@ -105,7 +127,8 @@ async def prepare_knowledge_base_tools(
     # The legacy document_ids field is for non-scoped document filters.
     legacy_document_ids = [] if has_restricted_scope else (document_ids or [])
     kb_tool = kb_tool_class(
-        knowledge_base_ids=knowledge_base_ids,
+        knowledge_base_ids=internal_kb_ids,
+        external_knowledge_refs=external_refs,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes or [],
         user_id=user_id,
@@ -128,23 +151,19 @@ async def prepare_knowledge_base_tools(
         logger.info(
             "[knowledge_factory] Created restricted KB tool set: knowledge_base_search only"
         )
-    else:
+    elif internal_kb_ids:
         # Create shared call counter for exploration tools (kb_ls and kb_head).
         # knowledge_base_search enforces its own limit internally; we fetch the
         # same KB-configured max_calls here only because kb_ls/kb_head need a
         # shared counter when they are actually exposed.
-        try:
-            max_calls, _ = kb_tool._get_kb_limits()
-        except Exception:
-            # KnowledgeBaseTool may be mocked in unit tests; fall back to defaults.
-            max_calls = 10
+        max_calls = _get_kb_max_calls(kb_tool)
         exploration_call_counter = KBToolCallCounter(max_calls=max_calls)
 
         # Create exploration tools (kb_ls and kb_head)
         # These are secondary tools for when RAG search doesn't find relevant results
         # They share a call counter to enforce combined call limits
         kb_ls_tool = KbLsTool(
-            knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_ids=internal_kb_ids,
             knowledge_base_scopes=knowledge_base_scopes or [],
             db_session=db,
             auth_token=auth_token,
@@ -152,7 +171,7 @@ async def prepare_knowledge_base_tools(
         kb_ls_tool._call_counter = exploration_call_counter
 
         kb_head_tool = KbHeadTool(
-            knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_ids=internal_kb_ids,
             knowledge_base_scopes=knowledge_base_scopes or [],
             user_id=user_id,
             db_session=db,
@@ -165,6 +184,29 @@ async def prepare_knowledge_base_tools(
 
         logger.info(
             "[knowledge_factory] Created 3 KB tools: knowledge_base_search, kb_ls, kb_head"
+        )
+    else:
+        logger.info(
+            "[knowledge_factory] Created external-only base KB tool set: "
+            "knowledge_base_search"
+        )
+
+    if external_refs and not restricted_search_only:
+        max_calls = _get_kb_max_calls(kb_tool)
+        knowledge_list_documents_tool = KnowledgeListDocumentsTool(
+            knowledge_base_ids=internal_kb_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
+            external_knowledge_refs=external_refs,
+            user_id=user_id,
+            user_name=user_name,
+            auth_token=auth_token,
+        )
+        knowledge_list_documents_tool._call_counter = KBToolCallCounter(
+            max_calls=max_calls
+        )
+        extra_tools.append(knowledge_list_documents_tool)
+        logger.info(
+            "[knowledge_factory] Added knowledge listing tool: knowledge_list_documents"
         )
 
     # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
@@ -201,10 +243,21 @@ async def prepare_knowledge_base_tools(
             kb_tool_access_mode=kb_tool_access_mode,
         )
 
+    if external_refs and not internal_kb_ids:
+        kb_instruction = KB_PROMPT_STRICT
+        logger.info(
+            "[knowledge_factory] Using STRICT mode prompt (external knowledge refs)"
+        )
+        enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+        return KnowledgeBaseToolsResult(
+            extra_tools=extra_tools,
+            enhanced_system_prompt=enhanced_system_prompt,
+            kb_meta_prompt="",
+            kb_tool_access_mode=kb_tool_access_mode,
+        )
+
     # Check if any KB has RAG enabled by querying KB info
-    has_rag_enabled = await _check_any_kb_has_rag_enabled(
-        knowledge_base_ids, auth_token
-    )
+    has_rag_enabled = await _check_any_kb_has_rag_enabled(internal_kb_ids, auth_token)
 
     # Choose prompt based on RAG availability and user selection mode
     if not has_rag_enabled:

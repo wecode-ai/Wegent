@@ -669,19 +669,11 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     }
 }
 
-fn task_backend_url(request: &ExecutionRequest) -> Option<String> {
-    request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
+fn task_backend_url(_request: &ExecutionRequest) -> Option<String> {
+    env::var("WEGENT_BACKEND_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            env::var("WEGENT_BACKEND_URL")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        })
         .or_else(|| {
             env::var("TASK_API_DOMAIN")
                 .ok()
@@ -991,6 +983,7 @@ mod tests {
 
     #[test]
     fn task_backend_url_falls_back_to_task_api_domain() {
+        let _lock = crate::test_env::lock();
         let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
         let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend.local:8000");
 
@@ -999,6 +992,23 @@ mod tests {
         assert_eq!(
             task_backend_url(&request),
             Some("http://backend.local:8000".to_owned())
+        );
+    }
+
+    #[test]
+    fn task_backend_url_prefers_env_over_payload_backend_url() {
+        let _lock = crate::test_env::lock();
+        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
+
+        let request = ExecutionRequest {
+            backend_url: Some("http://payload-backend.invalid".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            task_backend_url(&request),
+            Some("http://env-backend.local:8000".to_owned())
         );
     }
 }

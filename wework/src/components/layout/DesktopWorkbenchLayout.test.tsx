@@ -5184,6 +5184,8 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-100'
     )
     expect(panel).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toContainElement(panel)
+    expect(screen.getByTestId('desktop-workbench-main')).toContainElement(panel)
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
 

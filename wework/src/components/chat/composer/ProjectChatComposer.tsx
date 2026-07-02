@@ -152,7 +152,7 @@ export function ProjectChatComposer({
   }, [disabled, onFileSelect])
 
   return (
-    <div className="relative w-full rounded-[26px] bg-[#f3f3f3] shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
+    <div className="relative w-full rounded-[26px] bg-surface shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
       <form
         ref={formRef}
         data-testid="project-chat-composer-form"
@@ -246,7 +246,7 @@ export function ProjectChatComposer({
           onCreateBranch={projectWork.onCreateBranch}
           worktreeBranch={projectWork.worktreeBranch}
           onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
-          className="min-h-10 rounded-b-[26px] bg-[#f3f3f3] px-4"
+          className="min-h-10 rounded-b-[26px] bg-surface px-4"
           buttonClassName="h-9 px-2.5 text-[13px] leading-[18px] text-text-secondary hover:bg-surface/70 hover:text-text-primary"
         />
       )}

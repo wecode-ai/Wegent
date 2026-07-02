@@ -41,6 +41,7 @@ class ContextType(str, PyEnum):
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"  # Selected documents from notebook mode for direct injection
+    EXTERNAL_KNOWLEDGE = "external_knowledge"
 
 
 class ContextStatus(str, PyEnum):

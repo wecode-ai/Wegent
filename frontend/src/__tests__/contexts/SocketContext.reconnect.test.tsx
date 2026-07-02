@@ -1,15 +1,26 @@
 import React from 'react'
 import { act, render, waitFor } from '@testing-library/react'
-import { SocketProvider, useSocket } from '@/contexts/SocketContext'
+import path from 'path'
+
+type SocketContextModule = typeof import('@/contexts/SocketContext')
+type SocketApi = ReturnType<SocketContextModule['useSocket']>
 
 const mockIo = jest.fn()
 const mockGetToken = jest.fn()
 const mockFetchRuntimeConfig = jest.fn()
 const mockReconnectCallback = jest.fn()
 
-jest.mock('socket.io-client', () => ({
+const socketIoMockFactory = () => ({
   io: (...args: unknown[]) => mockIo(...args),
-}))
+})
+
+jest.doMock('socket.io-client', socketIoMockFactory)
+jest.doMock(
+  require.resolve('socket.io-client', {
+    paths: [path.join(process.cwd(), '../packages/chat-core')],
+  }),
+  socketIoMockFactory
+)
 
 jest.mock('@/apis/user', () => ({
   getToken: () => mockGetToken(),
@@ -20,6 +31,15 @@ jest.mock('@/lib/runtime-config', () => ({
   fetchRuntimeConfig: () => mockFetchRuntimeConfig(),
   getSocketUrl: () => 'http://fallback-socket',
 }))
+
+let SocketProvider: SocketContextModule['SocketProvider']
+let useSocket: SocketContextModule['useSocket']
+
+beforeAll(async () => {
+  const socketContext = await import('@/contexts/SocketContext')
+  SocketProvider = socketContext.SocketProvider
+  useSocket = socketContext.useSocket
+})
 
 function createMockSocket() {
   const socketHandlers = new Map<string, (...args: unknown[]) => void>()
@@ -65,7 +85,7 @@ function createMockSocket() {
   }
 }
 
-function SocketProbe({ onReady }: { onReady: (api: ReturnType<typeof useSocket>) => void }) {
+function SocketProbe({ onReady }: { onReady: (api: SocketApi) => void }) {
   const socketApi = useSocket()
 
   React.useEffect(() => {
@@ -96,7 +116,7 @@ describe('SocketProvider reconnect notification', () => {
     const socket = createMockSocket()
     mockIo.mockReturnValue(socket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe
@@ -151,7 +171,7 @@ describe('SocketProvider reconnect notification', () => {
     const socket = createMockSocket()
     mockIo.mockReturnValue(socket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe
@@ -183,7 +203,7 @@ describe('SocketProvider reconnect notification', () => {
     const socket = createMockSocket()
     mockIo.mockReturnValue(socket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe
@@ -211,7 +231,7 @@ describe('SocketProvider reconnect notification', () => {
     const secondSocket = createMockSocket()
     mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe
@@ -304,7 +324,7 @@ describe('SocketProvider reconnect notification', () => {
     )
     mockIo.mockReturnValue(socket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     const statusHandler = jest.fn()
     render(
       <SocketProvider>
@@ -346,7 +366,7 @@ describe('SocketProvider reconnect notification', () => {
     const secondSocket = createMockSocket()
     mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe
@@ -398,7 +418,7 @@ describe('SocketProvider reconnect notification', () => {
     const socket = createMockSocket()
     mockIo.mockReturnValue(socket)
 
-    let socketApi: ReturnType<typeof useSocket> | undefined
+    let socketApi: SocketApi | undefined
     render(
       <SocketProvider>
         <SocketProbe

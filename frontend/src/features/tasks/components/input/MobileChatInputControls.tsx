@@ -4,7 +4,15 @@
 
 'use client'
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
@@ -86,7 +94,7 @@ export interface MobileChatInputControlsProps {
 
   // Context selection
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
 
   // Attachment
   onFileSelect: (files: File | File[]) => void

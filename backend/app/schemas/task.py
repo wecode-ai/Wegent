@@ -203,6 +203,9 @@ class TaskDetail(BaseModel):
     requested_skills: Optional[List[SkillRef]] = (
         None  # User-selected skills for this task
     )
+    external_knowledge_refs: Optional[List[dict[str, Any]]] = (
+        None  # Task-level external knowledge refs used as runtime bindings
+    )
 
     class Config:
         """Pydantic config."""
