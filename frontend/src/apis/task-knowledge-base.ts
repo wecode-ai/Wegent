@@ -7,10 +7,13 @@
  */
 
 import type {
+  BoundExternalKnowledgeRefListResponse,
   BoundKnowledgeBaseDetail,
   BoundKnowledgeBaseListResponse,
+  RemoveExternalKnowledgeRefResponse,
   UnbindKnowledgeBaseResponse,
 } from '@/types/task-knowledge-base'
+import type { ExternalKnowledgeRef } from '@/types/context'
 import client from './client'
 
 export const taskKnowledgeBaseApi = {
@@ -50,6 +53,30 @@ export const taskKnowledgeBaseApi = {
     const query = params.toString()
     return client.delete<UnbindKnowledgeBaseResponse>(
       `/tasks/${taskId}/knowledge-bases/${kbName}${query ? `?${query}` : ''}`
+    )
+  },
+
+  /**
+   * Get external knowledge refs bound to a task
+   */
+  getBoundExternalKnowledgeRefs: async (
+    taskId: number
+  ): Promise<BoundExternalKnowledgeRefListResponse> => {
+    return client.get<BoundExternalKnowledgeRefListResponse>(
+      `/tasks/${taskId}/external-knowledge-refs`
+    )
+  },
+
+  /**
+   * Remove one external knowledge ref from a task
+   */
+  removeExternalKnowledgeRef: async (
+    taskId: number,
+    ref: ExternalKnowledgeRef
+  ): Promise<RemoveExternalKnowledgeRefResponse> => {
+    return client.post<RemoveExternalKnowledgeRefResponse>(
+      `/tasks/${taskId}/external-knowledge-refs/remove`,
+      { ref }
     )
   },
 }

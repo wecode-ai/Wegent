@@ -54,6 +54,37 @@ class TestSubtaskContextBrief:
         assert brief.knowledge_id == 123
         assert brief.document_count == 5
 
+    def test_subtask_brief_preserves_scoped_knowledge_base_documents(self) -> None:
+        """Knowledge base context briefs preserve scoped document selections."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name="Scoped KB",
+            status=ContextStatus.READY.value,
+            type_data={
+                "knowledge_id": 123,
+                "document_count": 2,
+                "document_ids": [10, 11],
+                "scope_restricted": True,
+            },
+        )
+        context.id = 1000
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.knowledge_id == 123
+        assert brief.document_count == 2
+        assert brief.document_ids == [10, 11]
+        assert brief.scope_restricted is True
+
     def test_subtask_brief_includes_table_document_id(self) -> None:
         """Table context briefs expose the underlying document ID."""
         from app.models.subtask_context import (

@@ -12,6 +12,8 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
+from app.schemas.context_display import build_context_display_fields
+
 # Add the project root to sys.path if not already there
 project_root = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -108,9 +110,25 @@ class SubtaskContextBrief(BaseModel):
     # Knowledge base fields (from type_data)
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
+    document_ids: Optional[list[int]] = None
+    scope_restricted: Optional[bool] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
     document_id: Optional[int] = None
     source_config: Optional[dict[str, Any]] = None
+    # External knowledge fields (from type_data)
+    external_provider: Optional[str] = None
+    external_mode: Optional[str] = None
+    external_id: Optional[str] = None
+    external_scope: Optional[str] = None
+    external_target_type: Optional[str] = None
+    external_node_id: Optional[str] = None
+    external_document_id: Optional[str] = None
+    external_parent_id: Optional[str] = None
+    # External web content fields
+    video_count: Optional[int] = None
+    site: Optional[str] = None
+    source_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -141,44 +159,7 @@ class SubtaskContextBrief(BaseModel):
             else context.context_type.value
         )
 
-        # Add type-specific fields
-        if context_type == "attachment":
-            base_data.update(
-                {
-                    "file_extension": type_data.get("file_extension"),
-                    "file_size": type_data.get("file_size"),
-                    "mime_type": type_data.get("mime_type"),
-                }
-            )
-        elif context_type == "knowledge_base":
-            base_data.update(
-                {
-                    "knowledge_id": type_data.get("knowledge_id"),
-                    "document_count": type_data.get("document_count"),
-                }
-            )
-        elif context_type == "table":
-            base_data["document_id"] = type_data.get("document_id")
-            # Build source_config for table contexts
-            url = type_data.get("url")
-            if url:
-                base_data["source_config"] = {"url": url}
-                # DEBUG: Log table context creation
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"[SubtaskContextBrief/subtask.py] Building table context: id={context.id}, "
-                    f"url={url}, source_config={base_data['source_config']}"
-                )
-        elif context.context_type == "selected_documents":
-            # Selected documents context for notebook mode
-            # Contains knowledge_base_id and document_ids in type_data
-            base_data.update(
-                {
-                    "document_count": len(type_data.get("document_ids", [])),
-                }
-            )
+        base_data.update(build_context_display_fields(context_type, type_data))
 
         return cls(**base_data)
 

@@ -2,7 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
+import {
+  useState,
+  useRef,
+  useMemo,
+  useCallback,
+  useEffect,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import type {
   Team,
   GitRepoInfo,
@@ -161,7 +169,7 @@ export interface ChatAreaState {
 
   // Context selection state (knowledge bases)
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
   resetContexts: () => void
 
   // Skill selection state

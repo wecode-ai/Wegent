@@ -260,6 +260,18 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       workspacePath: '/workspace/project-alpha',
       runtime: 'codex',
     }),
+    archiveProjectConversations: vi.fn().mockResolvedValue({
+      accepted: true,
+      requestedCount: 1,
+      acceptedCount: 1,
+      results: [],
+    }),
+    archiveAllConversations: vi.fn().mockResolvedValue({
+      accepted: true,
+      requestedCount: 1,
+      acceptedCount: 1,
+      results: [],
+    }),
     cancelRuntimeTask: vi.fn().mockResolvedValue({
       accepted: true,
       localTaskId: 'runtime-a',
@@ -812,6 +824,37 @@ function ArchiveRuntimeTaskProbe() {
         }
       >
         force archive worktree task
+      </button>
+    </div>
+  )
+}
+
+function ArchiveProjectConversationsProbe() {
+  const workbench = useWorkbench()
+  const [lastArchiveResult, setLastArchiveResult] = useState('')
+  return (
+    <div>
+      <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
+      <span data-testid="archive-result">{lastArchiveResult}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench
+            .archiveProjectsConversations(['project:7'])
+            .then(result => setLastArchiveResult(result?.status ?? 'none'))
+        }
+      >
+        archive project conversations
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench
+            .archiveProjectsConversations(['project:7'], { force: true })
+            .then(result => setLastArchiveResult(result?.status ?? 'none'))
+        }
+      >
+        force archive project conversations
       </button>
     </div>
   )
@@ -3000,6 +3043,88 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.archiveConversation.mock.invocationCallOrder[0]).toBeLessThan(
       removeCallOrder ?? 0
     )
+  })
+
+  test('prompts before force archiving project conversations with dirty worktrees', async () => {
+    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
+      if (data.command_key === 'git_status_porcelain') {
+        return { success: true, stdout: ' M src/App.tsx\n', stderr: '' }
+      }
+      if (data.command_key === 'git_worktree_remove') {
+        return { success: true, stdout: '', stderr: '' }
+      }
+      throw new Error(`unexpected command: ${data.command_key}`)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, key: 'project:7', name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 92,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/worktrees/9/project-alpha',
+                  workspaceKind: 'worktree',
+                  worktreeId: '9',
+                  available: true,
+                  localTasks: [
+                    {
+                      localTaskId: 'runtime-worktree',
+                      workspacePath: '/workspace/worktrees/9/project-alpha',
+                      workspaceKind: 'worktree',
+                      worktreeId: '9',
+                      title: 'Worktree task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+              totalLocalTasks: 1,
+            },
+          ],
+          totalLocalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: { executeCommand } as Partial<
+        WorkbenchServices['deviceApi']
+      > as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ArchiveProjectConversationsProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByText('archive project conversations')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByText('archive project conversations'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-result')).toHaveTextContent('dirty_worktree')
+    )
+    expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      'device-1',
+      expect.objectContaining({ command_key: 'git_worktree_remove' })
+    )
+
+    await userEvent.click(screen.getByText('force archive project conversations'))
+
+    await waitFor(() => expect(runtimeWorkApi.archiveProjectConversations).toHaveBeenCalledTimes(1))
+    expect(executeCommand).toHaveBeenCalledWith('device-1', {
+      command_key: 'git_worktree_remove',
+      path: '/workspace/worktrees/9/project-alpha',
+      args: ['/workspace/worktrees/9/project-alpha', '/workspace/worktrees/9/project-alpha'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 
   test('renders streaming local task chunks when the socket connects after chat start', async () => {

@@ -23,6 +23,7 @@ interface UseKnowledgeUrlSyncParams {
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   selectDingtalk: () => void
+  selectSourceView: (sourceViewId: string) => void
   clearSelection: () => void
 }
 
@@ -35,6 +36,7 @@ export function useKnowledgeUrlSync({
   selectGroup,
   selectGroups,
   selectDingtalk,
+  selectSourceView,
   clearSelection,
 }: UseKnowledgeUrlSyncParams) {
   const router = useRouter()
@@ -100,6 +102,13 @@ export function useKnowledgeUrlSync({
       selectGroups()
     } else if (groupParam === 'dingtalk') {
       selectDingtalk()
+    } else if (groupParam?.startsWith('source:')) {
+      const sourceViewId = groupParam.slice('source:'.length)
+      if (sourceViewId) {
+        selectSourceView(sourceViewId)
+      } else {
+        clearSelection()
+      }
     } else if (groupParam) {
       selectGroup(groupParam)
     } else {
@@ -116,6 +125,7 @@ export function useKnowledgeUrlSync({
     selectGroup,
     selectGroups,
     selectDingtalk,
+    selectSourceView,
     clearSelection,
     initialUrlSyncDone,
   ])

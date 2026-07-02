@@ -37,6 +37,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/local-device-command-rpc.md`](docs/en/developer-guide/local-device-command-rpc.md)
 - External knowledge MCP (trusted external knowledge integrations): [`docs/zh/developer-guide/external-knowledge-mcp.md`](docs/zh/developer-guide/external-knowledge-mcp.md)
 - English version: [`docs/en/developer-guide/external-knowledge-mcp.md`](docs/en/developer-guide/external-knowledge-mcp.md)
+- External knowledge sources (provider-neutral runtime retrieval sources): [`docs/zh/developer-guide/external-knowledge-sources.md`](docs/zh/developer-guide/external-knowledge-sources.md)
+- English version: [`docs/en/developer-guide/external-knowledge-sources.md`](docs/en/developer-guide/external-knowledge-sources.md)
 - User runtime config (encrypted user CLI auth storage and device sync): [`docs/zh/developer-guide/user-runtime-config.md`](docs/zh/developer-guide/user-runtime-config.md)
 - English version: [`docs/en/developer-guide/user-runtime-config.md`](docs/en/developer-guide/user-runtime-config.md)
 - Sandbox workspace archive (preserve Sandbox files across idle cleanup and recreation): [`docs/zh/developer-guide/sandbox-workspace-archive.md`](docs/zh/developer-guide/sandbox-workspace-archive.md)
@@ -47,6 +49,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/runtime-local-work.md`](docs/en/developer-guide/runtime-local-work.md)
 - Wework local-first cloud connection: [`docs/zh/developer-guide/wework-cloud-connection.md`](docs/zh/developer-guide/wework-cloud-connection.md)
 - English version: [`docs/en/developer-guide/wework-cloud-connection.md`](docs/en/developer-guide/wework-cloud-connection.md)
+- Wework performance diagnostics: [`docs/zh/developer-guide/wework-performance-diagnostics.md`](docs/zh/developer-guide/wework-performance-diagnostics.md)
+- English version: [`docs/en/developer-guide/wework-performance-diagnostics.md`](docs/en/developer-guide/wework-performance-diagnostics.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

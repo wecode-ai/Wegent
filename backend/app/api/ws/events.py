@@ -370,7 +370,19 @@ class SourceReference(BaseModel):
 
     index: int = Field(..., description="Source index number (e.g., 1, 2, 3)")
     title: str = Field(..., description="Document title/filename")
-    kb_id: int = Field(..., description="Knowledge base ID")
+    kb_id: Optional[int] = Field(None, description="Knowledge base ID")
+    source_id: Optional[str] = Field(None, description="Provider-specific source ID")
+    source_type: Optional[str] = Field(None, description="Provider source type")
+    source_uri: Optional[str] = Field(None, description="Provider source URI")
+    source_name: Optional[str] = Field(None, description="Provider source name")
+
+
+class RetrievalSummaryPayload(BaseModel):
+    """Aggregated retrieval coverage summary for a response."""
+
+    searched_source_ids: List[str] = Field(default_factory=list)
+    ignored_source_ids: List[str] = Field(default_factory=list)
+    source_statuses: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatChunkPayload(BaseModel):
@@ -398,6 +410,9 @@ class ChatDonePayload(BaseModel):
     task_id: Optional[int] = None  # Add task_id for group chat members
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
+    )
+    retrieval_summary: Optional[RetrievalSummaryPayload] = Field(
+        None, description="Aggregated retrieval coverage summary"
     )
 
 
