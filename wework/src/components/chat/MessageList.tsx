@@ -2,7 +2,6 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
@@ -116,7 +115,6 @@ export const MessageList = memo(function MessageList({
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
-  const isPointerSelectingRef = useRef(false)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [layoutWidth, setLayoutWidth] = useState(0)
@@ -174,13 +172,7 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
-    if (!isTextSelectionActive) return
-
     const updateSelectionState = () => {
-      if (isPointerSelectingRef.current) {
-        return
-      }
-
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
@@ -195,12 +187,10 @@ export const MessageList = memo(function MessageList({
     }
 
     const handlePointerUp = () => {
-      isPointerSelectingRef.current = false
       window.requestAnimationFrame(updateSelectionState)
     }
 
     const handleBlur = () => {
-      isPointerSelectingRef.current = false
       updateSelectionState()
     }
 
@@ -215,23 +205,14 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('selectionchange', updateSelectionState)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [isTextSelectionActive])
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !isMessageTextSelectionTarget(event.target)) {
-      return
-    }
-
-    isPointerSelectingRef.current = true
-    setIsTextSelectionActive(true)
-  }
+  }, [])
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
-    <div ref={listRef} className={cn(listLayoutClass, className)} onPointerDown={handlePointerDown}>
+    <div ref={listRef} className={cn(listLayoutClass, className)}>
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -298,16 +279,6 @@ function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
   }
 
   return Boolean(node.parentElement && root.contains(node.parentElement))
-}
-
-function isMessageTextSelectionTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false
-
-  return Boolean(
-    target.closest(
-      '.assistant-markdown, [data-testid="user-message-content"], [data-testid="message-hover-time"]'
-    )
-  )
 }
 
 function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {

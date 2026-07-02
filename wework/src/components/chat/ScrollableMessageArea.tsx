@@ -67,6 +67,7 @@ interface ScrollableMessageAreaProps {
   onOpenAssistantPlan?: (content: string) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
@@ -166,6 +167,7 @@ function areScrollableMessageAreaPropsEqual(
     previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
       ? 'hiddenRequestUserInputIds'
       : null,
+    previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
@@ -271,6 +273,7 @@ function ScrollableMessagePaneContent({
   onOpenAssistantPlan,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  autoScrollSuspended = false,
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
@@ -586,7 +589,7 @@ function ScrollableMessagePaneContent({
       return
     }
 
-    if (isTurnNavigationAutoScrollSuspended()) {
+    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
       clearScheduledScrolls()
       return
     }
@@ -603,6 +606,7 @@ function ScrollableMessagePaneContent({
   }, [
     conversationKey,
     activationVersion,
+    autoScrollSuspended,
     currentScrollKey,
     clearScheduledScrolls,
     isTurnNavigationAutoScrollSuspended,
@@ -648,7 +652,7 @@ function ScrollableMessagePaneContent({
         return
       }
 
-      if (isTurnNavigationAutoScrollSuspended()) {
+      if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
         return
       }
 
@@ -661,6 +665,7 @@ function ScrollableMessagePaneContent({
     return () => resizeObserver.disconnect()
   }, [
     currentScrollKey,
+    autoScrollSuspended,
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     scrollToBottom,
@@ -696,7 +701,7 @@ function ScrollableMessagePaneContent({
         data-testid={scrollTestId}
         className={cn(
           'h-full overflow-x-hidden overflow-y-auto',
-          turnNavigationLoading && '[overflow-anchor:none]',
+          (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
           scrollerClassName
         )}
         onScroll={() => {
@@ -717,7 +722,7 @@ function ScrollableMessagePaneContent({
           data-testid={`${scrollTestId}-content`}
           className={cn(
             'min-w-0 overflow-x-hidden',
-            turnNavigationLoading && '[overflow-anchor:none]'
+            (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]'
           )}
         >
           {messages.length === 0 ? (
