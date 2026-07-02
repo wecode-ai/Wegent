@@ -151,6 +151,40 @@ def test_build_pod_configuration_includes_skill_identity_env():
     assert env["WEGENT_SKILL_USER_NAME"] == "test_user"
 
 
+def test_build_pod_configuration_sources_executor_secret_env():
+    task = {
+        "task_id": 123,
+        "subtask_id": 456,
+        "user": {"name": "test_user"},
+        "type": "online",
+    }
+
+    pod = build_pod_configuration(
+        "test_user",
+        "executor-1",
+        "test-ns",
+        task,
+        "test/executor:latest",
+        123,
+        "default",
+    )
+
+    container = pod["spec"]["containers"][0]
+    assert container["command"] == ["/bin/sh", "-c"]
+    assert "set -a" in container["args"][0]
+    assert ". /etc/wegent-executor-secret/env" in container["args"][0]
+    assert "exec /app/executor" in container["args"][0]
+    assert {
+        "name": "wegent-executor-secret",
+        "mountPath": "/etc/wegent-executor-secret",
+        "readOnly": True,
+    } in container["volumeMounts"]
+    assert {
+        "name": "wegent-executor-secret",
+        "secret": {"secretName": "wegent-executor-secret"},
+    } in pod["spec"]["volumes"]
+
+
 def test_create_pod_from_warmpool_patches_skill_identity_annotations(mocker):
     executor = object.__new__(K8sExecutor)
     mocker.patch(

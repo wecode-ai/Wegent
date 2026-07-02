@@ -609,6 +609,7 @@ where
         status: StatusCode::BAD_REQUEST,
         detail: error.to_string(),
     })?;
+    let payload_preview = sanitized_json_preview(&payload, REQUEST_PAYLOAD_PREVIEW_CHARS);
     let request = OpenAIResponsesRequest::from_value(payload)?;
     let background = request.background();
     let execution_request = request.to_execution_request();
@@ -619,6 +620,7 @@ where
         format!("{:?}", execution_request.resolved_agent_kind()),
     ));
     fields.push(("background", background.to_string()));
+    fields.push(("payload_preview", payload_preview));
     log_executor_event("received request", &fields);
 
     let result = state.runner.submit(execution_request).await;
@@ -639,6 +641,53 @@ fn response_status(background: bool, status: TaskStatus) -> String {
     } else {
         status.as_str().to_owned()
     }
+}
+
+const REQUEST_PAYLOAD_PREVIEW_CHARS: usize = 2_000;
+
+fn sanitized_json_preview(value: &Value, max_chars: usize) -> String {
+    let sanitized = sanitize_log_value(value);
+    let serialized = serde_json::to_string(&sanitized).unwrap_or_default();
+    truncate_log_value(&serialized, max_chars)
+}
+
+fn sanitize_log_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| {
+                    let value = if is_sensitive_log_key(key) {
+                        Value::String("***".to_owned())
+                    } else {
+                        sanitize_log_value(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_log_value).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_log_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    normalized.contains("token")
+        || normalized.contains("secret")
+        || normalized.contains("password")
+        || normalized.contains("api_key")
+        || normalized.contains("apikey")
+        || normalized.contains("private_key")
+        || normalized == "authorization"
+}
+
+fn truncate_log_value(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let truncated = value.chars().take(max_chars).collect::<String>();
+    format!("{truncated}...")
 }
 
 #[derive(Debug, Serialize)]
@@ -1511,5 +1560,62 @@ impl IntoResponse for HttpError {
             ],
         );
         (self.status, Json(json!({ "detail": self.detail }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sanitized_json_preview_redacts_nested_secrets() {
+        let preview = sanitized_json_preview(
+            &json!({
+                "input": "clone repo",
+                "metadata": {
+                    "auth_token": "task-jwt-secret",
+                    "skill_identity_token": "skill-jwt-secret",
+                    "user": {
+                        "gitToken": "glpat-secret",
+                        "git_login": "tester"
+                    }
+                },
+                "headers": {
+                    "Authorization": "Bearer auth-secret"
+                },
+                "tools": [
+                    {
+                        "env": {
+                            "GITLAB_TOKEN": "gitlab-secret",
+                            "repo": "message-flow"
+                        }
+                    }
+                ]
+            }),
+            2_000,
+        );
+
+        assert!(preview.contains("\"input\":\"clone repo\""));
+        assert!(preview.contains("\"repo\":\"message-flow\""));
+        assert!(preview.contains("\"auth_token\":\"***\""));
+        assert!(preview.contains("\"skill_identity_token\":\"***\""));
+        assert!(preview.contains("\"gitToken\":\"***\""));
+        assert!(preview.contains("\"Authorization\":\"***\""));
+        assert!(preview.contains("\"GITLAB_TOKEN\":\"***\""));
+        assert!(!preview.contains("task-jwt-secret"));
+        assert!(!preview.contains("skill-jwt-secret"));
+        assert!(!preview.contains("glpat-secret"));
+        assert!(!preview.contains("auth-secret"));
+        assert!(!preview.contains("gitlab-secret"));
+    }
+
+    #[test]
+    fn sanitized_json_preview_truncates_long_payloads() {
+        let preview =
+            sanitized_json_preview(&json!({ "message": "abcdefghijklmnopqrstuvwxyz" }), 16);
+
+        assert!(preview.ends_with("..."));
+        assert!(preview.chars().count() <= 19);
     }
 }
