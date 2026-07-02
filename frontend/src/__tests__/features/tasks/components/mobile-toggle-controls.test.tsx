@@ -11,8 +11,13 @@ import { correctionApis } from '@/apis/correction'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : _key,
+    t: (key: string, fallback?: string | Record<string, unknown>) => {
+      const translations: Record<string, string> = {
+        'chat:correction.label': '交叉验证',
+        'correction.label': '交叉验证',
+      }
+      return translations[key] ?? (typeof fallback === 'string' ? fallback : key)
+    },
   }),
 }))
 
@@ -82,7 +87,7 @@ describe('mobile toggle controls', () => {
     )
     onToggle.mockClear()
 
-    const toggle = screen.getByRole('switch', { name: /纠错模式/ })
+    const toggle = screen.getByRole('switch', { name: /交叉验证/ })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
     expect(toggle.querySelector('button')).toBeNull()
 

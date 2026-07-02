@@ -42,7 +42,7 @@ export default function MobileCorrectionModeToggle({
   correctionModelName,
   taskId,
 }: MobileCorrectionModeToggleProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -133,7 +133,7 @@ export default function MobileCorrectionModeToggle({
       uncategorized: t('common:models.uncategorized', 'Uncategorized'),
       searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
       searchResults: t('common:models.search_results', 'Search results'),
-      noModels: t('chat:correction.no_models'),
+      noModels: t('correction.no_models'),
       noMatch: t('common:models.no_match', 'No matching models'),
       primaryGroups: t('common:models.primary_groups', 'Primary groups'),
       secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
@@ -160,7 +160,7 @@ export default function MobileCorrectionModeToggle({
         <div className="flex items-center gap-3">
           <Sparkles className="h-4 w-4 text-text-muted" />
           <div className="flex flex-col">
-            <span className="text-sm">{t('chat:correction.label')}</span>
+            <span className="text-sm">{t('correction.label')}</span>
             {enabled && correctionModelName && (
               <span className="text-xs text-text-muted truncate max-w-[120px]">
                 {correctionModelName}
@@ -175,8 +175,8 @@ export default function MobileCorrectionModeToggle({
       <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
         <DialogContent className="max-w-[calc(100vw-24px)] overflow-hidden p-4 sm:max-w-3xl sm:p-6">
           <DialogHeader>
-            <DialogTitle>{t('chat:correction.select_model')}</DialogTitle>
-            <DialogDescription>{t('chat:correction.select_model_desc')}</DialogDescription>
+            <DialogTitle>{t('correction.select_model')}</DialogTitle>
+            <DialogDescription>{t('correction.select_model_desc')}</DialogDescription>
           </DialogHeader>
 
           {isLoading ? (
@@ -196,8 +196,8 @@ export default function MobileCorrectionModeToggle({
               renderModelBadges={model => (
                 <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
                   {model.type === 'public'
-                    ? t('chat:correction.public_model')
-                    : t('chat:correction.user_model')}
+                    ? t('correction.public_model')
+                    : t('correction.user_model')}
                 </span>
               )}
               renderModelMeta={model =>
