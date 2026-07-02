@@ -8,6 +8,7 @@ import { isTauriRuntime } from './runtime-environment'
 
 const MENU_ID = 'wework-developer-command-menu'
 const INSPECTOR_COMMAND = 'open_main_webview_devtools'
+const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
 
 interface DeveloperCommand {
   id: string
@@ -137,6 +138,20 @@ function getDeveloperCommands(): DeveloperCommand[] {
         }
         await window.__WEWORK_PERF__.processSnapshot()
         console.info('[Wework perf] snapshot', window.__WEWORK_PERF__.snapshot())
+      },
+    },
+    {
+      id: 'open-log-directory',
+      label: 'Open Log Directory',
+      description: 'Open the folder that contains Tauri and frontend logs.',
+      run: async () => {
+        if (!isTauriRuntime()) {
+          console.warn('[Wework dev] Log directory is only available in the Tauri app.')
+          return
+        }
+        await invoke(OPEN_LOG_DIRECTORY_COMMAND).catch(error => {
+          console.error('[Wework dev] Failed to open log directory', error)
+        })
       },
     },
     {

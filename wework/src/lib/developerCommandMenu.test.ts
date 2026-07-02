@@ -34,7 +34,16 @@ describe('developerCommandMenu', () => {
     expect(screenCommand('reload')).toBeInTheDocument()
     expect(screenCommand('toggle-performance-diagnostics')).toBeInTheDocument()
     expect(screenCommand('print-performance-snapshot')).toBeInTheDocument()
+    expect(screenCommand('open-log-directory')).toBeInTheDocument()
     expect(screenCommand('open-web-inspector')).toBeInTheDocument()
+  })
+
+  test('opens the app log directory through Tauri', () => {
+    dispatchDeveloperShortcut()
+
+    screenCommand('open-log-directory').click()
+
+    expect(invokeMock).toHaveBeenCalledWith('open_app_log_directory')
   })
 
   test('opens the main WebView inspector through Tauri', () => {
