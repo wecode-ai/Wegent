@@ -47,17 +47,21 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, table_contexts, selected_docs_contexts = (
-            _prepare_contexts_for_creation(
-                contexts=[context_item],
-                subtask_id=100,
-                user_id=1,
-            )
+        (
+            kb_contexts,
+            table_contexts,
+            selected_docs_contexts,
+            external_contexts,
+        ) = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
         )
 
         assert len(kb_contexts) == 1
         assert table_contexts == []
         assert selected_docs_contexts == []
+        assert external_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -79,13 +83,14 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _ = _prepare_contexts_for_creation(
+        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
         )
 
         assert len(kb_contexts) == 1
+        assert external_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -106,13 +111,14 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _ = _prepare_contexts_for_creation(
+        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
         )
 
         assert len(kb_contexts) == 1
+        assert external_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -135,13 +141,14 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _ = _prepare_contexts_for_creation(
+        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
         )
 
         assert len(kb_contexts) == 1
+        assert external_contexts == []
         assert kb_contexts[0].type_data == {
             "knowledge_id": 10,
             "document_count": None,
@@ -165,13 +172,14 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _ = _prepare_contexts_for_creation(
+        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
         )
         scopes = _build_scopes_from_kb_contexts(kb_contexts)
 
+        assert external_contexts == []
         assert len(scopes) == 1
         assert scopes[0].knowledge_base_id == 10
         assert scopes[0].scope_restricted is True
@@ -951,6 +959,100 @@ class TestKBRefIdBasedLookup:
                 # Verify ID is included
                 assert kb_refs[0]["id"] == 10
                 assert kb_refs[0]["name"] == "Test KB"
+
+    def test_sync_scoped_kb_preserves_document_ids(
+        self, service, mock_db, mock_knowledge_base
+    ):
+        """Document-scoped subtask selections are persisted as task scope refs."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+                "knowledgeBaseScopes": [],
+            }
+        }
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
+                result = service.sync_subtask_kb_scope_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    document_ids=[3, "4", 3],
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        assert mock_task.json["spec"]["knowledgeBaseRefs"] == []
+        scope_refs = mock_task.json["spec"]["knowledgeBaseScopes"]
+        assert len(scope_refs) == 1
+        assert scope_refs[0]["id"] == 10
+        assert scope_refs[0]["scopeRestricted"] is True
+        assert scope_refs[0]["explicitDocumentIds"] == [3, 4]
+
+    def test_sync_whole_kb_removes_existing_scoped_ref(
+        self, service, mock_db, mock_knowledge_base
+    ):
+        """Whole-KB binding supersedes document-scoped refs for the same KB."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 10,
+                        "name": "Test KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [3],
+                    },
+                    {
+                        "id": 11,
+                        "name": "Other KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [8],
+                    },
+                ],
+            }
+        }
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        assert mock_task.json["spec"]["knowledgeBaseRefs"][0]["id"] == 10
+        assert mock_task.json["spec"]["knowledgeBaseScopes"] == [
+            {
+                "id": 11,
+                "name": "Other KB",
+                "namespace": "default",
+                "scopeRestricted": True,
+                "explicitDocumentIds": [8],
+            }
+        ]
 
     def test_sync_kb_appends_to_existing_task_level_refs(self, service, mock_db):
         """Test that message-time KB sync appends to existing task-level refs."""

@@ -79,6 +79,7 @@ export interface ModelFormData {
   embeddingSupportsImageInput?: boolean
   rerankTopN?: number
   rerankReturnDocuments?: boolean
+  supportsImageInput?: boolean
   supportsVideoInput?: boolean
   // Video-specific configs
   videoResolution?: '480p' | '720p' | '1080p'
@@ -360,6 +361,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Rerank
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
+  const [supportsImageInput, setSupportsImageInput] = useState(false)
   const [supportsVideoInput, setSupportsVideoInput] = useState(false)
   // Video
   const [videoGenerateAudio, setVideoGenerateAudio] = useState<boolean>(true)
@@ -465,6 +467,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setRerankTopN(effectiveInitialData.rerankConfig.top_n)
           setRerankReturnDocuments(effectiveInitialData.rerankConfig.return_documents ?? true)
         }
+        setSupportsImageInput(effectiveInitialData.modelCapabilities?.supportsImage ?? false)
         setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
         // Load video-specific configs
         if (effectiveInitialData.videoConfig) {
@@ -526,6 +529,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setEmbeddingSupportsImageInput(false)
         setRerankTopN(undefined)
         setRerankReturnDocuments(true)
+        setSupportsImageInput(false)
         setSupportsVideoInput(false)
         // Reset video-specific configs
         setVideoGenerateAudio(true)
@@ -1042,8 +1046,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      const rawModelCapabilities: ModelCapabilities = {
+        ...(supportsImageInput && { supportsImage: true }),
+        ...(supportsVideoInput && { supportsVideo: true }),
+      }
       const modelCapabilities: ModelCapabilities | undefined =
-        modelCategoryType === 'llm' && supportsVideoInput ? { supportsVideo: true } : undefined
+        modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
+          ? rawModelCapabilities
+          : undefined
 
       // Build video capabilities if any are configured
       const hasCapabilities =
@@ -1178,6 +1188,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         embeddingSupportsImageInput,
         rerankTopN,
         rerankReturnDocuments,
+        supportsImageInput,
         supportsVideoInput,
         // Video-specific configs (derive defaults from capabilities)
         videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
@@ -1598,23 +1609,45 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           )}
 
           {modelCategoryType === 'llm' && (
-            <div className="flex items-start space-x-3 rounded-lg bg-muted p-4">
-              <Checkbox
-                id="supports_video_input"
-                data-testid="supports-video-input-checkbox"
-                checked={supportsVideoInput}
-                onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
-              />
-              <div className="space-y-1">
-                <Label
-                  htmlFor="supports_video_input"
-                  className="cursor-pointer text-sm font-medium"
-                >
-                  {t('common:models.supports_video_input')}
-                </Label>
-                <p className="text-xs text-text-muted">
-                  {t('common:models.supports_video_input_hint')}
-                </p>
+            <div className="space-y-3 rounded-lg bg-muted p-4">
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_image_input"
+                  data-testid="supports-image-input-checkbox"
+                  checked={supportsImageInput}
+                  onCheckedChange={checked => setSupportsImageInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_image_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_image_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_image_input_hint')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_video_input"
+                  data-testid="supports-video-input-checkbox"
+                  checked={supportsVideoInput}
+                  onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_video_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_video_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_video_input_hint')}
+                  </p>
+                </div>
               </div>
             </div>
           )}

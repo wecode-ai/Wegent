@@ -9,6 +9,7 @@ import {
   isSupportedModelFamily,
   normalizeModelOptions,
 } from '@/lib/model-ui'
+import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import type {
   ModelCompatibilityDisabledReason,
   ModelOptions,
@@ -242,11 +243,13 @@ export function useWorkbenchModels({
       }
     }
 
-    loadModels()
+    void loadModels()
+    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
     return () => {
       cancelled = true
+      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
     }
-  }, [api, restoreSelection])
+  }, [api])
 
   useEffect(() => {
     if (!selectionReady) {

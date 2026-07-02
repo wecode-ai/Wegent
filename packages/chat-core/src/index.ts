@@ -21,6 +21,7 @@ export type {
   WorkbenchMessageRole,
   WorkbenchMessageStatus,
   WorkbenchFileChangesBlock,
+  WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,

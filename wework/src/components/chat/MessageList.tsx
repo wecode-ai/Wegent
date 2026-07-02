@@ -1,5 +1,6 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CSSProperties,
   MouseEvent as ReactMouseEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
@@ -11,11 +12,9 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  Download,
   File as FileIcon,
-  ListChecks,
-  Maximize2,
   Package,
+  Target,
 } from 'lucide-react'
 import type {
   Attachment,
@@ -33,13 +32,15 @@ import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
-import { CodexContextEvents, CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
+import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
+import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -73,11 +74,11 @@ interface MessageListProps {
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
+const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
-const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
-const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
+const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
   /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -113,20 +114,105 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
 }: MessageListProps) {
-  const visibleMessages = messages.filter(shouldRenderMessage)
+  const listRef = useRef<HTMLDivElement>(null)
+  const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
+  const [layoutWidth, setLayoutWidth] = useState(0)
+  const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+  const disableMessageContentVisibility = disableContentVisibility || isTextSelectionActive
+  const messageIntrinsicHeights = useMemo(() => {
+    return new Map(
+      visibleMessages.map(message => [
+        message.id,
+        getMessagePretextIntrinsicHeight(message, layoutWidth),
+      ])
+    )
+  }, [layoutWidth, visibleMessages])
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
+
+  useLayoutEffect(() => {
+    const element = listRef.current
+    if (!element) return
+
+    const updateLayoutWidth = () => {
+      setLayoutWidth(currentWidth => {
+        const nextWidth = element.clientWidth
+        return nextWidth === currentWidth ? currentWidth : nextWidth
+      })
+    }
+
+    const scheduleLayoutWidthUpdate = () => {
+      if (layoutWidthUpdateTimerRef.current !== null) {
+        clearTimeout(layoutWidthUpdateTimerRef.current)
+      }
+
+      layoutWidthUpdateTimerRef.current = setTimeout(() => {
+        layoutWidthUpdateTimerRef.current = null
+        updateLayoutWidth()
+      }, MESSAGE_LAYOUT_RESIZE_SETTLE_MS)
+    }
+
+    updateLayoutWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const resizeObserver = new ResizeObserver(scheduleLayoutWidthUpdate)
+    resizeObserver.observe(element)
+    return () => {
+      resizeObserver.disconnect()
+      if (layoutWidthUpdateTimerRef.current !== null) {
+        clearTimeout(layoutWidthUpdateTimerRef.current)
+        layoutWidthUpdateTimerRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const updateSelectionState = () => {
+      const selection = document.getSelection?.()
+      const root = listRef.current
+      if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
+        setIsTextSelectionActive(false)
+        return
+      }
+
+      const selectionTouchesList =
+        isNodeInsideElement(selection.anchorNode, root) ||
+        isNodeInsideElement(selection.focusNode, root)
+      setIsTextSelectionActive(selectionTouchesList)
+    }
+
+    const handlePointerUp = () => {
+      window.requestAnimationFrame(updateSelectionState)
+    }
+
+    const handleBlur = () => {
+      updateSelectionState()
+    }
+
+    document.addEventListener('pointerup', handlePointerUp)
+    document.addEventListener('pointercancel', handlePointerUp)
+    document.addEventListener('selectionchange', updateSelectionState)
+    window.addEventListener('blur', handleBlur)
+
+    return () => {
+      document.removeEventListener('pointerup', handlePointerUp)
+      document.removeEventListener('pointercancel', handlePointerUp)
+      document.removeEventListener('selectionchange', updateSelectionState)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
-    <div className={cn(listLayoutClass, className)}>
+    <div ref={listRef} className={cn(listLayoutClass, className)}>
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -134,11 +220,14 @@ export const MessageList = memo(function MessageList({
             <article
               className={[
                 'min-w-0 overflow-x-hidden',
-                disableContentVisibility
-                  ? ''
-                  : '[content-visibility:auto] [contain-intrinsic-size:0_220px]',
+                disableMessageContentVisibility ? '' : '[content-visibility:auto]',
                 message.role === 'user' ? 'flex justify-end' : '',
               ].join(' ')}
+              style={
+                disableMessageContentVisibility
+                  ? undefined
+                  : getMessageContainmentStyle(messageIntrinsicHeights.get(message.id))
+              }
               data-message-id={message.id}
               data-testid={`message-${message.role}`}
             >
@@ -176,6 +265,22 @@ export const MessageList = memo(function MessageList({
   )
 }, areMessageListPropsEqual)
 
+function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSProperties {
+  return {
+    containIntrinsicSize: `0 ${Math.ceil(estimatedHeight ?? 220)}px`,
+  } as CSSProperties
+}
+
+function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
+  if (!node) return false
+
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    return root.contains(node)
+  }
+
+  return Boolean(node.parentElement && root.contains(node.parentElement))
+}
+
 function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
@@ -202,6 +307,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
       ? 'onRequestUserInputIgnore'
       : null,
+    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -219,11 +325,7 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (message.status === 'streaming' || message.status === 'failed') return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
-  if (
-    message.references?.length ||
-    message.memoryCitations?.length ||
-    message.contextEvents?.length
-  ) {
+  if (message.references?.length || message.memoryCitations?.length) {
     return true
   }
 
@@ -378,13 +480,16 @@ function UserMessage({
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string) => void
 }) {
+  const { t } = useTranslation('common')
   const [isExpanded, setIsExpanded] = useState(false)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
   const codexLocalFileMentions = useMemo(
     () => parseCodexLocalFileMentions(message.content),
     [message.content]
   )
-  const displayContent = codexLocalFileMentions?.requestText ?? message.content
+  const displayContent = normalizeCodexUserMessageContent(
+    codexLocalFileMentions?.requestText ?? message.content
+  )
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
     [message.attachments]
@@ -415,6 +520,7 @@ function UserMessage({
     displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
+  const showGoalRequestBadge = message.runtimeGoalRequest === true
 
   return (
     <div
@@ -514,6 +620,17 @@ function UserMessage({
               ].join(' ')}
             >
               {renderUserContent(displayContent)}
+              {showGoalRequestBadge && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="user-message-goal-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <Target className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
               {shouldCollapse && !isExpanded && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
               )}
@@ -550,135 +667,10 @@ function UserMessage({
   )
 }
 
-function AssistantPlanCard({
-  content,
-  onOpenPlan,
-}: {
-  content: string
-  onOpenPlan?: (content: string) => void
-}) {
-  const { t } = useTranslation('chat')
-
-  const handleDownload = () => {
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'plan.md'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-
-  return (
-    <section
-      data-testid="assistant-plan-card"
-      className="my-3 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
-    >
-      <div className="flex min-h-10 items-center justify-between gap-3 px-4 py-2 text-text-muted">
-        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
-          <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-          <span>{t('plan_card.title')}</span>
-        </div>
-        <PlanCardActions
-          content={content}
-          onDownload={handleDownload}
-          onExpand={() => onOpenPlan?.(content)}
-        />
-      </div>
-      <div className="relative max-h-[360px] overflow-hidden px-4 pb-4 pt-3">
-        <div className="assistant-plan-card-content text-[15px] leading-7 text-text-primary">
-          <AssistantMarkdown content={content} />
-        </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />
-      </div>
-    </section>
-  )
-}
-
-function PlanCardActions({
-  content,
-  onDownload,
-  onExpand,
-}: {
-  content: string
-  onDownload: () => void
-  onExpand: () => void
-}) {
-  const { t } = useTranslation('chat')
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1400)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-
-  const handleCopy = () => {
-    void copyText(content).then(() => setCopied(true))
-  }
-
-  const actions = [
-    {
-      key: 'download',
-      label: t('plan_card.download'),
-      icon: <Download className="h-4 w-4" aria-hidden="true" />,
-      onClick: onDownload,
-      testId: 'assistant-plan-download-button',
-    },
-    {
-      key: 'copy',
-      label: t('plan_card.copy'),
-      icon: <Copy className="h-4 w-4" aria-hidden="true" />,
-      onClick: handleCopy,
-      testId: 'assistant-plan-copy-button',
-    },
-    {
-      key: 'expand',
-      label: t('plan_card.expand'),
-      icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
-      onClick: onExpand,
-      testId: 'assistant-plan-expand-button',
-    },
-  ]
-
-  return (
-    <div className="flex shrink-0 items-center gap-2">
-      {copied ? (
-        <span
-          data-testid="assistant-plan-copy-success"
-          className="text-xs font-medium text-text-secondary"
-        >
-          {t('plan_card.copy_success')}
-        </span>
-      ) : null}
-      {actions.map(action => (
-        <button
-          key={action.key}
-          type="button"
-          data-testid={action.testId}
-          aria-label={action.label}
-          title={action.label}
-          onClick={action.onClick}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
-        >
-          {action.icon}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function normalizeAssistantPlanContent(content: string): string {
-  return content.replace(CODEX_PLAN_TAG_PATTERN, '').trim()
-}
-
-function isAssistantPlanContent(content: string): boolean {
-  const normalizedContent = normalizeAssistantPlanContent(content)
-  return (
-    normalizedContent !== content ||
-    (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
-  )
+function normalizeCodexUserMessageContent(content: string): string {
+  return content.trimStart().startsWith(CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX)
+    ? CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL
+    : content
 }
 
 function parseCodexLocalFileMentions(content: string): {
@@ -1105,10 +1097,10 @@ function AssistantMessage({
   const hasStreamedResponse = hasBlocks || hasVisibleContent
   const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
   const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
+  const shouldShowTrailingThinking = isStreaming && hasVisibleContent
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
-  const contextEvents = message.contextEvents ?? []
   const memoryCitations = message.memoryCitations ?? []
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
@@ -1143,7 +1135,7 @@ function AssistantMessage({
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
-              className="mb-3 border-b border-border pb-2 text-sm font-medium text-text-muted"
+              className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
             >
               {t('assistant_status.stopped_after', {
                 duration: getStoppedElapsedDuration(message),
@@ -1163,22 +1155,16 @@ function AssistantMessage({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
+              onOpenAssistantPlan={onOpenAssistantPlan}
               hideRequestUserInputBlocks={hideRequestUserInputBlocks}
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}
-          {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
           {hasVisibleContent ? (
-            isAssistantPlanContent(visibleContent) ? (
-              <AssistantPlanCard
-                content={normalizeAssistantPlanContent(visibleContent)}
-                onOpenPlan={onOpenAssistantPlan}
-              />
-            ) : (
-              <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
-            )
+            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
+          {shouldShowTrailingThinking && <WaitingAssistantIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}

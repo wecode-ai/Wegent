@@ -32,7 +32,7 @@ import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
-import type { ContextItem, QueueMessageContext } from '@/types/context'
+import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
@@ -50,7 +50,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
-import { getAttachment, isVideoExtension } from '@/apis/attachments'
+import { getAttachment } from '@/apis/attachments'
 import { userApis } from '@/apis/user'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
@@ -73,6 +73,11 @@ import {
 import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
+import {
+  contextToExistingAttachment,
+  hasVideoInputAttachment,
+  isAttachmentLikeContext,
+} from '@/features/tasks/utils/contextAttachments'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
@@ -83,6 +88,30 @@ import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/li
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
 
+function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
+  if (!context.external_provider || !context.external_mode) return null
+  return {
+    provider: context.external_provider,
+    mode: context.external_mode,
+    id: context.external_id ?? undefined,
+    name: context.name,
+    scope: context.external_scope ?? undefined,
+    target_type: context.external_target_type ?? undefined,
+    node_id: context.external_node_id ?? undefined,
+    document_id: context.external_document_id ?? undefined,
+    parent_id: context.external_parent_id ?? undefined,
+  }
+}
+
+function buildExternalContextId(ref: ExternalKnowledgeRef) {
+  const targetType = ref.target_type ?? 'knowledge_base'
+  if (targetType !== 'knowledge_base') {
+    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
+    return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+  }
+  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+}
+
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
 
@@ -92,20 +121,10 @@ type SendMessageOptions = {
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
+  'external_web_content',
   'knowledge_base',
   'table',
 ])
-
-function isVideoAttachment(attachment: {
-  mime_type?: string | null
-  file_extension?: string | null
-}): boolean {
-  if (attachment.mime_type?.toLowerCase().startsWith('video/')) {
-    return true
-  }
-  const extension = attachment.file_extension?.toLowerCase()
-  return Boolean(extension && isVideoExtension(extension))
-}
 
 function getVideoInputSupport(model: Model | null | undefined): boolean | null {
   if (!model || model.name === DEFAULT_MODEL_NAME) {
@@ -333,7 +352,7 @@ function ChatAreaContent({
     if (taskType === 'video') {
       return false
     }
-    return chatState.attachmentState.attachments.some(isVideoAttachment)
+    return chatState.attachmentState.attachments.some(hasVideoInputAttachment)
   }, [taskType, chatState.attachmentState.attachments])
 
   const selectedModelVideoInputSupport = useMemo(
@@ -1245,6 +1264,8 @@ function ChatAreaContent({
           name: context.name,
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
+          document_ids: context.document_ids ?? undefined,
+          scope_restricted: context.scope_restricted ?? undefined,
         }
       } else if (context.context_type === 'table') {
         if (!context.document_id) return
@@ -1254,6 +1275,15 @@ function ChatAreaContent({
           type: 'table',
           document_id: context.document_id,
           source_config: context.source_config ?? undefined,
+        }
+      } else if (context.context_type === 'external_knowledge') {
+        const ref = buildExternalRefFromContext(context)
+        if (!ref) return
+        contextItem = {
+          id: buildExternalContextId(ref),
+          name: context.name,
+          type: 'external_knowledge',
+          ref,
         }
       }
 
@@ -1359,7 +1389,12 @@ function ChatAreaContent({
           subtask_id: detail.subtask_id ?? null,
           file_extension: detail.file_extension,
           created_at: detail.created_at,
+          external_media_type: detail.external_media_type ?? undefined,
+          text_count: detail.text_count ?? undefined,
           video_count: detail.video_count ?? undefined,
+          image_count: detail.image_count ?? undefined,
+          comment_count: detail.comment_count ?? undefined,
+          fetched_comment_count: detail.fetched_comment_count ?? undefined,
           site: detail.site ?? undefined,
           source_url: detail.source_url ?? undefined,
           cover_url: detail.cover_url ?? undefined,
@@ -1434,9 +1469,14 @@ function ChatAreaContent({
       // Restore all contexts (attachments and knowledge bases) from the user message
       const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
 
-      // Restore attachment contexts
-      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
+      // Restore attachment-like contexts
+      const attachmentContexts = rawContexts.filter(isAttachmentLikeContext)
       for (const ctx of attachmentContexts) {
+        if (ctx.context_type === 'external_web_content') {
+          addExistingAttachment(contextToExistingAttachment(ctx))
+          continue
+        }
+
         try {
           const detail = await getAttachment(ctx.id)
           addExistingAttachment({
@@ -1451,7 +1491,12 @@ function ChatAreaContent({
             subtask_id: detail.subtask_id ?? null,
             file_extension: detail.file_extension,
             created_at: detail.created_at,
+            external_media_type: detail.external_media_type ?? undefined,
+            text_count: detail.text_count ?? undefined,
             video_count: detail.video_count ?? undefined,
+            image_count: detail.image_count ?? undefined,
+            comment_count: detail.comment_count ?? undefined,
+            fetched_comment_count: detail.fetched_comment_count ?? undefined,
             site: detail.site ?? undefined,
             source_url: detail.source_url ?? undefined,
             cover_url: detail.cover_url ?? undefined,
@@ -1471,6 +1516,8 @@ function ChatAreaContent({
             name: ctx.name,
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
+            document_ids: ctx.document_ids ?? undefined,
+            scope_restricted: ctx.scope_restricted ?? undefined,
           })
         } else if (ctx.context_type === 'table') {
           if (!ctx.document_id) continue
@@ -1480,6 +1527,15 @@ function ChatAreaContent({
             type: 'table',
             document_id: ctx.document_id,
             source_config: ctx.source_config ?? undefined,
+          })
+        } else if (ctx.context_type === 'external_knowledge') {
+          const ref = buildExternalRefFromContext(ctx)
+          if (!ref) continue
+          restoredContextItems.push({
+            id: buildExternalContextId(ref),
+            name: ctx.name,
+            type: 'external_knowledge',
+            ref,
           })
         }
       }

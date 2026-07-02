@@ -1,8 +1,14 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ChromeTitlebar } from './ChromeTitlebar'
 import type { AppTab } from '@/config/apps'
+
+const startDragging = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ startDragging }),
+}))
 
 const mockTabs: AppTab[] = [
   { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
@@ -38,6 +44,10 @@ function disableTauri() {
 }
 
 describe('ChromeTitlebar', () => {
+  beforeEach(() => {
+    startDragging.mockClear()
+  })
+
   test('renders all tab buttons', () => {
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     expect(screen.getByTestId('chrome-tab-wework')).toBeInTheDocument()
@@ -49,7 +59,7 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass('bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-wework')).not.toHaveClass('bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass(
-      'h-7',
+      'h-8',
       'min-w-24',
       'justify-center',
       'rounded-lg',
@@ -63,7 +73,7 @@ describe('ChromeTitlebar', () => {
       'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
-    expect(screen.getByTestId('titlebar-actions')).toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('gap-1', 'pr-3')
   })
 
   test('renders app tabs as icon-only controls with hover labels', () => {
@@ -117,7 +127,11 @@ describe('ChromeTitlebar', () => {
     const spacer = screen.getByTestId('macos-traffic-light-spacer')
     const beforeTabs = screen.getByTestId('chrome-titlebar-before-tabs')
     const activeTab = screen.getByTestId('chrome-tab-wework')
+    const toggleButton = screen.getByRole('button', { name: 'Toggle sidebar' })
     expect(beforeTabs).toHaveTextContent('Toggle sidebar')
+    expect(screen.getByTestId('chrome-titlebar')).not.toHaveAttribute('data-tauri-drag-region')
+    expect(toggleButton.closest('[data-tauri-drag-region]')).toBeNull()
+    expect(activeTab.closest('[data-tauri-drag-region]')).toBeNull()
     expect(
       spacer.compareDocumentPosition(beforeTabs) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -140,8 +154,27 @@ describe('ChromeTitlebar', () => {
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     const dragRegion = screen.getByTestId('macos-traffic-light-spacer')
     expect(dragRegion.className).toContain('w-[95px]')
+    expect(dragRegion).toHaveClass('self-stretch')
+    expect(within(dragRegion).getByTestId('macos-titlebar-drag-region')).toHaveAttribute(
+      'data-tauri-drag-region'
+    )
     // macOS spacer is first child (left side)
     expect(dragRegion?.parentElement?.firstChild).toBe(dragRegion)
+    disableTauri()
+  })
+
+  test('starts native dragging from the Tauri titlebar window drag region', async () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
+
+    const dragRegion = screen.getByTestId('chrome-titlebar-window-drag-region')
+    expect(dragRegion).toHaveClass('self-stretch')
+    fireEvent.mouseDown(within(dragRegion).getByTestId('macos-titlebar-drag-region'), {
+      button: 0,
+    })
+
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
     disableTauri()
   })
 
@@ -149,8 +182,13 @@ describe('ChromeTitlebar', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    const dragRegion = document.querySelector('[data-tauri-drag-region]')
+    const dragRegion = screen.getByTestId('chrome-titlebar').lastElementChild
     expect(dragRegion).toBeInTheDocument()
+    expect(dragRegion).toHaveAttribute('data-tauri-drag-region')
+    expect(dragRegion).toHaveClass('w-[138px]', 'self-stretch')
+    expect(
+      within(dragRegion as HTMLElement).getByTestId('macos-titlebar-drag-region')
+    ).toHaveAttribute('data-tauri-drag-region')
     // Windows spacer is last child (right side)
     expect(dragRegion?.parentElement?.lastChild).toBe(dragRegion)
     disableTauri()

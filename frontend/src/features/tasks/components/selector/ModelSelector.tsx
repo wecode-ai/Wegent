@@ -20,7 +20,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { ChevronDown, Video, ImageIcon } from 'lucide-react'
+import { ChevronDown, ImageIcon, Video } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -66,13 +66,6 @@ export interface TeamWithBotDetails extends Team {
     role?: string
     bot?: BotSummary
   }>
-}
-
-function supportsVideoUnderstanding(model: Model): boolean {
-  return (
-    (model.config?.modelCapabilities as { supportsVideo?: boolean } | undefined)?.supportsVideo ===
-    true
-  )
 }
 
 /** Legacy props interface (backward compatible) */
@@ -420,11 +413,6 @@ export default function ModelSelector({
                   {model.type === 'user' && (
                     <Tag variant="info" className="text-[10px] flex-shrink-0 whitespace-nowrap">
                       {t('common:settings.personal', 'Personal')}
-                    </Tag>
-                  )}
-                  {supportsVideoUnderstanding(model) && (
-                    <Tag variant="success" className="text-[10px] flex-shrink-0 whitespace-nowrap">
-                      {t('common:models.video_understanding', 'Video')}
                     </Tag>
                   )}
                 </>

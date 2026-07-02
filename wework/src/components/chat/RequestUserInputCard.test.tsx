@@ -64,8 +64,8 @@ describe('RequestUserInputCard', () => {
           questions: [
             {
               id: 'implement',
-              question: '实施此计划?',
-              options: [{ label: '是，实施此计划' }],
+              question: '执行此计划?',
+              options: [{ label: '是的，执行此计划' }],
             },
             {
               id: 'adjustment',
@@ -84,7 +84,7 @@ describe('RequestUserInputCard', () => {
       requestId: undefined,
       itemId: undefined,
       answers: {
-        implement: { answers: ['是，实施此计划'] },
+        implement: { answers: ['是的，执行此计划'] },
       },
     })
   })
@@ -99,8 +99,8 @@ describe('RequestUserInputCard', () => {
           questions: [
             {
               id: 'implement',
-              question: '实施此计划?',
-              options: [{ label: '是，实施此计划' }],
+              question: '执行此计划?',
+              options: [{ label: '是的，执行此计划' }],
             },
             {
               id: 'adjustment',

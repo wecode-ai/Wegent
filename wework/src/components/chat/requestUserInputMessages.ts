@@ -3,6 +3,16 @@ import type { ProcessingBlock, ToolBlock, WorkbenchMessage } from '@/types/workb
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
+export const CODEX_IMPLEMENT_PLAN_QUESTION = '执行此计划?'
+export const CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL = '是的，执行此计划'
+const IMPLEMENT_PLAN_TEXT_MARKERS = ['实施此计划', '执行此计划']
+
+export function hasImplementationPlanText(text: string | null | undefined): boolean {
+  const normalizedText = text?.trim()
+  return Boolean(
+    normalizedText && IMPLEMENT_PLAN_TEXT_MARKERS.some(marker => normalizedText.includes(marker))
+  )
+}
 
 export type RequestUserInputBlock = ToolBlock & {
   renderPayload: RequestUserInputPayload
@@ -46,8 +56,8 @@ export function isImplementationPlanRequestUserInput(
     const id = question.id?.trim().toLowerCase()
     const text = question.question?.trim()
     if (id === 'implement') return true
-    if (text?.includes('实施此计划')) return true
-    return question.options?.some(option => option.label?.includes('实施此计划')) ?? false
+    if (hasImplementationPlanText(text)) return true
+    return question.options?.some(option => hasImplementationPlanText(option.label)) ?? false
   })
 }
 
@@ -134,7 +144,7 @@ function isRequestUserInputPayload(value: unknown): value is RequestUserInputPay
   )
 }
 
-function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
+export function hasRequestUserInputResponse(payload: RequestUserInputPayload): boolean {
   return Boolean(
     payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
   )

@@ -258,7 +258,7 @@ async def get_chat_history(
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
         supports_video: Whether the model supports video input.
-            If True, video attachments will include video_url blocks.
+            If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
 
     Returns:
@@ -322,7 +322,7 @@ async def _load_history_from_remote(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
         supports_video: Whether the model supports video input.
-            If True, video attachments will include video_url blocks.
+            If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
     """
     logger.info(
@@ -641,8 +641,9 @@ def _build_history_messages(
                     continue
                 video_parts.append(
                     {
-                        "type": "video_url",
-                        "video_url": {"url": payload.video_url},
+                        "type": "input_video",
+                        "video_url": payload.video_url,
+                        "mime_type": attachment.mime_type,
                     }
                 )
                 video_text = f"{payload.metadata_text}\n"

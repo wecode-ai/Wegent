@@ -47,6 +47,7 @@ from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
 from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
 from ..llm_logging import log_llm_request_event as _log_llm_request_event
 from ..llm_logging import log_llm_response_event as _log_llm_response_event
+from ..messages.converter import MessageConverter
 from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
@@ -403,12 +404,19 @@ def _convert_validated_messages(
     target_provider: str = "",
     target_model_id: str = "",
     target_api_format: str = "",
+    supports_video: bool = False,
 ) -> list[BaseMessage]:
     """Validate canonical message linkage, then convert to LangChain messages.
 
     When ``target_provider`` is set, foreign reasoning blocks are stripped
-    before conversion to prevent cross-model API errors.
+    before conversion to prevent cross-model API errors. Canonical video blocks
+    are also converted to the target provider's wire format.
     """
+    messages = MessageConverter.adapt_video_blocks_for_provider(
+        messages,
+        target_provider=target_provider,
+        supports_video=supports_video,
+    )
     if target_provider:
         from chat_shell.messages.think_block_filter import (  # noqa: PLC0415
             strip_foreign_reasoning_blocks,
@@ -835,6 +843,9 @@ class LangGraphAgentBuilder:
         self._provider: str = getattr(llm, "_wegent_provider", "unknown")
         self._model_id: str = getattr(llm, "_wegent_model_id", "")
         self._api_format: str = getattr(llm, "_wegent_api_format", "")
+        self._supports_video: bool = (
+            getattr(llm, "_wegent_supports_video", None) is True
+        )
         self._supports_developer_role: bool = (
             getattr(llm, "_wegent_supports_developer_role", None) is True
         )
@@ -873,6 +884,7 @@ class LangGraphAgentBuilder:
             target_provider=self._provider,
             target_model_id=self._model_id,
             target_api_format=self._api_format,
+            supports_video=self._supports_video,
         )
         exec_config = {"configurable": config} if config else None
 
@@ -1551,6 +1563,7 @@ class LangGraphAgentBuilder:
             target_provider=self._provider,
             target_model_id=self._model_id,
             target_api_format=self._api_format,
+            supports_video=self._supports_video,
         )
 
         exec_config = {"configurable": config} if config else None
@@ -1610,6 +1623,7 @@ class LangGraphAgentBuilder:
             target_provider=self._provider,
             target_model_id=self._model_id,
             target_api_format=self._api_format,
+            supports_video=self._supports_video,
         )
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}

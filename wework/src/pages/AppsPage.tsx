@@ -280,10 +280,10 @@ function HeroSection() {
         <button
           type="button"
           data-testid="apps-open-codex-button"
-          onClick={() => navigateTo('/settings/personal/codex')}
+          onClick={() => navigateTo('/settings/personal/models')}
           className="inline-flex h-9 items-center rounded-full bg-text-primary px-4 text-sm font-semibold text-background hover:opacity-90"
         >
-          打开 Codex
+          打开模型设置
         </button>
         <button
           type="button"
@@ -442,15 +442,15 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
       onClick: () => navigateTo('/settings/personal/proxy'),
     },
     {
-      title: 'Codex',
-      description: '管理 Codex auth.json、代理开关与默认 GPT 模型，可从在线设备导入认证。',
+      title: '模型设置',
+      description: '管理本机模型与 Codex auth.json 云端同步，可从在线设备导入认证。',
       icon: Cpu,
       iconClassName: 'bg-gradient-to-br from-slate-900 to-slate-500 text-white',
       status: codexConfigured ? '已认证' : '需认证',
       statusTone: codexConfigured ? 'online' : 'warning',
       meta: codexConfigured ? 'auth.json 已保存' : 'auth.json 缺失',
       action: codexConfigured ? '打开' : '去配置',
-      onClick: () => navigateTo('/settings/personal/codex'),
+      onClick: () => navigateTo('/settings/personal/models'),
     },
   ]
 }

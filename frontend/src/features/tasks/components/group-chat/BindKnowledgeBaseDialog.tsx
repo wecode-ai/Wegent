@@ -230,7 +230,7 @@ export default function BindKnowledgeBaseDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {t('common:actions.cancel')}
             </Button>
-            <Button onClick={handleBind} disabled={!selectedKb || binding}>
+            <Button variant="primary" onClick={handleBind} disabled={!selectedKb || binding}>
               {binding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('groupChat.knowledge.add')}
             </Button>

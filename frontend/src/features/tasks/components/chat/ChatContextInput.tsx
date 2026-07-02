@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, type Dispatch, type SetStateAction } from 'react'
 import AddContextButton from './AddContextButton'
 import ContextSelector from './ContextSelector'
 import type { ContextItem } from '@/types/context'
@@ -12,7 +12,7 @@ import { isChatContextEnabled } from '@/lib/runtime-config'
 
 interface ChatContextInputProps {
   selectedContexts: ContextItem[]
-  onContextsChange: (contexts: ContextItem[]) => void
+  onContextsChange: Dispatch<SetStateAction<ContextItem[]>>
   /** Knowledge base ID to exclude from the list (used in notebook mode to hide current KB) */
   excludeKnowledgeBaseId?: number
   /** Render style for the selector trigger */
@@ -40,34 +40,55 @@ export default function ChatContextInput({
 
   const handleSelect = useCallback(
     (context: ContextItem) => {
-      onContextsChange([...selectedContexts, context])
+      onContextsChange(prev => {
+        if (prev.some(ctx => ctx.id === context.id)) return prev
+        return [...prev, context]
+      })
     },
-    [selectedContexts, onContextsChange]
+    [onContextsChange]
   )
 
   const handleDeselect = useCallback(
     (id: number | string) => {
-      onContextsChange(selectedContexts.filter(ctx => ctx.id !== id))
+      onContextsChange(prev => prev.filter(ctx => ctx.id !== id))
     },
-    [selectedContexts, onContextsChange]
+    [onContextsChange]
   )
 
   // Handle batch selection for group knowledge bases
   // This is critical to avoid the closure problem when selecting multiple items
   const handleSelectMultiple = useCallback(
     (contextsToAdd: ContextItem[]) => {
-      onContextsChange([...selectedContexts, ...contextsToAdd])
+      onContextsChange(prev => {
+        const existingIds = new Set(prev.map(ctx => ctx.id))
+        const nextContexts = contextsToAdd.filter(ctx => !existingIds.has(ctx.id))
+        if (nextContexts.length === 0) return prev
+        return [...prev, ...nextContexts]
+      })
     },
-    [selectedContexts, onContextsChange]
+    [onContextsChange]
   )
 
   // Handle batch deselection for group knowledge bases
   const handleDeselectMultiple = useCallback(
     (ids: (number | string)[]) => {
       const idSet = new Set(ids)
-      onContextsChange(selectedContexts.filter(ctx => !idSet.has(ctx.id)))
+      onContextsChange(prev => prev.filter(ctx => !idSet.has(ctx.id)))
     },
-    [selectedContexts, onContextsChange]
+    [onContextsChange]
+  )
+
+  const handleReplaceContexts = useCallback(
+    (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => {
+      const idSet = new Set(idsToRemove)
+      onContextsChange(prev => {
+        const remainingContexts = prev.filter(ctx => !idSet.has(ctx.id))
+        const existingIds = new Set(remainingContexts.map(ctx => ctx.id))
+        const nextContexts = contextsToAdd.filter(ctx => !existingIds.has(ctx.id))
+        return [...remainingContexts, ...nextContexts]
+      })
+    },
+    [onContextsChange]
   )
 
   // If chat context feature is disabled, don't render anything
@@ -84,6 +105,7 @@ export default function ChatContextInput({
       onDeselect={handleDeselect}
       onSelectMultiple={handleSelectMultiple}
       onDeselectMultiple={handleDeselectMultiple}
+      onReplaceContexts={handleReplaceContexts}
       excludeKnowledgeBaseId={excludeKnowledgeBaseId}
     >
       <div>

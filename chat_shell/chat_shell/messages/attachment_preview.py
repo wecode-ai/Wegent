@@ -55,7 +55,7 @@ _ATTACHMENT_BLOCK = re.compile(r"<attachment>(.*?)</attachment>", re.DOTALL)
 # video too lets a video segment be isolated and kept verbatim instead of being
 # absorbed into a neighbouring document segment's truncatable body.
 _SEGMENT_HEADER = re.compile(r"\[(?:Image |Video )?Attachment: [^\n]*? \| ID: (\d+) \|")
-# Video headers start with this; their content is a separate video_url block, so
+# Video headers start with this; their content is a separate canonical video block, so
 # the inline segment (header + tiny metadata) is preserved verbatim.
 _VIDEO_HEADER_PREFIX = "[Video Attachment:"
 _HEADER_TYPE = re.compile(r"\| Type: ([^|\]]+)")
@@ -155,14 +155,14 @@ def _preview_attachment_body(
     # Consolidate ids up front when multiple attachments share the block, so
     # every read_attachment id is discoverable even after heavy truncation.
     # Video ids are excluded: read_attachment serves parsed text, but a video's
-    # content is a separate video_url block, not a read_attachment target.
+    # content is a separate canonical video block, not a read_attachment target.
     doc_ids = [i for i, video in zip(ids, is_video, strict=True) if not video]
     id_line = ""
     if len(doc_ids) > 1:
         id_line = "[Attachment IDs in this message: " + ", ".join(doc_ids) + "]\n"
 
     # Reserve budget for the id line, every header (always kept), and video
-    # segments kept verbatim (tiny metadata; real content is a video_url block).
+    # segments kept verbatim (tiny metadata; real content is a canonical video block).
     # The remainder is distributed across the truncatable document/text bodies.
     reserved = counter.count_text(preamble) + counter.count_text(id_line)
     reserved += sum(counter.count_text(header) for header, _ in headers_and_bodies)
@@ -189,7 +189,7 @@ def _preview_attachment_body(
     ):
         if video:
             # Keep the video header + tiny metadata verbatim. The real content is
-            # a separate video_url block (never touched here); never truncate or
+            # a separate canonical video block (never touched here); never truncate or
             # add a read_attachment hint (read_attachment has no text for video).
             rebuilt.append(f"{header}\n{seg_body}" if seg_body else header)
             continue

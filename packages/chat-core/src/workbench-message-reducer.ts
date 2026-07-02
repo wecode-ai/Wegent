@@ -42,6 +42,11 @@ export interface WorkbenchTextBlock extends BaseWorkbenchProcessingBlock {
   content: string
 }
 
+export interface WorkbenchPlanBlock extends BaseWorkbenchProcessingBlock {
+  type: 'plan'
+  content: string
+}
+
 export interface WorkbenchFileChangesBlock<
   TFileChanges = unknown
 > extends BaseWorkbenchProcessingBlock {
@@ -53,6 +58,7 @@ export type WorkbenchProcessingBlock<TFileChanges = unknown> =
   | WorkbenchToolBlock
   | WorkbenchThinkingBlock
   | WorkbenchTextBlock
+  | WorkbenchPlanBlock
   | WorkbenchFileChangesBlock<TFileChanges>
 
 export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown> {
@@ -260,9 +266,9 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       )
     case 'assistant_cancelled': {
       const completedAt = new Date().toISOString()
-      const matches = state.some(message => isAssistantMessageForAction(message, action))
+      const matches = state.some(message => isAssistantMessageForCancellationAction(message, action))
         ? (message: WorkbenchMessage<TAttachment, TFileChanges>) =>
-            isAssistantMessageForAction(message, action)
+            isAssistantMessageForCancellationAction(message, action)
         : (message: WorkbenchMessage<TAttachment, TFileChanges>) =>
             message.role === 'assistant' && message.status === 'streaming'
       if (!state.some(matches)) {
@@ -371,6 +377,15 @@ function isAssistantMessageForAction<TAttachment, TFileChanges>(
   if (message.role !== 'assistant') return false
   if (action.messageId) return message.id === action.messageId
   return typeof action.turnId === 'number' && message.turnId === action.turnId
+}
+
+function isAssistantMessageForCancellationAction<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  action: { messageId?: string; turnId?: number }
+): boolean {
+  if (message.role !== 'assistant') return false
+  if (typeof action.turnId === 'number' && message.turnId === action.turnId) return true
+  return Boolean(action.messageId && message.id === action.messageId)
 }
 
 function isAssistantMessageForTurn<TAttachment, TFileChanges>(
@@ -579,7 +594,10 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
   blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map(block => {
-    if ((block.type === 'thinking' || block.type === 'text') && block.status === 'streaming') {
+    if (
+      (block.type === 'thinking' || block.type === 'text' || block.type === 'plan') &&
+      block.status === 'streaming'
+    ) {
       return { ...block, status: 'done' as const }
     }
 

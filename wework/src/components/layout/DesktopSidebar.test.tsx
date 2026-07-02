@@ -134,8 +134,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
-      'h-9',
-      'w-9',
+      'h-8',
+      'w-8',
       'shrink-0'
     )
   })
@@ -597,6 +597,48 @@ describe('DesktopSidebar', () => {
       workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('selects a project when expanding it from the desktop sidebar', async () => {
+    const onSelectProject = vi.fn()
+
+    renderSidebar({
+      onSelectProject,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(onSelectProject).toHaveBeenCalledWith(7)
+    expect(screen.getByTestId('runtime-local-task-row-codex-1')).toBeInTheDocument()
   })
 
   test('hides remote-only runtime projects from the project list', () => {
@@ -1207,8 +1249,8 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[28px]', 'group-hover/task:w-[78px]')
-    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[78px]')
+    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[104px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[104px]')
   })
 
   test('moves pinned runtime tasks to the top of the project task list', async () => {
@@ -1465,7 +1507,7 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('archive-project-conversations-dialog-7-confirm-button'))
 
     await waitFor(() => {
-      expect(onArchiveProjectConversations).toHaveBeenCalledWith('project:7')
+      expect(onArchiveProjectConversations).toHaveBeenCalledWith('project:7', undefined)
     })
     expect(confirmSpy).not.toHaveBeenCalled()
 
@@ -1816,7 +1858,7 @@ describe('DesktopSidebar', () => {
       screen.getByTestId('projects-section-archive-conversations-dialog-confirm-button')
     )
     await waitFor(() => {
-      expect(onArchiveProjectsConversations).toHaveBeenCalledWith(['project:7'])
+      expect(onArchiveProjectsConversations).toHaveBeenCalledWith(['project:7'], undefined)
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
@@ -1838,13 +1880,16 @@ describe('DesktopSidebar', () => {
     )
 
     await waitFor(() => {
-      expect(onArchiveChatConversations).toHaveBeenCalledWith([
-        {
-          deviceId: 'local-device',
-          workspacePath: '/workspace/chats/chat-1',
-          localTaskId: 'chat-1',
-        },
-      ])
+      expect(onArchiveChatConversations).toHaveBeenCalledWith(
+        [
+          {
+            deviceId: 'local-device',
+            workspacePath: '/workspace/chats/chat-1',
+            localTaskId: 'chat-1',
+          },
+        ],
+        undefined
+      )
     })
   })
 

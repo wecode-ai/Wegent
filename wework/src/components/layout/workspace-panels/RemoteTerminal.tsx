@@ -3,18 +3,42 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
 import { createRemoteTerminalClient, type RemoteTerminalClient } from '@/lib/remote-terminal-socket'
+import {
+  applyTerminalTheme,
+  createTerminalThemeScheduler,
+  getTerminalTheme,
+  observeTerminalTheme,
+} from '@/lib/xterm-theme'
+import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface RemoteTerminalProps {
   sessionId: string
   active: boolean
+  onExit?: () => void
   testIdsEnabled?: boolean
 }
 
-export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: RemoteTerminalProps) {
+export function RemoteTerminal({
+  sessionId,
+  active,
+  onExit,
+  testIdsEnabled = true,
+}: RemoteTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const clientRef = useRef<RemoteTerminalClient | null>(null)
+  const activeRef = useRef(active)
+  const onExitRef = useRef(onExit)
+  const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+
+  useEffect(() => {
+    activeRef.current = active
+  }, [active])
+
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
 
   useEffect(() => {
     const container = containerRef.current
@@ -27,18 +51,19 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
       fontSize: 13,
       lineHeight: 1.2,
       scrollback: 2000,
-      theme: {
-        background: '#ffffff',
-        foreground: '#1a1a1a',
-        cursor: '#14b8a6',
-        selectionBackground: '#d8f3ee',
-      },
+      theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
     const client = createRemoteTerminalClient(sessionId)
     let disposed = false
+    let scheduleThemeSync: () => void = () => undefined
 
+    let inputFallback: XtermInputFallbackController = {
+      noteData: () => undefined,
+      dispose: () => undefined,
+    }
     const dataDisposable = terminal.onData(data => {
+      inputFallback.noteData(data)
       void client.write(data).catch(error => {
         if (!disposed) {
           console.error('Failed to write to remote terminal:', error)
@@ -48,19 +73,36 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
         terminal.write(payload.data)
+        scheduleThemeSync()
       }
     })
     const unsubscribeExit = client.onExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        terminal.writeln('\r\n[Process exited]')
+        onExitRef.current?.()
       }
     })
 
     terminal.loadAddon(fitAddon)
     terminal.open(container)
+    inputFallback = installXtermInputFallback({
+      terminal,
+      writeData: data => {
+        inputFallback.noteData(data)
+        void client.write(data).catch(error => {
+          if (!disposed) {
+            console.error('Failed to write fallback input to remote terminal:', error)
+          }
+        })
+      },
+    })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     clientRef.current = client
+    applyTerminalTheme(terminal, container)
+    scheduleThemeSync = createTerminalThemeScheduler(terminal, container)
+    const unobserveTheme = observeTerminalTheme(theme => {
+      applyTerminalTheme(terminal, container, theme)
+    })
 
     const fitAndResize = () => {
       if (disposed || !container.isConnected) return
@@ -70,11 +112,21 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
         console.error('Failed to resize remote terminal:', error)
         return
       }
-      void client.resize(terminal.rows, terminal.cols).catch(error => {
+      syncTerminalSize(error => {
         if (!disposed) {
           console.error('Failed to resize remote terminal:', error)
         }
       })
+    }
+
+    const syncTerminalSize = (onError: (error: unknown) => void) => {
+      if (!activeRef.current || terminal.rows <= 0 || terminal.cols <= 0) return
+
+      const lastSize = lastSizeRef.current
+      if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
+
+      lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
+      void client.resize(terminal.rows, terminal.cols).catch(onError)
     }
 
     const resizeObserver = new ResizeObserver(fitAndResize)
@@ -94,8 +146,10 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
 
     return () => {
       disposed = true
+      unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
       void client
@@ -118,15 +172,23 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
       const terminal = terminalRef.current
       const fitAddon = fitAddonRef.current
       const client = clientRef.current
-      if (!terminal || !fitAddon || !client) return
+      const container = containerRef.current
+      if (!terminal || !fitAddon || !client || !container) return
 
       try {
+        applyTerminalTheme(terminal, container)
         fitAddon.fit()
         terminal.focus()
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
         return
       }
+      if (terminal.rows <= 0 || terminal.cols <= 0) return
+
+      const lastSize = lastSizeRef.current
+      if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
+
+      lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
       void client.resize(terminal.rows, terminal.cols).catch(error => {
         console.error('Failed to sync remote terminal size on activate:', error)
       })
@@ -141,7 +203,7 @@ export function RemoteTerminal({ sessionId, active, testIdsEnabled = true }: Rem
     <div
       ref={containerRef}
       data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
-      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-white px-2 py-2"
+      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 py-2"
       hidden={!active}
     />
   )

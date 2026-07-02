@@ -266,17 +266,48 @@ fn authenticated_clone_url(git_url: &str, credentials: Option<&GitCredentials>) 
 }
 
 fn requires_credentials_for_clone(git_url: &str) -> bool {
+    requires_credentials_for_clone_with_domains(git_url, &protected_git_credential_domains())
+}
+
+fn requires_credentials_for_clone_with_domains(git_url: &str, domains: &[String]) -> bool {
     let lower = git_url.to_ascii_lowercase();
     if !lower.starts_with("https://") && !lower.starts_with("http://") {
         return false;
     }
-    [
-        "git.intra.weibo.com",
-        "git.staff.sina.com.cn",
-        "gitlab.weibo.cn",
-    ]
-    .iter()
-    .any(|domain| lower.contains(domain))
+    let Some(domain) = http_url_domain(&lower) else {
+        return false;
+    };
+    domains.iter().any(|protected_domain| {
+        domain == protected_domain || domain.ends_with(&format!(".{protected_domain}"))
+    })
+}
+
+fn protected_git_credential_domains() -> Vec<String> {
+    let configured = env::var("PROTECTED_GIT_CREDENTIAL_DOMAINS")
+        .unwrap_or_default()
+        .split([',', ';', ' ', '\n', '\t'])
+        .filter_map(|domain| non_empty(domain).map(|domain| domain.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    if configured.is_empty() {
+        return vec![
+            "git.intra.weibo.com".to_owned(),
+            "git.staff.sina.com.cn".to_owned(),
+            "gitlab.weibo.cn".to_owned(),
+        ];
+    }
+    configured
+}
+
+fn http_url_domain(url: &str) -> Option<&str> {
+    let rest = url.split_once("://")?.1;
+    let host = rest
+        .split('/')
+        .next()?
+        .split('@')
+        .next_back()?
+        .split(':')
+        .next()?;
+    non_empty(host)
 }
 
 fn branch_name(request: &ExecutionRequest) -> Option<String> {
@@ -429,7 +460,7 @@ mod tests {
             "wegent"
         );
         assert_eq!(
-            repo_name_from_url("git@gitlab.example.com:group/project.git"),
+            repo_name_from_url("git@gitlab.com:group/project.git"),
             "project"
         );
     }
@@ -442,11 +473,8 @@ mod tests {
         };
 
         assert_eq!(
-            authenticated_clone_url(
-                "git@gitlab.example.com:group/project.git",
-                Some(&credentials)
-            ),
-            "git@gitlab.example.com:group/project.git"
+            authenticated_clone_url("git@gitlab.com:group/project.git", Some(&credentials)),
+            "git@gitlab.com:group/project.git"
         );
     }
 
@@ -460,6 +488,24 @@ mod tests {
         ));
         assert!(!requires_credentials_for_clone(
             "git@git.intra.weibo.com:im/message-flow.git"
+        ));
+    }
+
+    #[test]
+    fn configured_https_repositories_require_credentials() {
+        let protected_domains = vec!["github.com".to_owned()];
+
+        assert!(requires_credentials_for_clone_with_domains(
+            "https://github.com/wecode-ai/wegent.git",
+            &protected_domains
+        ));
+        assert!(!requires_credentials_for_clone_with_domains(
+            "https://gitlab.com/wecode-ai/wegent.git",
+            &protected_domains
+        ));
+        assert!(!requires_credentials_for_clone_with_domains(
+            "git@github.com:wecode-ai/wegent.git",
+            &protected_domains
         ));
     }
 

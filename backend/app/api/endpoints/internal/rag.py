@@ -10,19 +10,21 @@ These endpoints are intended for service-to-service communication.
 
 import logging
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.scope_validation import (
     validate_document_ids as validate_scope_document_ids,
 )
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.knowledge.protected_mediation import (
     ProtectedKnowledgeMediationResponse,
+    RestrictedSafeSummaryResult,
     protected_knowledge_mediator,
 )
 from app.services.knowledge.retrieval_persistence import (
@@ -37,6 +39,11 @@ from app.services.rag.remote_gateway import (
 )
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.sources import (
+    RetrievalContext,
+    RetrievalSourceSummary,
+    retrieval_source_registry,
+)
 from shared.models import (
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunkRecord,
@@ -141,6 +148,11 @@ class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
     query: str = Field(..., description="Search query")
+    user_id: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Top-level retrieval identity for external sources",
+    )
     knowledge_base_id: Optional[int] = Field(
         default=None, description="Single knowledge base ID"
     )
@@ -160,6 +172,10 @@ class InternalRetrieveRequest(BaseModel):
     knowledge_base_scopes: Optional[list[KnowledgeBaseScopePayload]] = Field(
         default=None,
         description="Optional per-KB access scopes for scoped Responses requests.",
+    )
+    external_knowledge_refs: Optional[list[ExternalKnowledgeRef]] = Field(
+        default=None,
+        description="External knowledge source refs for provider-backed retrieval",
     )
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = Field(
         default="auto",
@@ -195,9 +211,17 @@ class InternalRetrieveRequest(BaseModel):
             self.knowledge_base_id is None
             and not self.knowledge_base_ids
             and not self.knowledge_base_scopes
+            and not self.external_knowledge_refs
         ):
-            raise ValueError("knowledge_base_id or knowledge_base_ids is required")
+            raise ValueError(
+                "knowledge_base_id, knowledge_base_ids, knowledge_base_scopes, "
+                "or external_knowledge_refs is required"
+            )
         return self
+
+
+def _is_none(value: object) -> bool:
+    return value is None
 
 
 class RetrieveRecord(BaseModel):
@@ -209,6 +233,22 @@ class RetrieveRecord(BaseModel):
     metadata: Optional[dict] = None
     knowledge_base_id: Optional[int] = None
     document_id: Optional[int] = None
+    source_type: Optional[str] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
+    source_id: Optional[str] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
+    source_uri: Optional[str] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
+    source_name: Optional[str] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
 
 
 class InternalRetrieveResponse(BaseModel):
@@ -219,6 +259,60 @@ class InternalRetrieveResponse(BaseModel):
     total: int
     total_estimated_tokens: int = 0
     message: Optional[str] = None
+    source_summaries: Optional[list[RetrievalSourceSummary]] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
+
+
+class MixedRestrictedRetrieveResponse(BaseModel):
+    """Response for restricted internal KB plus ordinary external retrieval."""
+
+    mode: Literal["mixed_restricted_retrieval"] = "mixed_restricted_retrieval"
+    retrieval_mode: Literal["direct_injection", "rag_retrieval"]
+    restricted_safe_summary: RestrictedSafeSummaryResult
+    answer_contract: str
+    message: str
+    total: int
+    total_estimated_tokens: int = 0
+    external_records: list[RetrieveRecord]
+    source_summaries: Optional[list[RetrievalSourceSummary]] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
+
+
+def _to_retrieve_record(record: dict) -> RetrieveRecord:
+    """Normalize raw retrieval records into the internal response schema."""
+    return RetrieveRecord(
+        content=record.get("content", ""),
+        score=record.get("score"),
+        title=record.get("title", "Unknown"),
+        metadata=record.get("metadata"),
+        knowledge_base_id=record.get("knowledge_base_id"),
+        document_id=record.get("document_id"),
+        source_type=record.get("source_type"),
+        source_id=record.get("source_id"),
+        source_uri=record.get("source_uri"),
+        source_name=record.get("source_name"),
+    )
+
+
+def _retrieve_record_content(record: dict | RetrieveRecord) -> str:
+    """Read content from raw dict or normalized retrieve record."""
+    if isinstance(record, RetrieveRecord):
+        return record.content
+    return str(record.get("content") or "")
+
+
+def _mediation_field(
+    response: ProtectedKnowledgeMediationResponse | dict,
+    field_name: str,
+) -> Any:
+    """Read a mediation response field from model or test double dict."""
+    if isinstance(response, dict):
+        return response.get(field_name)
+    return getattr(response, field_name)
 
 
 def _resolve_document_names(
@@ -239,6 +333,93 @@ def _resolve_document_names(
 def _scope_kb_ids(scopes: list[KnowledgeBaseScopePayload]) -> list[int]:
     """Return KB IDs from scope payloads preserving order."""
     return list(dict.fromkeys(scope.knowledge_base_id for scope in scopes))
+
+
+def _external_ref_source_ids(refs: list[ExternalKnowledgeRef]) -> list[str]:
+    """Return explicit source IDs from external refs."""
+    return [ref.id for ref in refs if ref.id]
+
+
+def _group_external_refs_by_provider(
+    refs: list[ExternalKnowledgeRef],
+) -> dict[str, list[ExternalKnowledgeRef]]:
+    """Group external refs by provider while preserving provider order."""
+    refs_by_provider: dict[str, list[ExternalKnowledgeRef]] = {}
+    for ref in refs:
+        refs_by_provider.setdefault(ref.provider, []).append(ref)
+    return refs_by_provider
+
+
+def _ignored_external_summary(
+    provider_name: str,
+    refs: list[ExternalKnowledgeRef],
+) -> RetrievalSourceSummary | None:
+    """Build an ignored summary for explicit external refs."""
+    source_ids = _external_ref_source_ids(refs)
+    if not source_ids:
+        return None
+    return RetrievalSourceSummary(
+        provider=provider_name,
+        searched_source_ids=[],
+        ignored_source_ids=source_ids,
+    )
+
+
+def _external_retrieval_context(request: InternalRetrieveRequest) -> RetrievalContext:
+    """Build provider context, failing fast when caller lacks identity."""
+    if not request.user_id:
+        raise ValueError("user_id is required for external knowledge retrieval")
+    return RetrievalContext(user_id=request.user_id, user_name=request.user_name)
+
+
+async def _retrieve_external_sources(
+    request: InternalRetrieveRequest,
+) -> tuple[list[RetrieveRecord], list[RetrievalSourceSummary]]:
+    """Retrieve from registered external providers with per-provider isolation."""
+    refs = request.external_knowledge_refs or []
+    if not refs:
+        return [], []
+
+    external_records: list[RetrieveRecord] = []
+    source_summaries: list[RetrievalSourceSummary] = []
+    ctx = _external_retrieval_context(request)
+
+    for provider_name, provider_refs in _group_external_refs_by_provider(refs).items():
+        provider = retrieval_source_registry.get(provider_name)
+        if provider is None:
+            logger.warning(
+                "[internal_rag] External retrieval provider is not registered: %s",
+                provider_name,
+            )
+            summary = _ignored_external_summary(provider_name, provider_refs)
+            if summary is not None:
+                source_summaries.append(summary)
+            continue
+
+        try:
+            result = await provider.retrieve(request.query, provider_refs, ctx)
+        except Exception:
+            logger.warning(
+                "[internal_rag] External retrieval provider failed: %s",
+                provider_name,
+                exc_info=True,
+            )
+            summary = _ignored_external_summary(provider_name, provider_refs)
+            if summary is not None:
+                source_summaries.append(summary)
+            continue
+
+        external_records.extend(result.records)
+        if result.summary is not None:
+            source_summaries.append(result.summary)
+        for warning in result.warnings:
+            logger.warning(
+                "[internal_rag] External retrieval warning from %s: %s",
+                provider_name,
+                warning,
+            )
+
+    return external_records, source_summaries
 
 
 def _scope_violation() -> HTTPException:
@@ -466,7 +647,11 @@ async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
 
 @router.post(
     "/retrieve",
-    response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
+    response_model=(
+        InternalRetrieveResponse
+        | ProtectedKnowledgeMediationResponse
+        | MixedRestrictedRetrieveResponse
+    ),
 )
 async def internal_retrieve(
     request: InternalRetrieveRequest,
@@ -503,7 +688,7 @@ async def internal_retrieve(
                     raise _scope_violation()
 
         resolved_document_ids = request.document_ids or []
-        if not resolved_document_ids and request.document_names:
+        if not resolved_document_ids and request.document_names and knowledge_base_ids:
             resolved_document_ids = _resolve_document_names(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
@@ -531,7 +716,14 @@ async def internal_retrieve(
             persistence_context and persistence_context.restricted_mode
         )
 
-        if scopes:
+        if not knowledge_base_ids:
+            result = {
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            }
+        elif scopes:
             result = await _execute_scoped_retrieve(
                 request=request,
                 db=db,
@@ -580,9 +772,18 @@ async def internal_retrieve(
             result = await _execute_query_with_remote_fallback(runtime_spec, db)
 
         records = result.get("records", [])
+        response_records = list(records)
+        external_records: list[RetrieveRecord] = []
+        source_summaries: list[RetrievalSourceSummary] = []
+        if request.external_knowledge_refs:
+            external_records, source_summaries = await _retrieve_external_sources(
+                request
+            )
 
         # Calculate total content size for logging
-        total_content_chars = sum(len(r.get("content", "")) for r in records)
+        total_content_chars = sum(
+            len(_retrieve_record_content(record)) for record in response_records
+        ) + sum(len(record.content) for record in external_records)
         total_content_kb = total_content_chars / 1024
         available_for_kb = (
             RetrievalService._calculate_ratio_based_direct_injection_budget(
@@ -606,13 +807,19 @@ async def internal_retrieve(
             )
         )
 
+        internal_mode = result.get("mode", "rag_retrieval")
+        response_mode = "rag_retrieval" if external_records else internal_mode
+        response_record_count = len(response_records) + len(external_records)
+
         logger.info(
-            "[internal_rag] Retrieved %d records in mode=%s for KBs %s, "
+            "[internal_rag] Retrieved %d records in mode=%s response_mode=%s "
+            "for KBs %s, "
             "total_size=%.2fKB, estimated_tokens=%d, context_window=%s, "
             "used_context_tokens=%s, available_for_kb=%s, "
             "available_injection_tokens=%s, query: %s%s",
-            len(records),
-            result.get("mode", "rag_retrieval"),
+            response_record_count,
+            internal_mode,
+            response_mode,
             knowledge_base_ids,
             total_content_kb,
             result.get("total_estimated_tokens", 0),
@@ -628,7 +835,6 @@ async def internal_retrieve(
             ),
         )
 
-        mode = result.get("mode", "rag_retrieval")
         total_estimated_tokens = result.get("total_estimated_tokens", 0)
 
         if persistence_context is not None:
@@ -637,16 +843,16 @@ async def internal_retrieve(
                 user_subtask_id=persistence_context.user_subtask_id,
                 user_id=persistence_context.user_id,
                 query=request.query,
-                mode=mode,
+                mode=internal_mode,
                 records=records,
                 restricted_mode=restricted_mode,
             )
 
-        if restricted_mode:
-            return await protected_knowledge_mediator.transform(
+        if restricted_mode and records:
+            mediated_response = await protected_knowledge_mediator.transform(
                 db=db,
                 query=request.query,
-                retrieval_mode=mode,
+                retrieval_mode=internal_mode,
                 records=records,
                 mediation_context=(
                     request.mediation_context.model_dump(exclude_none=True)
@@ -658,23 +864,36 @@ async def internal_retrieve(
                 user_id=persistence_context.user_id if persistence_context else None,
                 user_name=request.user_name or "system",
             )
+            if external_records or source_summaries:
+                return MixedRestrictedRetrieveResponse(
+                    retrieval_mode=internal_mode,
+                    restricted_safe_summary=_mediation_field(
+                        mediated_response, "restricted_safe_summary"
+                    ),
+                    answer_contract=_mediation_field(
+                        mediated_response, "answer_contract"
+                    ),
+                    message=_mediation_field(mediated_response, "message"),
+                    total=(
+                        int(_mediation_field(mediated_response, "total") or 0)
+                        + len(external_records)
+                    ),
+                    total_estimated_tokens=total_estimated_tokens,
+                    external_records=external_records,
+                    source_summaries=source_summaries or None,
+                )
+            return mediated_response
 
         return InternalRetrieveResponse(
-            mode=mode,
+            mode=response_mode,
             records=[
-                RetrieveRecord(
-                    content=r.get("content", ""),
-                    score=r.get("score"),
-                    title=r.get("title", "Unknown"),
-                    metadata=r.get("metadata"),
-                    knowledge_base_id=r.get("knowledge_base_id"),
-                    document_id=r.get("document_id"),
-                )
-                for r in records
+                *[_to_retrieve_record(record) for record in response_records],
+                *external_records,
             ],
-            total=len(records),
+            total=len(response_records) + len(external_records),
             total_estimated_tokens=total_estimated_tokens,
             message=result.get("message"),
+            source_summaries=source_summaries or None,
         )
 
     except ValueError as e:

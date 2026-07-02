@@ -265,6 +265,8 @@ export interface NormalizedRuntimeMessage {
   completed_at?: string | number | null
   stoppedNotice?: boolean | null
   stopped_notice?: boolean | null
+  runtimeGoalRequest?: boolean | null
+  runtime_goal_request?: boolean | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
   blocks?: ChatBlock[]
@@ -275,8 +277,6 @@ export interface NormalizedRuntimeMessage {
   memory_citations?: CodexMemoryCitation[] | null
   memoryCitation?: CodexMemoryCitation | null
   memory_citation?: CodexMemoryCitation | null
-  contextEvents?: CodexContextEvent[] | null
-  context_events?: CodexContextEvent[] | null
 }
 
 export interface RuntimeTurnNavigationItem {
@@ -310,14 +310,6 @@ export interface CodexMemoryCitation {
   rollout_ids?: string[]
   threadIds?: string[]
   thread_ids?: string[]
-}
-
-export interface CodexContextEvent {
-  id: string
-  type: 'context_compaction' | 'contextCompaction' | string
-  status?: 'pending' | 'streaming' | 'done' | 'error' | string | null
-  createdAt?: number | string | null
-  created_at?: number | string | null
 }
 
 export interface LocalTaskSummary {
@@ -511,6 +503,67 @@ export interface RuntimeSendResponse {
   error?: string | null
 }
 
+export type RuntimeGoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'usageLimited'
+  | 'budgetLimited'
+  | 'complete'
+
+export interface RuntimeGoal {
+  threadId: string
+  objective: string
+  status: RuntimeGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface RuntimeGoalCreateInput {
+  objective: string
+  status?: RuntimeGoalStatus | null
+  tokenBudget?: number | null
+}
+
+export interface RuntimeGoalGetRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeGoalGetResponse {
+  accepted: boolean
+  localTaskId: string
+  goal: RuntimeGoal | null
+  error?: string | null
+}
+
+export interface RuntimeGoalSetRequest {
+  address: RuntimeTaskAddress
+  objective?: string | null
+  status?: RuntimeGoalStatus | null
+  tokenBudget?: number | null
+}
+
+export interface RuntimeGoalSetResponse {
+  accepted: boolean
+  localTaskId: string
+  goal: RuntimeGoal
+  error?: string | null
+}
+
+export interface RuntimeGoalClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeGoalClearResponse {
+  accepted: boolean
+  localTaskId: string
+  cleared: boolean
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceOpenRequest {
   deviceId: string
   workspacePath: string
@@ -690,6 +743,7 @@ export interface RuntimeTaskCreateRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
+  initialGoal?: RuntimeGoalCreateInput | null
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -1455,7 +1509,7 @@ export interface InstalledPluginUpdateRequest {
   description?: string
 }
 
-export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'plan' | 'error' | 'guidance'
 
 export interface ChatBlock {
   id: string
@@ -1510,6 +1564,16 @@ export interface RuntimeSubagentActivityPayload {
   occurred_at_ms?: number
 }
 
+export interface RuntimeGoalEventPayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  device_id?: string
+  local_task_id?: string
+  thread_id?: string
+  goal?: RuntimeGoal | null
+}
+
 export interface ChatGuidanceQueuedPayload {
   task_id: number
   subtask_id: number
@@ -1541,6 +1605,7 @@ export type ModelOptions = Record<string, string>
 export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
+  | 'unavailable'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

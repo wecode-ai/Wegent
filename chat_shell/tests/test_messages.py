@@ -264,6 +264,30 @@ class TestMessageConverterBuildMessages:
         # Verify image_url is in LangChain format (nested dict)
         assert "url" in image_block["image_url"]
 
+    def test_build_messages_preserves_image_url(self):
+        """Test that URL image blocks are passed through for provider adapters."""
+        vision_data = [
+            {"type": "input_text", "text": "What is this?"},
+            {
+                "type": "input_image",
+                "image_url": "https://public.example.com/image.jpg",
+            },
+        ]
+
+        messages = MessageConverter.build_messages(
+            history=[],
+            current_message=vision_data,
+            system_prompt="",
+            inject_datetime=False,
+        )
+
+        user_msg = messages[-1]
+        image_block = next(
+            (b for b in user_msg["content"] if b.get("type") == "image_url"), None
+        )
+        assert image_block is not None
+        assert image_block["image_url"]["url"] == "https://public.example.com/image.jpg"
+
 
 class TestMessageConverterExtractText:
     """Tests for MessageConverter.extract_text method."""
@@ -326,6 +350,23 @@ class TestMessageConverterIsVisionMessage:
             ],
         }
         assert MessageConverter.is_vision_message(message) is False
+
+    def test_is_vision_message_true_for_video_blocks(self):
+        """Test detecting canonical and provider-specific video blocks."""
+        for block in (
+            {
+                "type": "image",
+                "source": {"type": "url", "url": "https://example.com/a.png"},
+            },
+            {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+            {"type": "video_url", "video_url": {"url": "https://example.com/a.mp4"}},
+            {
+                "type": "video",
+                "source": {"type": "url", "url": "https://example.com/a.mp4"},
+            },
+        ):
+            message = {"role": "user", "content": [{"type": "text", "text": ""}, block]}
+            assert MessageConverter.is_vision_message(message) is True
 
 
 class TestConvertResponsesAPIToLangchain:
@@ -404,6 +445,25 @@ class TestConvertResponsesAPIToLangchain:
         assert text_blocks[0]["text"] == "User[Alice]: What is this?"
         assert len(image_blocks) == 1
 
+    def test_video_message_uses_canonical_input_video(self):
+        """Responses API video input stays provider-neutral until model dispatch."""
+        blocks = [
+            {"type": "input_text", "text": "Describe this"},
+            {
+                "type": "input_video",
+                "video_url": "https://example.com/video.mp4",
+                "mime_type": "video/mp4",
+            },
+        ]
+        result = MessageConverter._convert_responses_api_to_langchain(blocks)
+        content = result["content"]
+        assert content[0] == {"type": "text", "text": "Describe this"}
+        assert content[1] == {
+            "type": "input_video",
+            "video_url": "https://example.com/video.mp4",
+            "mime_type": "video/mp4",
+        }
+
     def test_single_text_block_gets_username(self):
         """With only one text block, it gets the username prefix."""
         blocks = [{"type": "input_text", "text": "Hello"}]
@@ -433,6 +493,108 @@ class TestConvertResponsesAPIToLangchain:
         assert content[2]["text"] == "<selected_documents>docs</selected_documents>"
         assert "[time]" in content[3]["text"]
         assert "<system-reminder>" in content[3]["text"]
+
+
+class TestAdaptVideoBlocksForProvider:
+    """Tests for provider-specific video block adaptation."""
+
+    def test_input_video_to_openai_video_url(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+                ],
+            }
+        ]
+        adapted = MessageConverter.adapt_video_blocks_for_provider(
+            messages,
+            target_provider="openai",
+            supports_video=True,
+        )
+        assert adapted[0]["content"][1] == {
+            "type": "video_url",
+            "video_url": {"url": "https://example.com/a.mp4"},
+        }
+
+    def test_input_video_to_anthropic_video_source_url(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+                ],
+            }
+        ]
+        adapted = MessageConverter.adapt_video_blocks_for_provider(
+            messages,
+            target_provider="anthropic",
+            supports_video=True,
+        )
+        assert adapted[0]["content"][1] == {
+            "type": "video",
+            "source": {"type": "url", "url": "https://example.com/a.mp4"},
+        }
+
+    def test_video_block_is_dropped_when_not_supported(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+                ],
+            }
+        ]
+        adapted = MessageConverter.adapt_video_blocks_for_provider(
+            messages,
+            target_provider="anthropic",
+            supports_video=False,
+        )
+        assert adapted[0]["content"] == [{"type": "text", "text": "Describe"}]
+
+    def test_video_block_is_dropped_for_unsupported_provider(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+                ],
+            }
+        ]
+        adapted = MessageConverter.adapt_video_blocks_for_provider(
+            messages,
+            target_provider="google",
+            supports_video=True,
+        )
+        assert adapted[0]["content"] == [{"type": "text", "text": "Describe"}]
+
+    def test_legacy_openai_video_url_to_anthropic(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": "https://example.com/a.mp4"},
+                    }
+                ],
+            }
+        ]
+        adapted = MessageConverter.adapt_video_blocks_for_provider(
+            messages,
+            target_provider="anthropic",
+            supports_video=True,
+        )
+        assert adapted[0]["content"] == [
+            {
+                "type": "video",
+                "source": {"type": "url", "url": "https://example.com/a.mp4"},
+            }
+        ]
 
 
 class TestBuildMessagesPlainTextWithTimeBlock:

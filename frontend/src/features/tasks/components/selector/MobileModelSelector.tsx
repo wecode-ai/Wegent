@@ -11,6 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { Tag } from '@/components/ui/tag'
+import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import {
   buildModelCascadeGroups,
@@ -30,13 +31,6 @@ function getModelDisplayText(model: Model): string {
 /** Get unique key for model */
 function getModelKey(model: Model): string {
   return `${model.name}:${model.type || ''}`
-}
-
-function supportsVideoUnderstanding(model: Model): boolean {
-  return (
-    (model.config?.modelCapabilities as { supportsVideo?: boolean } | undefined)?.supportsVideo ===
-    true
-  )
 }
 
 type MobileModelStep = 'primary' | 'secondary' | 'models'
@@ -261,11 +255,7 @@ export default function MobileModelSelector({
                 {t('common:settings.personal', '个人')}
               </Tag>
             )}
-            {supportsVideoUnderstanding(model) && (
-              <Tag variant="success" className="flex-shrink-0 whitespace-nowrap text-[10px]">
-                {t('common:models.video_understanding', '视频理解')}
-              </Tag>
-            )}
+            <ModelCapabilityIcons model={model} />
           </div>
           {showPath ? (
             <div className="mt-0.5 truncate text-[13px] text-[#8e8e93]">{path}</div>

@@ -28,6 +28,7 @@ import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
+import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
@@ -596,8 +597,8 @@ describe('DesktopWorkbenchLayout', () => {
             questions: [
               {
                 id: 'implement',
-                question: '实施此计划?',
-                options: [{ label: '是，实施此计划' }],
+                question: '执行此计划?',
+                options: [{ label: '是的，执行此计划' }],
               },
             ],
           },
@@ -910,6 +911,7 @@ describe('DesktopWorkbenchLayout', () => {
       send: props.onSend ?? baseProps.onSend,
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
+      ignoreRequestUserInput: vi.fn(),
       answeredRequestUserInputIds: new Set(),
       addCodeComment: vi.fn(),
       clearCodeComments: vi.fn(),
@@ -1017,14 +1019,45 @@ describe('DesktopWorkbenchLayout', () => {
         requestId: 42,
         itemId: undefined,
         answers: {
-          implement: { answers: ['是，实施此计划'] },
+          implement: { answers: ['是的，执行此计划'] },
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
     )
   })
 
-  test('opens assistant plans in the right workspace panel', async () => {
+  test('ignores the implementation plan confirmation through the pane session', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
+    )
+  })
+
+  test('does not open assistant markdown as a plan in the right workspace panel', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1048,14 +1081,50 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('assistant-plan-expand-button')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent 体验计划')).toBeInTheDocument()
+  })
+
+  test('opens explicit assistant plan blocks in the right workspace panel', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-30T00:00:01.000Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 1,
+                type: 'plan',
+                content: [
+                  '# Wegent 体验计划',
+                  '',
+                  '## Summary',
+                  '- 优先修复流式展示。',
+                  '',
+                  '## Test Plan',
+                  '- 运行相关前端测试。',
+                ].join('\n'),
+                status: 'done',
+                createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('Wegent 体验计划')
+
     await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
 
-    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
-    expect(screen.getByTestId('right-workspace-plan-tab')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('Wegent 体验计划')
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('运行相关前端测试')
   })
 
   test('renders project-specific empty prompt after selecting a project', () => {
@@ -1101,7 +1170,11 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
+    const desktopContent = screen.getByTestId('desktop-workbench-content')
+    expect(desktopContent).toHaveClass('pt-11')
+    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe(
+      '136px'
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-x-hidden',
@@ -1681,13 +1754,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
   })
 
+  test('expands an auto-collapsed sidebar from the titlebar toggle request', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 920,
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '0px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+
+    let handled = false
+    act(() => {
+      handled = requestDesktopSidebarToggle()
+    })
+
+    expect(handled).toBe(true)
+    await waitFor(() => expect(sidebar).toHaveStyle({ width: '240px' }))
+    expect(sidebar).toHaveAttribute('aria-hidden', 'false')
+  })
+
   test('collapses and expands the sidebar', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -2984,12 +3079,12 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-8', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-9', 'w-9')
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
-  test('toggles an empty project task list without selecting the project', async () => {
+  test('selects a project while toggling its empty task list', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
@@ -2998,7 +3093,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute(
       'aria-hidden',
       'false'
@@ -3009,7 +3104,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })
 
   test('opens the independent connection settings page from the settings menu', async () => {
@@ -3415,7 +3510,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-7')
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-8', 'gap-1')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
       'min-w-0',
       'flex-1',
@@ -3506,14 +3601,52 @@ describe('DesktopWorkbenchLayout', () => {
       )
       expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
         'h-[38px]',
-        'border-b'
+        'bg-background'
       )
+      expect(screen.getByTestId('right-workspace-titlebar-spacer')).not.toHaveClass('border-b')
       expect(
         document.documentElement.style.getPropertyValue('--right-workspace-titlebar-width')
       ).toBe('580px')
 
       await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
       expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
+  test('removes right workspace tabs from the titlebar when the Tauri panel is closed', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+      const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+      expect(rightPanelShell).toHaveStyle({ width: '0px' })
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+      expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+      expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     } finally {
       if (previousTauriInternals === undefined) {
         delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -5051,6 +5184,8 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-100'
     )
     expect(panel).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toContainElement(panel)
+    expect(screen.getByTestId('desktop-workbench-main')).toContainElement(panel)
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
 

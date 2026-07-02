@@ -162,7 +162,10 @@ export function WorkspacePanelActions({
       {showPanelToggles && canOpenCodeServer && localWorkspaceEnabled && (
         <div
           data-testid="local-workspace-titlebar-control"
-          className="flex h-7 shrink-0 overflow-hidden rounded-xl border border-border bg-background"
+          className={cn(
+            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-background text-[#6b7280] transition-colors hover:border-border/80 hover:bg-background focus-within:ring-2 focus-within:ring-primary/25',
+            ideLoading && 'cursor-wait opacity-70'
+          )}
         >
           <button
             type="button"
@@ -170,8 +173,7 @@ export function WorkspacePanelActions({
             onClick={() => void handleOpenLocalWorkspace()}
             disabled={ideLoading}
             className={cn(
-              DESKTOP_TOP_BAR_BUTTON_CLASS,
-              'h-7 w-8 rounded-none bg-surface hover:bg-muted active:bg-border/50',
+              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {
@@ -184,6 +186,7 @@ export function WorkspacePanelActions({
             ) : (
               <LocalWorkspaceOpenerIcon opener="vscode" className="h-4 w-4" />
             )}
+            <span className="whitespace-nowrap">{t('workbench.open_workspace_location')}</span>
           </button>
           <LocalWorkspaceOpenerPicker
             ariaLabel={t('workbench.choose_project_ide')}
@@ -192,8 +195,7 @@ export function WorkspacePanelActions({
             optionTestIdPrefix="open-local-workspace-option"
             disabled={ideLoading}
             buttonClassName={cn(
-              DESKTOP_TOP_BAR_BUTTON_CLASS,
-              'h-7 w-6 rounded-none border-l border-border bg-background hover:bg-muted active:bg-border/50 [&_svg]:h-3.5 [&_svg]:w-3.5',
+              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b7280] transition-colors hover:bg-black/[0.06] hover:text-[#374151] active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
               ideLoading && 'cursor-wait opacity-70'
             )}
             onSelect={handleOpenLocalWorkspace}

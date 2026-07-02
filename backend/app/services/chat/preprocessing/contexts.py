@@ -27,8 +27,15 @@ from sqlalchemy.orm import Session
 import app.stores.tasks as task_stores
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.services.chat.preprocessing.external_web_content import (
+    build_external_web_content_images,
+    build_external_web_content_texts,
+    expand_external_web_content_assets,
+    is_external_web_content_asset,
+)
 from app.services.context import context_service
 from app.services.context.context_service import VideoAttachmentResolutionError
+from app.services.rag.sources import ExternalRefValidationError
 from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
     ChatContextsResult,
@@ -233,9 +240,11 @@ def _build_vision_structure(
     if text_contents:
         all_attachment_parts.extend(text_contents)
 
-    # Add image metadata headers (inside the attachment tag)
+    # Add image metadata headers (inside the attachment tag). Images processed
+    # by _process_attachment_context already put the header into text_contents
+    # to preserve the selected attachment order.
     for img in image_contents:
-        if "image_header" in img:
+        if "image_header" in img and not img.get("image_header_in_text"):
             all_attachment_parts.append(img["image_header"])
 
     # Note: video_header is NOT added separately because complete metadata_text
@@ -250,6 +259,16 @@ def _build_vision_structure(
 
     # 2. Image blocks
     for img in image_contents:
+        image_url = img.get("image_url", "")
+        if image_url:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": image_url,
+                }
+            )
+            continue
+
         image_base64 = img.get("image_base64", "")
         mime_type = img.get("mime_type", "image/jpeg")
         if image_base64:
@@ -350,31 +369,45 @@ def _process_attachment_context(
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
+        mime_type = context.mime_type or "unknown"
+        file_size = context.file_size or 0
+        formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
+        uses_external_web_asset = is_external_web_content_asset(context)
 
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+        # Build image metadata header with optional sandbox path.  Use the
+        # shared formatter for normal attachments; external web images carry a
+        # provider-visible public URL instead of the backend download URL.
+        if uses_external_web_asset:
+            url_part = f" | URL: {url}" if url else ""
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size}{url_part}]"
+            )
+        else:
+            sandbox_path = context_service.build_sandbox_path(
+                task_id, subtask_id, filename
+            )
+            image_header = build_attachment_header(
+                attachment_id=attachment_id,
+                filename=filename,
+                mime_type=mime_type,
+                file_size=file_size,
+                sandbox_path=sandbox_path,
+                is_image=True,
+            )
 
-        # Build image metadata header (shared with chat_shell loader)
-        image_header = build_attachment_header(
-            attachment_id=attachment_id,
-            filename=filename,
-            mime_type=context.mime_type or "unknown",
-            file_size=context.file_size or 0,
-            sandbox_path=sandbox_path,
-            is_image=True,
-        )
-
-        image_contents.append(
-            {
-                "image_base64": context.image_base64,
-                "mime_type": context.mime_type,
-                "filename": context.original_filename,
-                "id": attachment_id,
-                "url": url,
-                "image_header": image_header,
-            }
-        )
+        image_content = {
+            "mime_type": context.mime_type,
+            "filename": context.original_filename,
+            "id": attachment_id,
+            "url": url,
+            "image_header": image_header,
+            "image_header_in_text": True,
+        }
+        image_content["image_base64"] = context.image_base64
+        image_contents.append(image_content)
+        text_contents.append(f"[Attachment {idx}]\n{image_header}")
     elif context_service.is_video_context(context):
         # Video attachment - use shared helper for video processing
         # Check model capabilities first
@@ -423,10 +456,13 @@ def _process_attachment_context(
                 subtask_id=subtask_id,
             )
         else:
+            uses_external_web_asset = is_external_web_content_asset(context)
+            document_task_id = None if uses_external_web_asset else task_id
+            document_subtask_id = None if uses_external_web_asset else subtask_id
             doc_prefix = context_service.build_document_text_prefix(
                 context,
-                task_id=task_id,
-                subtask_id=subtask_id,
+                task_id=document_task_id,
+                subtask_id=document_subtask_id,
             )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
@@ -460,7 +496,9 @@ def _build_attachment_metadata_only_prefix(
     file_size = context.file_size or 0
     formatted_size = context_service.format_file_size(file_size)
     url = context_service.build_attachment_url(attachment_id)
-    sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+    sandbox_path = None
+    if not is_external_web_content_asset(context):
+        sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
     preview_status = "truncated" if context.extracted_text else "unavailable"
     path_part = (
         f" | File Path(already in sandbox): {sandbox_path}" if sandbox_path else ""
@@ -583,7 +621,7 @@ def _validate_attachment_ownership(
 
     Validates that:
     - Attachments belong to the current user
-    - Attachments are of type ATTACHMENT
+    - Contexts are sendable attachment-like context types
     - Attachments are in READY status
     - Attachments are either unlinked or already linked to the same task
 
@@ -606,7 +644,12 @@ def _validate_attachment_ownership(
     filters = [
         SubtaskContext.id.in_(attachment_ids),
         SubtaskContext.user_id == user_id,
-        SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        SubtaskContext.context_type.in_(
+            [
+                ContextType.ATTACHMENT.value,
+                ContextType.EXTERNAL_WEB_CONTENT.value,
+            ]
+        ),
         SubtaskContext.status == ContextStatus.READY.value,
     ]
 
@@ -684,15 +727,18 @@ def link_contexts_to_subtask(
     """
     Link attachments and create knowledge base/table contexts for a subtask.
 
-    This function handles three types of contexts in a single database transaction:
+    This function handles display and retrieval contexts in a single database transaction:
     1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
     2. Knowledge bases: Selected at send time, batch create SubtaskContext records
        (without extracted_text - RAG retrieval is done later via tools/Service)
     3. Tables: Selected at send time, batch create SubtaskContext records
        (table context is used for MCP tool injection)
+    4. External knowledge refs: Selected at send time, batch create SubtaskContext
+       records and sync them to task-level externalKnowledgeRefs.
 
-    When knowledge bases are created, they are automatically synced to the task-level
-    knowledgeBaseRefs for future use across all subtasks.
+    When knowledge bases or external knowledge refs are created, they are
+    automatically synced to the task-level binding spec for future use across all
+    subtasks.
 
     SECURITY NOTE: When attachment_ids is provided, ownership validation is ALWAYS
     performed to prevent attachment hijacking across users/tasks.
@@ -731,6 +777,7 @@ def link_contexts_to_subtask(
         kb_contexts_to_create,
         table_contexts_to_create,
         selected_docs_contexts_to_create,
+        external_knowledge_contexts_to_create,
     ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id)
 
     # Combine all contexts to create
@@ -738,6 +785,7 @@ def link_contexts_to_subtask(
         kb_contexts_to_create
         + table_contexts_to_create
         + selected_docs_contexts_to_create
+        + external_knowledge_contexts_to_create
     )
 
     # Execute all database operations in a single transaction
@@ -751,27 +799,74 @@ def link_contexts_to_subtask(
         )
         linked_context_ids.extend(created_context_ids)
 
+        # External knowledge validation must happen before any task-level sync can
+        # commit through legacy internal KB helpers.
+        if task and external_knowledge_contexts_to_create:
+            _sync_external_contexts_to_task(
+                db,
+                external_knowledge_contexts_to_create,
+                task,
+            )
+
         # Sync subtask-level knowledge bases to task level
         if task and kb_contexts_to_create and user_name:
             _sync_kb_contexts_to_task(
                 db, kb_contexts_to_create, task, user_id, user_name
             )
 
-        # Sync attachments to running sandbox (if sandbox is healthy)
+        # Sync ordinary attachments to running sandbox (if sandbox is healthy).
+        # Aggregate external web content is expanded during chat preprocessing.
         if valid_attachment_ids and task:
-            _schedule_attachment_sync_to_sandbox(
-                db=db,
-                task_id=task.id,
-                subtask_id=subtask_id,
-                attachment_ids=valid_attachment_ids,
+            syncable_attachment_ids = _filter_syncable_attachment_ids(
+                db,
+                valid_attachment_ids,
             )
+            if syncable_attachment_ids:
+                _schedule_attachment_sync_to_sandbox(
+                    db=db,
+                    task_id=task.id,
+                    subtask_id=subtask_id,
+                    attachment_ids=syncable_attachment_ids,
+                )
 
+        db.commit()
+
+    except ExternalRefValidationError as e:
+        db.rollback()
+        logger.warning(
+            "Failed to link external knowledge contexts to subtask %s: %s",
+            subtask_id,
+            e,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         db.rollback()
         logger.exception(f"Failed to link contexts to subtask {subtask_id}: {e}")
         raise
 
     return linked_context_ids
+
+
+def _filter_syncable_attachment_ids(
+    db: Session,
+    context_ids: List[int],
+) -> List[int]:
+    """Return ordinary attachment IDs that should be synced as files."""
+    if not context_ids:
+        return []
+    contexts = (
+        db.query(SubtaskContext.id)
+        .filter(
+            SubtaskContext.id.in_(context_ids),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        )
+        .all()
+    )
+    syncable_ids = {context_id for (context_id,) in contexts}
+    return _order_attachment_ids(context_ids, syncable_ids)
 
 
 def _sync_kb_contexts_to_task(
@@ -803,15 +898,30 @@ def _sync_kb_contexts_to_task(
         )
         if not knowledge_id:
             continue
+        type_data = (
+            kb_context.type_data if isinstance(kb_context.type_data, dict) else {}
+        )
+        scope_restricted = bool(type_data.get("scope_restricted", False))
+        document_ids = _normalize_document_ids(type_data.get("document_ids", []))
 
         try:
-            synced = task_kb_service.sync_subtask_kb_to_task(
-                db=db,
-                task=task,
-                knowledge_id=knowledge_id,
-                user_id=user_id,
-                user_name=user_name,
-            )
+            if scope_restricted:
+                synced = task_kb_service.sync_subtask_kb_scope_to_task(
+                    db=db,
+                    task=task,
+                    knowledge_id=knowledge_id,
+                    document_ids=document_ids,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
+            else:
+                synced = task_kb_service.sync_subtask_kb_to_task(
+                    db=db,
+                    task=task,
+                    knowledge_id=knowledge_id,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
             if synced:
                 logger.info(
                     f"[_sync_kb_contexts_to_task] Synced KB {knowledge_id} "
@@ -829,6 +939,57 @@ def _sync_kb_contexts_to_task(
                 f"[_sync_kb_contexts_to_task] Failed to sync KB {knowledge_id} "
                 f"to task {task.id}: {e}"
             )
+
+
+def _sync_external_contexts_to_task(
+    db: Session,
+    external_contexts: List[SubtaskContext],
+    task: "TaskResource",
+) -> list[dict[str, Any]]:
+    """Sync message-level external knowledge contexts to task-level refs."""
+    from app.services.chat.external_knowledge_refs import (
+        sync_task_external_knowledge_refs,
+        validate_external_knowledge_refs,
+    )
+
+    refs: list[dict[str, Any]] = []
+    for external_context in external_contexts:
+        type_data = (
+            external_context.type_data
+            if isinstance(external_context.type_data, dict)
+            else {}
+        )
+        provider = type_data.get("provider")
+        mode = type_data.get("mode")
+        external_id = type_data.get("id")
+        if not provider or not mode:
+            continue
+
+        ref = {
+            "provider": provider,
+            "mode": mode,
+            "id": external_id,
+            "name": type_data.get("name") or external_context.name or external_id,
+            "scope": type_data.get("scope"),
+            "target_type": type_data.get("target_type"),
+            "node_id": type_data.get("node_id"),
+            "document_id": type_data.get("document_id"),
+            "parent_id": type_data.get("parent_id"),
+            "target_name": type_data.get("target_name"),
+        }
+        refs.append({key: value for key, value in ref.items() if value is not None})
+
+    if not refs:
+        return []
+
+    validate_external_knowledge_refs(refs, binding_level="conversation")
+    next_refs = sync_task_external_knowledge_refs(db, task, refs)
+    logger.info(
+        "[_sync_external_contexts_to_task] Synced %d external refs to task %s",
+        len(next_refs),
+        task.id,
+    )
+    return next_refs
 
 
 def _schedule_attachment_sync_to_sandbox(
@@ -945,7 +1106,12 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
-) -> tuple[List[SubtaskContext], List[SubtaskContext], List[SubtaskContext]]:
+) -> tuple[
+    List[SubtaskContext],
+    List[SubtaskContext],
+    List[SubtaskContext],
+    List[SubtaskContext],
+]:
     """
     Prepare structured contexts for batch creation.
 
@@ -955,17 +1121,20 @@ def _prepare_contexts_for_creation(
         user_id: User ID
 
     Returns:
-        Tuple of context lists ready for insertion.
+        Tuple of (kb_contexts, table_contexts, selected_docs_contexts,
+        external_knowledge_contexts) ready for insertion
     """
     kb_contexts_to_create: List[SubtaskContext] = []
     table_contexts_to_create: List[SubtaskContext] = []
     selected_docs_contexts_to_create: List[SubtaskContext] = []
+    external_knowledge_contexts_to_create: List[SubtaskContext] = []
 
     if not contexts:
         return (
             kb_contexts_to_create,
             table_contexts_to_create,
             selected_docs_contexts_to_create,
+            external_knowledge_contexts_to_create,
         )
 
     for ctx in contexts:
@@ -1062,10 +1231,47 @@ def _prepare_contexts_for_creation(
                 logger.warning(f"Failed to prepare selected_documents context: {e}")
                 continue
 
+        elif ctx.type == "external_knowledge":
+            try:
+                external_data = ctx.data
+                provider = external_data.get("provider")
+                mode = external_data.get("mode")
+                external_id = external_data.get("id")
+                external_name = external_data.get("name") or external_id or provider
+                if not provider or not mode:
+                    logger.warning(
+                        "Skipped external_knowledge context without provider/mode"
+                    )
+                    continue
+
+                external_context = SubtaskContext(
+                    subtask_id=subtask_id,
+                    user_id=user_id,
+                    context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+                    name=str(external_name),
+                    status=ContextStatus.READY.value,
+                    type_data={
+                        "provider": str(provider),
+                        "mode": str(mode),
+                        "id": str(external_id) if external_id is not None else None,
+                        "scope": external_data.get("scope"),
+                        "target_type": external_data.get("target_type"),
+                        "node_id": external_data.get("node_id"),
+                        "document_id": external_data.get("document_id"),
+                        "parent_id": external_data.get("parent_id"),
+                        "target_name": external_data.get("target_name"),
+                    },
+                )
+                external_knowledge_contexts_to_create.append(external_context)
+            except Exception as e:
+                logger.warning(f"Failed to prepare external knowledge context: {e}")
+                continue
+
     return (
         kb_contexts_to_create,
         table_contexts_to_create,
         selected_docs_contexts_to_create,
+        external_knowledge_contexts_to_create,
     )
 
 
@@ -1129,8 +1335,7 @@ def _batch_update_and_insert_contexts(
     if contexts_to_create:
         db.add_all(contexts_to_create)
 
-    # Single commit for all operations
-    db.commit()
+    db.flush()
 
     # Refresh contexts to get their IDs
     for ctx in contexts_to_create:
@@ -1226,6 +1431,29 @@ async def prepare_contexts_for_chat(
         if c.context_type == ContextType.ATTACHMENT.value
         and c.status == ContextStatus.READY.value
     ]
+    external_web_content_contexts = [
+        c
+        for c in contexts
+        if c.context_type == ContextType.EXTERNAL_WEB_CONTENT.value
+        and c.status == ContextStatus.READY.value
+    ]
+    external_web_content_texts = build_external_web_content_texts(
+        external_web_content_contexts
+    )
+    external_web_content_images = build_external_web_content_images(
+        external_web_content_contexts
+    )
+    # External web video/comment assets are only expanded for inline LLM paths.
+    # Local executor runtimes such as ClaudeCode intentionally receive external
+    # web content as text/URL context only, not as sandbox-downloadable files.
+    if external_web_content_contexts and inline_attachment_content:
+        attachment_contexts.extend(
+            expand_external_web_content_assets(
+                db=db,
+                external_contexts=external_web_content_contexts,
+                user_id=user_id,
+            )
+        )
     kb_contexts = [
         c
         for c in contexts
@@ -1246,7 +1474,9 @@ async def prepare_contexts_for_chat(
     ]
     logger.info(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
-        f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases, "
+        f"{len(attachment_contexts)} attachments, "
+        f"{len(external_web_content_contexts)} external web contents, "
+        f"{len(kb_contexts)} knowledge bases, "
         f"{len(table_contexts)} tables, {len(selected_docs_contexts)} selected_documents"
     )
 
@@ -1259,7 +1489,9 @@ async def prepare_contexts_for_chat(
         subtask_id=user_subtask_id,
         model_config=model_config,  # Pass model config for video capability check
         metadata_only_for_large_documents=metadata_only_for_large_attachments,
+        initial_text_contents=external_web_content_texts,
         inline_attachment_content=inline_attachment_content,
+        initial_image_contents=external_web_content_images,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1387,7 +1619,9 @@ async def _process_attachment_contexts_for_message(
         dict[str, Any]
     ] = None,  # New parameter for model capabilities
     metadata_only_for_large_documents: bool = False,
+    initial_text_contents: Optional[List[str]] = None,
     inline_attachment_content: bool = True,
+    initial_image_contents: Optional[List[dict]] = None,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1397,21 +1631,21 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
-        model_config: Optional model config for capability check
         model_config: Optional model config for video capability check.
         metadata_only_for_large_documents: Whether to replace large document
             text with metadata and a short preview.
+        initial_text_contents: Optional text snippets to inject before
+            attachment-derived content.
         inline_attachment_content: Whether parsed attachment content should be
             injected. When False, only attachment metadata is included.
+        initial_image_contents: Optional image blocks to inject before
+            attachment-derived images.
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images/videos
     """
-    if not attachment_contexts:
-        return message
-
-    text_contents = []
-    image_contents = []
+    text_contents = list(initial_text_contents or [])
+    image_contents = list(initial_image_contents or [])
     video_contents = []  # New container for video attachments
 
     for idx, context in enumerate(attachment_contexts, start=1):

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'wework.desktop.sidebar.collapsed'
 const SIDEBAR_COLLAPSED_EVENT = 'wework:desktop-sidebar-collapsed-change'
+const SIDEBAR_TOGGLE_REQUEST_EVENT = 'wework:desktop-sidebar-toggle-request'
 
 function readStoredSidebarCollapsed(): boolean {
   if (typeof window === 'undefined') return false
@@ -50,4 +51,24 @@ export function useDesktopSidebarCollapsed() {
     sidebarCollapsed,
     setSidebarCollapsed,
   }
+}
+
+export function requestDesktopSidebarToggle(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const event = new Event(SIDEBAR_TOGGLE_REQUEST_EVENT, { cancelable: true })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
+}
+
+export function useDesktopSidebarToggleRequest(onToggleSidebar: () => void) {
+  useEffect(() => {
+    const handleToggleRequest = (event: Event) => {
+      event.preventDefault()
+      onToggleSidebar()
+    }
+
+    window.addEventListener(SIDEBAR_TOGGLE_REQUEST_EVENT, handleToggleRequest)
+    return () => window.removeEventListener(SIDEBAR_TOGGLE_REQUEST_EVENT, handleToggleRequest)
+  }, [onToggleSidebar])
 }

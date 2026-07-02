@@ -139,12 +139,13 @@ vi.mock('@/api/backend/backendServices', () => ({
 }))
 
 const codexModel = {
-  name: 'codex-gpt-5.5',
+  name: 'gpt-5.5',
   type: 'runtime',
-  displayName: 'GPT-5.5 (Codex)',
+  displayName: 'gpt-5.5',
   config: {
     protocol: 'openai-responses',
-    ui: { family: 'gpt', modelLabel: 'GPT-5.5' },
+    weworkModelKind: 'codex-official',
+    ui: { family: 'codex-official', modelLabel: 'gpt-5.5' },
   },
   runtime: { family: 'openai.openai-responses' },
   isActive: true,
@@ -229,12 +230,12 @@ describe('createHybridWorkbenchServices', () => {
     const response = await services.modelApi.listModels()
 
     expect(response.data.map(model => model.name)).toEqual([
-      'local:runtime:codex-gpt-5.5',
-      'cloud:runtime:codex-gpt-5.5',
+      'local:runtime:gpt-5.5',
+      'cloud:runtime:gpt-5.5',
     ])
     expect(response.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
-      'codex-gpt-5.5',
-      'codex-gpt-5.5',
+      'gpt-5.5',
+      'gpt-5.5',
     ])
   })
 

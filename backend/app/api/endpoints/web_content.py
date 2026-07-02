@@ -28,7 +28,7 @@ class WebContentCrawlRequest(BaseModel):
 
 
 class WebContentCrawlResponse(BaseModel):
-    """Response for crawling external web content into video attachments."""
+    """Response for crawling external web content into attachment contexts."""
 
     attachments: list[AttachmentResponse]
 
@@ -66,13 +66,13 @@ async def crawl_external_web_content(
     except WebContentCrawlError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc) or "External web content video import failed",
+            detail=str(exc) or "External web content media import failed",
         ) from exc
     except Exception as exc:
-        logger.exception("Failed to import external web videos: url=%s", request.url)
+        logger.exception("Failed to import external web content: url=%s", request.url)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="External web content video upload failed",
+            detail="External web content media import failed",
         ) from exc
 
     return WebContentCrawlResponse(

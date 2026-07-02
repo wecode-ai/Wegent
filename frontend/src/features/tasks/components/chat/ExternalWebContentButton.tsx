@@ -37,26 +37,33 @@ function getExternalWebContentErrorKey(error: unknown): string {
 
   if (error.status === 502) {
     if (error.message.includes('download')) {
-      return 'externalWebContent.errors.videoDownloadFailed'
+      return 'externalWebContent.errors.mediaDownloadFailed'
     }
-    if (error.message.includes('upload') || error.message.includes('fid')) {
-      return 'externalWebContent.errors.videoUploadFailed'
+    if (
+      error.message.includes('upload') ||
+      error.message.includes('import') ||
+      error.message.includes('fid')
+    ) {
+      return 'externalWebContent.errors.mediaImportFailed'
     }
     return 'externalWebContent.errors.serviceUnavailable'
   }
 
   if (error.status === 422) {
+    if (error.message.includes('No supported media')) {
+      return 'externalWebContent.errors.noSupportedMedia'
+    }
     if (error.message.includes('No video_url_s3')) {
-      return 'externalWebContent.errors.noVideo'
+      return 'externalWebContent.errors.noSupportedMedia'
     }
     if (error.message.includes('absolute HTTP')) {
       return 'externalWebContent.errors.invalidUrl'
     }
     if (error.message.includes('more than')) {
-      return 'externalWebContent.errors.tooManyVideos'
+      return 'externalWebContent.errors.tooManyMedia'
     }
     if (error.message.includes('file size')) {
-      return 'externalWebContent.errors.videoTooLarge'
+      return 'externalWebContent.errors.mediaTooLarge'
     }
   }
 
@@ -128,10 +135,15 @@ export default function ExternalWebContentButton({
           error_message: attachment.error_message,
           error_code: attachment.error_code,
           subtask_id: null,
-          file_extension: attachment.file_extension || '.mp4',
+          file_extension: attachment.file_extension || '',
           created_at: attachment.created_at || new Date().toISOString(),
           truncation_info: attachment.truncation_info,
+          external_media_type: attachment.external_media_type,
+          text_count: attachment.text_count,
           video_count: attachment.video_count,
+          image_count: attachment.image_count,
+          comment_count: attachment.comment_count,
+          fetched_comment_count: attachment.fetched_comment_count,
           site: attachment.site,
           source_url: attachment.source_url,
           cover_url: attachment.cover_url,
@@ -139,7 +151,7 @@ export default function ExternalWebContentButton({
       }
       toast({
         title: t('externalWebContent.added'),
-        description: t('externalWebContent.videoCount', {
+        description: t('externalWebContent.attachmentCount', {
           count: response.attachments.length,
         }),
       })

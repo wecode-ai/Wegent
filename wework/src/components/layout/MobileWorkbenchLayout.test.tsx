@@ -137,8 +137,8 @@ function createPendingRequestUserInputMessage(): WorkbenchMessage {
           questions: [
             {
               id: 'implement',
-              question: '实施此计划?',
-              options: [{ label: '是，实施此计划' }],
+              question: '执行此计划?',
+              options: [{ label: '是的，执行此计划' }],
             },
           ],
         },
@@ -314,6 +314,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
     sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
+    ignoreRequestUserInput: vi.fn(),
     answeredRequestUserInputIds: new Set(),
     addCodeComment: vi.fn(),
     clearCodeComments: vi.fn(),
@@ -515,10 +516,41 @@ describe('MobileWorkbenchLayout', () => {
         requestId: 42,
         itemId: undefined,
         answers: {
-          implement: { answers: ['是，实施此计划'] },
+          implement: { answers: ['是的，执行此计划'] },
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('ignores the implementation plan confirmation through the pane session on mobile', async () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage()]}
+        projectChat={baseProjectChat}
+      />
+    )
+
+    const ignoreRequestUserInput = (
+      paneSessionMockRef.current as {
+        ignoreRequestUserInput: ReturnType<typeof vi.fn>
+      }
+    ).ignoreRequestUserInput
+
+    await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
+
+    expect(ignoreRequestUserInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 42,
+      })
     )
   })
 

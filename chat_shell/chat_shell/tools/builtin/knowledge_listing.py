@@ -526,6 +526,323 @@ class KbHeadInput(BaseModel):
     )
 
 
+class KnowledgeListDocumentsInput(BaseModel):
+    """Input schema for listing mounted knowledge documents."""
+
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Number of documents to skip.",
+    )
+    limit: int = Field(
+        default=DEFAULT_KB_LS_LIMIT,
+        ge=1,
+        le=MAX_KB_LS_LIMIT,
+        description="Maximum number of documents to return.",
+    )
+
+
+class KnowledgeListDocumentsTool(BaseTool):
+    """List documents in mounted knowledge sources."""
+
+    name: str = "knowledge_list_documents"
+    display_name: str = "列出知识文档"
+    description: str = (
+        "List documents in the knowledge sources mounted to this conversation. "
+        "Prefer this over kb_ls for document or file listing requests because "
+        "kb_ls only lists internal knowledge bases. "
+        "Use this when the user asks what documents or files are available in the "
+        "selected knowledge sources. The response includes selected_sources; when "
+        "answering which knowledge sources are selected, enumerate every source in "
+        "selected_sources, including external providers and sources with "
+        "zero documents."
+    )
+    args_schema: type[BaseModel] = KnowledgeListDocumentsInput
+
+    knowledge_base_ids: list[int] = Field(default_factory=list)
+    knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
+    external_knowledge_refs: list[dict[str, Any]] = Field(default_factory=list)
+    user_id: int = 0
+    user_name: Optional[str] = None
+    auth_token: str = ""
+    _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
+
+    def _run(
+        self,
+        offset: int = 0,
+        limit: int = DEFAULT_KB_LS_LIMIT,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Synchronous run - not implemented, use async version."""
+        raise NotImplementedError(
+            "KnowledgeListDocumentsTool only supports async execution"
+        )
+
+    @trace_async(
+        span_name="knowledge_list_documents_arun",
+        tracer_name="chat_shell.tools.knowledge_list_documents",
+    )
+    async def _arun(
+        self,
+        offset: int = 0,
+        limit: int = DEFAULT_KB_LS_LIMIT,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """List documents in mounted knowledge sources."""
+        if not self.knowledge_base_ids and not self.external_knowledge_refs:
+            return json.dumps(
+                {
+                    "documents": [],
+                    "message": "No listable knowledge sources are mounted.",
+                },
+                ensure_ascii=False,
+            )
+
+        if limit < 1 or limit > MAX_KB_LS_LIMIT:
+            return json.dumps(
+                {"error": f"limit must be between 1 and {MAX_KB_LS_LIMIT}"},
+                ensure_ascii=False,
+            )
+        if offset < 0:
+            return json.dumps(
+                {"error": "offset must be greater than or equal to 0"},
+                ensure_ascii=False,
+            )
+
+        if self._call_counter:
+            allowed, error_msg = self._call_counter.check_and_increment()
+            if not allowed:
+                return error_msg
+
+        internal_documents = await self._list_internal_documents(
+            offset=offset,
+            limit=limit,
+        )
+        external_result = await self._list_external_documents(
+            offset=offset,
+            limit=limit,
+        )
+        if external_result.get("error") and not internal_documents:
+            return json.dumps(external_result, ensure_ascii=False)
+
+        external_documents = external_result.get("documents") or []
+        documents = [*internal_documents, *external_documents]
+        warnings = external_result.get("warnings") or []
+        if external_result.get("error"):
+            warnings = [
+                *warnings,
+                {
+                    "type": "external_listing_failed",
+                    "message": external_result["error"],
+                    "status_code": external_result.get("status_code"),
+                },
+            ]
+        selected_sources = self._build_selected_sources(documents)
+        return json.dumps(
+            {
+                "selected_sources": selected_sources,
+                "documents": documents,
+                "total_returned": len(documents),
+                "internal_returned": len(internal_documents),
+                "external_returned": len(external_documents),
+                "pagination_scope": "per_source",
+                "must_include_all_selected_sources": True,
+                "warnings": warnings,
+                "answer_hint": (
+                    "When answering source/document listing questions, group the "
+                    "answer by every item in selected_sources and do not omit "
+                    "external providers or selected sources with zero documents."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    def _build_selected_sources(
+        self,
+        documents: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Group listed documents by mounted source for model-friendly answers."""
+        sources: dict[str, dict[str, Any]] = {}
+
+        self._seed_internal_selected_sources(sources)
+        self._seed_external_selected_sources(sources)
+
+        for doc in documents:
+            provider = str(doc.get("provider") or "unknown")
+            source_id = str(doc.get("source_id") or "")
+            key = f"{provider}:{source_id}"
+            source = sources.setdefault(
+                key,
+                {
+                    "provider": provider,
+                    "source_id": source_id,
+                    "source_name": doc.get("source_name") or source_id or provider,
+                    "document_count": 0,
+                    "documents": [],
+                },
+            )
+            if doc.get("source_name"):
+                source["source_name"] = doc["source_name"]
+            self._append_selected_document(source, doc)
+
+        for source in sources.values():
+            source["document_count"] = len(source["documents"])
+
+        return list(sources.values())
+
+    def _seed_internal_selected_sources(
+        self,
+        sources: dict[str, dict[str, Any]],
+    ) -> None:
+        """Add selected internal KBs before documents are grouped."""
+        for knowledge_base_id in self.knowledge_base_ids:
+            source_id = str(knowledge_base_id)
+            sources[f"internal:{source_id}"] = {
+                "provider": "internal",
+                "source_id": source_id,
+                "source_name": f"KB-{source_id}",
+                "document_count": 0,
+                "documents": [],
+            }
+
+    def _seed_external_selected_sources(
+        self,
+        sources: dict[str, dict[str, Any]],
+    ) -> None:
+        """Add selected external sources before documents are grouped."""
+        for ref in self.external_knowledge_refs:
+            provider = str(ref.get("provider") or "external")
+            source_id = str(ref.get("id") or "")
+            sources[f"{provider}:{source_id}"] = {
+                "provider": provider,
+                "source_id": source_id,
+                "source_name": ref.get("name") or source_id or provider,
+                "scope": ref.get("scope"),
+                "mode": ref.get("mode"),
+                "document_count": 0,
+                "documents": [],
+            }
+
+    @staticmethod
+    def _append_selected_document(
+        source: dict[str, Any],
+        doc: dict[str, Any],
+    ) -> None:
+        """Append one listed document to a selected source group."""
+        source["documents"].append(
+            {
+                "document_id": doc.get("document_id"),
+                "title": doc.get("title"),
+                "node_id": doc.get("node_id"),
+                "parent_id": doc.get("parent_id"),
+                "file_extension": doc.get("file_extension"),
+                "source_uri": doc.get("source_uri"),
+            }
+        )
+
+    async def _list_internal_documents(
+        self,
+        *,
+        offset: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """List internal mounted KB documents through Backend internal API."""
+        if not self.knowledge_base_ids:
+            return []
+
+        import httpx
+
+        documents: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for knowledge_base_id in self.knowledge_base_ids:
+                request_data: dict[str, Any] = {
+                    "knowledge_base_id": knowledge_base_id,
+                    "offset": offset,
+                    "limit": limit,
+                }
+                if self.knowledge_base_scopes:
+                    request_data["knowledge_base_scopes"] = _scope_payloads(
+                        self.knowledge_base_scopes
+                    )
+                response = await client.post(
+                    f"{_get_backend_url()}/api/internal/rag/list-docs",
+                    **_build_backend_post_kwargs(request_data, self.auth_token),
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "[KnowledgeListDocumentsTool] Internal list-docs returned %s: %s",
+                        response.status_code,
+                        response.text,
+                    )
+                    continue
+
+                payload = response.json()
+                for doc in payload.get("documents") or []:
+                    documents.append(
+                        {
+                            "provider": "internal",
+                            "source_id": str(knowledge_base_id),
+                            "source_name": payload.get("knowledge_base_name")
+                            or f"KB-{knowledge_base_id}",
+                            "document_id": doc.get("id"),
+                            "title": doc.get("name"),
+                            "node_id": (
+                                f"document:{doc.get('id')}"
+                                if doc.get("id") is not None
+                                else None
+                            ),
+                            "parent_id": doc.get("folder_id"),
+                            "mime_type": doc.get("mime_type"),
+                            "file_extension": doc.get("file_extension")
+                            or doc.get("type"),
+                            "source_uri": None,
+                            "summary": doc.get("short_summary") or doc.get("summary"),
+                        }
+                    )
+
+        return documents
+
+    async def _list_external_documents(
+        self,
+        *,
+        offset: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        """List external mounted documents through Backend provider registry."""
+        if not self.external_knowledge_refs:
+            return {"documents": [], "total_returned": 0, "warnings": []}
+
+        import httpx
+
+        request_data: dict[str, Any] = {
+            "external_knowledge_refs": self.external_knowledge_refs,
+            "user_id": self.user_id,
+            "limit": limit,
+            "offset": offset,
+        }
+        if self.user_name is not None:
+            request_data["user_name"] = self.user_name
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{_get_backend_url()}/api/internal/knowledge/list-documents",
+                **_build_backend_post_kwargs(request_data, self.auth_token),
+            )
+
+        if response.status_code != 200:
+            logger.warning(
+                "[KnowledgeListDocumentsTool] HTTP list-documents returned %s: %s",
+                response.status_code,
+                response.text,
+            )
+            return {
+                "error": "Failed to list knowledge documents",
+                "status_code": response.status_code,
+            }
+
+        return response.json()
+
+
 class KbHeadTool(BaseTool):
     """Read document content with offset/limit pagination.
 

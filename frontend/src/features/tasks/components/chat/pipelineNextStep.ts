@@ -4,6 +4,7 @@
 
 import type { PipelineContextPassing, SubtaskContextBrief } from '@/types/api'
 import { parseMarkdownFinalPrompt } from '../message/finalPromptParser'
+import { isAttachmentLikeContext } from '@/features/tasks/utils/contextAttachments'
 
 export type PipelineNextStepDefaultSource = 'final_prompt' | 'last_ai_response' | 'none'
 
@@ -85,8 +86,8 @@ function buildTextItemId(message: PipelineNextStepMessage, kind: PipelineNextSte
 }
 
 function getStructuredItemId(context: SubtaskContextBrief): string | null {
-  if (context.context_type === 'attachment') {
-    return `attachment:${context.id}`
+  if (isAttachmentLikeContext(context)) {
+    return `${context.context_type}:${context.id}`
   }
 
   if (context.context_type === 'knowledge_base' && context.knowledge_id) {
@@ -325,7 +326,7 @@ export function buildPipelineNextStepPayload(
   for (const item of selectedStructuredItems) {
     pendingContexts.push(item.context)
 
-    if (item.context.context_type === 'attachment') {
+    if (isAttachmentLikeContext(item.context)) {
       attachmentIds.push(item.context.id)
       continue
     }

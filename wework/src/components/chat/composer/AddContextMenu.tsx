@@ -1,4 +1,4 @@
-import { Paperclip, Plus } from 'lucide-react'
+import { ClipboardList, Paperclip, Plus, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -7,9 +7,16 @@ import { useOutsideClick } from './useOutsideClick'
 interface AddContextMenuProps {
   disabled: boolean
   onFileSelect: (files: File | File[]) => void
+  onSetPlanMode?: () => void
+  onSetGoal?: () => void
 }
 
-export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) {
+export function AddContextMenu({
+  disabled,
+  onFileSelect,
+  onSetPlanMode,
+  onSetGoal,
+}: AddContextMenuProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -30,6 +37,16 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
     [onFileSelect]
   )
 
+  const handleSetGoal = useCallback(() => {
+    setOpen(false)
+    onSetGoal?.()
+  }, [onSetGoal])
+
+  const handleSetPlanMode = useCallback(() => {
+    setOpen(false)
+    onSetPlanMode?.()
+  }, [onSetPlanMode])
+
   return (
     <div ref={containerRef} className="relative">
       <input
@@ -43,7 +60,7 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
       {open && (
         <div
           data-testid="add-context-menu"
-          className="absolute bottom-[44px] left-0 z-40 w-60 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]"
+          className="absolute bottom-[44px] left-0 z-40 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]"
         >
           <button
             type="button"
@@ -54,6 +71,38 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
             <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
             <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
           </button>
+          {onSetPlanMode && (
+            <button
+              type="button"
+              data-testid="set-plan-mode-button"
+              onClick={handleSetPlanMode}
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
+            >
+              <ClipboardList className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+              <span className="min-w-0 truncate">
+                <span className="font-semibold">{t('workbench.plan_mode', '计划模式')}</span>
+                <span className="ml-2 text-text-muted">
+                  {t('workbench.enable_plan_mode', '开启计划模式')}
+                </span>
+              </span>
+            </button>
+          )}
+          {onSetGoal && (
+            <button
+              type="button"
+              data-testid="set-goal-button"
+              onClick={handleSetGoal}
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
+            >
+              <Target className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+              <span className="min-w-0 truncate">
+                <span className="font-semibold">{t('workbench.goal_chip', '目标')}</span>
+                <span className="ml-2 text-text-muted">
+                  {t('workbench.pursue_goal_description', '设置 WeWork 将持续努力实现的目标')}
+                </span>
+              </span>
+            </button>
+          )}
         </div>
       )}
       <button

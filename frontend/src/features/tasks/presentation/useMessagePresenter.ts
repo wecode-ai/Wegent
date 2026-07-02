@@ -14,7 +14,7 @@ import { useEffect, useMemo } from 'react'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
-import type { SourceReference } from '@/types/socket'
+import type { RetrievalSummaryPayload, SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
 import type { UnifiedMessage, SyncOptions } from '@wegent/chat-core'
 
@@ -63,6 +63,7 @@ export interface DisplayMessage {
     workbench?: Record<string, unknown>
     shell_type?: string // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
+    retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // DeepSeek R1 reasoning content
     blocks?: MessageBlock[] // Message blocks for mixed content rendering
     /** Video generation config (stored in user message subtask for display) */

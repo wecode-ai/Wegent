@@ -24,7 +24,10 @@ from app.services.adapters.task_kinds.converters import (
 )
 
 
-def _task_crd(execution_workspace: dict | None = None) -> dict:
+def _task_crd(
+    execution_workspace: dict | None = None,
+    external_knowledge_refs: list[dict] | None = None,
+) -> dict:
     spec = {
         "title": "Demo",
         "prompt": "hello",
@@ -34,6 +37,8 @@ def _task_crd(execution_workspace: dict | None = None) -> dict:
     }
     if execution_workspace:
         spec["execution"] = {"workspace": execution_workspace}
+    if external_knowledge_refs is not None:
+        spec["externalKnowledgeRefs"] = external_knowledge_refs
 
     return {
         "apiVersion": "agent.wecode.io/v1",
@@ -48,13 +53,17 @@ def _task_crd(execution_workspace: dict | None = None) -> dict:
     }
 
 
-def _build_kind_task(project_id, execution_workspace: dict | None = None):
+def _build_kind_task(
+    project_id,
+    execution_workspace: dict | None = None,
+    external_knowledge_refs: list[dict] | None = None,
+):
     task = Mock(spec=TaskResource)
     task.id = 42
     task.user_id = 1
     task.project_id = project_id
     task.client_origin = "wework"
-    task.json = _task_crd(execution_workspace)
+    task.json = _task_crd(execution_workspace, external_knowledge_refs)
     return task
 
 
@@ -208,3 +217,39 @@ def test_convert_to_task_dict_optimized_includes_execution_workspace_path():
 
     assert result["execution_workspace_source"] == "git_worktree"
     assert result["execution_workspace_path"] == "/workspace/worktrees/42/Wegent"
+
+
+@pytest.mark.unit
+def test_convert_to_task_dict_optimized_includes_external_knowledge_refs():
+    task = _build_kind_task(
+        project_id=1821,
+        external_knowledge_refs=[
+            {
+                "provider": "demo",
+                "mode": "explicit",
+                "id": "kb-1",
+                "name": "Demo KB",
+                "scope": "organization",
+            }
+        ],
+    )
+    task_crd = TaskCrd.model_validate(task.json)
+    related_data = {
+        "workspace_data": {},
+        "created_at": None,
+        "updated_at": None,
+        "completed_at": None,
+        "is_group_chat": False,
+    }
+
+    result = convert_to_task_dict_optimized(task, related_data, task_crd)
+
+    assert result["external_knowledge_refs"] == [
+        {
+            "provider": "demo",
+            "mode": "explicit",
+            "id": "kb-1",
+            "name": "Demo KB",
+            "scope": "organization",
+        }
+    ]

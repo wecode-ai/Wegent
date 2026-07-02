@@ -20,7 +20,7 @@ export function AppUpdateTitlebarButton() {
         void installUpdate()
       }}
       className={cn(
-        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 text-[13px] font-medium leading-none text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-70'
+        'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 text-[13px] font-medium leading-none text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-70'
       )}
     >
       {isInstalling ? (
