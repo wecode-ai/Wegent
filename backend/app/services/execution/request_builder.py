@@ -1963,6 +1963,13 @@ Response template:
                                 server_entry["args"] = server_config["args"]
                             if "env" in server_config:
                                 server_entry["env"] = server_config["env"]
+                            for timeout_key in (
+                                "timeout",
+                                "timeoutSeconds",
+                                "timeout_seconds",
+                            ):
+                                if timeout_key in server_config:
+                                    server_entry[timeout_key] = server_config[timeout_key]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
