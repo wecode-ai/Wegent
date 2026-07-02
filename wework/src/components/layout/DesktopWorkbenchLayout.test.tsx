@@ -3084,7 +3084,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
-  test('toggles an empty project task list without selecting the project', async () => {
+  test('selects a project while toggling its empty task list', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
@@ -3093,7 +3093,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute(
       'aria-hidden',
       'false'
@@ -3104,7 +3104,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })
 
   test('opens the independent connection settings page from the settings menu', async () => {

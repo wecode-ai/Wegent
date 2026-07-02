@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chat_shell.tools.builtin.knowledge_listing import (
-    KBToolCallCounter,
     KbHeadTool,
     KbLsTool,
+    KBToolCallCounter,
     KnowledgeListDocumentsTool,
 )
 from shared.models.knowledge import KnowledgeBaseScope
