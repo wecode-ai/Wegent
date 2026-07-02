@@ -32,6 +32,7 @@ async def prepare_knowledge_base_tools(
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
     knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
+    default_knowledge_base_ids: Optional[list[int]] = None,
     model_id: Optional[str] = None,
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
@@ -108,6 +109,7 @@ async def prepare_knowledge_base_tools(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes or [],
+        default_knowledge_base_ids=default_knowledge_base_ids or [],
         user_id=user_id,
         user_name=user_name,
         auth_token=auth_token,
@@ -124,9 +126,22 @@ async def prepare_knowledge_base_tools(
     )
     extra_tools.append(kb_tool)
 
-    if restricted_search_only:
+    default_kb_id_set = set(default_knowledge_base_ids or [])
+    exploration_knowledge_base_ids = [
+        kb_id for kb_id in knowledge_base_ids if kb_id not in default_kb_id_set
+    ]
+    exploration_knowledge_base_scopes = [
+        scope
+        for scope in (knowledge_base_scopes or [])
+        if scope.knowledge_base_id not in default_kb_id_set
+    ]
+
+    if restricted_search_only or not exploration_knowledge_base_ids:
         logger.info(
-            "[knowledge_factory] Created restricted KB tool set: knowledge_base_search only"
+            "[knowledge_factory] Created KB search-only tool set: restricted=%s, "
+            "exploration_kb_count=%d",
+            restricted_search_only,
+            len(exploration_knowledge_base_ids),
         )
     else:
         # Create shared call counter for exploration tools (kb_ls and kb_head).
@@ -144,16 +159,16 @@ async def prepare_knowledge_base_tools(
         # These are secondary tools for when RAG search doesn't find relevant results
         # They share a call counter to enforce combined call limits
         kb_ls_tool = KbLsTool(
-            knowledge_base_ids=knowledge_base_ids,
-            knowledge_base_scopes=knowledge_base_scopes or [],
+            knowledge_base_ids=exploration_knowledge_base_ids,
+            knowledge_base_scopes=exploration_knowledge_base_scopes,
             db_session=db,
             auth_token=auth_token,
         )
         kb_ls_tool._call_counter = exploration_call_counter
 
         kb_head_tool = KbHeadTool(
-            knowledge_base_ids=knowledge_base_ids,
-            knowledge_base_scopes=knowledge_base_scopes or [],
+            knowledge_base_ids=exploration_knowledge_base_ids,
+            knowledge_base_scopes=exploration_knowledge_base_scopes,
             user_id=user_id,
             db_session=db,
             user_subtask_id=user_subtask_id,
@@ -176,6 +191,11 @@ async def prepare_knowledge_base_tools(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
+            knowledge_base_ids=knowledge_base_ids,
+            is_user_selected_kb=is_user_selected,
+            document_ids=legacy_document_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
+            default_knowledge_base_ids=default_knowledge_base_ids or [],
             kb_tool_access_mode=kb_tool_access_mode,
         )
 
@@ -198,6 +218,11 @@ async def prepare_knowledge_base_tools(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
+            knowledge_base_ids=knowledge_base_ids,
+            is_user_selected_kb=is_user_selected,
+            document_ids=legacy_document_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
+            default_knowledge_base_ids=default_knowledge_base_ids or [],
             kb_tool_access_mode=kb_tool_access_mode,
         )
 
@@ -206,13 +231,22 @@ async def prepare_knowledge_base_tools(
         knowledge_base_ids, auth_token
     )
 
+    has_exploration_tools = bool(exploration_knowledge_base_ids)
+
     # Choose prompt based on RAG availability and user selection mode
     if not has_rag_enabled:
-        # No-RAG mode: Use exploration tools only
-        kb_instruction = KB_PROMPT_NO_RAG
-        logger.info(
-            "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
-        )
+        if has_exploration_tools:
+            # No-RAG mode: Use exploration tools only
+            kb_instruction = KB_PROMPT_NO_RAG
+            logger.info(
+                "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
+            )
+        else:
+            kb_instruction = KB_PROMPT_RESTRICTED_ANALYST
+            logger.info(
+                "[knowledge_factory] Using search-only prompt because no retriever "
+                "or exploration tools are available"
+            )
     elif is_user_selected:
         # Strict mode: User explicitly selected KB for this message
         kb_instruction = KB_PROMPT_STRICT
@@ -234,6 +268,11 @@ async def prepare_knowledge_base_tools(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt="",
+        knowledge_base_ids=knowledge_base_ids,
+        is_user_selected_kb=is_user_selected,
+        document_ids=legacy_document_ids,
+        knowledge_base_scopes=knowledge_base_scopes or [],
+        default_knowledge_base_ids=default_knowledge_base_ids or [],
         kb_tool_access_mode=kb_tool_access_mode,
     )
 

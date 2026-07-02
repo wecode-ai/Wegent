@@ -18,7 +18,16 @@ logger = logging.getLogger(__name__)
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.schemas.kind import (
+    Bot,
+    Ghost,
+    KnowledgeBaseDefaultRef,
+    Model,
+    Shell,
+    SkillRefMeta,
+    Team,
+)
+from app.schemas.share import MemberRole
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -28,6 +37,9 @@ from app.services.adapters.shell_utils import (
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.share.knowledge_share_service import KnowledgeShareService
+from app.services.share.team_share_service import TeamShareService
+from app.services.task_team_resolver import can_user_use_team
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -60,39 +72,129 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Add more sensitive keys here as needed
     ]
 
-    def _validate_default_knowledge_bases(
+    def _prepare_default_knowledge_base_refs(
         self,
         db: Session,
         refs: Optional[List[Any]],
         user_id: int,
         namespace: str,
-    ) -> None:
-        """Restrict group bots to current-group and organization knowledge bases."""
-        if not refs or namespace == "default":
-            return
+        team_owner_user_id: int,
+    ) -> List[KnowledgeBaseDefaultRef]:
+        """Validate and normalize default KB refs for a Team edit context."""
+        if not refs:
+            return []
 
-        grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
-            db=db,
-            user_id=user_id,
-        )
+        share_service = KnowledgeShareService()
+        normalized_refs: list[KnowledgeBaseDefaultRef] = []
 
-        allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
-        current_group = next(
-            (group for group in grouped_kbs.groups if group.group_name == namespace),
-            None,
-        )
-        if current_group is not None:
-            allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
+        allowed_ids: set[int] | None = None
+        if namespace != "default":
+            grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
+                db=db,
+                user_id=user_id,
+            )
+            allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
+            current_group = next(
+                (
+                    group
+                    for group in grouped_kbs.groups
+                    if group.group_name == namespace
+                ),
+                None,
+            )
+            if current_group is not None:
+                allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
 
-        invalid_refs = [ref.name for ref in refs if ref.id not in allowed_ids]
+        invalid_refs: list[str] = []
+        for ref in refs:
+            ref_model = (
+                ref
+                if isinstance(ref, KnowledgeBaseDefaultRef)
+                else KnowledgeBaseDefaultRef(**ref)
+            )
+            if allowed_ids is not None and ref_model.id not in allowed_ids:
+                invalid_refs.append(ref_model.name)
+                continue
+            if share_service._get_resource(db, ref_model.id, user_id) is None:
+                invalid_refs.append(ref_model.name)
+                continue
+            if (
+                team_owner_user_id != user_id
+                and share_service._get_resource(db, ref_model.id, team_owner_user_id)
+                is None
+            ):
+                invalid_refs.append(ref_model.name)
+                continue
+            normalized_refs.append(ref_model)
+
         if invalid_refs:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Group bots can only bind knowledge bases from the current "
-                    "group or the organization"
+                    "Bots can only bind knowledge bases readable by the editor"
+                    " and the Team owner"
+                    + (
+                        " and group bots can only bind knowledge bases from the "
+                        "current group or the organization"
+                        if namespace != "default"
+                        else ""
+                    )
                 ),
             )
+        return normalized_refs
+
+    def _resolve_default_kb_team_owner_id(
+        self,
+        db: Session,
+        team_id: Optional[int],
+        current_user_id: int,
+        bot: Optional[Kind] = None,
+        require_edit: bool = False,
+    ) -> int:
+        """Resolve Team owner for default KB context after permission checks."""
+        if team_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Team context is required to update default knowledge bases",
+            )
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not team or not team.json:
+            raise HTTPException(status_code=400, detail="Team context not found")
+
+        if require_edit:
+            if (
+                team.user_id != current_user_id
+                and not TeamShareService().check_permission(
+                    db, team.id, current_user_id, MemberRole.Developer
+                )
+            ):
+                raise HTTPException(status_code=403, detail="Access denied")
+        elif not can_user_use_team(db, current_user_id, team):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if bot is not None:
+            team_crd = Team.model_validate(team.json)
+            bot_namespace = bot.namespace or "default"
+            if team.user_id != bot.user_id or not any(
+                member.botRef.name == bot.name
+                and (member.botRef.namespace or "default") == bot_namespace
+                for member in (team_crd.spec.members or [])
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Team context does not reference this bot",
+                )
+
+        return team.user_id
 
     def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -348,11 +450,23 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             self._validate_skills(db, obj_in.skills, user_id, namespace)
         if obj_in.preload_skills:
             self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
-        self._validate_default_knowledge_bases(
+        team_owner_user_id = user_id
+        if (
+            obj_in.default_knowledge_base_refs is not None
+            and obj_in.default_knowledge_base_team_id is not None
+        ):
+            team_owner_user_id = self._resolve_default_kb_team_owner_id(
+                db,
+                obj_in.default_knowledge_base_team_id,
+                current_user_id=user_id,
+                require_edit=True,
+            )
+        default_knowledge_base_refs = self._prepare_default_knowledge_base_refs(
             db,
             obj_in.default_knowledge_base_refs,
             user_id,
             namespace,
+            team_owner_user_id=team_owner_user_id,
         )
 
         # Encrypt sensitive data in agent_config before storing
@@ -365,7 +479,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         }
         if obj_in.default_knowledge_base_refs is not None:
             ghost_spec["defaultKnowledgeBaseRefs"] = [
-                ref.model_dump() for ref in obj_in.default_knowledge_base_refs
+                ref.model_dump() for ref in default_knowledge_base_refs
             ]
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
@@ -734,13 +848,68 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
 
+    def _annotate_default_kb_availability(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        bot_dict: Dict[str, Any],
+        team_id: Optional[int],
+        current_user_id: int,
+    ) -> None:
+        """Annotate default KB refs with Team owner readability diagnostics."""
+        if not team_id or not bot_dict.get("default_knowledge_base_refs"):
+            return
+
+        team_owner_user_id = self._resolve_default_kb_team_owner_id(
+            db,
+            team_id,
+            current_user_id=current_user_id,
+            bot=bot,
+            require_edit=False,
+        )
+        share_service = KnowledgeShareService()
+        annotated_refs = []
+        for ref in bot_dict["default_knowledge_base_refs"]:
+            next_ref = dict(ref)
+            if share_service._get_resource(db, next_ref["id"], team_owner_user_id):
+                next_ref["available"] = True
+                next_ref["unavailable_reason"] = None
+            else:
+                next_ref["available"] = False
+                next_ref["unavailable_reason"] = "team_owner_cannot_read_kb"
+            annotated_refs.append(next_ref)
+        bot_dict["default_knowledge_base_refs"] = annotated_refs
+
     def get_bot_detail(
-        self, db: Session, *, bot_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        bot_id: int,
+        user_id: int,
+        default_knowledge_base_team_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Get detailed bot information including related user
         """
         bot_dict = self.get_by_id_and_user(db, bot_id=bot_id, user_id=user_id)
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.id == bot_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if bot:
+            self._annotate_default_kb_availability(
+                db,
+                bot=bot,
+                bot_dict=bot_dict,
+                team_id=default_knowledge_base_team_id,
+                current_user_id=user_id,
+            )
 
         # Get related user
         user = db.query(User).filter(User.id == user_id).first()
@@ -804,12 +973,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Get related components
         ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        normalized_default_kb_refs: list[KnowledgeBaseDefaultRef] | None = None
         if "default_knowledge_base_refs" in update_data:
-            self._validate_default_knowledge_bases(
+            team_owner_user_id = self._resolve_default_kb_team_owner_id(
+                db,
+                obj_in.default_knowledge_base_team_id,
+                current_user_id=user_id,
+                bot=bot,
+                require_edit=True,
+            )
+            normalized_default_kb_refs = self._prepare_default_knowledge_base_refs(
                 db,
                 obj_in.default_knowledge_base_refs,
                 user_id,
                 bot.namespace or "default",
+                team_owner_user_id=team_owner_user_id,
             )
 
         # Track the agent_config to return (for predefined models)
@@ -1052,9 +1230,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         if "default_knowledge_base_refs" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
-            ghost_crd.spec.defaultKnowledgeBaseRefs = (
-                obj_in.default_knowledge_base_refs or []
-            )
+            ghost_crd.spec.defaultKnowledgeBaseRefs = normalized_default_kb_refs or []
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)

@@ -39,6 +39,11 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'bot.default_knowledge_bases_source_group': 'Group',
     'bot.default_knowledge_bases_source_organization': 'Organization',
     'bot.default_knowledge_bases_source_shared': 'Shared',
+    'bot.default_knowledge_bases_unavailable': 'Unavailable',
+    'bot.default_knowledge_bases_unavailable_hint':
+      'Some default knowledge bases are unavailable to the current agent owner and will not load at runtime.',
+    'bot.default_knowledge_bases_team_context_required':
+      'Default knowledge bases can only be managed from agent settings.',
     'knowledge:document_count': `${options?.count ?? 0} document`,
     'knowledge:documents_count': `${options?.count ?? 0} documents`,
     'skills.preload_hint': 'Check skills to preload them.',
@@ -71,6 +76,7 @@ jest.mock('@/apis/bots', () => {
     ...actual,
     botApis: {
       ...actual.botApis,
+      getBot: jest.fn(),
       updateBot: jest.fn(),
       createBot: jest.fn(),
     },
@@ -196,6 +202,7 @@ jest.mock('@/components/ui/switch', () => ({
 }))
 
 const mockedUpdateBot = botApis.updateBot as jest.Mock
+const mockedGetBot = botApis.getBot as jest.Mock
 const mockedKnowledgeBaseGrouped = knowledgeBaseApi.getAllGrouped as jest.Mock
 const mockedGetUnifiedModels = modelApis.getUnifiedModels as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
@@ -206,7 +213,11 @@ const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
 
 function renderBotEdit(
   botOverrides: Partial<Bot> = {},
-  props: { scope?: 'personal' | 'group' | 'all' | 'public'; groupName?: string } = {}
+  props: {
+    scope?: 'personal' | 'group' | 'all' | 'public'
+    groupName?: string
+    defaultKnowledgeBaseTeamId?: number
+  } = {}
 ) {
   const bot = {
     id: 7,
@@ -242,6 +253,7 @@ function renderBotEdit(
       toast={toast}
       scope={props.scope || 'personal'}
       groupName={props.groupName}
+      defaultKnowledgeBaseTeamId={props.defaultKnowledgeBaseTeamId}
     />
   )
 
@@ -251,6 +263,7 @@ function renderBotEdit(
 describe('BotEdit default knowledge bases', () => {
   beforeEach(() => {
     mockedUpdateBot.mockReset()
+    mockedGetBot.mockReset()
     mockedKnowledgeBaseGrouped.mockReset()
     mockedGetUnifiedModels.mockReset()
     mockedGetUnifiedShells.mockReset()
@@ -397,6 +410,24 @@ describe('BotEdit default knowledge bases', () => {
       created_at: '2026-04-02T00:00:00Z',
       updated_at: '2026-04-02T00:00:00Z',
     })
+    mockedGetBot.mockResolvedValue({
+      id: 7,
+      name: 'Bot Alpha',
+      namespace: 'default',
+      shell_name: 'ClaudeCode',
+      shell_type: 'ClaudeCode',
+      agent_config: {
+        bind_model: 'gpt-4.1',
+        bind_model_type: 'public',
+      },
+      system_prompt: 'helpful',
+      mcp_servers: {},
+      skills: [],
+      default_knowledge_base_refs: [{ id: 101, name: 'Product Docs' }],
+      is_active: true,
+      created_at: '2026-04-02T00:00:00Z',
+      updated_at: '2026-04-02T00:00:00Z',
+    })
   })
 
   test('loads existing bot default knowledge bases into the form', async () => {
@@ -404,6 +435,44 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
+  })
+
+  test('marks default knowledge bases unavailable from team owner precheck', async () => {
+    mockedGetBot.mockResolvedValue({
+      id: 7,
+      name: 'Bot Alpha',
+      namespace: 'default',
+      shell_name: 'ClaudeCode',
+      shell_type: 'ClaudeCode',
+      agent_config: {
+        bind_model: 'gpt-4.1',
+        bind_model_type: 'public',
+      },
+      system_prompt: 'helpful',
+      mcp_servers: {},
+      skills: [],
+      default_knowledge_base_refs: [
+        {
+          id: 101,
+          name: 'Product Docs',
+          available: false,
+          unavailableReason: 'team_owner_cannot_read_kb',
+        },
+      ],
+      is_active: true,
+      created_at: '2026-04-02T00:00:00Z',
+      updated_at: '2026-04-02T00:00:00Z',
+    })
+
+    renderBotEdit({}, { defaultKnowledgeBaseTeamId: 88 })
+
+    await waitFor(() => {
+      expect(mockedGetBot).toHaveBeenCalledWith(7, 88)
+    })
+    expect(await screen.findByTestId('default-knowledge-base-unavailable-101')).toHaveTextContent(
+      'Unavailable'
+    )
+    expect(screen.getByTestId('default-knowledge-base-unavailable-hint')).toBeInTheDocument()
   })
 
   test('renders selected hidden skill display name without exposing it as selectable', async () => {
@@ -521,7 +590,7 @@ describe('BotEdit default knowledge bases', () => {
         namespace: 'platform',
         default_knowledge_base_refs: [],
       },
-      { scope: 'group', groupName: 'platform' }
+      { scope: 'group', groupName: 'platform', defaultKnowledgeBaseTeamId: 88 }
     )
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
@@ -535,7 +604,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('renders popover-based selector with grouped metadata', async () => {
-    renderBotEdit()
+    renderBotEdit({}, { defaultKnowledgeBaseTeamId: 88 })
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -561,7 +630,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('allows adding and removing multiple knowledge bases', async () => {
-    renderBotEdit()
+    renderBotEdit({}, { defaultKnowledgeBaseTeamId: 88 })
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -582,7 +651,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('includes default_knowledge_base_refs in save payload', async () => {
-    renderBotEdit()
+    renderBotEdit({}, { defaultKnowledgeBaseTeamId: 88 })
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -600,6 +669,54 @@ describe('BotEdit default knowledge bases', () => {
             { id: 101, name: 'Product Docs' },
             { id: 202, name: 'Runbooks' },
           ],
+          default_knowledge_base_team_id: 88,
+        })
+      )
+    })
+  })
+
+  test('omits default knowledge base refs in standalone bot editing', async () => {
+    renderBotEdit()
+
+    expect(
+      await screen.findByText('Default knowledge bases can only be managed from agent settings.')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.not.objectContaining({
+          default_knowledge_base_refs: expect.anything(),
+        })
+      )
+    })
+  })
+
+  test('includes team context but strips diagnostic fields when saving defaults', async () => {
+    renderBotEdit(
+      {
+        default_knowledge_base_refs: [
+          {
+            id: 101,
+            name: 'Product Docs',
+            available: false,
+            unavailableReason: 'team_owner_cannot_read_kb',
+          },
+        ],
+      },
+      { defaultKnowledgeBaseTeamId: 88 }
+    )
+
+    fireEvent.click(await screen.findByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          default_knowledge_base_team_id: 88,
+          default_knowledge_base_refs: [{ id: 101, name: 'Product Docs' }],
         })
       )
     })

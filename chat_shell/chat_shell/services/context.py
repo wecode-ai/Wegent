@@ -456,6 +456,7 @@ class ChatContext:
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
             knowledge_base_scopes=self._request.knowledge_base_scopes,
+            default_knowledge_base_ids=self._request.default_knowledge_base_ids,
             model_id=model_id,
             context_window=context_window,
             model_config=self._request.model_config,

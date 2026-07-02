@@ -28,6 +28,7 @@ from app.models.subtask import SubtaskStatus
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.kind import Task as TaskCRD
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
@@ -37,6 +38,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.task_team_resolver import can_user_use_team, resolve_task_team_ref
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -289,12 +291,40 @@ class SharedTaskService:
 
         return share_info
 
+    def _resolve_task_team(
+        self, db: Session, task: TaskResource, task_crd: TaskCRD
+    ) -> Kind:
+        """Resolve a task's Team using teamRef.user_id before task owner fallback."""
+        team = resolve_task_team_ref(
+            db,
+            team_ref=task_crd.spec.teamRef,
+            fallback_user_id=task.user_id,
+        )
+        if not team:
+            raise HTTPException(
+                status_code=400,
+                detail="Original task team is unavailable",
+            )
+        return team
+
+    def _ensure_user_can_use_team(
+        self, db: Session, *, team: Kind, user_id: int
+    ) -> None:
+        """Validate that the importing user can continue with the original Team."""
+        if can_user_use_team(db, user_id, team):
+            return
+
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to use the shared task's agent",
+        )
+
     def _copy_task_with_subtasks(
         self,
         db: Session,
         original_task: Kind,
         new_user_id: int,
-        new_team_id: int,
+        new_team_id: Optional[int] = None,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
         force_override_bot_model_type: Optional[str] = None,
@@ -305,26 +335,16 @@ class SharedTaskService:
         branch_name: Optional[str] = None,
     ) -> Kind:
         """Copy task and all its subtasks to new user"""
-        from app.schemas.kind import Task, Team, Workspace
+        from app.schemas.kind import Task, Workspace
 
         should_force_override_model = bool(model_id) or force_override_bot_model
 
-        # Get the new team to get its name and namespace
-        new_team = (
-            db.query(Kind)
-            .filter(
-                Kind.id == new_team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not new_team:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Team with id {new_team_id} not found",
-            )
+        task_crd = Task.model_validate(original_task.json)
+        original_team = self._resolve_task_team(db, original_task, task_crd)
+        self._ensure_user_can_use_team(db, team=original_team, user_id=new_user_id)
+        task_crd.spec.teamRef.name = original_team.name
+        task_crd.spec.teamRef.namespace = original_team.namespace
+        task_crd.spec.teamRef.user_id = original_team.user_id
 
         # Query the workspace if git_repo_id is provided
         new_workspace = None
@@ -434,11 +454,6 @@ class SharedTaskService:
                     "Please select a repository and branch, or create a workspace first.",
                 )
 
-        # Parse the original task JSON and update the team reference
-        task_crd = Task.model_validate(original_task.json)
-        task_crd.spec.teamRef.name = new_team.name
-        task_crd.spec.teamRef.namespace = new_team.namespace
-
         # Check if this is a code task
         task_type = "chat"  # default
         try:
@@ -526,7 +541,7 @@ class SharedTaskService:
                 db,
                 user_id=new_user_id,
                 task_id=new_task.id,
-                team_id=new_team_id,
+                team_id=original_team.id,
                 title=original_subtask.title,
                 bot_ids=original_subtask.bot_ids,
                 role=original_subtask.role,
@@ -586,7 +601,7 @@ class SharedTaskService:
         db: Session,
         share_token: str,
         user_id: int,
-        team_id: int,
+        team_id: Optional[int] = None,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
         force_override_bot_model_type: Optional[str] = None,

@@ -310,6 +310,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              defaultKnowledgeBaseTeamId={editingTeamId}
             />
           </div>
         ) : selectedBotId !== null ? (
@@ -330,6 +331,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              defaultKnowledgeBaseTeamId={editingTeamId}
             />
           </div>
         ) : (

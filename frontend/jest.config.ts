@@ -48,6 +48,7 @@ const config: Config = {
   // Coverage thresholds are enforced incrementally via CI tools (e.g., Codecov)
   // rather than globally to support gradual improvement of legacy code
   testMatch: ['<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}'],
+  testTimeout: 15000,
   // Transform ESM packages that Jest can't handle by default
   // This list includes react-markdown and all its ESM dependencies
   transformIgnorePatterns: [

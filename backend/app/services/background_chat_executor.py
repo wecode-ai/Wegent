@@ -533,7 +533,11 @@ class BackgroundChatExecutor:
                     if len(user_message) > 100
                     else user_message
                 ),
-                "teamRef": {"name": "system-background", "namespace": "system"},
+                "teamRef": {
+                    "name": "system-background",
+                    "namespace": "system",
+                    "user_id": 0,
+                },
                 "workspaceRef": {"name": "", "namespace": ""},
                 "is_group_chat": False,
             },

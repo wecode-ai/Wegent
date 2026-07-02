@@ -72,6 +72,25 @@ The user explicitly selected these table(s) - prioritize table operations over a
 </table_context>
 """
 
+DEFAULT_KB_LOAD_FAILURE_PROMPT = """
+
+<knowledge_base_status>
+The task's default knowledge bases could not be loaded for this turn. Continue with
+any explicitly selected knowledge bases, and mention the default knowledge base
+loading failure if the answer depends on task default knowledge.
+</knowledge_base_status>
+"""
+
+DEFAULT_KB_PARTIAL_LOAD_PROMPT = """
+
+<knowledge_base_status>
+Some task default knowledge bases were not loaded for this turn because they are
+not available to the current agent owner. Continue with the loaded and explicitly
+selected knowledge bases, and mention that some default knowledge was unavailable
+if the answer depends on task default knowledge.
+</knowledge_base_status>
+"""
+
 
 def build_table_prompt(table_contexts: List[dict]) -> str:
     """
@@ -1195,6 +1214,7 @@ async def prepare_contexts_for_chat(
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
         knowledge_base_scopes=kb_result.knowledge_base_scopes,
+        default_knowledge_base_ids=kb_result.default_knowledge_base_ids,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
@@ -1315,6 +1335,10 @@ def _prepare_kb_tools_from_contexts(
     is_user_selected_kb = bool(subtask_kb_ids)
 
     knowledge_base_scopes: List[KnowledgeBaseScope] = []
+    default_knowledge_base_ids: List[int] = []
+    default_kb_load_error: Optional[str] = None
+    default_kb_warnings: List[Any] = []
+    default_kb_status_prompt = ""
 
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
@@ -1328,9 +1352,13 @@ def _prepare_kb_tools_from_contexts(
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
         knowledge_base_scopes = _get_bound_knowledge_base_scopes(db, task_id, user_id)
-        knowledge_base_ids = [
+        scoped_knowledge_base_ids = [
             scope.knowledge_base_id for scope in knowledge_base_scopes
-        ] or _get_bound_knowledge_base_ids(db, task_id)
+        ]
+        legacy_knowledge_base_ids = _get_bound_knowledge_base_ids(db, task_id)
+        knowledge_base_ids = list(
+            dict.fromkeys(scoped_knowledge_base_ids + legacy_knowledge_base_ids)
+        )
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
@@ -1338,6 +1366,46 @@ def _prepare_kb_tools_from_contexts(
             )
     else:
         knowledge_base_ids = []
+
+    if task_id:
+        (
+            default_scopes,
+            default_kb_load_error,
+            default_kb_warnings,
+        ) = _get_task_default_knowledge_base_scopes(db, task_id, user_id)
+        if default_scopes:
+            requested_knowledge_base_ids = set(knowledge_base_ids)
+            default_knowledge_base_ids = _get_effective_default_knowledge_base_ids(
+                default_scopes,
+                requested_knowledge_base_ids,
+            )
+            default_knowledge_base_ids = _get_search_only_default_knowledge_base_ids(
+                db,
+                user_id,
+                default_knowledge_base_ids,
+            )
+            knowledge_base_scopes = _merge_knowledge_base_scopes(
+                default_scopes, knowledge_base_scopes
+            )
+            scoped_knowledge_base_ids = [
+                scope.knowledge_base_id for scope in knowledge_base_scopes
+            ]
+            knowledge_base_ids = list(
+                dict.fromkeys(scoped_knowledge_base_ids + knowledge_base_ids)
+            )
+            logger.info(
+                "[_prepare_kb_tools_from_contexts] Added %d runtime default KB scopes for task_id=%d",
+                len(default_scopes),
+                task_id,
+            )
+
+    if default_kb_load_error:
+        default_kb_status_prompt = DEFAULT_KB_LOAD_FAILURE_PROMPT
+    elif default_kb_warnings:
+        default_kb_status_prompt = DEFAULT_KB_PARTIAL_LOAD_PROMPT
+
+    if default_kb_status_prompt:
+        enhanced_system_prompt = f"{enhanced_system_prompt}{default_kb_status_prompt}"
 
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
     # Normalize to int, skip invalid values, and deduplicate while preserving order.
@@ -1362,6 +1430,7 @@ def _prepare_kb_tools_from_contexts(
             is_user_selected_kb=False,
             document_ids=[],
             knowledge_base_scopes=[],
+            default_knowledge_base_ids=[],
             kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
         )
 
@@ -1404,6 +1473,7 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
+        default_knowledge_base_ids=default_knowledge_base_ids,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
@@ -1444,7 +1514,9 @@ def _prepare_kb_tools_from_contexts(
                 "(KB inherited from task)"
             )
 
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+    enhanced_system_prompt = (
+        f"{base_system_prompt}{kb_instruction}{default_kb_status_prompt}"
+    )
 
     return KnowledgeBaseToolsResult(
         extra_tools=extra_tools,
@@ -1454,6 +1526,7 @@ def _prepare_kb_tools_from_contexts(
         is_user_selected_kb=is_user_selected_kb,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
+        default_knowledge_base_ids=default_knowledge_base_ids,
         kb_tool_access_mode=kb_tool_access_mode,
     )
 
@@ -1480,6 +1553,56 @@ def _build_scopes_from_kb_contexts(
             )
         )
     return scopes
+
+
+def _merge_knowledge_base_scopes(
+    default_scopes: List[KnowledgeBaseScope],
+    requested_scopes: List[KnowledgeBaseScope],
+) -> List[KnowledgeBaseScope]:
+    """Merge default and requested scopes, preserving explicit requested scopes."""
+    merged: dict[int, KnowledgeBaseScope] = {
+        scope.knowledge_base_id: scope for scope in default_scopes
+    }
+    for scope in requested_scopes:
+        merged[scope.knowledge_base_id] = scope
+    return list(merged.values())
+
+
+def _get_effective_default_knowledge_base_ids(
+    default_scopes: List[KnowledgeBaseScope],
+    requested_knowledge_base_ids: set[int],
+) -> List[int]:
+    """Return default-only KB IDs after explicit or task KBs take precedence."""
+    return [
+        scope.knowledge_base_id
+        for scope in default_scopes
+        if scope.knowledge_base_id not in requested_knowledge_base_ids
+    ]
+
+
+def _get_search_only_default_knowledge_base_ids(
+    db: Session,
+    user_id: int,
+    default_knowledge_base_ids: List[int],
+) -> List[int]:
+    """Return default KB IDs that should not expose document exploration tools."""
+    if not default_knowledge_base_ids:
+        return []
+
+    from app.services.share.knowledge_share_service import KnowledgeShareService
+
+    share_service = KnowledgeShareService()
+    search_only_ids: list[int] = []
+    for kb_id in default_knowledge_base_ids:
+        if share_service._get_resource(db, kb_id, user_id) is None:
+            search_only_ids.append(kb_id)
+            continue
+
+        access_mode, _ = _get_user_kb_tool_access_mode(db, user_id, [kb_id])
+        if access_mode != KnowledgeBaseToolAccessMode.FULL:
+            search_only_ids.append(kb_id)
+
+    return search_only_ids
 
 
 def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
@@ -1587,6 +1710,47 @@ def _get_bound_knowledge_base_scopes(
             exc_info=True,
         )
         return []
+
+
+def _get_task_default_knowledge_base_scopes(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> Tuple[List[KnowledgeBaseScope], Optional[str], List[Any]]:
+    """Resolve runtime default knowledge base scopes for a task."""
+    from app.services.chat.task_default_knowledge_bases import (
+        get_task_default_knowledge_base_resolution,
+    )
+
+    try:
+        resolution = get_task_default_knowledge_base_resolution(db, task_id, user_id)
+        if resolution.warnings:
+            logger.info(
+                "runtime_default_kb_scope_resolution_filtered",
+                extra={
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "warning_count": len(resolution.warnings),
+                    "warning_reasons": [
+                        warning.reason for warning in resolution.warnings
+                    ],
+                },
+            )
+        return resolution.scopes, None, resolution.warnings
+    except Exception as exc:
+        logger.exception(
+            "runtime_default_kb_scope_resolution_failed",
+            extra={
+                "task_id": task_id,
+                "user_id": user_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return (
+            [],
+            "default_knowledge_base_load_failed",
+            [],
+        )
 
 
 def _build_kb_meta_prompt(

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.schemas.kind import Bot, Ghost, Task, Team
+from app.services.kind_ref_resolver import batch_load_kinds_by_refs
 from app.services.skill_binding_service import (
     SkillBindingContext,
     skill_binding_service,
@@ -31,89 +32,10 @@ from app.services.task_skill_selection import (
     parse_additional_skill_names_from_labels,
     parse_requested_skill_refs_from_labels,
 )
+from app.services.task_team_resolver import get_team_ref_owner_id
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
-
-
-def _batch_load_kinds_by_refs(
-    db: Session,
-    *,
-    user_id: int,
-    kind_type: Any,
-    refs: Set[Tuple[str, str]],
-) -> Dict[Tuple[str, str], Kind]:
-    """
-    Batch load kinds by namespace/name refs with fallback behavior.
-
-    Behavior aligns with kindReader.get_by_name_and_namespace for BOT/GHOST:
-    - default namespace: personal (user_id) first, fallback to public (user_id=0)
-    - non-default namespace: group resource lookup
-    """
-    if not refs:
-        return {}
-
-    result: Dict[Tuple[str, str], Kind] = {}
-    default_refs = {ref for ref in refs if ref[0] == "default"}
-    group_refs = refs - default_refs
-
-    if default_refs:
-        default_names = [name for _, name in default_refs]
-        if user_id != 0:
-            personal_rows = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == kind_type.value,
-                    Kind.namespace == "default",
-                    Kind.name.in_(default_names),
-                    Kind.is_active == True,
-                )
-                .all()
-            )
-            for row in personal_rows:
-                key = (row.namespace, row.name)
-                if key in default_refs:
-                    result[key] = row
-
-        missing_default_refs = default_refs - set(result.keys())
-        if missing_default_refs:
-            missing_names = [name for _, name in missing_default_refs]
-            public_rows = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == kind_type.value,
-                    Kind.namespace == "default",
-                    Kind.name.in_(missing_names),
-                    Kind.is_active == True,
-                )
-                .all()
-            )
-            for row in public_rows:
-                key = (row.namespace, row.name)
-                if key in missing_default_refs:
-                    result[key] = row
-
-    if group_refs:
-        group_names = [name for _, name in group_refs]
-        group_namespaces = [namespace for namespace, _ in group_refs]
-        group_rows = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == kind_type.value,
-                Kind.namespace.in_(group_namespaces),
-                Kind.name.in_(group_names),
-                Kind.is_active == True,
-            )
-            .all()
-        )
-        for row in group_rows:
-            key = (row.namespace, row.name)
-            if key in group_refs and key not in result:
-                result[key] = row
-
-    return result
 
 
 def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str, Any]:
@@ -131,14 +53,26 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     task_crd = Task.model_validate(task.json)
     team_name = task_crd.spec.teamRef.name
     team_namespace = task_crd.spec.teamRef.namespace
-    task_owner_id = task.user_id
+    task_owner_id = get_team_ref_owner_id(task_crd.spec.teamRef, task.user_id)
     labels = task_crd.metadata.labels or {}
     requested_skill_refs = parse_requested_skill_refs_from_labels(labels)
     user_selected_skills = parse_additional_skill_names_from_labels(labels)
 
-    team = kindReader.get_by_name_and_namespace(
-        db, task_owner_id, KindType.TEAM, team_namespace, team_name
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == task_owner_id,
+            Kind.kind == KindType.TEAM.value,
+            Kind.namespace == team_namespace,
+            Kind.name == team_name,
+            Kind.is_active.is_(True),
+        )
+        .first()
     )
+    if not team or getattr(team, "kind", None) != KindType.TEAM.value:
+        team = kindReader.get_by_name_and_namespace(
+            db, task_owner_id, KindType.TEAM, team_namespace, team_name
+        )
     team_owner_id = _resolve_team_owner_id(task=task, task_crd=task_crd, team=team)
     binding_context = _build_skill_binding_context(
         task=task,
@@ -204,7 +138,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         for member in (team_crd.spec.members or [])
         if getattr(member, "botRef", None)
     }
-    bot_by_ref = _batch_load_kinds_by_refs(
+    bot_by_ref = batch_load_kinds_by_refs(
         db, user_id=team_owner_id, kind_type=KindType.BOT, refs=bot_refs
     )
 
@@ -220,7 +154,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 (bot_crd.spec.ghostRef.namespace, bot_crd.spec.ghostRef.name)
             )
 
-    ghost_by_ref = _batch_load_kinds_by_refs(
+    ghost_by_ref = batch_load_kinds_by_refs(
         db, user_id=team_owner_id, kind_type=KindType.GHOST, refs=ghost_refs
     )
 
@@ -416,11 +350,11 @@ def _resolve_team_owner_id(
     Shared teams execute under the task creator's context, but their related
     Bots, Ghosts, and private Skills still belong to the original team owner.
     """
-    if team and getattr(team, "user_id", None):
+    if team and getattr(team, "user_id", None) is not None:
         return team.user_id
 
     team_ref_user_id = getattr(task_crd.spec.teamRef, "user_id", None)
-    if team_ref_user_id:
+    if team_ref_user_id is not None:
         return team_ref_user_id
 
     return task.user_id
@@ -442,7 +376,7 @@ def _get_subscription_skill_refs_for_task(db: Session, *, task_id: int) -> List[
         .filter(
             Kind.id == execution.subscription_id,
             Kind.kind == "Subscription",
-            Kind.is_active == True,  # noqa: E712
+            Kind.is_active.is_(True),
         )
         .first()
     )

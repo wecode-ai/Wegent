@@ -7,6 +7,7 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
   useImperativeHandle,
   forwardRef,
 } from 'react'
@@ -117,6 +118,8 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Team context used to validate and precheck default knowledge bases */
+  defaultKnowledgeBaseTeamId?: number
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -134,6 +137,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    defaultKnowledgeBaseTeamId,
   },
   ref
 ) => {
@@ -157,6 +161,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
+  const lastResetKeyRef = useRef<string | null>(null)
+  const lastResetSnapshotRef = useRef<string | null>(null)
 
   const baseBot = useMemo(() => {
     if (editingBot) {
@@ -172,12 +178,23 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
   const [agentName, setAgentName] = useState(baseBot?.shell_name || baseBot?.shell_type || '')
   // Helper function to remove protocol from agent_config for display
-  const getAgentConfigWithoutProtocol = (config: Record<string, unknown> | undefined): string => {
-    if (!config) return ''
+  const getAgentConfigWithoutProtocol = useCallback(
+    (config: Record<string, unknown> | undefined): string => {
+      if (!config) return ''
 
-    const { protocol: _, ...rest } = config
-    return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : ''
-  }
+      const { protocol: _, ...rest } = config
+      return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : ''
+    },
+    []
+  )
+  const normalizeDefaultKnowledgeBaseRefs = useCallback(
+    (refs: KnowledgeBaseDefaultRef[] | undefined) =>
+      (refs || []).map(ref => ({
+        id: ref.id,
+        name: ref.name,
+      })),
+    []
+  )
   const [agentConfig, setAgentConfig] = useState(
     baseBot?.agent_config ? getAgentConfigWithoutProtocol(baseBot.agent_config) : ''
   )
@@ -189,6 +206,49 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >(baseBot?.default_knowledge_base_refs || [])
+  const hasDefaultKnowledgeBaseTeamContext =
+    typeof defaultKnowledgeBaseTeamId === 'number' && defaultKnowledgeBaseTeamId > 0
+  const canEditDefaultKnowledgeBases = scope === 'public' || hasDefaultKnowledgeBaseTeamContext
+
+  useEffect(() => {
+    if (!hasDefaultKnowledgeBaseTeamContext || editingBotId <= 0) {
+      return
+    }
+
+    let cancelled = false
+    const teamId = defaultKnowledgeBaseTeamId as number
+
+    botApis
+      .getBot(editingBotId, teamId)
+      .then(bot => {
+        if (!cancelled) {
+          setDefaultKnowledgeBaseRefs(prev => {
+            const refIdentity = (refs: KnowledgeBaseDefaultRef[] | undefined) =>
+              JSON.stringify(normalizeDefaultKnowledgeBaseRefs(refs))
+            const baseRefs = editingBot?.default_knowledge_base_refs || []
+            if (refIdentity(prev) !== refIdentity(baseRefs)) {
+              return prev
+            }
+            return bot.default_knowledge_base_refs || []
+          })
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.error('Failed to precheck default knowledge bases:', error)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    defaultKnowledgeBaseTeamId,
+    editingBot,
+    editingBotId,
+    hasDefaultKnowledgeBaseTeamContext,
+    normalizeDefaultKnowledgeBaseRefs,
+  ])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -198,6 +258,73 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
+  const resolvedBaseShellType = useMemo(() => {
+    const shellName = baseBot?.shell_name || baseBot?.shell_type || ''
+    return shells.find(shell => shell.name === shellName)?.shellType || ''
+  }, [baseBot?.shell_name, baseBot?.shell_type, shells])
+
+  const buildMcpConfigSnapshot = useCallback(
+    (mcpServers: Record<string, unknown> | undefined, agentType: string) => {
+      if (!mcpServers) {
+        return ''
+      }
+      if (agentType && isValidAgentType(agentType)) {
+        return JSON.stringify(adaptMcpConfigForAgent(mcpServers, agentType), null, 2)
+      }
+      return JSON.stringify(mcpServers, null, 2)
+    },
+    []
+  )
+
+  const currentFormSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        botName,
+        agentName,
+        prompt,
+        mcpConfig,
+        agentConfig,
+        selectedSkills,
+        preloadSkills,
+        selectedSkillRefs,
+        defaultKnowledgeBaseRefs: normalizeDefaultKnowledgeBaseRefs(defaultKnowledgeBaseRefs),
+      }),
+    [
+      agentConfig,
+      agentName,
+      botName,
+      defaultKnowledgeBaseRefs,
+      mcpConfig,
+      preloadSkills,
+      prompt,
+      normalizeDefaultKnowledgeBaseRefs,
+      selectedSkillRefs,
+      selectedSkills,
+    ]
+  )
+
+  const buildBaseFormSnapshot = useCallback(
+    (bot: Bot | null) =>
+      JSON.stringify({
+        botName: bot?.name || '',
+        agentName: bot?.shell_name || bot?.shell_type || '',
+        prompt: bot?.system_prompt || '',
+        mcpConfig: buildMcpConfigSnapshot(bot?.mcp_servers, resolvedBaseShellType),
+        agentConfig: bot?.agent_config ? getAgentConfigWithoutProtocol(bot.agent_config) : '',
+        selectedSkills: bot?.skills || [],
+        preloadSkills: bot?.preload_skills || [],
+        selectedSkillRefs: bot?.skill_refs || {},
+        defaultKnowledgeBaseRefs: normalizeDefaultKnowledgeBaseRefs(
+          bot?.default_knowledge_base_refs
+        ),
+      }),
+    [
+      buildMcpConfigSnapshot,
+      getAgentConfigWithoutProtocol,
+      normalizeDefaultKnowledgeBaseRefs,
+      resolvedBaseShellType,
+    ]
+  )
 
   const resetAgentDependentConfig = useCallback(() => {
     setIsCustomModel(false)
@@ -503,6 +630,23 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Reset base form when switching editing object
   useEffect(() => {
+    const resetKey = [
+      editingBotId,
+      baseBot?.id || 'new',
+      baseBot?.updated_at || '',
+      cloningBot?.id || '',
+      resolvedBaseShellType || '',
+    ].join(':')
+    if (lastResetKeyRef.current === resetKey) {
+      return
+    }
+
+    const formIsDirty =
+      lastResetSnapshotRef.current !== null && currentFormSnapshot !== lastResetSnapshotRef.current
+    if (formIsDirty) {
+      return
+    }
+
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
@@ -510,16 +654,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     // Apply type normalization when loading MCP config
     if (baseBot?.mcp_servers) {
-      const shellName = baseBot.shell_name || baseBot.shell_type || ''
-      const shell = shells.find(s => s.name === shellName)
-      const agentType = shell?.shellType
-
-      if (agentType && isValidAgentType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForAgent(baseBot.mcp_servers, agentType)
-        setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-      } else {
-        setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
-      }
+      setMcpConfig(buildMcpConfigSnapshot(baseBot.mcp_servers, resolvedBaseShellType))
     } else {
       setMcpConfig('')
     }
@@ -536,7 +671,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } else {
       setAgentConfig('')
     }
-  }, [editingBotId, baseBot, shells])
+    lastResetKeyRef.current = resetKey
+    lastResetSnapshotRef.current = buildBaseFormSnapshot(baseBot)
+  }, [
+    baseBot,
+    buildMcpConfigSnapshot,
+    buildBaseFormSnapshot,
+    cloningBot?.id,
+    currentFormSnapshot,
+    editingBotId,
+    getAgentConfigWithoutProtocol,
+    resolvedBaseShellType,
+  ])
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {
@@ -721,7 +867,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       agent_config: parsedAgentConfig,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
-      default_knowledge_base_refs: defaultKnowledgeBaseRefs,
+      default_knowledge_base_refs: defaultKnowledgeBaseRefs.map(ref => ({
+        id: ref.id,
+        name: ref.name,
+      })),
       skills: selectedSkills.length > 0 ? selectedSkills : [],
       skill_refs: buildSkillRefsFromSelection(
         selectedSkills,
@@ -814,12 +963,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: botData.agent_config,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
-          default_knowledge_base_refs: botData.default_knowledge_base_refs,
           skills: botData.skills,
           skill_refs: botData.skill_refs,
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+        }
+        if (canEditDefaultKnowledgeBases) {
+          botReq.default_knowledge_base_refs = botData.default_knowledge_base_refs
+          botReq.default_knowledge_base_team_id = defaultKnowledgeBaseTeamId
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -841,7 +993,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    defaultKnowledgeBaseTeamId,
+    canEditDefaultKnowledgeBases,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -858,166 +1021,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Save logic
   const handleSave = async () => {
-    // Use validateBot() as single source of truth for all validation rules
-    const validation = validateBot()
-    if (!validation.isValid) {
-      toast({
-        variant: 'destructive',
-        title: validation.error,
-      })
-      return
-    }
-
-    let parsedAgentConfig: unknown = undefined
-
-    // For Dify agent, always use custom model configuration
-    if (isDifyAgent) {
-      const trimmedConfig = agentConfig.trim()
-      try {
-        parsedAgentConfig = JSON.parse(trimmedConfig)
-        setAgentConfigError(false)
-      } catch {
-        setAgentConfigError(true)
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.agent_config_json'),
-        })
-        return
-      }
-    } else if (isCustomModel) {
-      // Non-Dify custom model configuration
-      const trimmedConfig = agentConfig.trim()
-      try {
-        const configObj = JSON.parse(trimmedConfig)
-        // Add protocol to the config
-        parsedAgentConfig = { ...configObj, protocol: selectedProtocol }
-        setAgentConfigError(false)
-      } catch {
-        setAgentConfigError(true)
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.agent_config_json'),
-        })
-        return
-      }
-    } else {
-      // Use createPredefinedModelConfig to include bind_model_type and namespace
-      // Returns null if selectedModel is empty, meaning no model binding
-      const modelConfig = createPredefinedModelConfig(
-        selectedModel,
-        selectedModelType,
-        selectedModelNamespace,
-        restrictModels ? allowedModels : undefined
-      )
-      parsedAgentConfig = modelConfig ?? {}
-    }
-
-    let parsedMcpConfig: Record<string, unknown> | null = null
-
-    // Skip MCP config for Dify agent
-    if (!isDifyAgent && mcpConfig.trim()) {
-      try {
-        parsedMcpConfig = JSON.parse(mcpConfig)
-        // Adapt MCP config types based on selected agent
-        if (parsedMcpConfig && agentName) {
-          if (isValidAgentType(agentName)) {
-            parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName)
-          } else {
-            console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`)
-          }
-        }
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-        return
-      }
-    }
-
-    setBotSaving(true)
-    try {
-      if (scope === 'public') {
-        // For public scope, use public resource API
-        const publicBotData: PublicBotFormData = {
-          name: botName.trim(),
-          shell_name: agentName.trim(),
-          agent_config: parsedAgentConfig as Record<string, unknown>,
-          system_prompt: isDifyAgent ? '' : prompt.trim() || '',
-          mcp_servers: parsedMcpConfig ?? {},
-          skills: selectedSkills.length > 0 ? selectedSkills : [],
-          skill_refs: buildSkillRefsFromSelection(
-            selectedSkills,
-            selectedSkillRefs,
-            allSkills,
-            scope,
-            groupName
-          ),
-          preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
-          preload_skill_refs: buildSkillRefsFromSelection(
-            preloadSkills,
-            selectedSkillRefs,
-            allSkills,
-            scope,
-            groupName
-          ),
-          namespace: 'default',
-          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
-        }
-
-        if (editingBotId && editingBotId > 0) {
-          const updated = await publicResourceApis.updatePublicBot(editingBotId, publicBotData)
-          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
-        } else {
-          const created = await publicResourceApis.createPublicBot(publicBotData)
-          setBots(prev => [created, ...prev])
-        }
-      } else {
-        // For other scopes, use regular bot API
-        const botReq: CreateBotRequest = {
-          name: botName.trim(),
-          shell_name: agentName.trim(), // Use shell_name instead of shell_type
-          agent_config: parsedAgentConfig as Record<string, unknown>,
-          system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
-          mcp_servers: parsedMcpConfig ?? {},
-          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
-          skills: selectedSkills.length > 0 ? selectedSkills : [],
-          skill_refs: buildSkillRefsFromSelection(
-            selectedSkills,
-            selectedSkillRefs,
-            allSkills,
-            scope,
-            groupName
-          ),
-          preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
-          preload_skill_refs: buildSkillRefsFromSelection(
-            preloadSkills,
-            selectedSkillRefs,
-            allSkills,
-            scope,
-            groupName
-          ),
-          namespace: scope === 'group' && groupName ? groupName : undefined,
-        }
-
-        if (editingBotId && editingBotId > 0) {
-          // Edit existing bot
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
-          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
-        } else {
-          // Create new bot
-          const created = await botApis.createBot(botReq)
-          setBots(prev => [created, ...prev])
-        }
-      }
+    const savedBotId = await saveBot()
+    if (savedBotId !== null) {
       onClose()
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: (error as Error)?.message || t('common:bot.errors.save_failed'),
-      })
-    } finally {
-      setBotSaving(false)
     }
   }
   return (
@@ -1510,7 +1516,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <KnowledgeBaseMultiSelector
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
-                      disabled={readOnly}
+                      disabled={readOnly || !canEditDefaultKnowledgeBases}
                       allowedSources={
                         scope === 'public'
                           ? ['organization']
@@ -1522,6 +1528,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       }
                       allowedGroupNamespaces={
                         scope === 'group' && groupName ? [groupName] : undefined
+                      }
+                      helperText={
+                        canEditDefaultKnowledgeBases
+                          ? undefined
+                          : t(
+                              'common:bot.default_knowledge_bases_team_context_required',
+                              '默认知识库只能在智能体配置中维护。'
+                            )
                       }
                     />
                   </div>

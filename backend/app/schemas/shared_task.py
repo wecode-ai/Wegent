@@ -35,7 +35,7 @@ class JoinSharedTaskRequest(BaseModel):
     """Request body for joining a shared task"""
 
     share_token: str
-    team_id: Optional[int] = None  # Optional: if not provided, use user's first team
+    team_id: Optional[int] = None  # Deprecated: copied tasks keep the original team
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
     force_override_bot_model_type: Optional[str] = (

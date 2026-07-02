@@ -108,6 +108,7 @@ jest.mock('@/apis/bots', () => {
     ...actual,
     botApis: {
       ...actual.botApis,
+      getBot: jest.fn(),
       createBot: jest.fn(),
       updateBot: jest.fn(),
     },
@@ -245,6 +246,7 @@ jest.mock('@/features/settings/components/McpConfigSection', () => {
 
 const mockedCreateBot = botApis.createBot as jest.Mock
 const mockedUpdateBot = botApis.updateBot as jest.Mock
+const mockedGetBot = botApis.getBot as jest.Mock
 const mockedCreateTeam = createTeam as jest.Mock
 const mockedUpdateTeam = updateTeam as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
@@ -318,6 +320,7 @@ describe('Simple TeamEditDialog', () => {
     mockedCreateBot.mockResolvedValue(makeBot({ id: 42, name: 'new-agent-bot' }))
     mockedCreateTeam.mockResolvedValue(makeTeam({ id: 99, name: 'new-agent' }))
     mockedUpdateBot.mockResolvedValue(makeBot())
+    mockedGetBot.mockResolvedValue(makeBot())
     mockedUpdateTeam.mockResolvedValue(makeTeam())
   })
 

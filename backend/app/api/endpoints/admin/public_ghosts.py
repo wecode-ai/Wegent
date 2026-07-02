@@ -19,6 +19,9 @@ from app.schemas.admin import (
     PublicGhostResponse,
     PublicGhostUpdate,
 )
+from app.services.public_resource_validation import (
+    validate_public_ghost_default_knowledge_bases,
+)
 
 router = APIRouter()
 
@@ -115,6 +118,8 @@ async def create_public_ghost(
             detail=f"Public ghost '{ghost_data.name}' already exists in namespace '{ghost_data.namespace}'",
         )
 
+    validate_public_ghost_default_knowledge_bases(db, ghost_data.ghost_json)
+
     new_ghost = Kind(
         user_id=0,
         kind="Ghost",
@@ -176,6 +181,7 @@ async def update_public_ghost(
     if ghost_data.namespace is not None:
         ghost.namespace = ghost_data.namespace
     if ghost_data.ghost_json is not None:
+        validate_public_ghost_default_knowledge_bases(db, ghost_data.ghost_json)
         ghost.json = ghost_data.ghost_json
     if ghost_data.is_active is not None:
         ghost.is_active = ghost_data.is_active

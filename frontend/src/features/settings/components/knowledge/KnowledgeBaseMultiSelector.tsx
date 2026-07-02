@@ -250,17 +250,38 @@ function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOp
 
 interface SelectedKnowledgeBaseChipProps {
   item: KnowledgeBaseOption
+  availability?: KnowledgeBaseDefaultRef
   disabled: boolean
   onRemove: (knowledgeBaseId: number) => void
 }
 
-function SelectedKnowledgeBaseChip({ item, disabled, onRemove }: SelectedKnowledgeBaseChipProps) {
+function SelectedKnowledgeBaseChip({
+  item,
+  availability,
+  disabled,
+  onRemove,
+}: SelectedKnowledgeBaseChipProps) {
+  const { t } = useTranslation()
+  const unavailable = availability?.available === false
+
   return (
     <div
-      className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm',
+        unavailable ? 'bg-error/10 text-error' : 'bg-muted'
+      )}
       data-testid={`default-knowledge-base-chip-${item.id}`}
     >
       <span>{item.name}</span>
+      {unavailable ? (
+        <Badge
+          variant="error"
+          size="sm"
+          data-testid={`default-knowledge-base-unavailable-${item.id}`}
+        >
+          {t('common:bot.default_knowledge_bases_unavailable', '不可用')}
+        </Badge>
+      ) : null}
       <button
         type="button"
         onClick={() => onRemove(item.id)}
@@ -325,7 +346,11 @@ export function KnowledgeBaseMultiSelector({
   )
 
   const selectedItems = useMemo(
-    () => value.map(item => optionsById.get(item.id) ?? buildFallbackOption(item)),
+    () =>
+      value.map(item => ({
+        option: optionsById.get(item.id) ?? buildFallbackOption(item),
+        ref: item,
+      })),
     [optionsById, value]
   )
 
@@ -474,15 +499,25 @@ export function KnowledgeBaseMultiSelector({
       </Popover>
 
       <div className="flex flex-wrap gap-1.5">
-        {selectedItems.map(item => (
+        {selectedItems.map(({ option, ref }) => (
           <SelectedKnowledgeBaseChip
-            key={item.id}
-            item={item}
+            key={option.id}
+            item={option}
+            availability={ref}
             disabled={disabled}
             onRemove={handleRemove}
           />
         ))}
       </div>
+
+      {value.some(item => item.available === false) ? (
+        <p className="text-xs text-error" data-testid="default-knowledge-base-unavailable-hint">
+          {t(
+            'common:bot.default_knowledge_bases_unavailable_hint',
+            '部分默认知识库当前智能体所有者不可用，运行时不会加载。'
+          )}
+        </p>
+      ) : null}
 
       {helperText === null ? null : (
         <p className="text-xs text-text-muted">

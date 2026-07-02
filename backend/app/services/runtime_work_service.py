@@ -3379,7 +3379,11 @@ def _runtime_task_context(
             "spec": {
                 "title": title,
                 "prompt": request.message,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "teamRef": {
+                    "name": team.name,
+                    "namespace": team.namespace,
+                    "user_id": team.user_id,
+                },
                 "workspaceRef": {"name": "runtime-local", "namespace": "default"},
                 "is_group_chat": False,
                 "device_id": target.device_id,

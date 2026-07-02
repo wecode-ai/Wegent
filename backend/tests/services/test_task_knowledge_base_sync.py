@@ -26,6 +26,7 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
 from app.services.share import knowledge_share_service
+from shared.models.knowledge import KnowledgeBaseScope
 
 
 @pytest.mark.unit
@@ -566,6 +567,74 @@ class TestKBPriorityLogic:
                     assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
                     assert len(kb_result.extra_tools) == 1
 
+    def test_task_scopes_preserve_legacy_ids_when_default_kb_is_added(self, mock_db):
+        """Scoped task KBs should not drop legacy task KB IDs after default merge."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[
+                    KnowledgeBaseScope(
+                        knowledge_base_id=20,
+                        scope_restricted=False,
+                        document_ids=[],
+                    )
+                ],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[30],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=(
+                    [
+                        KnowledgeBaseScope(
+                            knowledge_base_id=10,
+                            scope_restricted=False,
+                            document_ids=[],
+                        )
+                    ],
+                    None,
+                    [],
+                ),
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_search_only_default_knowledge_base_ids",
+                return_value=[10],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                return_value=("full", ""),
+            ),
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool,
+        ):
+            mock_kb_tool.return_value = Mock()
+
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
+
+        mock_kb_tool.assert_called_once()
+        call_kwargs = mock_kb_tool.call_args.kwargs
+        assert call_kwargs["knowledge_base_ids"] == [10, 20, 30]
+        assert [
+            scope.knowledge_base_id for scope in call_kwargs["knowledge_base_scopes"]
+        ] == [
+            10,
+            20,
+        ]
+        assert kb_result.knowledge_base_ids == [10, 20, 30]
+        assert kb_result.default_knowledge_base_ids == [10]
+
     def test_restricted_analyst_uses_search_only_mode(self, mock_db):
         """Restricted Analysts should get search-only KB access instead of full denial."""
         from app.services.chat.preprocessing.contexts import (
@@ -630,9 +699,19 @@ class TestKBPriorityLogic:
             _prepare_kb_tools_from_contexts,
         )
 
-        with patch(
-            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
-        ) as mock_get_bound:
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+            ) as mock_get_bound,
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], None, []),
+            ),
+        ):
             mock_get_bound.return_value = []  # No task-level KBs
 
             kb_result = _prepare_kb_tools_from_contexts(
@@ -653,6 +732,80 @@ class TestKBPriorityLogic:
             assert kb_result.is_user_selected_kb is False
             assert kb_result.document_ids == []
             assert kb_result.kb_tool_access_mode == "full"
+
+    def test_default_kb_resolution_failure_is_observable(self, mock_db):
+        """Unexpected default KB resolver failures should not be silent."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], "default_knowledge_base_load_failed", []),
+            ),
+        ):
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
+
+        assert kb_result.extra_tools == []
+        assert "default knowledge bases could not be loaded" in (
+            kb_result.enhanced_system_prompt
+        )
+
+    def test_default_kb_partial_load_warning_is_non_sensitive(self, mock_db):
+        """Filtered default KBs should add only aggregate chat prompt status."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        warning = SimpleNamespace(
+            knowledge_base_id=22,
+            knowledge_base_name="Sensitive Docs",
+            reason="team_owner_cannot_read_kb",
+        )
+        with (
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_scopes",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[],
+            ),
+            patch(
+                "app.services.chat.preprocessing.contexts._get_task_default_knowledge_base_scopes",
+                return_value=([], None, [warning]),
+            ),
+        ):
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
+
+        assert "Some task default knowledge bases were not loaded" in (
+            kb_result.enhanced_system_prompt
+        )
+        assert "Sensitive Docs" not in kb_result.enhanced_system_prompt
+        assert "22" not in kb_result.enhanced_system_prompt
 
 
 @pytest.mark.unit

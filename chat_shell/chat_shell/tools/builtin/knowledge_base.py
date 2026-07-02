@@ -95,6 +95,7 @@ class KnowledgeBaseTool(BaseTool):
     document_ids: list[int] = Field(default_factory=list)
     document_names: list[str] = Field(default_factory=list)
     knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
+    default_knowledge_base_ids: list[int] = Field(default_factory=list)
 
     # User ID for access control
     user_id: int = 0
@@ -536,6 +537,17 @@ class KnowledgeBaseTool(BaseTool):
                     "Per-call document filters are not allowed for scoped knowledge base access"
                 )
             return [], []
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        configured_kb_ids = set(self.knowledge_base_ids or [])
+        if (
+            configured_kb_ids
+            and configured_kb_ids.issubset(default_kb_ids)
+            and (document_ids or document_names)
+        ):
+            logger.info(
+                "[KnowledgeBaseTool] Ignoring per-call document filters for default KB search-only access"
+            )
+            return [], []
         effective_document_ids = (
             self.document_ids if document_ids is None else document_ids
         )
@@ -639,6 +651,23 @@ class KnowledgeBaseTool(BaseTool):
                         },
                         ensure_ascii=False,
                     )
+                default_kb_ids = set(self.default_knowledge_base_ids or [])
+                exploration_kb_ids = [
+                    kb_id
+                    for kb_id in (self.knowledge_base_ids or [])
+                    if kb_id not in default_kb_ids
+                ]
+                if not exploration_kb_ids:
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error_code": "rag_not_configured_default_search_only",
+                            "message": "Default knowledge bases are connected to the search tool, but their retrievers are not enabled, so knowledge_base_search cannot retrieve content from them.",
+                            "suggestion": "Default knowledge bases do not expose kb_ls or kb_head exploration tools. Ask an administrator to enable a retriever for these knowledge bases, or explicitly select a knowledge base that allows exploration.",
+                            "knowledge_base_ids": self.knowledge_base_ids,
+                        },
+                        ensure_ascii=False,
+                    )
                 return json.dumps(
                     {
                         "status": "error",
@@ -646,7 +675,7 @@ class KnowledgeBaseTool(BaseTool):
                         "message": "RAG retrieval is not available for this knowledge base. "
                         "The knowledge base was created without a retriever configuration. "
                         "Please use kb_ls to list documents and kb_head to read document contents instead.",
-                        "suggestion": f"Use kb_ls(knowledge_base_id={self.knowledge_base_ids[0]}) to list available documents, "
+                        "suggestion": f"Use kb_ls(knowledge_base_id={exploration_kb_ids[0]}) to list available documents, "
                         "then use kb_head(document_ids=[...]) to read specific documents.",
                         "knowledge_base_ids": self.knowledge_base_ids,
                     },
@@ -928,8 +957,32 @@ class KnowledgeBaseTool(BaseTool):
         route_mode: str = "auto",
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
+        knowledge_base_ids: Optional[list[int]] = None,
+        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
+        allow_split: bool = True,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
+        active_kb_ids = (
+            knowledge_base_ids
+            if knowledge_base_ids is not None
+            else self.knowledge_base_ids
+        )
+        active_scopes = (
+            knowledge_base_scopes
+            if knowledge_base_scopes is not None
+            else self.knowledge_base_scopes
+        )
+        if allow_split and self._should_split_default_filtered_search(
+            document_ids, document_names
+        ):
+            return await self._retrieve_with_split_default_filtered_search(
+                query=query,
+                max_results=max_results,
+                route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
+            )
+
         if self.db_session is None:
             result = await self._retrieve_with_strategy_via_http(
                 query=query,
@@ -937,16 +990,19 @@ class KnowledgeBaseTool(BaseTool):
                 route_mode=route_mode,
                 document_ids=document_ids,
                 document_names=document_names,
+                knowledge_base_ids=active_kb_ids,
+                knowledge_base_scopes=active_scopes,
             )
         else:
             try:
-                if self._has_restricted_scope():
+                if self._has_restricted_scope(active_scopes):
                     result = await self._retrieve_with_scopes_package_mode(
                         query=query,
                         max_results=max_results,
                         route_mode=route_mode,
                         document_ids=document_ids,
                         document_names=document_names,
+                        knowledge_base_scopes=active_scopes,
                     )
                     mode = result.get("mode", InjectionMode.RAG_ONLY)
                     logger.info(
@@ -963,7 +1019,7 @@ class KnowledgeBaseTool(BaseTool):
                     resolved_document_ids = (
                         KnowledgeService.resolve_document_ids_by_names(
                             db=self.db_session,
-                            knowledge_base_ids=self.knowledge_base_ids,
+                            knowledge_base_ids=active_kb_ids,
                             document_names=document_names,
                         )
                         or None
@@ -996,7 +1052,7 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 result = await retrieval_service.retrieve_with_routing(
                     query=query,
-                    knowledge_base_ids=self.knowledge_base_ids,
+                    knowledge_base_ids=active_kb_ids,
                     db=self.db_session,
                     max_results=max_results,
                     scope=retrieval_scope,
@@ -1037,7 +1093,7 @@ class KnowledgeBaseTool(BaseTool):
                         retrieval_mode=result.get("mode", InjectionMode.RAG_ONLY),
                         records=result.get("records", []),
                         mediation_context=self._build_mediation_context(),
-                        knowledge_base_ids=self.knowledge_base_ids,
+                        knowledge_base_ids=active_kb_ids,
                         total_estimated_tokens=result.get("total_estimated_tokens", 0),
                         user_id=self.user_id,
                         user_name=self.user_name or "system",
@@ -1050,6 +1106,8 @@ class KnowledgeBaseTool(BaseTool):
                     route_mode=route_mode,
                     document_ids=document_ids,
                     document_names=document_names,
+                    knowledge_base_ids=active_kb_ids,
+                    knowledge_base_scopes=active_scopes,
                 )
 
         mode = result.get("mode", InjectionMode.RAG_ONLY)
@@ -1060,9 +1118,147 @@ class KnowledgeBaseTool(BaseTool):
         )
         return mode, result
 
-    def _has_restricted_scope(self) -> bool:
+    def _should_split_default_filtered_search(
+        self,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> bool:
+        """Detect mixed default-only and explicit KB search with per-call filters."""
+        if self._has_restricted_scope() or not (document_ids or document_names):
+            return False
+
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        if not default_kb_ids:
+            return False
+
+        configured_kb_ids = set(self.knowledge_base_ids or [])
+        default_only_kb_ids = configured_kb_ids.intersection(default_kb_ids)
+        explicit_kb_ids = configured_kb_ids.difference(default_kb_ids)
+        return bool(default_only_kb_ids and explicit_kb_ids)
+
+    async def _retrieve_with_split_default_filtered_search(
+        self,
+        query: str,
+        max_results: int,
+        route_mode: str,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Search default-only KBs broadly and explicit KBs with per-call filters."""
+        default_kb_ids = set(self.default_knowledge_base_ids or [])
+        configured_kb_ids = list(self.knowledge_base_ids or [])
+        default_only_kb_ids = [
+            kb_id for kb_id in configured_kb_ids if kb_id in default_kb_ids
+        ]
+        explicit_kb_ids = [
+            kb_id for kb_id in configured_kb_ids if kb_id not in default_kb_ids
+        ]
+
+        default_mode, default_result = await self._retrieve_with_temporary_kb_context(
+            knowledge_base_ids=default_only_kb_ids,
+            knowledge_base_scopes=self._filter_scopes_for_kbs(default_only_kb_ids),
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            document_ids=None,
+            document_names=None,
+        )
+        explicit_mode, explicit_result = await self._retrieve_with_temporary_kb_context(
+            knowledge_base_ids=explicit_kb_ids,
+            knowledge_base_scopes=self._filter_scopes_for_kbs(explicit_kb_ids),
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            document_ids=document_ids,
+            document_names=document_names,
+        )
+
+        combined_result = self._combine_retrieve_results(
+            default_result,
+            explicit_result,
+            max_results=max_results,
+        )
+        combined_mode = (
+            InjectionMode.DIRECT_INJECTION
+            if {default_mode, explicit_mode} == {InjectionMode.DIRECT_INJECTION}
+            else InjectionMode.RAG_ONLY
+        )
+        combined_result["mode"] = combined_mode
+        return combined_mode, combined_result
+
+    async def _retrieve_with_temporary_kb_context(
+        self,
+        knowledge_base_ids: list[int],
+        knowledge_base_scopes: list[KnowledgeBaseScope],
+        query: str,
+        max_results: int,
+        route_mode: str,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Run retrieval for a KB subset without mutating shared tool state."""
+        return await self._retrieve_with_strategy_from_all_kbs(
+            query=query,
+            max_results=max_results,
+            route_mode=route_mode,
+            document_ids=document_ids,
+            document_names=document_names,
+            knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_scopes=knowledge_base_scopes,
+            allow_split=False,
+        )
+
+    def _filter_scopes_for_kbs(
+        self,
+        knowledge_base_ids: list[int],
+    ) -> list[KnowledgeBaseScope]:
+        """Return configured scopes that belong to the selected KB IDs."""
+        kb_id_set = set(knowledge_base_ids)
+        return [
+            scope
+            for scope in (self.knowledge_base_scopes or [])
+            if scope.knowledge_base_id in kb_id_set
+        ]
+
+    def _combine_retrieve_results(
+        self,
+        *results: Dict[str, Any],
+        max_results: int,
+    ) -> Dict[str, Any]:
+        """Combine route results from split default and explicit KB searches."""
+        records: list[dict[str, Any]] = []
+        total_estimated_tokens = 0
+        messages: list[str] = []
+        for result in results:
+            records.extend(result.get("records", []) or [])
+            total_estimated_tokens += result.get("total_estimated_tokens", 0) or 0
+            message = result.get("message")
+            if message:
+                messages.append(message)
+
+        records.sort(key=lambda item: item.get("score") or 0, reverse=True)
+        records = records[:max_results]
+        combined: Dict[str, Any] = {
+            "mode": InjectionMode.RAG_ONLY,
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": total_estimated_tokens,
+        }
+        if messages and not records:
+            combined["message"] = " ".join(messages)
+        return combined
+
+    def _has_restricted_scope(
+        self,
+        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
+    ) -> bool:
         """Return whether any configured KB scope is restricted."""
-        return any(scope.scope_restricted for scope in self.knowledge_base_scopes or [])
+        scopes = (
+            knowledge_base_scopes
+            if knowledge_base_scopes is not None
+            else self.knowledge_base_scopes
+        )
+        return any(scope.scope_restricted for scope in scopes or [])
 
     def _has_only_empty_restricted_scopes(self) -> bool:
         """Return whether all configured scopes are restricted and empty."""
@@ -1082,15 +1278,23 @@ class KnowledgeBaseTool(BaseTool):
             ensure_ascii=False,
         )
 
-    def _scope_payloads(self) -> list[dict[str, Any]]:
+    def _scope_payloads(
+        self,
+        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
+    ) -> list[dict[str, Any]]:
         """Serialize configured KB scopes for Backend internal APIs."""
+        scopes = (
+            knowledge_base_scopes
+            if knowledge_base_scopes is not None
+            else self.knowledge_base_scopes
+        )
         return [
             {
                 "knowledge_base_id": scope.knowledge_base_id,
                 "scope_restricted": scope.scope_restricted,
                 "document_ids": scope.document_ids,
             }
-            for scope in (self.knowledge_base_scopes or [])
+            for scope in (scopes or [])
         ]
 
     async def _retrieve_with_scopes_package_mode(
@@ -1100,6 +1304,7 @@ class KnowledgeBaseTool(BaseTool):
         route_mode: str,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
+        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
     ) -> Dict[str, Any]:
         """Retrieve data in package mode while preserving per-KB scopes."""
         if document_ids or document_names:
@@ -1115,16 +1320,24 @@ class KnowledgeBaseTool(BaseTool):
         records: list[dict[str, Any]] = []
         total_estimated_tokens = 0
         modes: set[str] = set()
+        active_scopes = (
+            knowledge_base_scopes
+            if knowledge_base_scopes is not None
+            else self.knowledge_base_scopes
+        )
+        active_kb_ids = list(
+            dict.fromkeys(scope.knowledge_base_id for scope in active_scopes)
+        )
 
         unscoped_kb_ids = [
             scope.knowledge_base_id
-            for scope in self.knowledge_base_scopes
+            for scope in active_scopes
             if not scope.scope_restricted
         ]
         retrieve_groups: list[tuple[list[int], Optional[list[int]]]] = []
         if unscoped_kb_ids:
             retrieve_groups.append((unscoped_kb_ids, None))
-        for scope in self.knowledge_base_scopes:
+        for scope in active_scopes:
             if scope.scope_restricted and scope.document_ids:
                 retrieve_groups.append(
                     ([scope.knowledge_base_id], list(scope.document_ids))
@@ -1204,7 +1417,7 @@ class KnowledgeBaseTool(BaseTool):
                 retrieval_mode=mode,
                 records=records,
                 mediation_context=self._build_mediation_context(),
-                knowledge_base_ids=self.knowledge_base_ids,
+                knowledge_base_ids=active_kb_ids,
                 total_estimated_tokens=total_estimated_tokens,
                 user_id=self.user_id,
                 user_name=self.user_name or "system",
@@ -1219,6 +1432,8 @@ class KnowledgeBaseTool(BaseTool):
         route_mode: str = "auto",
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
+        knowledge_base_ids: Optional[list[int]] = None,
+        knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
     ) -> Dict[str, Any]:
         """Retrieve KB data from Backend internal retrieve endpoint."""
         import httpx
@@ -1231,15 +1446,25 @@ class KnowledgeBaseTool(BaseTool):
         else:
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
+        active_kb_ids = (
+            knowledge_base_ids
+            if knowledge_base_ids is not None
+            else self.knowledge_base_ids
+        )
+        active_scopes = (
+            knowledge_base_scopes
+            if knowledge_base_scopes is not None
+            else self.knowledge_base_scopes
+        )
         payload = {
             "query": query,
-            "knowledge_base_ids": self.knowledge_base_ids,
+            "knowledge_base_ids": active_kb_ids,
             "max_results": max_results,
             "route_mode": route_mode,
             "runtime_context": self._build_runtime_context(),
         }
-        if self.knowledge_base_scopes:
-            payload["knowledge_base_scopes"] = self._scope_payloads()
+        if active_scopes:
+            payload["knowledge_base_scopes"] = self._scope_payloads(active_scopes)
         persistence_context = self._build_persistence_context()
         if persistence_context:
             payload["persistence_context"] = persistence_context

@@ -109,7 +109,7 @@ def test_resolve_task_skills_uses_batched_kind_loading_for_bots_and_ghosts():
             side_effect=[ghost_crd_a, ghost_crd_b],
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {
@@ -230,7 +230,7 @@ def test_resolve_task_skills_returns_refs_for_ghost_task_and_subscription_source
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -346,7 +346,7 @@ def test_resolve_task_skills_includes_user_default_refs_without_preloading(
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -440,7 +440,7 @@ def test_resolve_task_skills_adds_force_preloaded_user_default_skills_to_preload
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -525,7 +525,7 @@ def test_resolve_task_skills_passes_context_to_user_default_skill_refs(
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -638,7 +638,7 @@ def test_resolve_task_skills_prefers_requested_skill_refs_over_subscription_and_
             return_value=ghost_crd_a,
         ),
         patch(
-            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            "app.services.adapters.task_kinds.task_skills_resolver.batch_load_kinds_by_refs",
             create=True,
             side_effect=[
                 {("default", "bot-a"): bot_a},
@@ -789,3 +789,68 @@ def test_resolve_task_skills_uses_team_owner_for_shared_team_skill_resolution():
     assert result["skill_refs"]["owner-private-skill"]["skill_id"] == 55
     assert result["preload_skill_refs"]["owner-private-skill"]["skill_id"] == 55
     assert mock_find_skill_by_ref.call_args.kwargs["user_id"] == 7
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_preserves_public_team_owner_zero():
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 99
+    mock_task.kind = "Task"
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="public-team", namespace="default", user_id=0),
+        ),
+        metadata=SimpleNamespace(
+            labels={
+                "requestedSkillRefs": json.dumps(
+                    [
+                        {
+                            "name": "public-skill",
+                            "namespace": "default",
+                            "is_public": True,
+                        }
+                    ]
+                )
+            }
+        ),
+    )
+    team_crd = SimpleNamespace(spec=SimpleNamespace(members=[]))
+    public_team = _build_kind(0, {"kind": "Team", "name": "public-team"})
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=public_team,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Team.model_validate",
+            return_value=team_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.find_skill_by_ref",
+            return_value=SimpleNamespace(id=55, namespace="default", user_id=0),
+        ) as mock_find_skill_by_ref,
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert result["skill_refs"]["public-skill"]["skill_id"] == 55
+    assert mock_find_skill_by_ref.call_args.kwargs["user_id"] == 0

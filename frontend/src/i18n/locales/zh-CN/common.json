@@ -279,6 +279,9 @@
     "default_knowledge_bases_updated_at": "最近更新",
     "default_knowledge_bases_selected_badge": "已选",
     "default_knowledge_bases_select_to_add": "选择要添加的知识库...",
+    "default_knowledge_bases_unavailable": "不可用",
+    "default_knowledge_bases_unavailable_hint": "部分默认知识库当前智能体所有者不可用，运行时不会加载。",
+    "default_knowledge_bases_team_context_required": "默认知识库只能在智能体配置中维护。",
     "default_knowledge_bases_selected_count": "已选 {{count}} 个",
     "default_knowledge_bases_selected_count_one": "已选 {{count}} 个",
     "default_knowledge_bases_selected_count_other": "已选 {{count}} 个"

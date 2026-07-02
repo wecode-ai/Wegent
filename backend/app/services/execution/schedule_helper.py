@@ -117,6 +117,25 @@ def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
     return extract_display_prompt(user_subtask.prompt) or ""
 
 
+def _fail_pending_subtasks(
+    db: Session,
+    subtasks: list["Subtask"],
+    error_message: str,
+) -> None:
+    """Mark pending subtasks as failed when dispatch cannot start."""
+    from app.models.subtask import SubtaskStatus
+    from app.stores.tasks import subtask_store
+
+    for subtask in subtasks:
+        subtask_store.update_fields(
+            db,
+            subtask=subtask,
+            status=SubtaskStatus.FAILED,
+            error_message=error_message,
+        )
+    db.commit()
+
+
 def _get_thread_pool() -> ThreadPoolExecutor:
     """Get or create the shared thread pool."""
     global _thread_pool
@@ -139,7 +158,7 @@ async def _dispatch_task_async(task_id: int) -> None:
     from app.api.dependencies import get_db
     from app.models.subtask import SubtaskStatus
     from app.schemas.kind import Task as TaskCRD
-    from app.services.readers.kinds import KindType, kindReader
+    from app.services.task_team_resolver import can_user_use_team, resolve_task_team_ref
     from app.stores.tasks import subtask_store, task_store
     from shared.models.db import User
 
@@ -172,29 +191,38 @@ async def _dispatch_task_async(task_id: int) -> None:
         team_ref = task_crd.spec.teamRef
 
         if not team_ref:
-            logger.error(f"[schedule_dispatch] Task {task_id} has no teamRef")
+            error_message = f"Task {task_id} has no teamRef"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
-        # Query team using kindReader which supports:
-        # - Personal teams (owned by user)
-        # - Shared teams (via ResourceMember table)
-        # - Public teams (user_id=0)
-        # - Group teams (namespace != 'default')
-        team = kindReader.get_by_name_and_namespace(
-            db, task.user_id, KindType.TEAM, team_ref.namespace, team_ref.name
+        team = resolve_task_team_ref(
+            db,
+            team_ref=team_ref,
+            fallback_user_id=task.user_id,
         )
 
         if not team:
-            logger.error(
-                f"[schedule_dispatch] Team not found: {team_ref.namespace}/{team_ref.name}"
+            error_message = f"Team not found: {team_ref.namespace}/{team_ref.name}"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
+            return
+        if not can_user_use_team(db, task.user_id, team):
+            error_message = (
+                f"User {task.user_id} cannot use Team "
+                f"{team_ref.namespace}/{team_ref.name} owned by {team.user_id}"
             )
+            logger.error("[schedule_dispatch] %s", error_message)
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
         # Query user
         user = db.query(User).filter(User.id == task.user_id).first()
 
         if not user:
-            logger.error(f"[schedule_dispatch] User {task.user_id} not found")
+            error_message = f"User {task.user_id} not found"
+            logger.error(f"[schedule_dispatch] {error_message}")
+            _fail_pending_subtasks(db, subtasks, error_message)
             return
 
         # Build and dispatch each subtask

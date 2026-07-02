@@ -4,38 +4,20 @@
 
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { buildChatCodeHref } from '@/config/coding-route'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { taskApis, TaskShareInfo } from '@/apis/tasks'
-import { teamApis } from '@/apis/team'
 import { githubApis } from '@/apis/github'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import Modal from '@/features/common/Modal'
-import ModelSelector, {
-  Model,
-  DEFAULT_MODEL_NAME,
-  allBotsHavePredefinedModel,
-} from '../selector/ModelSelector'
 import RepositorySelector from '../selector/RepositorySelector'
 import BranchSelector from '../selector/BranchSelector'
-import { Check } from 'lucide-react'
-import { UsersIcon } from '@heroicons/react/24/outline'
-import { cn } from '@/lib/utils'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
+import type { GitRepoInfo, GitBranch } from '@/types/api'
 
 interface TaskShareHandlerProps {
   onTaskCopied?: () => void
@@ -56,38 +38,18 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   const [_isLoading, setIsLoading] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [teams, setTeams] = useState<Team[]>([])
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
-  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [isTeamSelectorOpen, setIsTeamSelectorOpen] = useState(false)
-  const [teamSearchValue, setTeamSearchValue] = useState('')
   // Repository and branch selection for code tasks
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
 
   const isSelfShare = shareInfo && user && shareInfo.user_id === user.id
   const isCodeTask = shareInfo?.task_type === 'code'
+  const isRepoSelectionRequired = isCodeTask && (!selectedRepo || !selectedBranch)
 
-  // Find the selected team with full details
-  const selectedTeam = useMemo(() => {
-    return teams.find(team => team.id === selectedTeamId) || null
-  }, [teams, selectedTeamId])
-
-  // Check if model selection is required
-  const isModelSelectionRequired = useMemo(() => {
-    // Skip check if team is not selected, or if team type is 'dify' (external API)
-    if (!selectedTeam || selectedTeam.agent_type === 'dify') return false
-    // If team's bots have predefined models, "Default" option is available, no need to force selection
-    const hasDefaultOption = allBotsHavePredefinedModel(selectedTeam)
-    if (hasDefaultOption) return false
-    // Model selection is required when no model is selected
-    return !selectedModel
-  }, [selectedTeam, selectedModel])
-
-  // Check if repository and branch are required for code tasks
-  const isRepoSelectionRequired = useMemo(() => {
-    return isCodeTask && (!selectedRepo || !selectedBranch)
-  }, [isCodeTask, selectedRepo, selectedBranch])
+  const handleRepoChange = React.useCallback((repo: GitRepoInfo | null) => {
+    setSelectedRepo(repo)
+    setSelectedBranch(null)
+  }, [])
 
   const cleanupUrlParams = React.useCallback(() => {
     const url = new URL(window.location.href)
@@ -102,23 +64,11 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       return
     }
 
-    const fetchShareInfoAndTeams = async () => {
+    const fetchShareInfo = async () => {
       setIsLoading(true)
       try {
-        // Fetch share info and teams in parallel
-        const [info, teamsResponse] = await Promise.all([
-          taskApis.getTaskShareInfo(taskShareToken),
-          teamApis.getTeams({ page: 1, limit: 100 }),
-        ])
-
+        const info = await taskApis.getTaskShareInfo(taskShareToken)
         setShareInfo(info)
-        setTeams(teamsResponse.items)
-
-        // Auto-select first team
-        if (teamsResponse.items.length > 0) {
-          setSelectedTeamId(teamsResponse.items[0].id)
-        }
-
         setIsModalOpen(true)
       } catch (err) {
         console.error('Failed to fetch task share info:', err)
@@ -133,7 +83,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       }
     }
 
-    fetchShareInfoAndTeams()
+    fetchShareInfo()
   }, [searchParams, toast, t, cleanupUrlParams])
 
   // Auto-fill repository and branch for code tasks
@@ -198,23 +148,6 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       return
     }
 
-    if (!selectedTeamId) {
-      toast({
-        variant: 'destructive',
-        title: t('shared-task:handler_select_team'),
-      })
-      return
-    }
-
-    // Validate model selection if required
-    if (isModelSelectionRequired) {
-      toast({
-        variant: 'destructive',
-        title: t('common:task_submit.model_required'),
-      })
-      return
-    }
-
     // Validate repository and branch selection for code tasks
     if (isCodeTask) {
       if (!selectedRepo) {
@@ -241,18 +174,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         throw new Error('Share token not found')
       }
 
-      // Determine model_id based on selection
-      let modelId: string | undefined = undefined
-      if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-        modelId = selectedModel.name
-      }
-
       const response = await taskApis.joinSharedTask({
         share_token: shareToken,
-        team_id: selectedTeamId,
-        model_id: modelId,
-        force_override_bot_model: Boolean(modelId),
-        force_override_bot_model_type: selectedModel?.type,
         git_repo_id: selectedRepo?.git_repo_id,
         git_url: selectedRepo?.git_url,
         git_repo: selectedRepo?.git_repo,
@@ -352,124 +275,9 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
               </AlertDescription>
             </Alert>
 
-            {/* Team Selection */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-text-primary">
-                {t('shared-task:handler_select_team_label')}
-              </label>
-              <Popover open={isTeamSelectorOpen} onOpenChange={setIsTeamSelectorOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    role="combobox"
-                    aria-controls="shared-task-team-selector-popover"
-                    aria-expanded={isTeamSelectorOpen}
-                    disabled={isCopying || teams.length === 0}
-                    className={cn(
-                      'flex h-10 w-full items-center justify-between rounded-md',
-                      'border border-border bg-background px-3 py-2 text-sm',
-                      'text-text-primary',
-                      'hover:bg-hover transition-colors',
-                      'focus:outline-none focus:ring-2 focus:ring-primary',
-                      'disabled:cursor-not-allowed disabled:opacity-50'
-                    )}
-                  >
-                    <span className="truncate">
-                      {selectedTeam
-                        ? selectedTeam.name
-                        : t('shared-task:handler_select_team_label')}
-                    </span>
-                    <svg
-                      className="ml-2 h-4 w-4 shrink-0 opacity-50"
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                </PopoverTrigger>
-
-                <PopoverContent
-                  id="shared-task-team-selector-popover"
-                  className={cn(
-                    'p-0 w-[var(--radix-popover-trigger-width)] border border-border bg-background',
-                    'shadow-lg rounded-md overflow-hidden'
-                  )}
-                  align="start"
-                  sideOffset={4}
-                >
-                  <Command className="border-0">
-                    <CommandInput
-                      placeholder={t('common:teams.search_placeholder')}
-                      value={teamSearchValue}
-                      onValueChange={setTeamSearchValue}
-                      className="h-10 border-b border-border"
-                    />
-                    <CommandList className="max-h-[200px] overflow-y-auto">
-                      {teams.length === 0 ? (
-                        <div className="py-6 text-center text-sm text-text-muted">
-                          {t('shared-task:handler_no_teams')}
-                        </div>
-                      ) : (
-                        <>
-                          <CommandEmpty className="py-6 text-center text-sm text-text-muted">
-                            {t('common:branches.no_match')}
-                          </CommandEmpty>
-                          <CommandGroup>
-                            {teams.map(team => (
-                              <CommandItem
-                                key={team.id}
-                                value={`${team.id} ${team.name}`}
-                                onSelect={() => {
-                                  setSelectedTeamId(team.id)
-                                  setIsTeamSelectorOpen(false)
-                                }}
-                                className={cn(
-                                  'flex items-center gap-2 px-3 py-2 text-sm cursor-pointer',
-                                  'hover:bg-hover',
-                                  selectedTeamId === team.id && 'bg-primary/5'
-                                )}
-                              >
-                                <Check
-                                  className={cn(
-                                    'h-4 w-4 shrink-0',
-                                    selectedTeamId === team.id
-                                      ? 'opacity-100 text-primary'
-                                      : 'opacity-0'
-                                  )}
-                                />
-                                <UsersIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
-                                <span className="truncate">{team.name}</span>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </>
-                      )}
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-              {teams.length === 0 && (
-                <p className="text-sm text-destructive">
-                  {t('shared-task:handler_create_team_hint')}
-                </p>
-              )}
-            </div>
-
-            {/* Model Selection */}
-            {selectedTeam && selectedTeam.agent_type !== 'dify' && (
-              <ModelSelector
-                selectedTeam={selectedTeam}
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                disabled={isCopying}
-              />
-            )}
+            <Alert variant="default">
+              <AlertDescription>{t('shared-task:handler_original_team_notice')}</AlertDescription>
+            </Alert>
 
             {/* Repository and Branch Selection (only for code tasks) */}
             {isCodeTask && (
@@ -501,7 +309,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     </label>
                     <RepositorySelector
                       selectedRepo={selectedRepo}
-                      handleRepoChange={setSelectedRepo}
+                      handleRepoChange={handleRepoChange}
                       disabled={isCopying}
                       selectedTaskDetail={null}
                     />
@@ -538,6 +346,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           onClick={handleCloseModal}
           variant="outline"
           size="sm"
+          data-testid="shared-task-cancel-button"
           style={{ flex: 1 }}
           disabled={isCopying}
         >
@@ -547,13 +356,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           onClick={handleConfirmCopy}
           variant="default"
           size="sm"
-          disabled={
-            !!isSelfShare ||
-            isCopying ||
-            teams.length === 0 ||
-            isModelSelectionRequired ||
-            isRepoSelectionRequired
-          }
+          data-testid="shared-task-confirm-copy-button"
+          disabled={!!isSelfShare || isCopying || isRepoSelectionRequired}
           style={{ flex: 1 }}
         >
           {isCopying ? t('shared-task:handler_copying') : t('shared-task:handler_copy_to_tasks')}
