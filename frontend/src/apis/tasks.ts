@@ -131,7 +131,12 @@ export interface JoinSharedTaskResponse {
 
 export interface PublicContextData {
   id: number
-  context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+  context_type:
+    | 'attachment'
+    | 'external_web_content'
+    | 'knowledge_base'
+    | 'table'
+    | 'external_knowledge'
   name: string
   status: string
   // Attachment fields
@@ -155,7 +160,12 @@ export interface PublicContextData {
     url?: string
   }
   // External web content fields
+  external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+  text_count?: number
   video_count?: number
+  image_count?: number
+  comment_count?: number
+  fetched_comment_count?: number
   site?: string | null
   source_url?: string | null
   cover_url?: string | null

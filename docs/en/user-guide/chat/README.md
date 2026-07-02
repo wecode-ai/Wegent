@@ -69,7 +69,20 @@ Flexible conversation control options:
 - Modify context
 - Switch agents
 
-### 5. Runtime Model Switching
+### 5. Add External Content
+
+From the input box's **More** menu, you can use **External content** to add an external web page URL. Wegent calls the built-in spider service, imports the crawled content, and adds it to the current conversation as one external content context.
+
+Supported external content includes:
+
+- **Title and body**: The crawled title, description, and page body are injected as text context for the model.
+- **Videos**: Crawled videos are stored as internal video assets of the external content context. If the current model supports video understanding, the video content is injected when you send a message. Otherwise, only video metadata is injected.
+- **Image posts**: Crawled images are stored as internal image assets of the external content context. When you send a message, they are passed to image-capable models as multiple image inputs.
+- **First-screen comments**: Crawled first-screen comments are stored as internal text assets of the external content context and injected as regular text context when you send a message.
+
+External content is displayed as one badge in the input box and message contexts. Wegent preserves that external content context when sending, regenerating, editing the original message, continuing to the next pipeline step, and exporting. If you remove an external content badge from the input box, that content will not be included in the current message.
+
+### 6. Runtime Model Switching
 
 After a task has started, you can adjust the model used for later responses in the current task. The change only affects the current task. It does not modify the agent, bot, or model defaults, and it does not affect other tasks or newly created conversations.
 

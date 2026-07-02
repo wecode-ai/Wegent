@@ -284,6 +284,40 @@ describe('pipeline next-step helpers', () => {
     expect(payload.pendingContexts).toHaveLength(3)
   })
 
+  it('passes external web content contexts as attachment ids for next step', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 77,
+            context_type: 'external_web_content',
+            name: 'External post',
+            status: 'ready',
+            external_media_type: 'mixed',
+            source_url: 'https://example.com/post/1',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+    const payload = buildPipelineNextStepPayload(
+      payloadInput({
+        draft,
+        editedMessage: 'Continue',
+        selectedTextItemIds: [],
+        selectedStructuredItemIds: draft.structuredItems.map(item => item.id),
+      })
+    )
+
+    expect(draft.structuredItems.map(item => item.id)).toEqual(['external_web_content:77'])
+    expect(payload.attachmentIds).toEqual([77])
+    expect(payload.contexts).toEqual([])
+    expect(payload.pendingContexts[0]).toMatchObject({
+      id: 77,
+      context_type: 'external_web_content',
+    })
+  })
+
   it('defaults selected text items from contextPassing mode', () => {
     const noneDraft = buildPipelineNextStepDraft(
       [userMessage(), aiMessage('Plain AI summary')],

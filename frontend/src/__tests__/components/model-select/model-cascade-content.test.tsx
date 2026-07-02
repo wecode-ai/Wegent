@@ -10,6 +10,12 @@ import {
 } from '@/components/model-select/ModelCascadeSelect'
 import type { GroupableModel } from '@/components/model-select/model-grouping'
 
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (_key: string, fallback?: string) => fallback ?? _key,
+  }),
+}))
+
 global.ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
@@ -148,6 +154,36 @@ describe('ModelCascadeContent', () => {
     expect(results).toHaveClass('min-h-0')
     expect(results.className).toContain('h-[clamp(')
     expect(footer).toHaveClass('shrink-0')
+  })
+
+  it('shows model capability icons for image and video understanding', () => {
+    render(
+      <ModelCascadeContent
+        models={[
+          {
+            name: 'vision-model',
+            displayName: 'Vision Model',
+            provider: 'provider-one',
+            modelId: 'vision-model-id',
+            modelGroup: 'Primary One',
+            modelSubGroup: 'Secondary One',
+            config: {
+              modelCapabilities: {
+                supportsImage: true,
+                supportsVideo: true,
+              },
+            },
+          },
+        ]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.getByLabelText('图片理解')).toBeInTheDocument()
+    expect(screen.getByLabelText('视频理解')).toBeInTheDocument()
   })
 
   it('scrolls the selected model into view when the active subgroup contains many models', async () => {

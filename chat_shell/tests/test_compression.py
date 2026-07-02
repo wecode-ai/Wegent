@@ -85,6 +85,25 @@ class TestTokenCounter:
         # Should include both text and image tokens
         assert count > 50  # At least image token count
 
+    def test_count_message_video_blocks(self):
+        """Test counting canonical and provider-specific video blocks."""
+        counter = TokenCounter(model_id="gpt-4")
+        for block in (
+            {"type": "input_video", "video_url": "https://example.com/a.mp4"},
+            {"type": "video_url", "video_url": {"url": "https://example.com/a.mp4"}},
+            {
+                "type": "video",
+                "source": {"type": "url", "url": "https://example.com/a.mp4"},
+            },
+        ):
+            count = counter.count_message(
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Describe"}, block],
+                }
+            )
+            assert count >= 3600
+
     def test_count_messages_list(self):
         """Test counting tokens in message list."""
         counter = TokenCounter(model_id="gpt-4")

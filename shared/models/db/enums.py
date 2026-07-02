@@ -38,6 +38,7 @@ class ContextType(str, PyEnum):
     """Context type enumeration."""
 
     ATTACHMENT = "attachment"
+    EXTERNAL_WEB_CONTENT = "external_web_content"
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"  # Selected documents from notebook mode for direct injection

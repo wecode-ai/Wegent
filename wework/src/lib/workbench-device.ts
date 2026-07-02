@@ -12,13 +12,10 @@ export function getActiveWorkbenchDeviceId({
   standaloneDeviceId?: string | null
 }) {
   const projectDeviceId = getProjectDeviceId(currentProject)
-  return projectDeviceId ?? (!currentProject ? standaloneDeviceId ?? undefined : undefined)
+  return projectDeviceId ?? (!currentProject ? (standaloneDeviceId ?? undefined) : undefined)
 }
 
-export function findWorkbenchDevice(
-  devices: DeviceInfo[],
-  deviceId: string | null | undefined,
-) {
+export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | null | undefined) {
   if (!deviceId) return null
   return devices.find(device => device.device_id === deviceId) ?? null
 }
@@ -29,7 +26,7 @@ export function isWorkbenchDeviceOnline(device: DeviceInfo | null) {
 
 export function getWorkbenchDeviceDisplayName(
   device: DeviceInfo | null,
-  deviceId: string | null | undefined,
+  deviceId: string | null | undefined
 ) {
   return device?.name || deviceId || ''
 }

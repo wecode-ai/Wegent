@@ -163,6 +163,9 @@ metadata:
 spec:
   modelGroup: "主分组"
   modelSubGroup: "快速"
+  modelCapabilities:
+    supportsImage: true
+    supportsVideo: true
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -179,6 +182,9 @@ spec:
 | `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
 | `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
+| `spec.modelCapabilities` | object | 否 | LLM 聊天模型声明的多模态理解能力 |
+| `spec.modelCapabilities.supportsImage` | boolean | 否 | 是否支持图片理解；开启后模型选择器显示“图片理解”能力标识 |
+| `spec.modelCapabilities.supportsVideo` | boolean | 否 | 是否支持视频理解；开启后模型选择器显示“视频理解”能力标识 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
 | `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
 

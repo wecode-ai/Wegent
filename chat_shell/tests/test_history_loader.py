@@ -317,8 +317,9 @@ class TestPackageModeVideoHistory:
         content = messages[0]["content"]
         assert content[0] == {"type": "text", "text": "describe the video"}
         assert content[1] == {
-            "type": "video_url",
-            "video_url": {"url": "https://example.com/video.mp4"},
+            "type": "input_video",
+            "video_url": "https://example.com/video.mp4",
+            "mime_type": "video/mp4",
         }
         assert "Video Attachment" in content[2]["text"]
 

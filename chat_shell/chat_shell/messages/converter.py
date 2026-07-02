@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_SIZE_MB = 1
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 MAX_IMAGE_LONG_EDGE = MAX_MODEL_IMAGE_LONG_EDGE
+VIDEO_CONTENT_TYPES = ("input_video", "video_url", "video")
 
 
 class MessageConverter:
@@ -287,12 +288,16 @@ class MessageConverter:
                     )
 
             elif block_type == "input_video":
-                # Convert input_video to video_url
                 video_url = block.get("video_url", "")
                 if video_url:
-                    video_entries.append(
-                        {"type": "video_url", "video_url": {"url": video_url}}
-                    )
+                    video_block: dict[str, Any] = {
+                        "type": "input_video",
+                        "video_url": video_url,
+                    }
+                    mime_type = block.get("mime_type")
+                    if mime_type:
+                        video_block["mime_type"] = mime_type
+                    video_entries.append(video_block)
 
         # Phase 2 — separate user message (last text) from context blocks
         if text_entries:
@@ -369,10 +374,102 @@ class MessageConverter:
         if isinstance(content, list):
             return any(
                 isinstance(part, dict)
-                and part.get("type") in ("image_url", "video_url")
+                and part.get("type")
+                in (
+                    "image_url",
+                    "image",
+                    "input_image",
+                    "input_video",
+                    "video_url",
+                    "video",
+                )
                 for part in content
             )
         return False
+
+    @staticmethod
+    def adapt_video_blocks_for_provider(
+        messages: list[dict[str, Any]],
+        *,
+        target_provider: str,
+        supports_video: bool,
+    ) -> list[dict[str, Any]]:
+        """Convert canonical video blocks to the target provider payload format."""
+        adapted_messages: list[dict[str, Any]] = []
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                adapted_messages.append(message)
+                continue
+
+            adapted_content: list[Any] = []
+            changed = False
+            for block in content:
+                if not isinstance(block, dict):
+                    adapted_content.append(block)
+                    continue
+
+                block_type = block.get("type")
+                if block_type not in VIDEO_CONTENT_TYPES:
+                    adapted_content.append(block)
+                    continue
+
+                changed = True
+                if not supports_video:
+                    continue
+
+                video_url = MessageConverter._extract_video_url(block)
+                if not video_url:
+                    continue
+
+                if target_provider == "anthropic":
+                    adapted_content.append(
+                        {
+                            "type": "video",
+                            "source": {
+                                "type": "url",
+                                "url": video_url,
+                            },
+                        }
+                    )
+                elif target_provider == "openai":
+                    adapted_content.append(
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": video_url},
+                        }
+                    )
+                else:
+                    logger.warning(
+                        "Dropping video block for unsupported provider: %s",
+                        target_provider or "unknown",
+                    )
+
+            if changed:
+                adapted_message = dict(message)
+                adapted_message["content"] = adapted_content
+                adapted_messages.append(adapted_message)
+            else:
+                adapted_messages.append(message)
+
+        return adapted_messages
+
+    @staticmethod
+    def _extract_video_url(block: dict[str, Any]) -> str:
+        """Extract a URL from canonical, OpenAI-style, or Anthropic-style video blocks."""
+        block_type = block.get("type")
+        if block_type == "input_video":
+            return str(block.get("video_url") or "")
+        if block_type == "video_url":
+            video_url = block.get("video_url")
+            if isinstance(video_url, dict):
+                return str(video_url.get("url") or "")
+            return str(video_url or "")
+        if block_type == "video":
+            source = block.get("source")
+            if isinstance(source, dict) and source.get("type") == "url":
+                return str(source.get("url") or "")
+        return ""
 
     @staticmethod
     def create_image_block(

@@ -36,7 +36,12 @@ export interface AttachmentResponse {
   error_message?: string | null
   error_code?: string | null
   truncation_info?: TruncationInfo | null
+  external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+  text_count?: number | null
   video_count?: number | null
+  image_count?: number | null
+  comment_count?: number | null
+  fetched_comment_count?: number | null
   site?: string | null
   source_url?: string | null
   cover_url?: string | null
