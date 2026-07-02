@@ -42,6 +42,10 @@ const WEBVIEW_DEVTOOLS_ENV: &str = "WEWORK_WEBVIEW_DEVTOOLS";
 
 #[cfg(desktop)]
 fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor::local_executor_log_dir_path();
+    }
+
     #[cfg(target_os = "macos")]
     {
         return Ok(app
@@ -87,13 +91,16 @@ fn create_log_plugin(
     app: &tauri::AppHandle,
 ) -> Result<tauri::plugin::TauriPlugin<tauri::Wry>, String> {
     let log_directory = app_log_directory(app)?;
+    let process_id = std::process::id();
+    let rust_log_file_name = format!("{RUST_LOG_FILE_NAME}-{process_id}");
+    let webview_log_file_name = format!("{WEBVIEW_LOG_FILE_NAME}-{process_id}");
     Ok(tauri_plugin_log::Builder::default()
         .clear_targets()
         .level(log::LevelFilter::Debug)
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
-                file_name: Some(RUST_LOG_FILE_NAME.into()),
+                file_name: Some(rust_log_file_name.into()),
             })
             .filter(|metadata| {
                 !metadata
@@ -104,7 +111,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory,
-                file_name: Some(WEBVIEW_LOG_FILE_NAME.into()),
+                file_name: Some(webview_log_file_name.into()),
             })
             .filter(|metadata| {
                 metadata
@@ -121,9 +128,52 @@ fn get_app_log_directory(app: tauri::AppHandle) -> Result<String, String> {
     Ok(app_log_directory(&app)?.to_string_lossy().to_string())
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+fn open_app_log_directory(app: tauri::AppHandle) -> Result<(), String> {
+    let log_directory = app_log_directory(&app)?;
+    std::fs::create_dir_all(&log_directory)
+        .map_err(|error| format!("Failed to create app log directory: {error}"))?;
+
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new("open")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("explorer")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run Windows explorer command: {error}"))?;
+
+    #[cfg(target_os = "linux")]
+    let output = std::process::Command::new("xdg-open")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run xdg-open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("Failed to open app log directory".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
 #[cfg(not(desktop))]
 #[tauri::command]
 fn get_app_log_directory(_app: tauri::AppHandle) -> Result<String, String> {
+    Err("App log directory is only available on desktop".to_string())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn open_app_log_directory(_app: tauri::AppHandle) -> Result<(), String> {
     Err("App log directory is only available on desktop".to_string())
 }
 
@@ -1304,8 +1354,16 @@ pub fn run() {
                     .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
             )?;
 
+            #[cfg(desktop)]
+            println!(
+                "Wework app PID={} log dir={}",
+                std::process::id(),
+                get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
+            );
+
             log::info!(
-                "Wework app logs are written to {}",
+                "Wework app PID={} logs are written to {}",
+                std::process::id(),
                 get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
             );
 
@@ -1338,6 +1396,7 @@ pub fn run() {
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
             get_app_log_directory,
+            open_app_log_directory,
             get_wework_process_snapshot,
             open_main_webview_devtools,
             set_tray_menu_state,
