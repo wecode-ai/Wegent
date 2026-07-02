@@ -60,6 +60,8 @@ export type ArchiveRuntimeLocalTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
+export type ArchiveRuntimeConversationsResult = ArchiveRuntimeLocalTaskResult
+
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
@@ -129,9 +131,18 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress,
     options?: ArchiveRuntimeLocalTaskOptions
   ) => Promise<ArchiveRuntimeLocalTaskResult>
-  archiveProjectConversations: (runtimeProjectKey: string) => Promise<void>
-  archiveProjectsConversations: (runtimeProjectKeys: string[]) => Promise<void>
-  archiveChatConversations: (addresses: RuntimeTaskAddress[]) => Promise<void>
+  archiveProjectConversations: (
+    runtimeProjectKey: string,
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult>
+  archiveProjectsConversations: (
+    runtimeProjectKeys: string[],
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult>
+  archiveChatConversations: (
+    addresses: RuntimeTaskAddress[],
+    options?: ArchiveRuntimeLocalTaskOptions
+  ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>

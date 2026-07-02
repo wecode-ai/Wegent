@@ -195,6 +195,10 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
     execution_workspace_source = get_task_execution_workspace_source(task_crd)
     execution_workspace_path = get_task_execution_workspace_path(task_crd)
+    external_knowledge_refs = [
+        ref.model_dump(exclude_none=True)
+        for ref in (task_crd.spec.externalKnowledgeRefs or [])
+    ]
 
     return {
         "id": task.id,
@@ -226,6 +230,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "execution_workspace_source": execution_workspace_source,
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
+        "external_knowledge_refs": external_knowledge_refs,
     }
 
 
@@ -264,6 +269,10 @@ def convert_to_task_dict_optimized(
         and task_crd.metadata.labels.get("preserveExecutor") == "true"
     )
     model_selection = _get_model_selection_labels(task_crd)
+    external_knowledge_refs = [
+        ref.model_dump(exclude_none=True)
+        for ref in (task_crd.spec.externalKnowledgeRefs or [])
+    ]
 
     return {
         "id": task.id,
@@ -299,6 +308,7 @@ def convert_to_task_dict_optimized(
         "execution_workspace_source": execution_workspace_source,
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
+        "external_knowledge_refs": external_knowledge_refs,
     }
 
 

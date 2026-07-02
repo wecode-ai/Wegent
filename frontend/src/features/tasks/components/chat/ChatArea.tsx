@@ -29,7 +29,7 @@ import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
-import type { ContextItem, QueueMessageContext } from '@/types/context'
+import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
@@ -79,6 +79,30 @@ import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/li
  * When the controls container width is less than this value, selectors will collapse.
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
+
+function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
+  if (!context.external_provider || !context.external_mode) return null
+  return {
+    provider: context.external_provider,
+    mode: context.external_mode,
+    id: context.external_id ?? undefined,
+    name: context.name,
+    scope: context.external_scope ?? undefined,
+    target_type: context.external_target_type ?? undefined,
+    node_id: context.external_node_id ?? undefined,
+    document_id: context.external_document_id ?? undefined,
+    parent_id: context.external_parent_id ?? undefined,
+  }
+}
+
+function buildExternalContextId(ref: ExternalKnowledgeRef) {
+  const targetType = ref.target_type ?? 'knowledge_base'
+  if (targetType !== 'knowledge_base') {
+    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
+    return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+  }
+  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+}
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
@@ -1189,6 +1213,8 @@ function ChatAreaContent({
           name: context.name,
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
+          document_ids: context.document_ids ?? undefined,
+          scope_restricted: context.scope_restricted ?? undefined,
         }
       } else if (context.context_type === 'table') {
         if (!context.document_id) return
@@ -1198,6 +1224,15 @@ function ChatAreaContent({
           type: 'table',
           document_id: context.document_id,
           source_config: context.source_config ?? undefined,
+        }
+      } else if (context.context_type === 'external_knowledge') {
+        const ref = buildExternalRefFromContext(context)
+        if (!ref) return
+        contextItem = {
+          id: buildExternalContextId(ref),
+          name: context.name,
+          type: 'external_knowledge',
+          ref,
         }
       }
 
@@ -1407,6 +1442,8 @@ function ChatAreaContent({
             name: ctx.name,
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
+            document_ids: ctx.document_ids ?? undefined,
+            scope_restricted: ctx.scope_restricted ?? undefined,
           })
         } else if (ctx.context_type === 'table') {
           if (!ctx.document_id) continue
@@ -1416,6 +1453,15 @@ function ChatAreaContent({
             type: 'table',
             document_id: ctx.document_id,
             source_config: ctx.source_config ?? undefined,
+          })
+        } else if (ctx.context_type === 'external_knowledge') {
+          const ref = buildExternalRefFromContext(ctx)
+          if (!ref) continue
+          restoredContextItems.push({
+            id: buildExternalContextId(ref),
+            name: ctx.name,
+            type: 'external_knowledge',
+            ref,
           })
         }
       }

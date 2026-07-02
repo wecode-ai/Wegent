@@ -148,6 +148,23 @@ function SharedTaskContent() {
         mime_type: ctx.mime_type,
         // Knowledge base fields
         document_count: ctx.document_count,
+        // External knowledge fields
+        external_provider: ctx.external_provider ?? undefined,
+        external_mode: ctx.external_mode ?? undefined,
+        external_id: ctx.external_id ?? undefined,
+        external_scope: ctx.external_scope ?? undefined,
+        external_target_type: ctx.external_target_type ?? undefined,
+        external_node_id: ctx.external_node_id ?? undefined,
+        external_document_id: ctx.external_document_id ?? undefined,
+        external_parent_id: ctx.external_parent_id ?? undefined,
+        // Table fields
+        document_id: ctx.document_id,
+        source_config: ctx.source_config,
+        // External web content fields
+        video_count: ctx.video_count,
+        site: ctx.site,
+        source_url: ctx.source_url,
+        cover_url: ctx.cover_url,
       })) || []
 
     // For user messages, use prompt

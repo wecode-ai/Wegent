@@ -1,6 +1,8 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CSSProperties,
   MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
@@ -39,6 +41,7 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
+import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -72,6 +75,7 @@ interface MessageListProps {
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
+const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
@@ -111,20 +115,123 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
 }: MessageListProps) {
-  const visibleMessages = messages.filter(shouldRenderMessage)
+  const listRef = useRef<HTMLDivElement>(null)
+  const isPointerSelectingRef = useRef(false)
+  const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
+  const [layoutWidth, setLayoutWidth] = useState(0)
+  const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
+  const disableMessageContentVisibility = disableContentVisibility || isTextSelectionActive
+  const messageIntrinsicHeights = useMemo(() => {
+    return new Map(
+      visibleMessages.map(message => [
+        message.id,
+        getMessagePretextIntrinsicHeight(message, layoutWidth),
+      ])
+    )
+  }, [layoutWidth, visibleMessages])
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
+
+  useLayoutEffect(() => {
+    const element = listRef.current
+    if (!element) return
+
+    const updateLayoutWidth = () => {
+      setLayoutWidth(currentWidth => {
+        const nextWidth = element.clientWidth
+        return nextWidth === currentWidth ? currentWidth : nextWidth
+      })
+    }
+
+    const scheduleLayoutWidthUpdate = () => {
+      if (layoutWidthUpdateTimerRef.current !== null) {
+        clearTimeout(layoutWidthUpdateTimerRef.current)
+      }
+
+      layoutWidthUpdateTimerRef.current = setTimeout(() => {
+        layoutWidthUpdateTimerRef.current = null
+        updateLayoutWidth()
+      }, MESSAGE_LAYOUT_RESIZE_SETTLE_MS)
+    }
+
+    updateLayoutWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const resizeObserver = new ResizeObserver(scheduleLayoutWidthUpdate)
+    resizeObserver.observe(element)
+    return () => {
+      resizeObserver.disconnect()
+      if (layoutWidthUpdateTimerRef.current !== null) {
+        clearTimeout(layoutWidthUpdateTimerRef.current)
+        layoutWidthUpdateTimerRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTextSelectionActive) return
+
+    const updateSelectionState = () => {
+      if (isPointerSelectingRef.current) {
+        return
+      }
+
+      const selection = document.getSelection?.()
+      const root = listRef.current
+      if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
+        setIsTextSelectionActive(false)
+        return
+      }
+
+      const selectionTouchesList =
+        isNodeInsideElement(selection.anchorNode, root) ||
+        isNodeInsideElement(selection.focusNode, root)
+      setIsTextSelectionActive(selectionTouchesList)
+    }
+
+    const handlePointerUp = () => {
+      isPointerSelectingRef.current = false
+      window.requestAnimationFrame(updateSelectionState)
+    }
+
+    const handleBlur = () => {
+      isPointerSelectingRef.current = false
+      updateSelectionState()
+    }
+
+    document.addEventListener('pointerup', handlePointerUp)
+    document.addEventListener('pointercancel', handlePointerUp)
+    document.addEventListener('selectionchange', updateSelectionState)
+    window.addEventListener('blur', handleBlur)
+
+    return () => {
+      document.removeEventListener('pointerup', handlePointerUp)
+      document.removeEventListener('pointercancel', handlePointerUp)
+      document.removeEventListener('selectionchange', updateSelectionState)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [isTextSelectionActive])
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !isMessageTextSelectionTarget(event.target)) {
+      return
+    }
+
+    isPointerSelectingRef.current = true
+    setIsTextSelectionActive(true)
+  }
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
-    <div className={cn(listLayoutClass, className)}>
+    <div ref={listRef} className={cn(listLayoutClass, className)} onPointerDown={handlePointerDown}>
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -132,11 +239,14 @@ export const MessageList = memo(function MessageList({
             <article
               className={[
                 'min-w-0 overflow-x-hidden',
-                disableContentVisibility
-                  ? ''
-                  : '[content-visibility:auto] [contain-intrinsic-size:0_220px]',
+                disableMessageContentVisibility ? '' : '[content-visibility:auto]',
                 message.role === 'user' ? 'flex justify-end' : '',
               ].join(' ')}
+              style={
+                disableMessageContentVisibility
+                  ? undefined
+                  : getMessageContainmentStyle(messageIntrinsicHeights.get(message.id))
+              }
               data-message-id={message.id}
               data-testid={`message-${message.role}`}
             >
@@ -173,6 +283,32 @@ export const MessageList = memo(function MessageList({
     </div>
   )
 }, areMessageListPropsEqual)
+
+function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSProperties {
+  return {
+    containIntrinsicSize: `0 ${Math.ceil(estimatedHeight ?? 220)}px`,
+  } as CSSProperties
+}
+
+function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
+  if (!node) return false
+
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    return root.contains(node)
+  }
+
+  return Boolean(node.parentElement && root.contains(node.parentElement))
+}
+
+function isMessageTextSelectionTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+
+  return Boolean(
+    target.closest(
+      '.assistant-markdown, [data-testid="user-message-content"], [data-testid="message-hover-time"]'
+    )
+  )
+}
 
 function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {
   const changed = [
@@ -990,6 +1126,7 @@ function AssistantMessage({
   const hasStreamedResponse = hasBlocks || hasVisibleContent
   const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
   const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
+  const shouldShowTrailingThinking = isStreaming && hasVisibleContent
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
@@ -1056,6 +1193,7 @@ function AssistantMessage({
           {hasVisibleContent ? (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
+          {shouldShowTrailingThinking && <WaitingAssistantIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}

@@ -131,7 +131,7 @@ export interface JoinSharedTaskResponse {
 
 export interface PublicContextData {
   id: number
-  context_type: 'attachment' | 'knowledge_base'
+  context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
   name: string
   status: string
   // Attachment fields
@@ -140,6 +140,25 @@ export interface PublicContextData {
   mime_type?: string
   // Knowledge base fields
   document_count?: number
+  // External knowledge fields
+  external_provider?: string | null
+  external_mode?: string | null
+  external_id?: string | null
+  external_scope?: string | null
+  external_target_type?: 'knowledge_base' | 'folder' | 'document' | null
+  external_node_id?: string | null
+  external_document_id?: string | null
+  external_parent_id?: string | null
+  // Table fields
+  document_id?: number
+  source_config?: {
+    url?: string
+  }
+  // External web content fields
+  video_count?: number
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 export interface PublicSubtaskData {

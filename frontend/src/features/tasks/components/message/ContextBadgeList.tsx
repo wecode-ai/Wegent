@@ -59,6 +59,7 @@ interface ContextBadgeListProps {
  * - attachment: Uses AttachmentPreview component (reuse existing logic)
  * - knowledge_base: Displays KB name with document count
  * - table: Displays table name with clickable link to view/reselect
+ * - external_knowledge: Displays external KB name with provider metadata
  */
 export function ContextBadgeList({
   contexts,
@@ -100,6 +101,8 @@ function ContextBadgeItem({
       return <AttachmentContextBadge context={context} shareToken={shareToken} />
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
+    case 'external_knowledge':
+      return <ExternalKnowledgeBadge context={context} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -175,6 +178,29 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
     context.document_count > 0
       ? formatDocumentCount(context.document_count, t)
       : undefined
+
+  return (
+    <div>
+      <ContextPreviewBase
+        icon={<Database className="text-primary" />}
+        title={context.name}
+        subtitle={subtitle}
+      />
+    </div>
+  )
+}
+
+function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('knowledge')
+  const targetLabel =
+    context.external_target_type === 'document'
+      ? t('picker.target.document')
+      : context.external_target_type === 'folder'
+        ? t('picker.target.folder')
+        : t('picker.target.knowledgeBase')
+  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div>
