@@ -2,22 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{collections::HashMap, env, future::Future, path::PathBuf, pin::Pin, sync::Arc};
+
+#[cfg(unix)]
 use std::{
-    collections::HashMap,
-    env, fs,
-    future::Future,
-    io,
-    path::{Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
+    fs, io,
+    path::Path,
     time::{Duration, Instant},
 };
 
 use serde_json::{json, Value};
+use tokio::sync::broadcast;
+
+#[cfg(unix)]
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::UnixListener,
-    sync::{broadcast, mpsc},
+    net::{UnixListener, UnixStream},
+    sync::mpsc,
 };
 
 use crate::{
@@ -32,6 +33,7 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+#[cfg(unix)]
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const WORKSPACE_TREE_SCRIPT: &str = r#"
 import json
@@ -452,6 +454,7 @@ impl AppIpcServer {
         )
     }
 
+    #[cfg(unix)]
     pub async fn serve_forever(&self, socket_path: PathBuf) -> Result<(), String> {
         prepare_socket_path(&socket_path).map_err(|error| {
             format!(
@@ -487,7 +490,13 @@ impl AppIpcServer {
         }
     }
 
-    async fn handle_stream(&self, stream: tokio::net::UnixStream) -> Result<(), String> {
+    #[cfg(not(unix))]
+    pub async fn serve_forever(&self, _socket_path: PathBuf) -> Result<(), String> {
+        Err("app IPC sidecar requires Unix socket support".to_owned())
+    }
+
+    #[cfg(unix)]
+    async fn handle_stream(&self, stream: UnixStream) -> Result<(), String> {
         let (reader, writer) = stream.into_split();
         let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
         let mut writer_task = tokio::spawn(async move {
@@ -665,6 +674,7 @@ pub fn app_ipc_listening_log_line(device_id: &str, socket_path: &str) -> String 
     )
 }
 
+#[cfg(unix)]
 fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
@@ -684,6 +694,7 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     }
 }
 
+#[cfg(unix)]
 fn log_app_ipc_request(
     event: &str,
     request_id: Option<&str>,
@@ -1105,6 +1116,7 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+#[cfg(unix)]
 fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent)?;
@@ -1123,9 +1135,7 @@ fn set_socket_permissions(socket_path: &Path) {
     let _ = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600));
 }
 
-#[cfg(not(unix))]
-fn set_socket_permissions(_socket_path: &Path) {}
-
+#[cfg(unix)]
 async fn write_message<W>(writer: &mut W, message: &Value) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,

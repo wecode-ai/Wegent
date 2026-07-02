@@ -238,12 +238,24 @@ impl ProcessOperations for DefaultProcessOperations {
         is_process_alive(pid)
     }
 
+    #[cfg(unix)]
     fn terminate_gracefully(&self, pid: u32) -> bool {
         send_signal(pid, libc::SIGTERM)
     }
 
+    #[cfg(not(unix))]
+    fn terminate_gracefully(&self, _pid: u32) -> bool {
+        false
+    }
+
+    #[cfg(unix)]
     fn terminate_forcefully(&self, pid: u32) -> bool {
         send_signal(pid, libc::SIGKILL)
+    }
+
+    #[cfg(not(unix))]
+    fn terminate_forcefully(&self, _pid: u32) -> bool {
+        false
     }
 }
 
@@ -261,11 +273,6 @@ fn is_process_alive(_pid: u32) -> bool {
 #[cfg(unix)]
 fn send_signal(pid: u32, signal: libc::c_int) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, signal) == 0 }
-}
-
-#[cfg(not(unix))]
-fn send_signal(_pid: u32, _signal: libc::c_int) -> bool {
-    false
 }
 
 #[cfg(unix)]
