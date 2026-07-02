@@ -184,10 +184,26 @@ async fn clone_repo(
         configure_repo_proxy(&git_domain).await;
     }
 
-    let clone_url = authenticated_clone_url(git_url, git_credentials(request).as_ref());
+    let credentials = git_credentials(request);
+    if credentials.is_none() && requires_credentials_for_clone(git_url) {
+        let mut failed_fields = task_fields(request.task_id, request.subtask_id);
+        failed_fields.push(("path", project_path.display().to_string()));
+        failed_fields.push(("git_url", mask_url_credentials(git_url)));
+        if let Some(git_domain) = request_git_domain(request) {
+            failed_fields.push(("git_domain", git_domain));
+        }
+        log_executor_event("git clone credentials missing", &failed_fields);
+        return Err(format!(
+            "git credentials missing for protected repository: {}",
+            mask_url_credentials(git_url)
+        ));
+    }
+
+    let clone_url = authenticated_clone_url(git_url, credentials.as_ref());
     let mut command = Command::new("git");
     command.arg("clone");
-    if let Some(branch) = branch_name(request) {
+    let branch = branch_name(request);
+    if let Some(branch) = branch.as_deref() {
         command.arg("--branch").arg(branch).arg("--single-branch");
     }
     command.arg(clone_url).arg(project_path);
@@ -196,6 +212,9 @@ async fn clone_repo(
     let mut fields = task_fields(request.task_id, request.subtask_id);
     fields.push(("path", project_path.display().to_string()));
     fields.push(("git_url", mask_url_credentials(git_url)));
+    if let Some(branch) = branch.as_deref() {
+        fields.push(("branch", branch.to_owned()));
+    }
     log_executor_event("git clone started", &fields);
 
     let output = command
@@ -210,6 +229,14 @@ async fn clone_repo(
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let detail = if !stderr.is_empty() { stderr } else { stdout };
+    let mut failed_fields = fields;
+    push_git_clone_failure_fields(
+        &mut failed_fields,
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    );
+    log_executor_event("git clone failed", &failed_fields);
     Err(format!(
         "git clone failed for {}: {}",
         project_path.display(),
@@ -236,6 +263,20 @@ fn authenticated_clone_url(git_url: &str, credentials: Option<&GitCredentials>) 
         (credentials.username.clone(), credentials.token.clone())
     };
     format!("{protocol}://{username}:{token}@{rest}")
+}
+
+fn requires_credentials_for_clone(git_url: &str) -> bool {
+    let lower = git_url.to_ascii_lowercase();
+    if !lower.starts_with("https://") && !lower.starts_with("http://") {
+        return false;
+    }
+    [
+        "git.intra.weibo.com",
+        "git.staff.sina.com.cn",
+        "gitlab.weibo.cn",
+    ]
+    .iter()
+    .any(|domain| lower.contains(domain))
 }
 
 fn branch_name(request: &ExecutionRequest) -> Option<String> {
@@ -310,6 +351,62 @@ fn mask_url_credentials(url: &str) -> String {
     format!("{protocol}://***@{after_credentials}")
 }
 
+fn push_git_clone_failure_fields(
+    fields: &mut Vec<(&'static str, String)>,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) {
+    fields.push((
+        "exit_code",
+        exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_owned()),
+    ));
+    fields.push(("stdout_len", stdout.len().to_string()));
+    fields.push(("stderr_len", stderr.len().to_string()));
+
+    let stdout = git_output_summary(stdout);
+    if !stdout.is_empty() {
+        fields.push(("stdout", stdout));
+    }
+    let stderr = git_output_summary(stderr);
+    if !stderr.is_empty() {
+        fields.push(("stderr", stderr));
+    }
+}
+
+fn git_output_summary(output: &str) -> String {
+    let sanitized = output
+        .split_whitespace()
+        .map(redact_git_output_fragment)
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate_summary(&sanitized, 240)
+}
+
+fn redact_git_output_fragment(fragment: &str) -> String {
+    let masked = mask_url_credentials(fragment);
+    if masked.starts_with("ghp_")
+        || masked.starts_with("github_pat_")
+        || masked.starts_with("glpat-")
+        || masked.starts_with("gloas-")
+    {
+        return "***".to_owned();
+    }
+    masked
+}
+
+fn truncate_summary(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let summary = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{summary}...")
+    } else {
+        summary
+    }
+}
+
 fn workspace_root() -> PathBuf {
     env::var_os("WORKSPACE_ROOT")
         .map(PathBuf::from)
@@ -354,6 +451,19 @@ mod tests {
     }
 
     #[test]
+    fn protected_internal_https_repositories_require_credentials() {
+        assert!(requires_credentials_for_clone(
+            "https://git.intra.weibo.com/im/message-flow.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "https://github.com/wecode-ai/wegent.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "git@git.intra.weibo.com:im/message-flow.git"
+        ));
+    }
+
+    #[test]
     fn resolves_project_workspace_path_first() {
         let request = ExecutionRequest {
             task_id: 10,
@@ -363,5 +473,25 @@ mod tests {
         };
 
         assert!(resolve_git_project_path(&request, "repo").ends_with("projects/custom"));
+    }
+
+    #[test]
+    fn git_clone_failure_fields_include_diagnostics_without_credentials() {
+        let mut fields = vec![("task_id", "10".to_owned())];
+        push_git_clone_failure_fields(
+            &mut fields,
+            Some(128),
+            "trace token ghp_secret",
+            "fatal: Authentication failed for 'https://token:glpat-secret@gitlab.com/org/repo.git'",
+        );
+
+        assert!(fields.contains(&("exit_code", "128".to_owned())));
+        assert!(fields
+            .iter()
+            .any(|(key, value)| *key == "stderr" && value.contains("Authentication failed")));
+        assert!(!fields
+            .iter()
+            .any(|(_, value)| value.contains("glpat-secret")));
+        assert!(!fields.iter().any(|(_, value)| value.contains("ghp_secret")));
     }
 }
