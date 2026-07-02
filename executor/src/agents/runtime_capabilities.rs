@@ -22,6 +22,7 @@ use crate::{
     agents::{
         backend_url::{is_local_mode, request_backend_url_or_default},
         claude_config_dir, claude_task_dir, extract_claude_options,
+        skill_download::skill_download_concurrency,
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     logging::{log_executor_event, push_error_fields, task_fields},
@@ -35,7 +36,6 @@ use crate::{
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
-const SKILL_DOWNLOAD_CONCURRENCY: usize = 4;
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request.extra.get("interactive_form_answer").is_some() {
@@ -692,7 +692,7 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
                 }
             }
         })
-        .buffer_unordered(SKILL_DOWNLOAD_CONCURRENCY)
+        .buffer_unordered(skill_download_concurrency())
         .collect::<Vec<_>>()
         .await;
 

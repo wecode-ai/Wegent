@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        task_identity::task_identity_env,
+        skill_download::skill_download_concurrency, task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
@@ -35,7 +35,6 @@ use crate::{
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
-const CLAUDE_TASK_SKILL_DOWNLOAD_CONCURRENCY: usize = 4;
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 const DEFAULT_HAIKU_MODEL_ENV: &str = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
 const DEFAULT_CLAUDE_SETTINGS_ENV: &[&str] = &[
@@ -690,7 +689,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
                 }
             }
         })
-        .buffer_unordered(CLAUDE_TASK_SKILL_DOWNLOAD_CONCURRENCY)
+        .buffer_unordered(skill_download_concurrency())
         .collect::<Vec<_>>()
         .await;
 }
