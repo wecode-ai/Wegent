@@ -47,7 +47,45 @@ describe('MessageList', () => {
     ).toContain('0 ')
   })
 
-  test('disables message row containment while selecting message text', async () => {
+  test('keeps message row containment during a plain text click', () => {
+    const getSelectionSpy = vi.spyOn(document, 'getSelection')
+    getSelectionSpy.mockReturnValue({
+      isCollapsed: true,
+      rangeCount: 0,
+      anchorNode: null,
+      focusNode: null,
+    } as Selection)
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'user-clickable',
+              role: 'user',
+              content: 'Click this user message.',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:01Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-user')
+      const content = screen.getByTestId('user-message-content')
+      expect(article.className).toContain('[content-visibility:auto]')
+
+      fireEvent.pointerDown(content, { button: 0 })
+      fireEvent.pointerUp(document)
+
+      expect(article.className).toContain('[content-visibility:auto]')
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+    } finally {
+      getSelectionSpy.mockRestore()
+    }
+  })
+
+  test('disables message row containment only while selected message text is active', async () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     const requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
@@ -73,11 +111,21 @@ describe('MessageList', () => {
 
       const article = screen.getByTestId('message-assistant')
       const paragraph = screen.getByText('Select this assistant paragraph.')
+      const textNode = paragraph.firstChild
       expect(article.className).toContain('[content-visibility:auto]')
 
-      fireEvent.pointerDown(paragraph, { button: 0 })
-      expect(article.className).not.toContain('[content-visibility:auto]')
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+      getSelectionSpy.mockReturnValue({
+        isCollapsed: false,
+        rangeCount: 1,
+        anchorNode: textNode,
+        focusNode: textNode,
+      } as Selection)
+      fireEvent(document, new Event('selectionchange'))
+
+      await waitFor(() => {
+        expect(article.className).not.toContain('[content-visibility:auto]')
+        expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+      })
 
       getSelectionSpy.mockReturnValue({
         isCollapsed: true,
