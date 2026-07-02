@@ -310,6 +310,61 @@ class TestKnowledgeFactoryDynamicContext:
         assert call_kwargs["knowledge_base_scopes"] == [scope]
 
     @pytest.mark.asyncio
+    async def test_mixed_internal_external_sources_add_unified_listing_tool(self):
+        """Mixed mounted sources should expose one listing tool for both source types."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ),
+        ):
+            mock_kb_tool = MagicMock()
+            mock_kb_tool.name = "knowledge_base_search"
+            mock_kb_tool._get_kb_limits.return_value = (10, 0)
+            mock_kb_tool_class.return_value = mock_kb_tool
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[107],
+                external_knowledge_refs=[
+                    {
+                        "provider": "demo",
+                        "id": "demo-kb-1",
+                        "name": "External Demo",
+                        "scope": "organization",
+                        "mode": "explicit",
+                    }
+                ],
+                user_id=2,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+                auth_token="user-token",
+            )
+
+        assert [tool.name for tool in result.extra_tools] == [
+            "knowledge_base_search",
+            "kb_ls",
+            "kb_head",
+            "knowledge_list_documents",
+        ]
+        unified_tool = result.extra_tools[-1]
+        assert unified_tool.knowledge_base_ids == [107]
+        assert unified_tool.external_knowledge_refs == [
+            {
+                "provider": "demo",
+                "id": "demo-kb-1",
+                "name": "External Demo",
+                "scope": "organization",
+                "mode": "explicit",
+            }
+        ]
+
+    @pytest.mark.asyncio
     async def test_skip_prompt_enhancement_returns_base_prompt(self):
         """When skip_prompt_enhancement=True, should return base_system_prompt unchanged."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools

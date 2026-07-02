@@ -599,6 +599,48 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('selects a project when expanding it from the desktop sidebar', async () => {
+    const onSelectProject = vi.fn()
+
+    renderSidebar({
+      onSelectProject,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(onSelectProject).toHaveBeenCalledWith(7)
+    expect(screen.getByTestId('runtime-local-task-row-codex-1')).toBeInTheDocument()
+  })
+
   test('hides remote-only runtime projects from the project list', () => {
     renderSidebar({
       runtimeWork: {

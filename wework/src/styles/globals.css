@@ -129,18 +129,31 @@ button:disabled {
   }
 
   @keyframes waiting-thinking-text {
-    0%,
-    100% {
-      color: rgb(var(--color-text-muted));
+    0% {
+      background-position: 140% 50%;
     }
 
-    50% {
-      color: rgb(var(--color-text-secondary));
+    100% {
+      background-position: -40% 50%;
     }
   }
 
   .waiting-thinking-text {
-    animation: waiting-thinking-text 1.4s ease-in-out infinite;
+    display: inline-block;
+    color: rgb(var(--color-text-muted));
+    background-image: linear-gradient(
+      90deg,
+      rgb(var(--color-text-muted)) 0%,
+      rgb(var(--color-text-muted)) 32%,
+      rgb(var(--color-text-primary)) 50%,
+      rgb(var(--color-text-muted)) 68%,
+      rgb(var(--color-text-muted)) 100%
+    );
+    background-size: 240% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: waiting-thinking-text 1.6s linear infinite;
   }
 
   @keyframes local-runtime-card-settle {

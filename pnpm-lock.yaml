@@ -459,6 +459,9 @@ importers:
 
   wework:
     dependencies:
+      "@chenglou/pretext":
+        specifier: 0.0.8
+        version: 0.0.8
       "@headless-tree/core":
         specifier: ^1.7.0
         version: 1.7.0
@@ -486,6 +489,9 @@ importers:
       "@tauri-apps/plugin-http":
         specifier: ^2.5.0
         version: 2.5.9
+      "@tauri-apps/plugin-log":
+        specifier: ^2.8.0
+        version: 2.8.0
       "@tauri-apps/plugin-opener":
         specifier: ~2.5.4
         version: 2.5.4
@@ -958,6 +964,12 @@ packages:
         integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==,
       }
     hasBin: true
+
+  "@chenglou/pretext@0.0.8":
+    resolution:
+      {
+        integrity: sha512-yqm2GMxnPI7VHcHwe84P8ZF0JK/2d2DMKPqMN+s95jQhwDMYYXKVFVJUMEaVWckQStdsjdLav/0Vu+d9YbtGxA==,
+      }
 
   "@chevrotain/cst-dts-gen@11.0.3":
     resolution:
@@ -4079,6 +4091,12 @@ packages:
     resolution:
       {
         integrity: sha512-lCiY0+vs4HvIUSvZrBs8TC3TiCB0MOPRmiUjTq4prW7SlcJE2jdLeT6KBsJrT9Tlplufl7W1pY6SFAO3gCWxDA==,
+      }
+
+  "@tauri-apps/plugin-log@2.8.0":
+    resolution:
+      {
+        integrity: sha512-a+7rOq3MJwpTOLLKbL8d0qGZ85hgHw5pNOWusA9o3cf7cEgtYHiGY/+O8fj8MvywQIGqFv0da2bYQDlrqLE7rw==,
       }
 
   "@tauri-apps/plugin-opener@2.5.4":
@@ -12617,6 +12635,8 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
+  "@chenglou/pretext@0.0.8": {}
+
   "@chevrotain/cst-dts-gen@11.0.3":
     dependencies:
       "@chevrotain/gast": 11.0.3
@@ -14820,6 +14840,10 @@ snapshots:
       "@tauri-apps/cli-win32-x64-msvc": 2.11.2
 
   "@tauri-apps/plugin-http@2.5.9":
+    dependencies:
+      "@tauri-apps/api": 2.11.0
+
+  "@tauri-apps/plugin-log@2.8.0":
     dependencies:
       "@tauri-apps/api": 2.11.0
 

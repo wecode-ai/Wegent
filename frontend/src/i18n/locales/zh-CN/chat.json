@@ -45,6 +45,17 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "sourceReferences": {
+    "title": "引用来源",
+    "openSource": "打开来源",
+    "unavailableSource": "无法打开来源",
+    "footerCited": "引用 {{documents}} 个文档，来自 {{sources}} 个知识源",
+    "footerNoHit": "{{count}} 个知识源未命中",
+    "footerSkipped": "跳过 {{count}} 个不可用来源",
+    "footerSearchedNoReferences": "已检索 {{searched}} 个知识源，但未返回可引用内容",
+    "footerSearched": "本次检索 {{searched}} 个知识源",
+    "footerSearchedAndIgnored": "本次检索 {{searched}} 个知识源 · 跳过 {{ignored}} 个不可用来源"
+  },
   "guidance": {
     "send": "发送引导",
     "applied": "引导已生效",
@@ -403,6 +414,17 @@
     "stale_update_10m": "任务仍在运行，但已超过 10 分钟没有新的流更新，建议停止后重试",
     "started_over_20m": "任务已运行超过 20 分钟，请关注执行状态，建议停止后重试"
   },
+  "knowledgeBinding": {
+    "title": "知识来源",
+    "count": "已绑定 {{count}} 个",
+    "externalKnowledge": "外部知识来源",
+    "empty": "暂未绑定知识来源",
+    "loadFailed": "加载知识来源失败",
+    "externalLoadFailed": "外部知识来源加载失败，内部知识库仍可管理。",
+    "remove": "移除 {{name}}",
+    "removeSuccess": "已移除「{{name}}」",
+    "removeFailed": "移除知识来源失败"
+  },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
@@ -713,6 +735,9 @@
     "referencedDocsLabel": "引用的钉钉文档：",
     "myDocsTab": "我的文档",
     "wikispaceTab": "知识库",
+    "allDocs": "全部文档",
+    "selectAll": "选择全部",
+    "deselectAll": "取消全选",
     "wikispaceSync": "同步",
     "wikispaceSyncing": "同步中...",
     "wikispaceEmpty": "暂无知识库内容",

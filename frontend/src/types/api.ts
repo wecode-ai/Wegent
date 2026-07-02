@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ExternalKnowledgeRef } from '@/types/context'
+
 // Authentication Types
 
 // User Preferences
@@ -327,6 +329,7 @@ export interface TaskDetail {
   device_id?: string | null // Device ID used for execution (for task history)
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
   requested_skills?: SkillRef[] | null // User-selected skills for this task
+  external_knowledge_refs?: ExternalKnowledgeRef[] | null // Task-level external knowledge bindings
 }
 
 export interface TaskRuntimeActiveStream {
@@ -656,7 +659,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'table'
+export type ContextType = 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -671,11 +674,27 @@ export interface SubtaskContextBrief {
   // Knowledge base fields (from type_data)
   knowledge_id?: number | null
   document_count?: number | null
+  document_ids?: number[] | null
+  scope_restricted?: boolean | null
   // Table fields (from type_data)
   document_id?: number | null
   source_config?: {
     url?: string
   } | null
+  // External knowledge fields
+  external_provider?: string | null
+  external_mode?: string | null
+  external_id?: string | null
+  external_scope?: string | null
+  external_target_type?: 'knowledge_base' | 'folder' | 'document' | null
+  external_node_id?: string | null
+  external_document_id?: string | null
+  external_parent_id?: string | null
+  // External web content fields
+  video_count?: number | null
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 // Quick Access Types

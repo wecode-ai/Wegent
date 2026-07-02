@@ -49,7 +49,7 @@ import RegenerateModelPopover from './RegenerateModelPopover'
 import VideoConfigBadge from './VideoConfigBadge'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
 import type { ClarificationData, ClarificationAnswer } from '@/types/api'
-import type { SourceReference, GeminiAnnotation } from '@/types/socket'
+import type { SourceReference, GeminiAnnotation, RetrievalSummaryPayload } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
 import { isTextBlock, isThinkingBlock } from './thinking/types'
@@ -76,6 +76,7 @@ export interface Message {
     workbench?: Record<string, unknown>
     shell_type?: string // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
+    retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
     annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
@@ -780,7 +781,10 @@ const MessageBubble = memo(
           <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
-          <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+          <SourceReferences
+            sources={msg.sources || msg.result?.sources || []}
+            retrievalSummary={msg.result?.retrieval_summary}
+          />
           <GeminiAnnotations annotations={msg.result?.annotations || []} />
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
@@ -1509,7 +1513,10 @@ const MessageBubble = memo(
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
                       />
-                      <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+                      <SourceReferences
+                        sources={msg.sources || msg.result?.sources || []}
+                        retrievalSummary={msg.result?.retrieval_summary}
+                      />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (

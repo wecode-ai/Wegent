@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
@@ -15,7 +15,7 @@ const tauriCoreMock = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 
 describe('MessageList', () => {
-  test('marks message rows for offscreen rendering containment', () => {
+  test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
     render(
       <MessageList
         messages={[
@@ -39,6 +39,120 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
     expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
+    expect(
+      screen.getByTestId('message-user').style.getPropertyValue('contain-intrinsic-size')
+    ).toContain('0 ')
+    expect(
+      screen.getByTestId('message-assistant').style.getPropertyValue('contain-intrinsic-size')
+    ).toContain('0 ')
+  })
+
+  test('disables message row containment while selecting message text', async () => {
+    const getSelectionSpy = vi.spyOn(document, 'getSelection')
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(0)
+        return 1
+      })
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-selectable',
+              role: 'assistant',
+              content: 'Select this assistant paragraph.',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:01Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-assistant')
+      const paragraph = screen.getByText('Select this assistant paragraph.')
+      expect(article.className).toContain('[content-visibility:auto]')
+
+      fireEvent.pointerDown(paragraph, { button: 0 })
+      expect(article.className).not.toContain('[content-visibility:auto]')
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+
+      getSelectionSpy.mockReturnValue({
+        isCollapsed: true,
+        rangeCount: 0,
+        anchorNode: null,
+        focusNode: null,
+      } as Selection)
+      fireEvent.pointerUp(document)
+
+      await waitFor(() => {
+        expect(article.className).toContain('[content-visibility:auto]')
+        expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+      })
+    } finally {
+      getSelectionSpy.mockRestore()
+      requestAnimationFrameSpy.mockRestore()
+    }
+  })
+
+  test('coalesces intrinsic size recalculation during message list resize', async () => {
+    vi.useFakeTimers()
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-resize',
+              role: 'assistant',
+              content: 'x'.repeat(2000),
+              status: 'done',
+              createdAt: '2026-06-11T10:00:01Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-assistant')
+      const list = article.parentElement as HTMLElement
+      const initialIntrinsicSize = article.style.getPropertyValue('contain-intrinsic-size')
+      Object.defineProperty(list, 'clientWidth', {
+        configurable: true,
+        value: 640,
+      })
+
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+        vi.advanceTimersByTime(119)
+      })
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe(initialIntrinsicSize)
+
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).not.toBe(
+        initialIntrinsicSize
+      )
+    } finally {
+      vi.useRealTimers()
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
   })
 
   test('renders one assistant turn file changes under its message', () => {
@@ -418,6 +532,30 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
     expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+  })
+
+  test('shows thinking after partial streaming assistant content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-with-content',
+            role: 'assistant',
+            content: '我已经完成前面的检查，继续等最后结果。',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const content = screen.getByText('我已经完成前面的检查，继续等最后结果。')
+    const thinking = screen.getByTestId('thinking-indicator')
+
+    expect(thinking).toHaveTextContent('正在思考')
+    expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
   })
 
   test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
@@ -2669,7 +2807,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -2694,7 +2832,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows full-width processing status once final text starts streaming', () => {
+  test('shows full-width processing status and trailing thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -2711,7 +2849,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('已处理 1 秒')
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveClass('w-full', 'border-b')
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
@@ -2766,7 +2904,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('uses running tool rows instead of a generic thinking indicator when blocks are visible', () => {
+  test('keeps running tool rows visible while showing trailing thinking', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       turnId: 1,
@@ -2792,7 +2930,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
     expect(screen.getByText('正在运行 rg -n "foo" src')).toBeInTheDocument()
   })
 
