@@ -190,14 +190,6 @@ export function findFileChangesByTurnId(
   return messages.find(message => message.turnId === turnId)?.fileChanges
 }
 
-export function findActiveAssistantMessage(
-  messages: WorkbenchMessage[]
-): WorkbenchMessage | undefined {
-  return [...messages]
-    .reverse()
-    .find(message => message.role === 'assistant' && message.status === 'streaming')
-}
-
 export function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,

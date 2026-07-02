@@ -617,7 +617,7 @@ function ProjectSendProbe() {
       </button>
       <MessageList
         messages={paneSession.messages}
-        isWaitingForAssistant={paneSession.sending || paneSession.waitingForAssistant}
+        isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
       />
     </div>
   )
@@ -702,7 +702,7 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
       </button>
       <MessageList
         messages={paneSession.messages}
-        isWaitingForAssistant={paneSession.waitingForAssistant}
+        isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
       />
     </WorkbenchPaneActiveOnly>
   )
@@ -976,7 +976,7 @@ function RuntimeOpenProbe() {
       </button>
       <MessageList
         messages={paneSession.messages}
-        isWaitingForAssistant={paneSession.sending || paneSession.waitingForAssistant}
+        isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
       />
       <button type="button" onClick={() => void paneSession.loadMoreTranscriptBefore()}>
         load older

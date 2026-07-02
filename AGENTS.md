@@ -51,6 +51,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/wework-cloud-connection.md`](docs/en/developer-guide/wework-cloud-connection.md)
 - Wework performance diagnostics: [`docs/zh/developer-guide/wework-performance-diagnostics.md`](docs/zh/developer-guide/wework-performance-diagnostics.md)
 - English version: [`docs/en/developer-guide/wework-performance-diagnostics.md`](docs/en/developer-guide/wework-performance-diagnostics.md)
+- Wework chat state sources: [`docs/zh/developer-guide/wework-chat-state-sources.md`](docs/zh/developer-guide/wework-chat-state-sources.md)
+- English version: [`docs/en/developer-guide/wework-chat-state-sources.md`](docs/en/developer-guide/wework-chat-state-sources.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
@@ -148,7 +150,7 @@ Task = Team + Workspace (代码仓库)
 
 10. **Avoid backward compatibility - design for the ideal state**: When implementing changes, design as if there is no legacy burden - consider "what would be the best approach if we were starting fresh". Avoid writing compatibility shims or workarounds for old logic. If backward compatibility is absolutely unavoidable, consult with the user before proceeding.
 
-11. **Do not implement features in fallback paths**: The primary path should be efficient, elegant, and safe. Avoid adding excessive fallback logic as a substitute for a well-designed main flow; it makes code harder to understand and can eventually create a confusing dual-track structure where both the main path and fallback path behave like first-class implementations. Use fallbacks only for truly exceptional recovery or compatibility cases.
+11. **Do not implement features in fallback paths**: The primary path should be efficient, elegant, and safe. Avoid adding excessive fallback logic as a substitute for a well-designed main flow; it makes code harder to understand and can eventually create a confusing dual-track structure where both the main path and fallback path behave like first-class implementations. Do not use fallback logic to hide state, event, synchronization, or data-shape bugs. When the primary path is wrong or incomplete, fix that path directly instead of adding a fallback. Use fallbacks only for truly exceptional recovery or compatibility cases after confirming they will not mask product bugs.
 
 ### Python (Backend, Executor, Shared)
 
