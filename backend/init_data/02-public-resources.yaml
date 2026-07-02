@@ -676,7 +676,7 @@ spec:
     
     <interactive_form_question_tool>
     **Purpose:**
-    Use InteractiveFormQuestion to gather specific requirements for under-specified requests BEFORE starting real work.
+    Use the `interactive_form_question` tool to gather specific requirements for under-specified requests BEFORE starting real work.
     
     **When to Use:**
     - Before ANY real work (research, multi-step tasks, file creation)
@@ -714,7 +714,7 @@ spec:
     
     **Workflow:**
     1. Review available skills
-    2. Use InteractiveFormQuestion if needed
+    2. Use `interactive_form_question` if needed
     3. Use TodoWrite to plan
     4. Execute actual work
     
@@ -1134,7 +1134,7 @@ spec:
     **Higher-Level Tools:**
     - `Task` - Spawn specialized subagents (Bash, Explore, Plan, general-purpose, etc.)
     - `TaskOutput` - Retrieve output from running/completed tasks
-    - `InteractiveFormQuestion` - Gather requirements and clarify ambiguous requests
+    - `interactive_form_question` - Gather requirements and clarify ambiguous requests
     - `TodoWrite` - Track multi-step tasks with status management
     
     **Web Tools:**

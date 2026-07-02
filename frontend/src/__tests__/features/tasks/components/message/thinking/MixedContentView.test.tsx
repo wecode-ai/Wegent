@@ -136,6 +136,91 @@ describe('MixedContentView', () => {
     expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('tool_render_payload:1')
   })
 
+  it('renders interactive forms when the tool name is AskUserQuestion', () => {
+    const renderPayload = {
+      type: 'interactive_form_question',
+      task_id: 2493,
+      subtask_id: 2730,
+      questions: [
+        {
+          id: 'site_goal',
+          question: 'What should the site emphasize?',
+          input_type: 'text',
+          required: true,
+          multi_select: false,
+          options: null,
+          default: null,
+          placeholder: null,
+        },
+      ],
+    }
+
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'ask_user_question_tool',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'AskUserQuestion',
+            tool_use_id: 'ask_user_question_tool',
+            render_payload: renderPayload,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('ask_user_question_tool:1')
+    expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
+  })
+
+  it('renders Codex request_user_input payloads as interactive forms', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'request-user-input-42',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'request_user_input',
+            tool_use_id: 'request-user-input-42',
+            render_payload: {
+              kind: 'request_user_input',
+              requestId: 42,
+              questions: [
+                {
+                  id: 'goal',
+                  question: 'What should I prioritize?',
+                  options: [
+                    {
+                      label: 'Work goal',
+                      description: 'Focus on one concrete task.',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('request-user-input-42:1')
+    expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
+  })
+
   it('deduplicates interactive forms with the same tool_use_id', () => {
     const renderPayload = {
       type: 'interactive_form_question',

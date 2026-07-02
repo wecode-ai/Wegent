@@ -43,6 +43,39 @@ describe('interactiveFormPending', () => {
     })
   })
 
+  it('finds pending forms emitted with the AskUserQuestion tool name', () => {
+    const pending = findPendingInteractiveForm([
+      {
+        id: 'ai-2',
+        type: 'ai',
+        content: '',
+        subtaskId: 20,
+        result: {
+          blocks: [
+            {
+              id: 'tool-ask-user',
+              type: 'tool',
+              tool_name: 'AskUserQuestion',
+              tool_use_id: 'tool-ask-user',
+              render_payload: {
+                type: 'interactive_form_question',
+                task_id: 100,
+                subtask_id: 20,
+                questions: [{ id: 'q1', question: 'Question?' }],
+              },
+            },
+          ],
+        },
+      },
+    ])
+
+    expect(pending).toEqual({
+      toolUseId: 'tool-ask-user',
+      taskId: 100,
+      subtaskId: 20,
+    })
+  })
+
   it('treats a later user message as resolving the form', () => {
     const pending = findPendingInteractiveForm([
       {

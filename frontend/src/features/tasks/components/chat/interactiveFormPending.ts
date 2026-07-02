@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InteractiveFormAnswerPayload } from '@/types/api'
-
-const INTERACTIVE_FORM_TYPE = 'interactive_form_question'
+import {
+  INTERACTIVE_FORM_TYPE,
+  isInteractiveFormToolName,
+} from '@/features/tasks/utils/interactive-form'
 
 export interface PendingInteractiveForm {
   toolUseId: string
@@ -33,7 +35,7 @@ const getPendingFormFromBlock = (block: unknown): PendingInteractiveForm | null 
   if (!blockRecord) return null
 
   const toolName = String(blockRecord.tool_name ?? '')
-  if (!toolName.includes(INTERACTIVE_FORM_TYPE)) return null
+  if (!isInteractiveFormToolName(toolName)) return null
 
   const renderPayload = parseRecord(blockRecord.render_payload)
   if (renderPayload?.type !== INTERACTIVE_FORM_TYPE) return null
