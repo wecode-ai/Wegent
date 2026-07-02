@@ -870,8 +870,13 @@ export interface LocalDeviceSkill {
   short_description?: string | null
   path: string
   source: 'claude' | 'codex' | string
+  scope?: 'user' | 'system' | 'repo' | 'admin' | string
+  source_label?: string | null
+  source_priority?: number
   origin?: 'local' | 'wegent' | string
   plugin_name?: string | null
+  plugin_provider?: string | null
+  plugin_version?: string | null
   mtime?: number
 }
 

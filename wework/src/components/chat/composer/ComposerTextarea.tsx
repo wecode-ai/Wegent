@@ -1,10 +1,19 @@
-import { Package } from 'lucide-react'
+import { ClipboardList, Cpu, Package, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode, RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
-import type { LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import type { LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import type { ComposerTextTrigger, SlashCommand } from './composerAutocomplete'
+import {
+  chooseNearestTrigger,
+  filterSlashCommands,
+  findStandaloneTrigger,
+  hasDraftTextForSlashCommands,
+} from './composerAutocomplete'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
+import { SlashCommandMenu } from './SlashCommandMenu'
+import { SlashModelMenu } from './SlashModelMenu'
 
 interface ComposerTextareaProps {
   value: string
@@ -19,12 +28,20 @@ interface ComposerTextareaProps {
   skillMenuClassName?: string
   onPasteFiles?: (files: File[]) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
+  selectedModelOptions?: ModelOptions
+  planModeActive?: boolean
+  onSetPlanMode?: () => void
+  onSetGoal?: () => void
+  onSelectModel?: (model: UnifiedModel | null) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  isModelSelectionReady?: boolean
 }
 
-interface SkillTrigger {
-  start: number
-  query: string
+interface ActiveComposerMenu {
+  kind: ComposerTextTrigger['kind']
+  trigger: ComposerTextTrigger
 }
 
 interface SkillMention {
@@ -42,21 +59,9 @@ interface TextSelection {
   focused: boolean
 }
 
+type CommonTranslate = ReturnType<typeof useTranslation>['t']
+
 const LOCAL_SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
-
-function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
-  const beforeCursor = value.slice(0, cursor)
-  const triggerIndex = beforeCursor.lastIndexOf('$')
-  if (triggerIndex < 0) return null
-
-  const previousChar = triggerIndex > 0 ? value[triggerIndex - 1] : ''
-  if (triggerIndex > 0 && !/\s/.test(previousChar)) return null
-
-  const query = value.slice(triggerIndex + 1, cursor)
-  if (/\s/.test(query)) return null
-
-  return { start: triggerIndex, query }
-}
 
 function displaySkillNameFromName(name: string): string {
   return name
@@ -70,21 +75,23 @@ function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)
 }
 
-function displaySkillSource(skill: LocalDeviceSkill): string {
-  switch (skill.source) {
-    case 'agents':
-      return 'agents'
-    case 'claude':
-      return 'claude'
-    case 'claude-plugin':
-      return 'claude plugins'
-    case 'codex':
-      return 'codex'
-    case 'codex-plugin':
-      return 'codex plugins'
+function displaySkillSource(skill: LocalDeviceSkill, t: CommonTranslate): string {
+  if (skill.source_label) return skill.source_label
+
+  switch (skill.scope) {
+    case 'user':
+    case 'repo':
+      return t('workbench.skill_scope_personal', 'Personal')
+    case 'system':
+    case 'admin':
+      return t('workbench.skill_scope_system', 'System')
     default:
-      return skill.source
+      break
   }
+
+  if (skill.source === 'codex') return t('workbench.skill_scope_personal', 'Personal')
+  if (skill.source === 'codex-plugin') return t('workbench.skill_scope_personal', 'Personal')
+  return skill.source
 }
 
 function isClaudeSkill(skill: LocalDeviceSkill): boolean {
@@ -172,6 +179,38 @@ function localSkillTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
+function slashSkillTestId(name: string): string {
+  return `skill-${localSkillTestId(name)}`
+}
+
+function skillIdentityKey(skill: LocalDeviceSkill): string {
+  return (skill.name || skill.path).trim().toLowerCase()
+}
+
+function skillSourceRank(skill: LocalDeviceSkill): number {
+  if (skill.source_priority !== undefined) return skill.source_priority
+  if (skill.source === 'codex') return 0
+  if (skill.source === 'codex-plugin') return 1
+  return 2
+}
+
+function preferLocalSkill(left: LocalDeviceSkill, right: LocalDeviceSkill): LocalDeviceSkill {
+  const leftRank = skillSourceRank(left)
+  const rightRank = skillSourceRank(right)
+  if (leftRank !== rightRank) return leftRank < rightRank ? left : right
+  return (left.mtime ?? 0) >= (right.mtime ?? 0) ? left : right
+}
+
+function dedupeLocalSkills(input: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  const deduped = new Map<string, LocalDeviceSkill>()
+  input.forEach(skill => {
+    const key = skillIdentityKey(skill)
+    const current = deduped.get(key)
+    deduped.set(key, current ? preferLocalSkill(current, skill) : skill)
+  })
+  return Array.from(deduped.values())
+}
+
 function skillReference(skill: LocalDeviceSkill): string {
   return `[$${skill.name}](skill://${skill.path})`
 }
@@ -251,8 +290,7 @@ function renderCaret(key: string) {
     <span
       key={key}
       data-testid="local-skill-caret"
-      className="local-skill-caret inline-block h-5 w-px align-middle"
-      style={{ backgroundColor: 'rgb(26, 26, 26)' }}
+      className="local-skill-caret inline-block h-5 w-px bg-text-primary align-middle"
     />
   )
 }
@@ -322,10 +360,19 @@ export function ComposerTextarea({
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   onPasteFiles,
   onListLocalSkills,
+  models = [],
   selectedModel,
+  selectedModelOptions = {},
+  planModeActive = false,
+  onSetPlanMode,
+  onSetGoal,
+  onSelectModel,
+  onBlockedModelSelect,
+  isModelSelectionReady = true,
 }: ComposerTextareaProps) {
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
+  const modelMenuRef = useRef<HTMLDivElement>(null)
   const skillsLoadedRef = useRef(false)
   const skillsLoadingRef = useRef(false)
   const skillsRequestIdRef = useRef(0)
@@ -342,10 +389,15 @@ export function ComposerTextarea({
   const [isComposing, setIsComposing] = useState(false)
   const compositionJustEndedRef = useRef(false)
   const compositionResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
-  const [trigger, setTrigger] = useState<SkillTrigger | null>(null)
+  const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [modelQuery, setModelQuery] = useState('')
+  const [modelSelectedIndex, setModelSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
+
+  const dedupedSkills = useMemo(() => dedupeLocalSkills(skills), [skills])
 
   const validSkillMentions = useMemo(() => {
     const mentions = new Map<string, SkillMention>()
@@ -360,10 +412,10 @@ export function ComposerTextarea({
   }, [selectedSkillMentions, value])
 
   const filteredSkills = useMemo(() => {
-    const query = trigger?.query.trim().toLowerCase() ?? ''
-    if (!query) return skills
+    const query = activeMenu?.kind === 'skill' ? activeMenu.trigger.query.trim().toLowerCase() : ''
+    if (!query) return dedupedSkills
 
-    return skills.filter(skill => {
+    return dedupedSkills.filter(skill => {
       const description = skill.short_description || skill.description || ''
       return (
         skill.name.toLowerCase().includes(query) ||
@@ -371,12 +423,115 @@ export function ComposerTextarea({
         description.toLowerCase().includes(query)
       )
     })
-  }, [skills, trigger?.query])
+  }, [activeMenu, dedupedSkills])
 
-  const showSkillMenu = trigger !== null && Boolean(onListLocalSkills)
+  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
+  const openSlashModelMenu = useCallback(() => {
+    setModelQuery('')
+    setModelSelectedIndex(0)
+    setModelMenuOpen(true)
+  }, [])
+  const closeSlashModelMenu = useCallback(
+    (focusTextarea = false) => {
+      setModelMenuOpen(false)
+      setModelQuery('')
+      setModelSelectedIndex(0)
+      if (focusTextarea) {
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus()
+        })
+      }
+    },
+    [textareaRef]
+  )
 
-  const closeSkillMenu = useCallback(() => {
-    setTrigger(null)
+  const actionSlashCommands = useMemo<SlashCommand[]>(() => {
+    const commands: SlashCommand[] = []
+
+    if (onSetPlanMode && !planModeActive) {
+      commands.push({
+        id: 'plan',
+        title: t('workbench.slash_command_plan'),
+        description: t('workbench.slash_command_plan_description'),
+        searchAliases: ['plan', 'plan mode', 'planning'],
+        Icon: ClipboardList,
+        testId: 'plan',
+        onSelect: onSetPlanMode,
+      })
+    }
+
+    if (onSetGoal) {
+      commands.push({
+        id: 'goal',
+        title: t('workbench.slash_command_goal'),
+        description: t('workbench.slash_command_goal_description'),
+        searchAliases: ['goal', 'target', 'objective'],
+        Icon: Target,
+        testId: 'goal',
+        onSelect: onSetGoal,
+      })
+    }
+
+    if (canOpenSlashModelMenu) {
+      commands.push({
+        id: 'model',
+        title: t('workbench.slash_command_model'),
+        description: t('workbench.slash_command_model_description'),
+        searchAliases: ['model', 'model selector'],
+        Icon: Cpu,
+        testId: 'model',
+        onSelect: openSlashModelMenu,
+      })
+    }
+
+    return commands
+  }, [canOpenSlashModelMenu, onSetGoal, onSetPlanMode, openSlashModelMenu, planModeActive, t])
+
+  const skillSlashCommands = useMemo<SlashCommand[]>(() => {
+    const skillGroup = t('workbench.slash_command_group_skills')
+    return dedupedSkills.map(skill => {
+      const description = skill.short_description || skill.description || undefined
+      const sourceLabel = displaySkillSource(skill, t)
+      return {
+        id: `skill:${skill.path}`,
+        title: displaySkillName(skill),
+        description,
+        metaLabel: sourceLabel,
+        group: skillGroup,
+        searchAliases: [skill.name, sourceLabel, skill.plugin_name ?? ''],
+        Icon: Package,
+        enabled: canSelectSkillForModel(skill, selectedModel),
+        testId: slashSkillTestId(skill.name),
+        skill,
+      }
+    })
+  }, [dedupedSkills, selectedModel, t])
+
+  const slashCommands = useMemo(
+    () => [...actionSlashCommands, ...skillSlashCommands],
+    [actionSlashCommands, skillSlashCommands]
+  )
+
+  const filteredSlashCommands = useMemo(() => {
+    if (activeMenu?.kind !== 'slash') return []
+    return filterSlashCommands(
+      slashCommands,
+      activeMenu.trigger.query,
+      hasDraftTextForSlashCommands(value)
+    )
+  }, [activeMenu, slashCommands, value])
+
+  const showSkillMenu = activeMenu?.kind === 'skill' && Boolean(onListLocalSkills)
+  const showSlashMenu = activeMenu?.kind === 'slash'
+  const activeOptionCount = showSkillMenu
+    ? filteredSkills.length
+    : showSlashMenu
+      ? filteredSlashCommands.length
+      : 0
+  const highlightedIndex = Math.min(selectedIndex, Math.max(activeOptionCount - 1, 0))
+
+  const closeAutocompleteMenu = useCallback(() => {
+    setActiveMenu(null)
     setSelectedIndex(0)
   }, [])
 
@@ -489,20 +644,28 @@ export function ComposerTextarea({
     [loadError, onListLocalSkills]
   )
 
-  const updateSkillTrigger = useCallback(() => {
+  const updateAutocompleteTrigger = useCallback(() => {
     const textarea = textareaRef.current
-    if (!textarea || !onListLocalSkills) return
+    if (!textarea) return
 
-    const nextTrigger = findSkillTrigger(textarea.value, textarea.selectionStart)
-    setTrigger(nextTrigger)
+    const nextTrigger = chooseNearestTrigger([
+      onListLocalSkills
+        ? findStandaloneTrigger(textarea.value, textarea.selectionStart, '$', 'skill')
+        : null,
+      findStandaloneTrigger(textarea.value, textarea.selectionStart, '/', 'slash'),
+    ])
+    setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
     if (nextTrigger) {
+      setModelMenuOpen(false)
       setSelectedIndex(0)
-      loadLocalSkills()
+      if (nextTrigger.kind === 'skill' || onListLocalSkills) {
+        loadLocalSkills()
+      }
     }
   }, [loadLocalSkills, onListLocalSkills, textareaRef])
 
   useEffect(() => {
-    if (!showSkillMenu) return
+    if (!showSkillMenu && !showSlashMenu) return
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
@@ -512,14 +675,34 @@ export function ComposerTextarea({
       ) {
         return
       }
-      closeSkillMenu()
+      closeAutocompleteMenu()
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown)
     }
-  }, [closeSkillMenu, showSkillMenu, textareaRef])
+  }, [closeAutocompleteMenu, showSkillMenu, showSlashMenu, textareaRef])
+
+  useEffect(() => {
+    if (!modelMenuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (
+        target instanceof Node &&
+        (modelMenuRef.current?.contains(target) || textareaRef.current?.contains(target))
+      ) {
+        return
+      }
+      closeSlashModelMenu()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
 
   useEffect(() => {
     return () => {
@@ -555,8 +738,9 @@ export function ComposerTextarea({
   const selectSkill = useCallback(
     (skill: LocalDeviceSkill) => {
       const textarea = textareaRef.current
-      if (!textarea || !trigger) return
+      if (!textarea || !activeMenu) return
 
+      const { trigger } = activeMenu
       const cursor = textarea.selectionStart
       const label = displaySkillName(skill)
       const reference = skillReference(skill)
@@ -587,7 +771,7 @@ export function ComposerTextarea({
         },
       ])
       onChange(nextValue)
-      closeSkillMenu()
+      closeAutocompleteMenu()
 
       window.requestAnimationFrame(() => {
         textarea.focus()
@@ -595,7 +779,69 @@ export function ComposerTextarea({
         setSelection({ start: nextCursor, end: nextCursor, focused: true })
       })
     },
-    [closeSkillMenu, onChange, textareaRef, trigger, value]
+    [activeMenu, closeAutocompleteMenu, onChange, textareaRef, value]
+  )
+
+  const selectSlashCommand = useCallback(
+    (command: SlashCommand) => {
+      if (command.skill) {
+        selectSkill(command.skill)
+        return
+      }
+
+      const textarea = textareaRef.current
+      if (!textarea || activeMenu?.kind !== 'slash') return
+
+      const cursor = textarea.selectionStart
+      const { trigger } = activeMenu
+      const nextValue = value.slice(0, trigger.start) + value.slice(cursor)
+      const nextCursor = trigger.start
+
+      onChange(nextValue)
+      closeAutocompleteMenu()
+
+      window.requestAnimationFrame(() => {
+        textarea.focus()
+        textarea.setSelectionRange(nextCursor, nextCursor)
+        setSelection({ start: nextCursor, end: nextCursor, focused: true })
+        command.onSelect?.()
+      })
+    },
+    [activeMenu, closeAutocompleteMenu, onChange, selectSkill, textareaRef, value]
+  )
+
+  const getModelCompatibilityDisabledMessage = useCallback(
+    (model: UnifiedModel): string | undefined => {
+      if (!model.compatibilityDisabled) return undefined
+      if (model.compatibilityDisabledReason === 'missing_current_runtime_family') {
+        return t(
+          'workbench.model_disabled_missing_current_runtime_family',
+          'Current model is missing runtime.family'
+        )
+      }
+      if (model.compatibilityDisabledReason === 'missing_target_runtime_family') {
+        return t(
+          'workbench.model_disabled_missing_target_runtime_family',
+          'This model is missing runtime.family'
+        )
+      }
+      if (model.compatibilityDisabledReason === 'unavailable') {
+        return t('workbench.model_disabled_unavailable', 'This model is unavailable')
+      }
+      return t(
+        'workbench.model_disabled_runtime_family_mismatch',
+        'Incompatible with the current model protocol'
+      )
+    },
+    [t]
+  )
+
+  const selectSlashModel = useCallback(
+    (model: UnifiedModel) => {
+      onSelectModel?.(model)
+      closeSlashModelMenu(true)
+    },
+    [closeSlashModelMenu, onSelectModel]
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
@@ -632,29 +878,40 @@ export function ComposerTextarea({
       }
     }
 
-    if (showSkillMenu) {
+    if (showSkillMenu || showSlashMenu) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        setSelectedIndex(index => Math.min(index + 1, Math.max(filteredSkills.length - 1, 0)))
+        setSelectedIndex(Math.min(highlightedIndex + 1, Math.max(activeOptionCount - 1, 0)))
         return
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault()
-        setSelectedIndex(index => Math.max(index - 1, 0))
+        setSelectedIndex(Math.max(highlightedIndex - 1, 0))
         return
       }
       if (event.key === 'Escape') {
         event.preventDefault()
-        closeSkillMenu()
+        closeAutocompleteMenu()
         return
       }
       if (
         event.key === 'Enter' &&
-        filteredSkills[selectedIndex] &&
-        canSelectSkillForModel(filteredSkills[selectedIndex], selectedModel)
+        showSkillMenu &&
+        filteredSkills[highlightedIndex] &&
+        canSelectSkillForModel(filteredSkills[highlightedIndex], selectedModel)
       ) {
         event.preventDefault()
-        selectSkill(filteredSkills[selectedIndex])
+        selectSkill(filteredSkills[highlightedIndex])
+        return
+      }
+      if (
+        event.key === 'Enter' &&
+        showSlashMenu &&
+        filteredSlashCommands[highlightedIndex] &&
+        filteredSlashCommands[highlightedIndex].enabled !== false
+      ) {
+        event.preventDefault()
+        selectSlashCommand(filteredSlashCommands[highlightedIndex])
         return
       }
     }
@@ -706,7 +963,7 @@ export function ComposerTextarea({
         onChange={event => {
           handleValueChange(event.target.value)
           window.requestAnimationFrame(() => {
-            updateSkillTrigger()
+            updateAutocompleteTrigger()
             syncSelection()
           })
         }}
@@ -717,7 +974,7 @@ export function ComposerTextarea({
           }
         }}
         onClick={() => {
-          updateSkillTrigger()
+          updateAutocompleteTrigger()
           syncSelection()
         }}
         onKeyDown={handleKeyDown}
@@ -725,7 +982,7 @@ export function ComposerTextarea({
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onSelect={() => {
-          updateSkillTrigger()
+          updateAutocompleteTrigger()
           syncSelection()
         }}
         onPaste={handlePaste}
@@ -749,11 +1006,11 @@ export function ComposerTextarea({
           data-testid="local-skill-autocomplete"
           role="listbox"
           className={[
-            'absolute bottom-[calc(100%+0.5rem)] z-popover max-h-64 overflow-y-auto rounded-xl border border-border bg-background px-0 py-1.5 text-text-primary shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
+            'absolute bottom-[calc(100%+0.5rem)] z-popover max-h-64 overflow-y-auto rounded-xl border border-border bg-background px-1.5 py-1.5 text-text-primary shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
             skillMenuClassName,
           ].join(' ')}
         >
-          <div className="px-2.5 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
+          <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
             {t('workbench.local_skills', '技能')}
           </div>
           {loading ? (
@@ -764,7 +1021,7 @@ export function ComposerTextarea({
             <button
               type="button"
               data-testid="local-skill-load-error"
-              className="flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
+              className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
               onClick={() => loadLocalSkills({ force: true })}
             >
               <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
@@ -788,7 +1045,7 @@ export function ComposerTextarea({
                   key={`${skill.source}:${skill.path}`}
                   type="button"
                   data-testid={`local-skill-option-${skill.name}`}
-                  aria-selected={index === selectedIndex}
+                  aria-selected={index === highlightedIndex}
                   role="option"
                   disabled={!canSelectSkill}
                   aria-disabled={!canSelectSkill}
@@ -802,8 +1059,8 @@ export function ComposerTextarea({
                     if (canSelectSkill) selectSkill(skill)
                   }}
                   className={[
-                    'flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
-                    index === selectedIndex ? 'bg-muted' : '',
+                    'flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
+                    index === highlightedIndex ? 'bg-muted' : '',
                   ].join(' ')}
                 >
                   <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
@@ -821,12 +1078,52 @@ export function ComposerTextarea({
                     data-testid={`local-skill-source-${skill.name}`}
                     className="shrink-0 text-xs leading-5 text-text-muted"
                   >
-                    {displaySkillSource(skill)}
+                    {displaySkillSource(skill, t)}
                   </span>
                 </button>
               )
             })
           )}
+        </div>
+      )}
+      {showSlashMenu && (
+        <div ref={menuRef}>
+          <SlashCommandMenu
+            commands={filteredSlashCommands}
+            selectedIndex={highlightedIndex}
+            className={skillMenuClassName}
+            title={t('workbench.slash_command_menu_title')}
+            noResultsLabel={t('workbench.no_slash_commands')}
+            loadingSkills={Boolean(onListLocalSkills) && loading}
+            skillLoadError={Boolean(onListLocalSkills) && loadError}
+            skillGroupLabel={t('workbench.slash_command_group_skills')}
+            skillLoadingLabel={t('workbench.loading_slash_command_skills')}
+            skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
+            skillRetryLabel={t('workbench.retry_local_skills')}
+            onSelectCommand={selectSlashCommand}
+            onHighlightCommand={setSelectedIndex}
+            onRetrySkills={() => loadLocalSkills({ force: true })}
+          />
+        </div>
+      )}
+      {modelMenuOpen && (
+        <div ref={modelMenuRef}>
+          <SlashModelMenu
+            models={models}
+            selectedModel={selectedModel ?? null}
+            selectedModelOptions={selectedModelOptions}
+            query={modelQuery}
+            selectedIndex={modelSelectedIndex}
+            className={skillMenuClassName}
+            searchPlaceholder={t('workbench.search_models')}
+            noResultsLabel={t('workbench.no_models')}
+            onQueryChange={setModelQuery}
+            onSelectedIndexChange={setModelSelectedIndex}
+            onSelectModel={selectSlashModel}
+            onBlockedModelSelect={onBlockedModelSelect}
+            onClose={() => closeSlashModelMenu(true)}
+            getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
+          />
         </div>
       )}
     </div>
