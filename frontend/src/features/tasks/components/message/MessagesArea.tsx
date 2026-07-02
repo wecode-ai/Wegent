@@ -70,6 +70,7 @@ import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
 import { TaskRuntimeGlyph } from './TaskRuntimeGlyph'
 import { MessageLoadingStage } from './MessageLoadingStage'
+import { isAttachmentLikeContext } from '@/features/tasks/utils/contextAttachments'
 
 type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
@@ -639,12 +640,12 @@ function MessagesArea({
           let knowledgeBases: SelectableKnowledgeBase[] | undefined
 
           if (msg.contexts && msg.contexts.length > 0) {
-            // Filter attachment type contexts and convert to SelectableAttachment format
-            const attachmentContexts = msg.contexts.filter(ctx => ctx.context_type === 'attachment')
+            // Filter attachment-like contexts and convert to SelectableAttachment format
+            const attachmentContexts = msg.contexts.filter(isAttachmentLikeContext)
             if (attachmentContexts.length > 0) {
               attachments = attachmentContexts.map(ctx => ({
                 id: ctx.id,
-                filename: ctx.name,
+                filename: ctx.source_url ? `${ctx.name} (${ctx.source_url})` : ctx.name,
                 file_size: ctx.file_size || 0,
                 file_extension: ctx.file_extension || '',
               }))

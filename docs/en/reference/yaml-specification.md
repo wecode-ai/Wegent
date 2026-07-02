@@ -163,6 +163,9 @@ metadata:
 spec:
   modelGroup: "Primary"
   modelSubGroup: "Fast"
+  modelCapabilities:
+    supportsImage: true
+    supportsVideo: true
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -179,6 +182,9 @@ spec:
 | `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
 | `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
+| `spec.modelCapabilities` | object | No | Multimodal understanding capabilities declared by an LLM chat model |
+| `spec.modelCapabilities.supportsImage` | boolean | No | Whether the model supports image understanding; when enabled, model selectors show the Image Understanding capability indicator |
+| `spec.modelCapabilities.supportsVideo` | boolean | No | Whether the model supports video understanding; when enabled, model selectors show the Video Understanding capability indicator |
 | `spec.modelConfig`     | object | Yes      | Model configuration object                         |
 | `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
 

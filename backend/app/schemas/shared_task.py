@@ -122,7 +122,12 @@ class PublicContextData(BaseModel):
     source_config: Optional[dict[str, Any]] = None
 
     # External web content-specific fields (optional)
+    external_media_type: Optional[str] = None
+    text_count: Optional[int] = None
     video_count: Optional[int] = None
+    image_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    fetched_comment_count: Optional[int] = None
     site: Optional[str] = None
     source_url: Optional[str] = None
     cover_url: Optional[str] = None

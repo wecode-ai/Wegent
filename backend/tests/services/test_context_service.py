@@ -60,6 +60,96 @@ class TestSubtaskContextBrief:
         assert fields["site"] == "example"
         assert fields["source_url"] == "https://example.com/post/1"
         assert fields["cover_url"] == "https://cdn.example.com/cover.jpg"
+        assert fields["external_media_type"] == "video"
+
+    def test_context_display_fields_include_external_web_comment_fields(
+        self,
+    ) -> None:
+        """Shared display fields expose external web comment metadata."""
+        from app.schemas.context_display import build_context_display_fields
+
+        fields = build_context_display_fields(
+            "attachment",
+            {
+                "source": "external_web_content",
+                "external_media_type": "comments",
+                "file_extension": ".md",
+                "file_size": 1024,
+                "mime_type": "text/markdown",
+                "external_source_url": "https://example.com/post/1",
+                "site": "xiaohongshu",
+                "comment_count": 14,
+                "fetched_comment_count": 3,
+            },
+        )
+
+        assert fields["external_media_type"] == "comments"
+        assert fields["comment_count"] == 14
+        assert fields["fetched_comment_count"] == 3
+        assert fields["site"] == "xiaohongshu"
+        assert fields["source_url"] == "https://example.com/post/1"
+
+    def test_context_display_fields_include_external_web_text_fields(
+        self,
+    ) -> None:
+        """Shared display fields expose external web page text metadata."""
+        from app.schemas.context_display import build_context_display_fields
+
+        fields = build_context_display_fields(
+            "attachment",
+            {
+                "source": "external_web_content",
+                "external_media_type": "text",
+                "file_extension": ".md",
+                "file_size": 1024,
+                "mime_type": "text/markdown",
+                "external_source_url": "https://example.com/post/1",
+                "site": "example",
+            },
+        )
+
+        assert fields["external_media_type"] == "text"
+        assert fields["text_count"] == 1
+        assert fields["site"] == "example"
+        assert fields["source_url"] == "https://example.com/post/1"
+
+    def test_context_display_fields_include_external_web_aggregate_fields(
+        self,
+    ) -> None:
+        """External web aggregate contexts expose combined display metadata."""
+        from app.schemas.context_display import build_context_display_fields
+
+        fields = build_context_display_fields(
+            "external_web_content",
+            {
+                "source": "external_web_content",
+                "external_media_type": "mixed",
+                "external_source_url": "https://example.com/post/1",
+                "site": "xiaohongshu",
+                "cover_url": "https://public.example.com/cover.jpg",
+                "title": "Post title",
+                "body": "Post body",
+                "video_count": 1,
+                "image_count": 2,
+                "comment_count": 14,
+                "fetched_comment_count": 3,
+                "asset_context_ids": {
+                    "videos": [10],
+                    "comments": [13],
+                },
+                "raw_result": [{"id": "item-1"}],
+            },
+        )
+
+        assert fields["external_media_type"] == "mixed"
+        assert "text_count" not in fields
+        assert fields["video_count"] == 1
+        assert fields["image_count"] == 2
+        assert fields["comment_count"] == 14
+        assert fields["fetched_comment_count"] == 3
+        assert fields["site"] == "xiaohongshu"
+        assert fields["source_url"] == "https://example.com/post/1"
+        assert fields["cover_url"] == "https://public.example.com/cover.jpg"
 
     def test_context_display_fields_tolerate_empty_selected_documents(self) -> None:
         """Selected document display does not fail on nullable legacy data."""
@@ -199,6 +289,7 @@ class TestSubtaskContextBrief:
         assert brief.site == "example"
         assert brief.source_url == "https://example.com/post/1"
         assert brief.cover_url == "https://cdn.example.com/cover.jpg"
+        assert brief.external_media_type == "video"
 
 
 class TestContextServiceAttachmentCopy:

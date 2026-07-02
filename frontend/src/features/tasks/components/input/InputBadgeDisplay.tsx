@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { X, Loader2, Video } from 'lucide-react'
+import { FileText, Image as ImageIcon, MessageSquareText, X, Loader2, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import ContextBadge from '../chat/ContextBadge'
@@ -117,26 +117,84 @@ function AttachmentPreviewInline({
     isLoading: imageLoading,
     error: imageError,
   } = useAuthenticatedImageInline(attachment.id, isImage)
-  const isExternalWebVideo = Boolean(attachment.source_url && attachment.video_count != null)
+  const isExternalWebContent = Boolean(
+    attachment.source_url &&
+    (attachment.external_media_type ||
+      attachment.text_count != null ||
+      attachment.video_count != null)
+  )
 
-  if (isExternalWebVideo) {
+  if (isExternalWebContent) {
     const sourceLabel = attachment.site || parseHostname(attachment.source_url)
-    return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-muted border-border">
+    const mediaType = attachment.external_media_type || 'video'
+    const hasText = (attachment.text_count ?? 0) > 0
+    const hasVideo = (attachment.video_count ?? 0) > 0
+    const hasImage = (attachment.image_count ?? 0) > 0
+    const hasComments = (attachment.fetched_comment_count ?? attachment.comment_count ?? 0) > 0
+    const hasOnlyPageText =
+      !hasVideo && !hasImage && !hasComments && (hasText || mediaType === 'mixed')
+    const externalIcon =
+      mediaType === 'text' || hasOnlyPageText ? (
+        <FileText className="h-4 w-4 flex-shrink-0" />
+      ) : mediaType === 'image' || (!hasVideo && hasImage) ? (
+        <ImageIcon className="h-4 w-4 flex-shrink-0" />
+      ) : mediaType === 'comments' || (!hasVideo && !hasImage && hasComments) ? (
+        <MessageSquareText className="h-4 w-4 flex-shrink-0" />
+      ) : (
         <Video className="h-4 w-4 flex-shrink-0" />
+      )
+    const mediaLabels = [
+      hasText
+        ? t('chat:externalWebContent.textCount', { count: attachment.text_count ?? 1 })
+        : null,
+      hasVideo
+        ? t('chat:externalWebContent.videoCount', { count: attachment.video_count ?? 1 })
+        : null,
+      hasImage
+        ? t('chat:externalWebContent.imageCount', { count: attachment.image_count ?? 1 })
+        : null,
+      hasComments
+        ? t('chat:externalWebContent.commentCount', {
+            count: attachment.fetched_comment_count ?? attachment.comment_count ?? 0,
+          })
+        : null,
+    ].filter(Boolean)
+    const mediaLabel =
+      mediaLabels.length > 0
+        ? mediaLabels.join(' · ')
+        : t('chat:externalWebContent.textCount', { count: 1 })
+    const handleOpenSource = () => {
+      if (attachment.source_url) {
+        window.open(attachment.source_url, '_blank', 'noopener,noreferrer')
+      }
+    }
+    const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        handleOpenSource()
+      }
+    }
+    const handleRemoveClick = (event: React.MouseEvent) => {
+      event.stopPropagation()
+      onRemove()
+    }
+
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={handleOpenSource}
+        onKeyDown={handleKeyDown}
+        title={attachment.source_url ?? undefined}
+        className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5 transition-colors hover:border-primary/50 hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        {externalIcon}
         <div className="flex flex-col min-w-0 max-w-[170px]">
           <span className="text-xs font-medium truncate" title={attachment.filename}>
             {attachment.filename}
           </span>
           <span className="text-xs text-text-muted truncate">
-            {[
-              sourceLabel,
-              t('chat:externalWebContent.videoCount', {
-                count: attachment.video_count ?? 0,
-              }),
-            ]
-              .filter(Boolean)
-              .join(' · ')}
+            {[sourceLabel, mediaLabel].filter(Boolean).join(' · ')}
           </span>
         </div>
         {!disabled && (
@@ -144,7 +202,7 @@ function AttachmentPreviewInline({
             type="button"
             variant="ghost"
             size="icon"
-            onClick={onRemove}
+            onClick={handleRemoveClick}
             className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
           >
             <X className="h-3 w-3" />

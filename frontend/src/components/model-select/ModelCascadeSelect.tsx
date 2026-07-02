@@ -17,6 +17,7 @@ import {
   matchesModelSearch,
   type GroupableModel,
 } from './model-grouping'
+import { ModelCapabilityIcons } from './ModelCapabilityIcons'
 
 export interface ModelCascadeLabels {
   ungrouped: string
@@ -236,6 +237,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
             >
               {getModelDisplayName(model)}
             </span>
+            <ModelCapabilityIcons model={model} />
             {renderModelBadges?.(model)}
           </span>
           {showPath && <span className="block truncate text-xs text-text-muted">{groupPath}</span>}
@@ -636,8 +638,11 @@ export function GroupedModelSelect<T extends GroupableModel>({
           data-testid={dataTestId}
           className={cn('h-10 w-full justify-between bg-base px-3 font-normal', triggerClassName)}
         >
-          <span className="min-w-0 truncate">
-            {selectedModel ? getModelDisplayName(selectedModel) : placeholder}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate">
+              {selectedModel ? getModelDisplayName(selectedModel) : placeholder}
+            </span>
+            {selectedModel && <ModelCapabilityIcons model={selectedModel} />}
           </span>
           <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
         </Button>

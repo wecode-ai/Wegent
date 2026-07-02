@@ -161,7 +161,12 @@ function SharedTaskContent() {
         document_id: ctx.document_id,
         source_config: ctx.source_config,
         // External web content fields
+        external_media_type: ctx.external_media_type,
+        text_count: ctx.text_count,
         video_count: ctx.video_count,
+        image_count: ctx.image_count,
+        comment_count: ctx.comment_count,
+        fetched_comment_count: ctx.fetched_comment_count,
         site: ctx.site,
         source_url: ctx.source_url,
         cover_url: ctx.cover_url,

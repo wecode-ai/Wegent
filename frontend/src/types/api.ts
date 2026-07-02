@@ -652,7 +652,12 @@ export interface Attachment {
   file_extension: string
   created_at: string
   truncation_info?: TruncationInfo | null
+  external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+  text_count?: number | null
   video_count?: number | null
+  image_count?: number | null
+  comment_count?: number | null
+  fetched_comment_count?: number | null
   site?: string | null
   source_url?: string | null
   cover_url?: string | null
@@ -673,7 +678,12 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+export type ContextType =
+  | 'attachment'
+  | 'external_web_content'
+  | 'knowledge_base'
+  | 'table'
+  | 'external_knowledge'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -705,7 +715,12 @@ export interface SubtaskContextBrief {
   external_document_id?: string | null
   external_parent_id?: string | null
   // External web content fields
+  external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+  text_count?: number | null
   video_count?: number | null
+  image_count?: number | null
+  comment_count?: number | null
+  fetched_comment_count?: number | null
   site?: string | null
   source_url?: string | null
   cover_url?: string | null

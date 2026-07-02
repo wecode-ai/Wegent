@@ -103,7 +103,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
             before_message_id: Only return messages before this ID (for pagination)
             is_group_chat: Whether this is a group chat
             supports_video: Whether the model supports video input.
-                If True, video attachments will include video_url blocks.
+                If True, video attachments will include canonical video blocks.
                 If False (default), video attachments cannot be resolved as model input.
         """
         total_start = time.perf_counter()

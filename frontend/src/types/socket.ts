@@ -475,7 +475,7 @@ export interface ChatMessageAttachment {
 
 export interface ChatMessageContext {
   id: number
-  context_type: 'attachment' | 'knowledge_base' | 'table'
+  context_type: 'attachment' | 'external_web_content' | 'knowledge_base' | 'table'
   name: string
   status: string
   file_extension?: string
@@ -486,7 +486,12 @@ export interface ChatMessageContext {
   source_config?: {
     url?: string
   }
+  external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+  text_count?: number
   video_count?: number
+  image_count?: number
+  comment_count?: number
+  fetched_comment_count?: number
   site?: string | null
   source_url?: string | null
   cover_url?: string | null

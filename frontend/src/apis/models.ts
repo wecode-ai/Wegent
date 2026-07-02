@@ -33,6 +33,7 @@ export interface RerankConfig {
 }
 
 export interface ModelCapabilities {
+  supportsImage?: boolean
   supportsVideo?: boolean
 }
 

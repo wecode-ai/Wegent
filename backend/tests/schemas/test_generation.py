@@ -359,19 +359,20 @@ class TestModelSpecWithImageConfig:
 class TestModelSpecWithCapabilities:
     """Tests for ModelSpec with modelCapabilities field."""
 
-    def test_model_spec_with_video_input_capability(self):
-        """Test ModelSpec includes modelCapabilities for chat video input."""
+    def test_model_spec_with_multimodal_capabilities(self):
+        """Test ModelSpec includes modelCapabilities for chat multimodal input."""
         from app.schemas.kind import ModelSpec
 
         spec = ModelSpec(
             modelConfig={"model": "openai"},
             modelType="llm",
             protocol="openai",
-            modelCapabilities={"supportsVideo": True},
+            modelCapabilities={"supportsImage": True, "supportsVideo": True},
         )
 
         assert spec.modelType == "llm"
         assert spec.modelCapabilities is not None
+        assert spec.modelCapabilities.supportsImage is True
         assert spec.modelCapabilities.supportsVideo is True
 
     def test_model_spec_without_model_capabilities(self):

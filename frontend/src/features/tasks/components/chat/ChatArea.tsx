@@ -50,7 +50,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
-import { getAttachment, isVideoExtension } from '@/apis/attachments'
+import { getAttachment } from '@/apis/attachments'
 import { userApis } from '@/apis/user'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
@@ -73,6 +73,11 @@ import {
 import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
+import {
+  contextToExistingAttachment,
+  hasVideoInputAttachment,
+  isAttachmentLikeContext,
+} from '@/features/tasks/utils/contextAttachments'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
@@ -116,20 +121,10 @@ type SendMessageOptions = {
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
+  'external_web_content',
   'knowledge_base',
   'table',
 ])
-
-function isVideoAttachment(attachment: {
-  mime_type?: string | null
-  file_extension?: string | null
-}): boolean {
-  if (attachment.mime_type?.toLowerCase().startsWith('video/')) {
-    return true
-  }
-  const extension = attachment.file_extension?.toLowerCase()
-  return Boolean(extension && isVideoExtension(extension))
-}
 
 function getVideoInputSupport(model: Model | null | undefined): boolean | null {
   if (!model || model.name === DEFAULT_MODEL_NAME) {
@@ -357,7 +352,7 @@ function ChatAreaContent({
     if (taskType === 'video') {
       return false
     }
-    return chatState.attachmentState.attachments.some(isVideoAttachment)
+    return chatState.attachmentState.attachments.some(hasVideoInputAttachment)
   }, [taskType, chatState.attachmentState.attachments])
 
   const selectedModelVideoInputSupport = useMemo(
@@ -1394,7 +1389,12 @@ function ChatAreaContent({
           subtask_id: detail.subtask_id ?? null,
           file_extension: detail.file_extension,
           created_at: detail.created_at,
+          external_media_type: detail.external_media_type ?? undefined,
+          text_count: detail.text_count ?? undefined,
           video_count: detail.video_count ?? undefined,
+          image_count: detail.image_count ?? undefined,
+          comment_count: detail.comment_count ?? undefined,
+          fetched_comment_count: detail.fetched_comment_count ?? undefined,
           site: detail.site ?? undefined,
           source_url: detail.source_url ?? undefined,
           cover_url: detail.cover_url ?? undefined,
@@ -1469,9 +1469,14 @@ function ChatAreaContent({
       // Restore all contexts (attachments and knowledge bases) from the user message
       const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
 
-      // Restore attachment contexts
-      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
+      // Restore attachment-like contexts
+      const attachmentContexts = rawContexts.filter(isAttachmentLikeContext)
       for (const ctx of attachmentContexts) {
+        if (ctx.context_type === 'external_web_content') {
+          addExistingAttachment(contextToExistingAttachment(ctx))
+          continue
+        }
+
         try {
           const detail = await getAttachment(ctx.id)
           addExistingAttachment({
@@ -1486,7 +1491,12 @@ function ChatAreaContent({
             subtask_id: detail.subtask_id ?? null,
             file_extension: detail.file_extension,
             created_at: detail.created_at,
+            external_media_type: detail.external_media_type ?? undefined,
+            text_count: detail.text_count ?? undefined,
             video_count: detail.video_count ?? undefined,
+            image_count: detail.image_count ?? undefined,
+            comment_count: detail.comment_count ?? undefined,
+            fetched_comment_count: detail.fetched_comment_count ?? undefined,
             site: detail.site ?? undefined,
             source_url: detail.source_url ?? undefined,
             cover_url: detail.cover_url ?? undefined,

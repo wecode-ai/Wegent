@@ -112,9 +112,13 @@ class RerankConfig(BaseModel):
 class ModelCapabilities(BaseModel):
     """Declared multimodal capabilities for LLM-style models."""
 
+    supportsImage: Optional[bool] = Field(
+        None,
+        description="Whether the model supports image understanding in chat attachments.",
+    )
     supportsVideo: Optional[bool] = Field(
         None,
-        description="Whether the model supports video input in chat attachments.",
+        description="Whether the model supports video understanding in chat attachments.",
     )
 
 
@@ -273,7 +277,7 @@ class ModelSpec(BaseModel):
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared chat capabilities for LLM-style models "
-        "(e.g. video attachment understanding).",
+        "(e.g. image or video attachment understanding).",
     )
     videoConfig: Optional[VideoGenerationConfig] = Field(
         None, description="Video generation configuration (when modelType='video')"

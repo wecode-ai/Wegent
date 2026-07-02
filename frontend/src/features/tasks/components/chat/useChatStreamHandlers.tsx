@@ -42,6 +42,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+import { getAttachmentLikeContextIds } from '@/features/tasks/utils/contextAttachments'
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
@@ -544,7 +545,12 @@ export function useChatStreamHandlers({
 
       const pendingContexts: Array<{
         id: number
-        context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+        context_type:
+          | 'attachment'
+          | 'external_web_content'
+          | 'knowledge_base'
+          | 'table'
+          | 'external_knowledge'
         name: string
         status: 'pending' | 'ready'
         file_extension?: string
@@ -566,7 +572,12 @@ export function useChatStreamHandlers({
         external_node_id?: string
         external_document_id?: string
         external_parent_id?: string
+        external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+        text_count?: number
         video_count?: number
+        image_count?: number
+        comment_count?: number
+        fetched_comment_count?: number
         site?: string | null
         source_url?: string
         cover_url?: string | null
@@ -581,7 +592,12 @@ export function useChatStreamHandlers({
           file_extension: attachment.file_extension,
           file_size: attachment.file_size,
           mime_type: attachment.mime_type,
+          external_media_type: attachment.external_media_type ?? undefined,
+          text_count: attachment.text_count ?? undefined,
           video_count: attachment.video_count ?? undefined,
+          image_count: attachment.image_count ?? undefined,
+          comment_count: attachment.comment_count ?? undefined,
+          fetched_comment_count: attachment.fetched_comment_count ?? undefined,
           site: attachment.site ?? undefined,
           source_url: attachment.source_url ?? undefined,
           cover_url: attachment.cover_url ?? undefined,
@@ -1294,9 +1310,7 @@ export function useChatStreamHandlers({
         const immediateTaskId = currentTaskId || -Date.now()
 
         // Extract attachment IDs from existing contexts (for regeneration)
-        const attachmentIds =
-          existingContexts?.filter(ctx => ctx.context_type === 'attachment').map(ctx => ctx.id) ||
-          []
+        const attachmentIds = getAttachmentLikeContextIds(existingContexts)
 
         // Build context items for backend from existing contexts (knowledge bases, tables)
         const contextItems: Array<{
@@ -1348,7 +1362,12 @@ export function useChatStreamHandlers({
         // Build pending contexts for immediate display from existing contexts
         const pendingContexts: Array<{
           id: number
-          context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+          context_type:
+            | 'attachment'
+            | 'external_web_content'
+            | 'knowledge_base'
+            | 'table'
+            | 'external_knowledge'
           name: string
           status: 'pending' | 'ready'
           file_extension?: string
@@ -1370,7 +1389,12 @@ export function useChatStreamHandlers({
           external_node_id?: string | null
           external_document_id?: string | null
           external_parent_id?: string | null
+          external_media_type?: 'video' | 'image' | 'comments' | 'text' | 'mixed' | null
+          text_count?: number | null
           video_count?: number | null
+          image_count?: number | null
+          comment_count?: number | null
+          fetched_comment_count?: number | null
           site?: string | null
           source_url?: string | null
           cover_url?: string | null
@@ -1397,7 +1421,12 @@ export function useChatStreamHandlers({
             external_node_id: ctx.external_node_id ?? undefined,
             external_document_id: ctx.external_document_id ?? undefined,
             external_parent_id: ctx.external_parent_id ?? undefined,
+            external_media_type: ctx.external_media_type ?? undefined,
+            text_count: ctx.text_count ?? undefined,
             video_count: ctx.video_count ?? undefined,
+            image_count: ctx.image_count ?? undefined,
+            comment_count: ctx.comment_count ?? undefined,
+            fetched_comment_count: ctx.fetched_comment_count ?? undefined,
             site: ctx.site ?? undefined,
             source_url: ctx.source_url ?? undefined,
             cover_url: ctx.cover_url ?? undefined,

@@ -331,6 +331,9 @@ class LangChainModelFactory:
         model._wegent_provider = provider  # type: ignore[attr-defined]
         model._wegent_model_id = cfg["model_id"]  # type: ignore[attr-defined]
         model._wegent_api_format = cfg.get("api_format") or ""  # type: ignore[attr-defined]
+        model._wegent_supports_video = (  # type: ignore[attr-defined]
+            (model_config.get("modelCapabilities") or {}).get("supportsVideo") is True
+        )
         model._wegent_supports_developer_role = _supports_developer_role(  # type: ignore[attr-defined]
             provider=provider,
             model_config=model_config,

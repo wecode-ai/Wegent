@@ -50,6 +50,7 @@ class ModelCategoryType(str, Enum):
 class ModelCapabilities(BaseModel):
     """Declared multimodal capabilities for chat models."""
 
+    supportsImage: Optional[bool] = None
     supportsVideo: Optional[bool] = None
 
 

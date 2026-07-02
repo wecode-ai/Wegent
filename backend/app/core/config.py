@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     WEB_CONTENT_CRAWL_TIMEOUT_SECONDS: int = 180
     WEB_CONTENT_CRAWL_POLL_INTERVAL_SECONDS: float = 2.0
     WEB_CONTENT_MAX_VIDEOS_PER_CONTEXT: int = 10
+    WEB_CONTENT_MAX_IMAGES_PER_CONTEXT: int = 20
+    WEB_CONTENT_ALLOWED_MEDIA_HOSTS: list[str] = []
 
     # Public Model CRD id used by the media-understanding MCP tool.
     MEDIA_UNDERSTANDING_MODEL_KIND_ID: int = 237555

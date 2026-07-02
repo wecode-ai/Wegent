@@ -111,7 +111,7 @@ class HistoryStoreInterface(ABC):
             limit: Maximum number of messages to return
             before_message_id: Only return messages before this ID (for pagination)
             supports_video: Whether the model supports video input.
-                If True, video attachments will include video_url blocks.
+                If True, video attachments will include canonical video blocks.
                 If False (default), video attachments cannot be resolved as model input.
 
         Returns:
