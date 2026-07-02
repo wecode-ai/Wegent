@@ -184,7 +184,22 @@ async fn clone_repo(
         configure_repo_proxy(&git_domain).await;
     }
 
-    let clone_url = authenticated_clone_url(git_url, git_credentials(request).as_ref());
+    let credentials = git_credentials(request);
+    if credentials.is_none() && requires_credentials_for_clone(git_url) {
+        let mut failed_fields = task_fields(request.task_id, request.subtask_id);
+        failed_fields.push(("path", project_path.display().to_string()));
+        failed_fields.push(("git_url", mask_url_credentials(git_url)));
+        if let Some(git_domain) = request_git_domain(request) {
+            failed_fields.push(("git_domain", git_domain));
+        }
+        log_executor_event("git clone credentials missing", &failed_fields);
+        return Err(format!(
+            "git credentials missing for protected repository: {}",
+            mask_url_credentials(git_url)
+        ));
+    }
+
+    let clone_url = authenticated_clone_url(git_url, credentials.as_ref());
     let mut command = Command::new("git");
     command.arg("clone");
     let branch = branch_name(request);
@@ -248,6 +263,20 @@ fn authenticated_clone_url(git_url: &str, credentials: Option<&GitCredentials>) 
         (credentials.username.clone(), credentials.token.clone())
     };
     format!("{protocol}://{username}:{token}@{rest}")
+}
+
+fn requires_credentials_for_clone(git_url: &str) -> bool {
+    let lower = git_url.to_ascii_lowercase();
+    if !lower.starts_with("https://") && !lower.starts_with("http://") {
+        return false;
+    }
+    [
+        "git.intra.weibo.com",
+        "git.staff.sina.com.cn",
+        "gitlab.weibo.cn",
+    ]
+    .iter()
+    .any(|domain| lower.contains(domain))
 }
 
 fn branch_name(request: &ExecutionRequest) -> Option<String> {
@@ -419,6 +448,19 @@ mod tests {
             ),
             "git@gitlab.example.com:group/project.git"
         );
+    }
+
+    #[test]
+    fn protected_internal_https_repositories_require_credentials() {
+        assert!(requires_credentials_for_clone(
+            "https://git.intra.weibo.com/im/message-flow.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "https://github.com/wecode-ai/wegent.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "git@git.intra.weibo.com:im/message-flow.git"
+        ));
     }
 
     #[test]

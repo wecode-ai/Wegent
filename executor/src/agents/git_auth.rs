@@ -169,9 +169,21 @@ fn raw_git_token_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<(String, &'static str)> {
-    user_git_token(request)
-        .map(|token| (token, "request_user"))
-        .or_else(|| token_file(git_domain).map(|token| (token, "home_ssh_domain_file")))
+    if let Some(token) = user_git_token(request) {
+        if is_masked_or_empty_token(&token) {
+            log_token_source_probe(
+                request,
+                git_domain,
+                "request_user",
+                Some(token.trim().len()),
+                Some("masked_or_empty"),
+            );
+        } else {
+            log_token_source_probe(request, git_domain, "request_user", Some(token.len()), None);
+            return Some((token, "request_user"));
+        }
+    }
+    token_file(git_domain, request).map(|token| (token, "home_ssh_domain_file"))
 }
 
 fn user_git_token(request: &ExecutionRequest) -> Option<String> {
@@ -221,14 +233,64 @@ pub fn user_git_email(request: &ExecutionRequest) -> Option<String> {
     Some(format!("{git_id}+{git_login}@users.noreply.github.com"))
 }
 
-fn token_file(git_domain: &str) -> Option<String> {
-    let path = home_dir()?.join(".ssh").join(git_domain);
-    fs::read_to_string(path).ok()
+fn token_file(git_domain: &str, request: &ExecutionRequest) -> Option<String> {
+    let Some(home) = home_dir() else {
+        log_token_source_probe(
+            request,
+            git_domain,
+            "home_ssh_domain_file",
+            None,
+            Some("missing_home"),
+        );
+        return None;
+    };
+    let path = home.join(".ssh").join(git_domain);
+    match fs::read_to_string(&path) {
+        Ok(token) => {
+            log_token_source_probe(
+                request,
+                git_domain,
+                "home_ssh_domain_file",
+                Some(token.trim().len()),
+                None,
+            );
+            Some(token)
+        }
+        Err(error) => {
+            let mut fields = task_fields(request.task_id, request.subtask_id);
+            fields.push(("git_domain", git_domain.to_owned()));
+            fields.push(("token_source", "home_ssh_domain_file".to_owned()));
+            fields.push(("token_file", path.display().to_string()));
+            fields.push(("error_kind", format!("{:?}", error.kind())));
+            fields.push(("error", error.to_string()));
+            log_executor_event("git token source probe failed", &fields);
+            None
+        }
+    }
+}
+
+fn log_token_source_probe(
+    request: &ExecutionRequest,
+    git_domain: &str,
+    token_source: &'static str,
+    token_len: Option<usize>,
+    reason: Option<&'static str>,
+) {
+    let mut fields = task_fields(request.task_id, request.subtask_id);
+    fields.push(("git_domain", git_domain.to_owned()));
+    fields.push(("token_source", token_source.to_owned()));
+    if let Some(token_len) = token_len {
+        fields.push(("raw_token_len", token_len.to_string()));
+    }
+    if let Some(reason) = reason {
+        fields.push(("reason", reason.to_owned()));
+    }
+    log_executor_event("git token source probe", &fields);
 }
 
 fn normalize_git_token(token: &str) -> Option<String> {
     let token = token.trim();
-    if token.is_empty() || token == "***" {
+    if is_masked_or_empty_token(token) {
         return None;
     }
     if is_token_encrypted(token) {
@@ -238,6 +300,11 @@ fn normalize_git_token(token: &str) -> Option<String> {
         });
     }
     Some(token.to_owned())
+}
+
+fn is_masked_or_empty_token(token: &str) -> bool {
+    let token = token.trim();
+    token.is_empty() || token == "***"
 }
 
 fn token_fingerprint(token: &str) -> String {
@@ -626,6 +693,55 @@ mod tests {
         assert!(diagnostics.encrypted);
         assert_eq!(diagnostics.decrypt_success, Some(true));
         assert_eq!(diagnostics.token_len, "ghp_test_token".len());
+    }
+
+    #[test]
+    fn git_credentials_reads_domain_token_file_from_home_ssh() {
+        let temp_home =
+            env::temp_dir().join(format!("wegent-git-auth-test-{}", std::process::id()));
+        let ssh_dir = temp_home.join(".ssh");
+        fs::create_dir_all(&ssh_dir).unwrap();
+        fs::write(ssh_dir.join("git.intra.weibo.com"), "file-token\n").unwrap();
+        let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
+
+        let request = ExecutionRequest::default();
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics("git.intra.weibo.com", &request).unwrap();
+
+        assert_eq!(credentials.token, "file-token");
+        assert_eq!(diagnostics.source, "home_ssh_domain_file");
+        assert_eq!(diagnostics.raw_len, "file-token".len());
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn git_credentials_falls_back_to_token_file_when_request_token_is_masked() {
+        let temp_home = env::temp_dir().join(format!(
+            "wegent-git-auth-masked-test-{}",
+            std::process::id()
+        ));
+        let ssh_dir = temp_home.join(".ssh");
+        fs::create_dir_all(&ssh_dir).unwrap();
+        fs::write(ssh_dir.join("git.intra.weibo.com"), "file-token\n").unwrap();
+        let _home = EnvGuard::set("HOME", temp_home.to_str().unwrap());
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "user".to_owned(),
+                json!({
+                    "git_token": "***",
+                    "git_login": "oauth2"
+                }),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        let (credentials, diagnostics) =
+            git_credentials_with_diagnostics("git.intra.weibo.com", &request).unwrap();
+
+        assert_eq!(credentials.token, "file-token");
+        assert_eq!(credentials.username, "oauth2");
+        assert_eq!(diagnostics.source, "home_ssh_domain_file");
+        let _ = fs::remove_dir_all(temp_home);
     }
 
     struct EnvGuard {
