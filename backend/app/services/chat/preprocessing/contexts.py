@@ -366,6 +366,8 @@ def _process_attachment_context(
 
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
+        model_capabilities = (model_config or {}).get("modelCapabilities") or {}
+        supports_image = model_capabilities.get("supportsImage")
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
@@ -396,6 +398,15 @@ def _process_attachment_context(
                 sandbox_path=sandbox_path,
                 is_image=True,
             )
+
+        if supports_image is False:
+            text_contents.append(f"[Attachment {idx}]\n{image_header}")
+            logger.info(
+                "Added metadata-only image context: id=%s supports_image=%s",
+                context.id,
+                supports_image,
+            )
+            return
 
         image_content = {
             "mime_type": context.mime_type,

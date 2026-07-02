@@ -242,6 +242,7 @@ def test_understand_media_tool_schema_hides_token_info():
     tools = get_registered_mcp_tools(server="media")
     params = tools["understand_media"]["parameters"]
 
+    media_type_param = next(param for param in params if param["name"] == "media_type")
     assert "token_info" not in {param["name"] for param in params}
     assert {param["name"] for param in params} == {
         "context_id",
@@ -252,6 +253,8 @@ def test_understand_media_tool_schema_hides_token_info():
         "instruction",
         "context",
     }
+    assert "image" in media_type_param["description"]
+    assert "video" in media_type_param["description"]
 
 
 def test_knowledge_mcp_sse_without_trailing_slash_does_not_redirect():

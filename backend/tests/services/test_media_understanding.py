@@ -26,12 +26,24 @@ class FakeMediaUnderstandingClient:
         self.calls = []
 
     async def understand_media(
-        self, *, model_config, media_url, question, instruction, context
+        self,
+        *,
+        model_config,
+        media_type,
+        media_url,
+        image_base64,
+        mime_type,
+        question,
+        instruction,
+        context,
     ):
         self.calls.append(
             {
                 "model_config": model_config,
+                "media_type": media_type,
                 "media_url": media_url,
+                "image_base64": image_base64,
+                "mime_type": mime_type,
                 "question": question,
                 "instruction": instruction,
                 "context": context,
@@ -68,6 +80,39 @@ def _create_video_context(test_db, test_user, *, subtask_id=0, fid="fid-1"):
             "storage_backend": "weibo",
             "storage_key": "",
             "fid": fid,
+        },
+    )
+    test_db.add(context)
+    test_db.commit()
+    test_db.refresh(context)
+    return context
+
+
+def _create_image_context(
+    test_db,
+    test_user,
+    *,
+    subtask_id=0,
+    image_base64="aW1hZ2UtYnl0ZXM=",
+    mime_type="image/png",
+):
+    context = SubtaskContext(
+        subtask_id=subtask_id,
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="demo.png",
+        status=ContextStatus.READY.value,
+        binary_data=b"",
+        image_base64=image_base64,
+        extracted_text="",
+        text_length=0,
+        type_data={
+            "original_filename": "demo.png",
+            "file_extension": ".png",
+            "file_size": 1024,
+            "mime_type": mime_type,
+            "storage_backend": "mysql",
+            "storage_key": "",
         },
     )
     test_db.add(context)
@@ -192,7 +237,10 @@ def test_understand_media_resolves_video_context(monkeypatch, test_db, test_user
                 "model_name": "media-understanding-video",
                 "model_namespace": "default",
             },
+            "media_type": "video",
             "media_url": "https://cdn.example.com/video.mp4",
+            "image_base64": "",
+            "mime_type": "",
             "question": "画面里有什么？",
             "instruction": "重点看商品",
             "context": {"title": "商品介绍", "description": "背景描述"},
@@ -225,6 +273,66 @@ def test_attachment_id_alias_resolves_video(monkeypatch, test_db, test_user):
         "X-User-Id": str(test_user.id),
         "X-Task-User": test_user.user_name,
     }
+
+
+def test_understand_media_resolves_image_context(monkeypatch, test_db, test_user):
+    _create_public_media_understanding_model(test_db, monkeypatch)
+    context = _create_image_context(test_db, test_user)
+    client = FakeMediaUnderstandingClient()
+    service = MediaUnderstandingService(client=client)
+
+    result = service.understand_media(
+        test_db,
+        token_info=_token_info(test_user),
+        attachment_id=context.id,
+        media_type="image",
+        question="图片里有什么？",
+    )
+
+    assert result["status"] == "success"
+    assert result["source"] == "attachment"
+    assert client.calls[0]["media_type"] == "image"
+    assert client.calls[0]["media_url"] == ""
+    assert client.calls[0]["image_base64"] == "aW1hZ2UtYnl0ZXM="
+    assert client.calls[0]["mime_type"] == "image/png"
+
+
+def test_image_context_without_payload_returns_image_payload_unavailable(
+    test_db, test_user
+):
+    context = _create_image_context(test_db, test_user, image_base64="")
+    client = FakeMediaUnderstandingClient()
+    service = MediaUnderstandingService(client=client)
+
+    result = service.understand_media(
+        test_db,
+        token_info=_token_info(test_user),
+        attachment_id=context.id,
+        media_type="image",
+    )
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "image_payload_unavailable"
+    assert client.calls == []
+
+
+def test_image_media_url_is_supported(monkeypatch, test_db, test_user):
+    _create_public_media_understanding_model(test_db, monkeypatch)
+    client = FakeMediaUnderstandingClient()
+    service = MediaUnderstandingService(client=client)
+
+    result = service.understand_media(
+        test_db,
+        token_info=_token_info(test_user),
+        media_url="https://cdn.example.com/image.png",
+        media_type="image",
+    )
+
+    assert result["status"] == "success"
+    assert result["source"] == "media_url"
+    assert client.calls[0]["media_type"] == "image"
+    assert client.calls[0]["media_url"] == "https://cdn.example.com/image.png"
+    assert client.calls[0]["image_base64"] == ""
 
 
 def test_attachment_bound_to_current_task_subtask_is_accessible(
@@ -288,7 +396,10 @@ def test_media_client_prompt_uses_upstream_question_and_instruction():
 
     payload = client._build_payload(
         model_config={"model_id": "fixed-media-model", "max_tokens": 123},
+        media_type="video",
         media_url="https://cdn.example.com/video.mp4",
+        image_base64="",
+        mime_type="",
         question="请结合声音和画面判断这个视频在讲什么",
         instruction="以上游问题为主，不要输出 JSON",
         context={"title": "发布标题", "description": "发布描述"},
@@ -315,12 +426,39 @@ def test_media_client_prompt_uses_upstream_question_and_instruction():
     assert "Return concise JSON" not in text_block
 
 
+def test_media_client_builds_image_base64_payload():
+    client = MediaUnderstandingClient()
+
+    payload = client._build_payload(
+        model_config={"model_id": "fixed-media-model", "max_tokens": 123},
+        media_type="image",
+        media_url="",
+        image_base64="aW1hZ2U=",
+        mime_type="image/png",
+        question="图片里有什么？",
+        instruction="",
+        context={},
+    )
+
+    assert payload["messages"][0]["content"][0] == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "aW1hZ2U=",
+        },
+    }
+
+
 def test_media_client_uses_max_output_tokens_from_resolved_model_config():
     client = MediaUnderstandingClient()
 
     payload = client._build_payload(
         model_config={"model_id": "fixed-media-model", "max_output_tokens": 2048},
+        media_type="video",
         media_url="https://cdn.example.com/video.mp4",
+        image_base64="",
+        mime_type="",
         question="请分析视频",
         instruction="",
         context={},

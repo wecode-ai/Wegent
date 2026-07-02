@@ -349,6 +349,109 @@ class TestProcessAttachmentContext:
         assert "External Web First-Screen Comments" in text_contents[0]
         assert "Great post" in text_contents[0]
 
+    def test_image_context_metadata_only_when_model_does_not_support_image(self):
+        context = SimpleNamespace(
+            id=41,
+            user_id=7,
+            context_type="attachment",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_size=1024,
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            type_data={},
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+        video_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=context,
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=video_contents,
+            task_id=10,
+            subtask_id=20,
+            model_config={"modelCapabilities": {"supportsImage": False}},
+        )
+
+        assert image_contents == []
+        assert video_contents == []
+        assert len(text_contents) == 1
+        assert "[Image Attachment: photo.png" in text_contents[0]
+        assert "ID: 41" in text_contents[0]
+
+    def test_image_context_adds_image_block_when_model_supports_image(self):
+        context = SimpleNamespace(
+            id=41,
+            user_id=7,
+            context_type="attachment",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_size=1024,
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            type_data={},
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+        video_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=context,
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=video_contents,
+            task_id=10,
+            subtask_id=20,
+            model_config={"modelCapabilities": {"supportsImage": True}},
+        )
+
+        assert len(text_contents) == 1
+        assert "[Image Attachment: photo.png" in text_contents[0]
+        assert video_contents == []
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+        assert image_contents[0]["id"] == 41
+        assert image_contents[0]["image_header_in_text"] is True
+
+    def test_image_context_adds_image_block_when_capability_unset(self):
+        context = SimpleNamespace(
+            id=41,
+            user_id=7,
+            context_type="attachment",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_size=1024,
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            type_data={},
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+        video_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=context,
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=video_contents,
+            task_id=10,
+            subtask_id=20,
+            model_config={"modelCapabilities": {}},
+        )
+
+        assert len(text_contents) == 1
+        assert video_contents == []
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+        assert image_contents[0]["id"] == 41
+        assert image_contents[0]["image_header_in_text"] is True
+
     @pytest.mark.asyncio
     async def test_external_web_text_metadata_order_is_text_video_comments(self):
         video_context = SimpleNamespace(

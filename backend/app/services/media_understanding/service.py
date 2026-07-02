@@ -31,6 +31,7 @@ from shared.models.execution import ExecutionRequest
 logger = logging.getLogger(__name__)
 
 MEDIA_TYPE_VIDEO = "video"
+MEDIA_TYPE_IMAGE = "image"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TIMEOUT_SECONDS = 180.0
 
@@ -46,9 +47,12 @@ class MediaUnderstandingError(ValueError):
 
 @dataclass(frozen=True)
 class ResolvedMedia:
-    media_url: str
+    media_type: str
     source: str
     context_id: Optional[int] = None
+    media_url: str = ""
+    image_base64: str = ""
+    mime_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,10 @@ class MediaUnderstandingClient:
         self,
         *,
         model_config: dict[str, Any],
+        media_type: str,
         media_url: str,
+        image_base64: str,
+        mime_type: str,
         question: str,
         instruction: str,
         context: dict[str, Any],
@@ -106,7 +113,10 @@ class MediaUnderstandingClient:
         headers = self._build_headers(model_config)
         payload = self._build_payload(
             model_config=model_config,
+            media_type=media_type,
             media_url=media_url,
+            image_base64=image_base64,
+            mime_type=mime_type,
             question=question,
             instruction=instruction,
             context=context,
@@ -144,12 +154,21 @@ class MediaUnderstandingClient:
         self,
         *,
         model_config: dict[str, Any],
+        media_type: str,
         media_url: str,
+        image_base64: str,
+        mime_type: str,
         question: str,
         instruction: str,
         context: dict[str, Any],
     ) -> dict[str, Any]:
         max_tokens = _resolve_max_tokens(model_config)
+        media_block = _build_media_block(
+            media_type=media_type,
+            media_url=media_url,
+            image_base64=image_base64,
+            mime_type=mime_type,
+        )
         return {
             "model": model_config["model_id"],
             "max_tokens": max_tokens,
@@ -158,10 +177,7 @@ class MediaUnderstandingClient:
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "video",
-                            "source": {"type": "url", "url": media_url},
-                        },
+                        media_block,
                         {
                             "type": "text",
                             "text": _build_user_prompt(
@@ -293,7 +309,10 @@ class MediaUnderstandingService:
             answer = _run_coroutine_sync(
                 self.client.understand_media(
                     model_config=prepared.model_config,
+                    media_type=prepared.resolved.media_type,
                     media_url=prepared.resolved.media_url,
+                    image_base64=prepared.resolved.image_base64,
+                    mime_type=prepared.resolved.mime_type,
                     question=prepared.question,
                     instruction=prepared.instruction,
                     context=prepared.context,
@@ -436,9 +455,10 @@ class MediaUnderstandingService:
         attachment_id: Optional[int],
         media_url: Optional[str],
     ) -> ResolvedMedia:
-        if media_type != MEDIA_TYPE_VIDEO:
+        if media_type not in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_IMAGE}:
             raise MediaUnderstandingError(
-                "unsupported_media_type", "Only video media is currently supported"
+                "unsupported_media_type",
+                "Only image and video media are currently supported",
             )
 
         sources = [
@@ -462,6 +482,9 @@ class MediaUnderstandingService:
                 token_info=token_info,
                 context_id=context_id or attachment_id or 0,
             )
+            if media_type == MEDIA_TYPE_IMAGE:
+                return self._resolve_image_context(context)
+
             if not context_service.is_video_context(context):
                 raise MediaUnderstandingError(
                     "unsupported_media_type",
@@ -481,6 +504,7 @@ class MediaUnderstandingService:
                     f"Failed to resolve video URL for context {context.id}",
                 )
             return ResolvedMedia(
+                media_type=MEDIA_TYPE_VIDEO,
                 media_url=payload.video_url,
                 source="attachment",
                 context_id=context.id,
@@ -491,7 +515,30 @@ class MediaUnderstandingService:
             raise MediaUnderstandingError(
                 "invalid_media_url", "media_url must be an HTTP(S) URL"
             )
-        return ResolvedMedia(media_url=normalized_url, source="media_url")
+        return ResolvedMedia(
+            media_type=media_type,
+            media_url=normalized_url,
+            source="media_url",
+        )
+
+    def _resolve_image_context(self, context: SubtaskContext) -> ResolvedMedia:
+        if not context_service.is_image_context(context):
+            raise MediaUnderstandingError(
+                "unsupported_media_type",
+                f"Context {context.id} is not an image attachment",
+            )
+        if not context.image_base64:
+            raise MediaUnderstandingError(
+                "image_payload_unavailable",
+                f"Context {context.id} does not have image payload",
+            )
+        return ResolvedMedia(
+            media_type=MEDIA_TYPE_IMAGE,
+            source="attachment",
+            context_id=context.id,
+            image_base64=context.image_base64,
+            mime_type=context.mime_type or "image/jpeg",
+        )
 
     def _get_accessible_context(
         self,
@@ -552,6 +599,38 @@ def _build_user_prompt(
         )
     sections.append("Return a concise natural-language answer.")
     return "\n\n".join(sections)
+
+
+def _build_media_block(
+    *,
+    media_type: str,
+    media_url: str,
+    image_base64: str,
+    mime_type: str,
+) -> dict[str, Any]:
+    if media_type == MEDIA_TYPE_VIDEO:
+        return {
+            "type": "video",
+            "source": {"type": "url", "url": media_url},
+        }
+    if media_type == MEDIA_TYPE_IMAGE:
+        if image_base64:
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type or "image/jpeg",
+                    "data": image_base64,
+                },
+            }
+        return {
+            "type": "image",
+            "source": {"type": "url", "url": media_url},
+        }
+    raise MediaUnderstandingError(
+        "unsupported_media_type",
+        "Only image and video media are currently supported",
+    )
 
 
 def _sanitize_context(context: Optional[dict[str, Any]]) -> dict[str, Any]:

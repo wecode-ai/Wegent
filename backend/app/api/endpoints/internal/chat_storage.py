@@ -45,6 +45,7 @@ from app.services.task_fork_history import task_fork_history_resolver
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
+from shared.utils.attachment_block import build_attachment_header
 
 logger = logging.getLogger(__name__)
 
@@ -432,15 +433,21 @@ def _build_user_message_content(
         c for c in all_contexts if c.context_type == ContextType.KNOWLEDGE_BASE.value
     ]
 
+    model_capabilities = (model_config or {}).get("modelCapabilities") or {}
+    supports_image = model_capabilities.get("supportsImage")
+    supports_video = model_capabilities.get("supportsVideo", False)
+
     # Process attachments first (they have priority)
-    vision_parts: list[dict[str, Any]] = [
-        {
-            "type": "image_url",
-            "image_url": {"url": image["image_url"]},
-        }
-        for image in external_web_content_images
-        if isinstance(image.get("image_url"), str) and image["image_url"].strip()
-    ]
+    vision_parts: list[dict[str, Any]] = []
+    if supports_image is not False:
+        vision_parts = [
+            {
+                "type": "image_url",
+                "image_url": {"url": image["image_url"]},
+            }
+            for image in external_web_content_images
+            if isinstance(image.get("image_url"), str) and image["image_url"].strip()
+        ]
     video_parts: list[dict[str, Any]] = []  # New container for video attachments
     attachment_text_parts: list[str] = list(external_web_content_texts)
     total_attachment_text_length = sum(len(text) for text in attachment_text_parts)
@@ -452,21 +459,30 @@ def _build_user_message_content(
             attachment_id = attachment.id
             filename = attachment.original_filename or attachment.name
             mime_type = attachment.mime_type or "unknown"
-            file_size = attachment.file_size or 0
-            formatted_size = context_service.format_file_size(file_size)
-            url = context_service.build_attachment_url(attachment_id)
-
-            # Build image metadata header
-            url_part = f" | URL: {url}" if url else ""
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size}{url_part}]"
+            sandbox_path = context_service.build_sandbox_path(
+                subtask.task_id, subtask.id, filename
+            )
+            image_header = build_attachment_header(
+                attachment_id=attachment_id,
+                filename=filename,
+                mime_type=mime_type,
+                file_size=attachment.file_size or 0,
+                sandbox_path=sandbox_path,
+                is_image=True,
             )
 
             # Add text header to content
             attachment_text_parts.append(f"{image_header}\n")
             total_attachment_text_length += len(image_header) + 1
 
+            if supports_image is False:
+                logger.debug(
+                    "[history] Added metadata-only image attachment: id=%s",
+                    attachment.id,
+                )
+                continue
+
+            # Add vision part for image rendering
             vision_parts.append(
                 {
                     "type": "image_url",
@@ -481,9 +497,6 @@ def _build_user_message_content(
             )
         elif context_service.is_video_context(attachment):
             # Video attachment - use shared helper for video processing
-            # Check model capabilities first
-            model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-            supports_video = model_capabilities.get("supportsVideo", False)
             logger.info(
                 f"[history][VIDEO DEBUG] Processing video: id={attachment.id}, "
                 f"model_config_keys={list(model_config.keys()) if model_config else None}, "
@@ -940,6 +953,9 @@ async def get_chat_history(
         None, description="Only return messages before this ID"
     ),
     is_group_chat: bool = Query(False, description="Whether this is a group chat"),
+    supports_image: Optional[bool] = Query(
+        None, description="Whether the model supports image input"
+    ),
     supports_video: bool = Query(
         False, description="Whether the model supports video input"
     ),
@@ -960,6 +976,8 @@ async def get_chat_history(
         limit: Max number of messages to return (most recent N messages)
         before_message_id: Only return messages before this ID
         is_group_chat: Whether this is a group chat
+        supports_image: Whether the model supports image input.
+            If omitted, history keeps the legacy image attachment behavior.
         supports_video: Whether the model supports video input.
         db: Database session
     """
@@ -1003,8 +1021,11 @@ async def get_chat_history(
         subtasks = subtasks[-limit:]
 
     # Convert to message format with full context loading
-    # Build model_config from supports_video parameter for video capability check
-    model_config = {"modelCapabilities": {"supportsVideo": supports_video}}
+    # Build model_config from query parameters for attachment capability checks.
+    model_capabilities: dict[str, Any] = {"supportsVideo": supports_video}
+    if supports_image is not None:
+        model_capabilities["supportsImage"] = supports_image
+    model_config = {"modelCapabilities": model_capabilities}
     messages = [
         msg
         for st in subtasks
