@@ -48,19 +48,43 @@ vi.mock('@/lib/local-terminal', () => ({
 }))
 
 vi.mock('./EmbeddedLocalTerminal', () => ({
-  EmbeddedLocalTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
-    <div data-testid="embedded-local-terminal" data-session-id={sessionId} hidden={!active} />
+  EmbeddedLocalTerminal: ({
+    active,
+    sessionId,
+    onExit,
+  }: {
+    active: boolean
+    sessionId: string
+    onExit?: () => void
+  }) => (
+    <div data-testid="embedded-local-terminal" data-session-id={sessionId} hidden={!active}>
+      <button
+        type="button"
+        data-testid={`embedded-local-terminal-exit-${sessionId}`}
+        onClick={onExit}
+      />
+    </div>
   ),
 }))
 
 vi.mock('./RemoteTerminal', () => ({
-  RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
+  RemoteTerminal: ({
+    active,
+    sessionId,
+    onExit,
+  }: {
+    active: boolean
+    sessionId: string
+    onExit?: () => void
+  }) => (
     <div
       data-testid="remote-terminal"
       data-session-id={sessionId}
       className="h-full w-full"
       hidden={!active}
-    />
+    >
+      <button type="button" data-testid={`remote-terminal-exit-${sessionId}`} onClick={onExit} />
+    </div>
   ),
 }))
 
@@ -217,7 +241,7 @@ describe('WorkspacePanelCards', () => {
     await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledWith(7))
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
     expect(screen.queryByTestId('workspace-terminal-frame')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass('bg-white')
+    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass('bg-background')
     expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent('project38')
     expect(screen.getByTestId('workspace-terminal-new-tab-button')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-close-button')).toBeInTheDocument()
@@ -268,6 +292,18 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(1)
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
     expect(screen.getByTestId('remote-terminal')).not.toHaveAttribute('hidden')
+  })
+
+  test('removes the terminal session when the process exits', async () => {
+    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('remote-terminal-exit-terminal-1'))
+
+    expect(screen.queryByTestId('remote-terminal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
   })
 
   test('opens the project IDE in a new page without a preflight probe', async () => {

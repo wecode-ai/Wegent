@@ -8,21 +8,35 @@ import {
   resizeLocalTerminal,
   writeLocalTerminal,
 } from '@/lib/local-terminal'
+import {
+  applyTerminalTheme,
+  createTerminalThemeScheduler,
+  getTerminalTheme,
+  observeTerminalTheme,
+} from '@/lib/xterm-theme'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
   active: boolean
+  onExit?: () => void
   testIdsEnabled?: boolean
 }
 
 export function EmbeddedLocalTerminal({
   sessionId,
   active,
+  onExit,
   testIdsEnabled = true,
 }: EmbeddedLocalTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const activeRef = useRef(active)
+  const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+
+  useEffect(() => {
+    activeRef.current = active
+  }, [active])
 
   useEffect(() => {
     const container = containerRef.current
@@ -35,12 +49,7 @@ export function EmbeddedLocalTerminal({
       fontSize: 13,
       lineHeight: 1.2,
       scrollback: 2000,
-      theme: {
-        background: '#ffffff',
-        foreground: '#1a1a1a',
-        cursor: '#14b8a6',
-        selectionBackground: '#d8f3ee',
-      },
+      theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
     const dataDisposable = terminal.onData(data => {
@@ -53,15 +62,30 @@ export function EmbeddedLocalTerminal({
     terminal.open(container)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+    applyTerminalTheme(terminal, container)
+    const scheduleThemeSync = createTerminalThemeScheduler(terminal, container)
+    const unobserveTheme = observeTerminalTheme(theme => {
+      applyTerminalTheme(terminal, container, theme)
+    })
 
     const fitAndResize = () => {
       if (disposed || !container.isConnected) return
       try {
         fitAddon.fit()
-        void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
+        syncTerminalSize()
       } catch (error) {
         console.error('Failed to resize local terminal:', error)
       }
+    }
+
+    const syncTerminalSize = () => {
+      if (!activeRef.current || terminal.rows <= 0 || terminal.cols <= 0) return
+
+      const lastSize = lastSizeRef.current
+      if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
+
+      lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
+      void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
     }
 
     const resizeObserver = new ResizeObserver(fitAndResize)
@@ -71,6 +95,7 @@ export function EmbeddedLocalTerminal({
     void listenLocalTerminalOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
         terminal.write(payload.data)
+        scheduleThemeSync()
       }
     }).then(unlisten => {
       if (disposed) {
@@ -82,7 +107,7 @@ export function EmbeddedLocalTerminal({
 
     void listenLocalTerminalExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        terminal.writeln('\r\n[Process exited]')
+        onExit?.()
       }
     }).then(unlisten => {
       if (disposed) {
@@ -94,6 +119,7 @@ export function EmbeddedLocalTerminal({
 
     return () => {
       disposed = true
+      unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
       unlisteners.forEach(unlisten => unlisten())
@@ -109,12 +135,20 @@ export function EmbeddedLocalTerminal({
     const frame = requestAnimationFrame(() => {
       const terminal = terminalRef.current
       const fitAddon = fitAddonRef.current
-      if (!terminal || !fitAddon) return
+      const container = containerRef.current
+      if (!terminal || !fitAddon || !container) return
 
       try {
+        applyTerminalTheme(terminal, container)
         fitAddon.fit()
         terminal.focus()
-        void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
+        if (terminal.rows > 0 && terminal.cols > 0) {
+          const lastSize = lastSizeRef.current
+          if (lastSize?.rows !== terminal.rows || lastSize.cols !== terminal.cols) {
+            lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
+            void resizeLocalTerminal(sessionId, terminal.rows, terminal.cols)
+          }
+        }
       } catch (error) {
         console.error('Failed to activate local terminal:', error)
       }
@@ -129,7 +163,7 @@ export function EmbeddedLocalTerminal({
     <div
       ref={containerRef}
       data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
-      className="h-full min-h-0 w-full overflow-hidden bg-white px-2 py-2"
+      className="h-full min-h-0 w-full overflow-hidden bg-background px-2 py-2"
       hidden={!active}
     />
   )
