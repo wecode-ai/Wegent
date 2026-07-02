@@ -47,6 +47,12 @@ REPORTER_OR_HIGHER_ROLES = (
 )
 
 
+def _team_ref_key(name: str, namespace: str, user_id: int | None = None) -> str:
+    if user_id is None:
+        return f"{name}:{namespace}"
+    return f"{name}:{namespace}:{user_id}"
+
+
 def create_subtasks(
     db: Session, task: Kind, team: Kind, user_id: int, user_prompt: str
 ) -> None:
@@ -233,7 +239,13 @@ def get_tasks_related_data_batch(
             )
 
         if hasattr(task_crd.spec, "teamRef") and task_crd.spec.teamRef:
-            team_refs.add((task_crd.spec.teamRef.name, task_crd.spec.teamRef.namespace))
+            team_refs.add(
+                (
+                    task_crd.spec.teamRef.name,
+                    task_crd.spec.teamRef.namespace,
+                    getattr(task_crd.spec.teamRef, "user_id", None),
+                )
+            )
 
         device_id = getattr(task_crd.spec, "device_id", None)
         if device_id:
@@ -273,7 +285,11 @@ def get_tasks_related_data_batch(
         )
 
         # Get team data
-        team_key = f"{task_crd.spec.teamRef.name}:{task_crd.spec.teamRef.namespace}"
+        team_key = _team_ref_key(
+            task_crd.spec.teamRef.name,
+            task_crd.spec.teamRef.namespace,
+            getattr(task_crd.spec.teamRef, "user_id", None),
+        )
         task_team = team_data.get(team_key)
         team_id = task_team.id if task_team else None
         team_name = task_team.name if task_team else task_crd.spec.teamRef.name
@@ -400,6 +416,38 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     if not team_refs:
         return {}
 
+    exact_team_refs = {
+        (name, namespace, ref_user_id)
+        for name, namespace, ref_user_id in (
+            (*ref, None) if len(ref) == 2 else ref for ref in team_refs
+        )
+        if ref_user_id is not None
+    }
+    access_resolved_refs = {
+        (name, namespace)
+        for name, namespace, ref_user_id in (
+            (*ref, None) if len(ref) == 2 else ref for ref in team_refs
+        )
+        if ref_user_id is None
+    }
+
+    team_data: Dict[str, Kind] = {}
+    if exact_team_refs:
+        exact_teams = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                tuple_(Kind.name, Kind.namespace, Kind.user_id).in_(exact_team_refs),
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        for team in exact_teams:
+            team_data[_team_ref_key(team.name, team.namespace, team.user_id)] = team
+
+    if not access_resolved_refs:
+        return team_data
+
     team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
     approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
     accessible_team_ids = _get_accessible_team_ids(
@@ -415,17 +463,16 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
         db.query(Kind)
         .filter(
             Kind.kind == "Team",
-            tuple_(Kind.name, Kind.namespace).in_(team_refs),
+            tuple_(Kind.name, Kind.namespace).in_(access_resolved_refs),
             Kind.is_active.is_(True),
             access_filter,
         )
         .all()
     )
 
-    team_data: Dict[str, Kind] = {}
     team_priorities: Dict[str, int] = {}
     for team in accessible_teams:
-        key = f"{team.name}:{team.namespace}"
+        key = _team_ref_key(team.name, team.namespace)
         priority = _get_team_scope_priority(team, user_id)
         if key not in team_data or priority < team_priorities[key]:
             team_data[key] = team
