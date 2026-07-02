@@ -110,6 +110,7 @@ export function PluginsPage() {
           activeItem="plugins"
           collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
+          onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
           onRenameRuntimeLocalTask={renameRuntimeLocalTask}

@@ -195,6 +195,67 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('does not auto-scroll from content resize while auto-scroll is suspended', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <ScrollableMessageArea
+          autoScrollSuspended
+          messages={[
+            {
+              id: 'resize-suspended',
+              role: 'assistant',
+              content: 'Ready',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      expect(scroller).toHaveClass('[overflow-anchor:none]')
+      expect(screen.getByTestId('chat-message-scroll-area-content')).toHaveClass(
+        '[overflow-anchor:none]'
+      )
+      Object.defineProperty(scroller, 'clientHeight', {
+        value: 200,
+        configurable: true,
+      })
+      Object.defineProperty(scroller, 'scrollHeight', {
+        value: 600,
+        configurable: true,
+      })
+      Object.defineProperty(scroller, 'scrollTop', {
+        value: 352,
+        writable: true,
+        configurable: true,
+      })
+      scroller.scrollTo = vi.fn()
+
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      })
+
+      expect(scroller.scrollTo).not.toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
   test('renders a compact left-side navigation for previous user messages', () => {
     render(
       <ScrollableMessageArea
