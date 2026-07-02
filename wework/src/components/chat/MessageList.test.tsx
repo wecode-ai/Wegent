@@ -420,6 +420,30 @@ describe('MessageList', () => {
     expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
   })
 
+  test('shows thinking after partial streaming assistant content', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-with-content',
+            role: 'assistant',
+            content: '我已经完成前面的检查，继续等最后结果。',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const content = screen.getByText('我已经完成前面的检查，继续等最后结果。')
+    const thinking = screen.getByTestId('thinking-indicator')
+
+    expect(thinking).toHaveTextContent('正在思考')
+    expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
   test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
     render(
       <MessageList
@@ -2669,7 +2693,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -2694,7 +2718,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows full-width processing status once final text starts streaming', () => {
+  test('shows full-width processing status and trailing thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -2711,7 +2735,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('已处理 1 秒')
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveClass('w-full', 'border-b')
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
@@ -2766,7 +2790,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('uses running tool rows instead of a generic thinking indicator when blocks are visible', () => {
+  test('keeps running tool rows visible while showing trailing thinking', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       turnId: 1,
@@ -2792,7 +2816,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
     expect(screen.getByText('正在运行 rg -n "foo" src')).toBeInTheDocument()
   })
 

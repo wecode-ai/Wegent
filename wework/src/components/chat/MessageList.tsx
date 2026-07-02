@@ -990,6 +990,7 @@ function AssistantMessage({
   const hasStreamedResponse = hasBlocks || hasVisibleContent
   const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
   const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
+  const shouldShowTrailingThinking = isStreaming && hasVisibleContent
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
@@ -1056,6 +1057,7 @@ function AssistantMessage({
           {hasVisibleContent ? (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
+          {shouldShowTrailingThinking && <WaitingAssistantIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
