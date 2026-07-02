@@ -4,7 +4,7 @@
 
 'use client'
 
-import React from 'react'
+import React, { type Dispatch, type SetStateAction } from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
 import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
@@ -96,7 +96,7 @@ export interface ChatInputControlsProps {
 
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
 
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState

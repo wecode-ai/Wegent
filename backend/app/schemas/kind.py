@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
@@ -606,6 +607,7 @@ class TaskSpec(BaseModel):
     knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
         None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )
+    externalKnowledgeRefs: List[ExternalKnowledgeRef] = Field(default_factory=list)
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None
     fork: Optional[TaskForkSpec] = None

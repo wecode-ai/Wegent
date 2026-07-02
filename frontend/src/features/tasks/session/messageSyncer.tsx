@@ -249,25 +249,35 @@ export function useMessageSyncer({
    */
   const handleChatDone = useCallback(
     (data: ChatDonePayload) => {
-      const { task_id: taskId, subtask_id, result, message_id, sources } = data
+      const {
+        task_id: taskId,
+        subtask_id,
+        result,
+        message_id,
+        sources,
+        retrieval_summary: retrievalSummary,
+      } = data
 
       if (!taskId) {
         console.warn('[messageSyncer][chat:done] Missing task_id for subtask:', subtask_id)
         return
       }
 
-      const finalContent = (result?.value as string) || ''
-      const hasError = result?.error !== undefined
-      const errorMessage = hasError ? (result.error as string) : undefined
+      const mergedResult = retrievalSummary
+        ? { ...result, retrieval_summary: retrievalSummary }
+        : result
+      const finalContent = (mergedResult?.value as string) || ''
+      const hasError = mergedResult?.error !== undefined
+      const errorMessage = hasError ? (mergedResult.error as string) : undefined
 
       const machine = getMachineForTask(taskId)
       if (machine) {
         machine.handleChatDone(
           subtask_id,
           finalContent,
-          result as UnifiedMessage['result'],
+          mergedResult as UnifiedMessage['result'],
           message_id,
-          sources || (result?.sources as UnifiedMessage['sources']),
+          sources || (mergedResult?.sources as UnifiedMessage['sources']),
           hasError,
           errorMessage
         )

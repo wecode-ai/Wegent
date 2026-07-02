@@ -107,6 +107,11 @@ class ProtectedKnowledgeMediationResponse(BaseModel):
     message: str
     total: int
     total_estimated_tokens: int = 0
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    source_summaries: list[dict[str, Any]] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 def _extract_transform_attributes(

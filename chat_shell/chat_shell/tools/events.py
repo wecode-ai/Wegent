@@ -316,6 +316,9 @@ def _handle_tool_end(
     sources = _extract_sources(tool_name, serializable_output)
     if sources:
         state.add_sources(sources)
+    retrieval_summary = _extract_retrieval_summary(tool_name, serializable_output)
+    if retrieval_summary and hasattr(state, "add_retrieval_summary"):
+        state.add_retrieval_summary(retrieval_summary)
 
     # Track loaded skills for persistence across conversation turns
     if tool_name == "load_skill":
@@ -422,6 +425,19 @@ def _get_tool_instance(agent_builder: Any, tool_name: str) -> Any:
     return tool_instance
 
 
+def _parse_json_object(value: Any) -> dict[str, Any] | None:
+    """Return a dict payload from a raw tool output value."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
     """Extract sources from tool output for knowledge base citations.
 
@@ -436,23 +452,21 @@ def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
 
     # Extract sources from knowledge_base_search results
     if tool_name == "knowledge_base_search":
-        if isinstance(tool_output, str):
-            try:
-                parsed = json.loads(tool_output)
+        parsed = _parse_json_object(tool_output)
+        if parsed is not None:
+            logger.info(
+                f"[TOOL_OUTPUT] knowledge_base_search parsed output: "
+                f"has_sources={'sources' in parsed}, "
+                f"sources_count={len(parsed.get('sources', []))}"
+            )
+            kb_sources = parsed.get("sources", [])
+            if isinstance(kb_sources, list):
+                sources.extend(kb_sources)
                 logger.info(
-                    f"[TOOL_OUTPUT] knowledge_base_search parsed output: "
-                    f"has_sources={'sources' in parsed}, "
-                    f"sources_count={len(parsed.get('sources', []))}"
+                    f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
                 )
-                if isinstance(parsed, dict) and "sources" in parsed:
-                    kb_sources = parsed.get("sources", [])
-                    if isinstance(kb_sources, list):
-                        sources.extend(kb_sources)
-                        logger.info(
-                            f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
-                        )
-            except json.JSONDecodeError as e:
-                logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
+        elif isinstance(tool_output, str):
+            logger.warning("[TOOL_OUTPUT] Failed to parse tool output")
 
     # Extract sources from web_search results
     elif tool_name == "web_search":
@@ -465,6 +479,150 @@ def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
                 sources.append({"type": "url", "url": url})
 
     return sources
+
+
+def _source_entry(provider: Any, source_id: Any) -> dict[str, str] | None:
+    """Build a provider/source entry when source identity exists."""
+    if source_id is None:
+        return None
+    return {"provider": str(provider or ""), "source_id": str(source_id)}
+
+
+def _source_key(provider: Any, source_id: Any) -> tuple[str, str] | None:
+    """Build a provider/source key when source identity exists."""
+    entry = _source_entry(provider, source_id)
+    if entry is None:
+        return None
+    return entry["provider"], entry["source_id"]
+
+
+def _dedupe_source_entries(values: list[Any]) -> list[dict[str, str]]:
+    """Return provider/source entries without duplicates, preserving order."""
+    deduped: dict[tuple[str, str], dict[str, str]] = {}
+    for value in values:
+        if isinstance(value, dict):
+            entry = _source_entry(
+                value.get("provider"),
+                value.get("source_id") or value.get("id"),
+            )
+        else:
+            entry = _source_entry("", value)
+        if entry is None:
+            continue
+        deduped.setdefault((entry["provider"], entry["source_id"]), entry)
+    return list(deduped.values())
+
+
+def _normalize_source_status(value: Any) -> dict[str, Any] | None:
+    """Normalize one source status entry from tool output."""
+    if not isinstance(value, dict):
+        return None
+    source_id = value.get("source_id") or value.get("id")
+    if source_id is None:
+        return None
+    status = value.get("status") or "no_hit"
+    if status not in {"hit", "no_hit", "ignored", "failed"}:
+        status = "no_hit"
+    return {
+        "provider": str(value.get("provider") or ""),
+        "source_id": str(source_id),
+        "source_name": value.get("source_name"),
+        "status": status,
+        "record_count": max(0, int(value.get("record_count") or 0)),
+        "citation_count": max(0, int(value.get("citation_count") or 0)),
+        "mode": value.get("mode"),
+    }
+
+
+def _extract_retrieval_summary(
+    tool_name: str, tool_output: Any
+) -> dict[str, Any] | None:
+    """Extract aggregated retrieval coverage summary from tool output."""
+    if tool_name != "knowledge_base_search":
+        return None
+
+    parsed = _parse_json_object(tool_output)
+    if parsed is None:
+        return None
+
+    searched_sources: list[Any] = []
+    ignored_sources: list[Any] = []
+    source_statuses: dict[tuple[str, str], dict[str, Any]] = {}
+
+    summary = parsed.get("retrieval_summary")
+    if isinstance(summary, dict):
+        statuses = summary.get("source_statuses")
+        if isinstance(statuses, list):
+            for status in statuses:
+                normalized = _normalize_source_status(status)
+                if normalized is None:
+                    continue
+                source_key = _source_key(
+                    normalized["provider"], normalized["source_id"]
+                )
+                if source_key is not None:
+                    source_statuses[source_key] = normalized
+        searched = summary.get("searched_sources")
+        ignored = summary.get("ignored_sources")
+        if not isinstance(searched, list):
+            searched = summary.get("searched_source_ids")
+        if not isinstance(ignored, list):
+            ignored = summary.get("ignored_source_ids")
+        if isinstance(searched, list):
+            searched_sources.extend(searched)
+        if isinstance(ignored, list):
+            ignored_sources.extend(ignored)
+
+    source_summaries = parsed.get("source_summaries")
+    if isinstance(source_summaries, list):
+        for source_summary in source_summaries:
+            if not isinstance(source_summary, dict):
+                continue
+            provider = source_summary.get("provider")
+            statuses = source_summary.get("source_statuses")
+            if isinstance(statuses, list):
+                for status in statuses:
+                    normalized = _normalize_source_status(status)
+                    if normalized is None:
+                        continue
+                    source_key = _source_key(
+                        normalized["provider"], normalized["source_id"]
+                    )
+                    if source_key is not None:
+                        source_statuses[source_key] = normalized
+            searched = source_summary.get("searched_source_ids")
+            ignored = source_summary.get("ignored_source_ids")
+            if isinstance(searched, list):
+                searched_sources.extend(
+                    entry
+                    for source_id in searched
+                    if (entry := _source_entry(provider, source_id)) is not None
+                )
+            if isinstance(ignored, list):
+                ignored_sources.extend(
+                    entry
+                    for source_id in ignored
+                    if (entry := _source_entry(provider, source_id)) is not None
+                )
+
+    searched_entries = _dedupe_source_entries(searched_sources)
+    searched_keys = {
+        (entry["provider"], entry["source_id"]) for entry in searched_entries
+    }
+    ignored_entries = [
+        entry
+        for entry in _dedupe_source_entries(ignored_sources)
+        if (entry["provider"], entry["source_id"]) not in searched_keys
+    ]
+    if not searched_entries and not ignored_entries and not source_statuses:
+        return None
+    return {
+        "searched_source_ids": [entry["source_id"] for entry in searched_entries],
+        "ignored_source_ids": [entry["source_id"] for entry in ignored_entries],
+        "searched_sources": searched_entries,
+        "ignored_sources": ignored_entries,
+        "source_statuses": list(source_statuses.values()),
+    }
 
 
 def _make_serializable(value: Any) -> Any:

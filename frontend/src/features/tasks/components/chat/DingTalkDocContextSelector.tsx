@@ -238,42 +238,24 @@ interface DingTalkDocContextSelectorProps {
   onDeselectMultiple: (ids: string[]) => void
 }
 
-/**
- * DingTalk document context selector panel.
- * Displays the synced document tree with checkboxes for multi-selection.
- * Supports two sections: My Documents and Knowledge Base.
- */
-export function DingTalkDocContextSelector({
-  selectedContexts,
-  onSelect,
-  onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
-}: DingTalkDocContextSelectorProps) {
+export function useDingTalkDocTrees({ enabled = true }: { enabled?: boolean } = {}) {
   const { t } = useTranslation('chat')
 
-  // Section state
-  const [activeSection, setActiveSection] = useState<'my-docs' | 'wikispace'>('my-docs')
-
-  // My Docs state
   const [nodes, setNodes] = useState<DingtalkDocNode[]>([])
-  // Initialize loading to true to prevent first-frame flicker (empty state → loading)
+  const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isConfigured, setIsConfigured] = useState(true)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
-  // Wikispace state
   const [wikispaceNodes, setWikispaceNodes] = useState<DingtalkDocNode[]>([])
-  // Initialize wikispaceLoading to true to prevent first-frame flicker
+  const [wikispaceTotalCount, setWikispaceTotalCount] = useState(0)
   const [wikispaceLoading, setWikispaceLoading] = useState(true)
   const [wikispaceSyncing, setWikispaceSyncing] = useState(false)
   const [wikispaceError, setWikispaceError] = useState<string | null>(null)
   const [wikispaceConfigured, setWikispaceConfigured] = useState(false)
   const [wikispaceLastSyncedAt, setWikispaceLastSyncedAt] = useState<string | null>(null)
-  // Shared search state
-  const [searchQuery, setSearchQuery] = useState('')
 
   const fetchDocs = useCallback(async () => {
     setLoading(true)
@@ -284,6 +266,7 @@ export function DingTalkDocContextSelector({
         dingtalkDocApi.getSyncStatus(),
       ])
       setNodes(tree.nodes)
+      setTotalCount(tree.total_count)
       setIsConfigured(status.is_configured)
       setLastSyncedAt(status.last_synced_at)
     } catch (err) {
@@ -303,6 +286,7 @@ export function DingTalkDocContextSelector({
         dingtalkDocApi.getWikispaceSyncStatus(),
       ])
       setWikispaceNodes(tree.nodes)
+      setWikispaceTotalCount(tree.total_count)
       setWikispaceConfigured(status.is_configured)
       setWikispaceLastSyncedAt(status.last_synced_at)
     } catch (err) {
@@ -314,11 +298,12 @@ export function DingTalkDocContextSelector({
   }, [t])
 
   useEffect(() => {
+    if (!enabled) return
     fetchDocs()
     fetchWikispace()
-  }, [fetchDocs, fetchWikispace])
+  }, [enabled, fetchDocs, fetchWikispace])
 
-  const handleSync = useCallback(async () => {
+  const syncDocs = useCallback(async () => {
     setSyncing(true)
     setError(null)
     try {
@@ -332,7 +317,7 @@ export function DingTalkDocContextSelector({
     }
   }, [fetchDocs, t])
 
-  const handleWikispaceSync = useCallback(async () => {
+  const syncWikispace = useCallback(async () => {
     setWikispaceSyncing(true)
     setWikispaceError(null)
     try {
@@ -346,18 +331,73 @@ export function DingTalkDocContextSelector({
     }
   }, [fetchWikispace, t])
 
-  /** Build a DingTalkDocContext from a node. */
-  const buildContext = useCallback((node: DingtalkDocNode): DingTalkDocContext => {
-    return {
-      id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
-      name: node.name,
-      type: 'dingtalk_doc',
-      doc_url: node.doc_url,
-      node_type: node.node_type as 'folder' | 'doc' | 'file',
-      dingtalk_node_id: node.dingtalk_node_id,
-      source: node.source,
-    }
-  }, [])
+  return {
+    nodes,
+    totalCount,
+    loading,
+    syncing,
+    error,
+    isConfigured,
+    lastSyncedAt,
+    fetchDocs,
+    syncDocs,
+    wikispaceNodes,
+    wikispaceTotalCount,
+    wikispaceLoading,
+    wikispaceSyncing,
+    wikispaceError,
+    wikispaceConfigured,
+    wikispaceLastSyncedAt,
+    fetchWikispace,
+    syncWikispace,
+  }
+}
+
+export function buildDingTalkDocContext(node: DingtalkDocNode): DingTalkDocContext {
+  return {
+    id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
+    name: node.name,
+    type: 'dingtalk_doc',
+    doc_url: node.doc_url,
+    node_type: node.node_type as 'folder' | 'doc' | 'file',
+    dingtalk_node_id: node.dingtalk_node_id,
+    source: node.source,
+  }
+}
+
+/**
+ * DingTalk document context selector panel.
+ * Displays the synced document tree with checkboxes for multi-selection.
+ * Supports two sections: My Documents and Knowledge Base.
+ */
+export function DingTalkDocContextSelector({
+  selectedContexts,
+  onSelect,
+  onDeselect,
+  onSelectMultiple,
+  onDeselectMultiple,
+}: DingTalkDocContextSelectorProps) {
+  const { t } = useTranslation('chat')
+  const [activeSection, setActiveSection] = useState<'my-docs' | 'wikispace'>('my-docs')
+  const [searchQuery, setSearchQuery] = useState('')
+  const {
+    nodes,
+    loading,
+    syncing,
+    error,
+    isConfigured,
+    lastSyncedAt,
+    fetchDocs,
+    syncDocs,
+    wikispaceNodes,
+    wikispaceLoading,
+    wikispaceSyncing,
+    wikispaceError,
+    wikispaceConfigured,
+    wikispaceLastSyncedAt,
+    fetchWikispace,
+    syncWikispace,
+  } = useDingTalkDocTrees()
 
   const handleToggle = useCallback(
     (node: DingtalkDocNode) => {
@@ -377,7 +417,7 @@ export function DingTalkDocContextSelector({
           const addNode = (n: DingtalkDocNode) => {
             const childSelectionKey = getDingTalkSelectionKey(n.source, n.dingtalk_node_id)
             if (!selectedContexts.has(childSelectionKey)) {
-              toAdd.push(buildContext(n))
+              toAdd.push(buildDingTalkDocContext(n))
             }
             if (n.children) {
               n.children.forEach(addNode)
@@ -393,11 +433,11 @@ export function DingTalkDocContextSelector({
         if (selectedContexts.has(selectionKey)) {
           onDeselect(selectionKey)
         } else {
-          onSelect(buildContext(node))
+          onSelect(buildDingTalkDocContext(node))
         }
       }
     },
-    [selectedContexts, buildContext, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple]
+    [selectedContexts, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple]
   )
 
   // Count of selected doc/file nodes across both sections
@@ -424,7 +464,7 @@ export function DingTalkDocContextSelector({
   const activeSyncing = activeSection === 'my-docs' ? syncing : wikispaceSyncing
   const activeError = activeSection === 'my-docs' ? error : wikispaceError
   const activeLastSyncedAt = activeSection === 'my-docs' ? lastSyncedAt : wikispaceLastSyncedAt
-  const handleActiveSync = activeSection === 'my-docs' ? handleSync : handleWikispaceSync
+  const handleActiveSync = activeSection === 'my-docs' ? syncDocs : syncWikispace
   const handleRetry = activeSection === 'my-docs' ? fetchDocs : fetchWikispace
 
   /** Render the content area for the active section. */

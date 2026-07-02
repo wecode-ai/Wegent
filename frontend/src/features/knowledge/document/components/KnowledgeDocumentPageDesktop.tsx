@@ -32,6 +32,7 @@ import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
+import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
@@ -73,6 +74,7 @@ export function KnowledgeDocumentPageDesktop({
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
+  const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
 
   // Group KBs hook (extracted from inline logic)
@@ -198,6 +200,7 @@ export function KnowledgeDocumentPageDesktop({
     selectGroup: sidebar.selectGroup,
     selectGroups: sidebar.selectGroups,
     selectDingtalk: sidebar.selectDingtalk,
+    selectSourceView: sidebar.selectSourceView,
     clearSelection: sidebar.clearSelection,
   })
 
@@ -312,6 +315,14 @@ export function KnowledgeDocumentPageDesktop({
     updateUrlParams({ kb: null, group: 'dingtalk' })
   }, [sidebar, updateUrlParams])
 
+  const handleSelectSourceView = useCallback(
+    (sourceViewId: string) => {
+      sidebar.selectSourceView(sourceViewId)
+      updateUrlParams({ kb: null, group: `source:${sourceViewId}` })
+    },
+    [sidebar, updateUrlParams]
+  )
+
   const isFavorite = useCallback(
     (kbId: number) => {
       return sidebar.favorites.some(kb => kb.id === kbId)
@@ -422,6 +433,18 @@ export function KnowledgeDocumentPageDesktop({
           isWikispaceConfigured={sidebar.isWikispaceConfigured}
           onSyncComplete={() => sidebar.refreshAll()}
         />
+      )
+    }
+
+    if (sidebar.viewMode === 'source' && sidebar.selectedSourceViewId) {
+      const sourceView = sourceViews.find(view => view.id === sidebar.selectedSourceViewId)
+      if (sourceView) {
+        return sourceView.renderView()
+      }
+      return (
+        <div className="flex-1 flex items-center justify-center">
+          <Spinner size="lg" />
+        </div>
       )
     }
 
@@ -609,11 +632,14 @@ export function KnowledgeDocumentPageDesktop({
             selectedKbId={sidebar.selectedKbId}
             selectedGroupId={sidebar.selectedGroupId}
             viewMode={sidebar.viewMode}
+            selectedSourceViewId={sidebar.selectedSourceViewId}
             onSelectKb={handleSelectKb}
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
             onSelectDingtalk={handleSelectDingtalk}
+            onSelectSourceView={handleSelectSourceView}
+            sourceViews={sourceViews}
             dingtalkDocCount={sidebar.dingtalkDocCount + sidebar.wikispaceDocCount}
             isDingtalkConfigured={sidebar.isDingtalkConfigured}
             summary={sidebar.summary}

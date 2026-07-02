@@ -8,7 +8,12 @@ import React from 'react'
 import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ContextItem, QueueMessageContext, DingTalkDocContext } from '@/types/context'
+import type {
+  ContextItem,
+  DingTalkDocContext,
+  ExternalKnowledgeContext,
+  QueueMessageContext,
+} from '@/types/context'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface ContextBadgeProps {
@@ -31,6 +36,8 @@ const getContextIcon = (type: ContextItem['type']) => {
       return MessageSquare
     case 'dingtalk_doc':
       return FileText
+    case 'external_knowledge':
+      return Database
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
@@ -59,6 +66,8 @@ export default function ContextBadge({
         return 'border-orange-500 bg-orange-500/10 text-orange-600'
       case 'dingtalk_doc':
         return 'border-orange-400 bg-orange-400/10 text-orange-600'
+      case 'external_knowledge':
+        return 'border-cyan-500 bg-cyan-500/10 text-cyan-700'
       default:
         return 'border-primary bg-primary/10 text-primary'
     }
@@ -95,6 +104,8 @@ export default function ContextBadge({
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-500/20'
       case 'dingtalk_doc':
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-400/20'
+      case 'external_knowledge':
+        return 'text-cyan-700 hover:text-cyan-700 hover:bg-cyan-500/20'
       default:
         return 'text-primary hover:text-primary hover:bg-primary/20'
     }
@@ -115,11 +126,15 @@ export default function ContextBadge({
         <span className="text-xs font-medium truncate" title={context.name}>
           {context.name}
         </span>
-        {context.type === 'knowledge_base' && context.document_count !== undefined && (
+        {context.type === 'knowledge_base' && context.scope_restricted ? (
+          <span className="text-xs opacity-70">
+            {t('picker.selectedDocuments', { count: context.document_ids?.length ?? 0 })}
+          </span>
+        ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
           <span className="text-xs opacity-70">
             {formatDocumentCount(context.document_count, t)}
           </span>
-        )}
+        ) : null}
         {context.type === 'table' && context.source_config?.url && (
           <span className="text-xs opacity-70 truncate" title={context.source_config.url}>
             {new URL(context.source_config.url).hostname}
@@ -133,6 +148,11 @@ export default function ContextBadge({
         )}
         {context.type === 'dingtalk_doc' && (
           <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
+        )}
+        {context.type === 'external_knowledge' && (
+          <span className="text-xs opacity-70 truncate">
+            {(context as ExternalKnowledgeContext).ref.provider}
+          </span>
         )}
       </div>
       <Button
