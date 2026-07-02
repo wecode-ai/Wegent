@@ -7,6 +7,7 @@ Knowledge base and document service using kinds table.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -59,6 +60,8 @@ from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
     can_manage_accessible_knowledge_document,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_attachment_filename(name: str, file_extension: str) -> str:
@@ -1336,12 +1339,9 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied
         """
-        import logging
-
         from app.services.context import context_service
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
-        logger = logging.getLogger(__name__)
         rag_gateway = _get_delete_gateway()
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
@@ -2959,6 +2959,8 @@ class KnowledgeService:
         )
         if success_count > 0 or not failed_ids:
             return message
+        if len(failure_messages) != len(failed_ids):
+            return message
 
         lower_messages = [
             failure_message.lower() for failure_message in failure_messages
@@ -2974,7 +2976,7 @@ class KnowledgeService:
             return (
                 "Only Owner or Maintainer can delete documents from this knowledge base"
             )
-        if failure_messages:
+        if len(failure_messages) == 1:
             return failure_messages[0]
         return message
 
@@ -3013,8 +3015,10 @@ class KnowledgeService:
             except ValueError as exc:
                 failed_ids.append(doc_id)
                 failure_messages.append(str(exc))
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - continue deleting remaining docs
                 failed_ids.append(doc_id)
+                failure_messages.append(str(exc))
+                logger.exception("Unexpected error deleting document %s", doc_id)
 
         operation_result = BatchOperationResult(
             success_count=success_count,
@@ -3063,8 +3067,11 @@ class KnowledgeService:
                     success_count += 1
                 else:
                     failed_ids.append(doc_id)
-            except (ValueError, Exception):
+            except ValueError:
                 failed_ids.append(doc_id)
+            except Exception:  # noqa: BLE001 - continue updating remaining docs
+                failed_ids.append(doc_id)
+                logger.exception("Unexpected error enabling document %s", doc_id)
 
         return BatchOperationResult(
             success_count=success_count,
@@ -3106,8 +3113,11 @@ class KnowledgeService:
                     success_count += 1
                 else:
                     failed_ids.append(doc_id)
-            except (ValueError, Exception):
+            except ValueError:
                 failed_ids.append(doc_id)
+            except Exception:  # noqa: BLE001 - continue updating remaining docs
+                failed_ids.append(doc_id)
+                logger.exception("Unexpected error disabling document %s", doc_id)
 
         return BatchOperationResult(
             success_count=success_count,
