@@ -436,7 +436,9 @@ class TestUserScopedMcpInjection:
                 },
             },
         )
-        skill = SimpleNamespace(name="dingtalk-docs", user_id=0, namespace="default")
+        skill = SimpleNamespace(
+            id=None, name="dingtalk-docs", user_id=0, namespace="default"
+        )
 
         mock_query = mocker.Mock()
         mock_query.filter.return_value.first.return_value = ghost
@@ -484,6 +486,7 @@ class TestUserScopedMcpInjection:
                 "skill_id": None,
                 "namespace": "default",
                 "is_public": True,
+                "content_hash": None,
             }
         }
 

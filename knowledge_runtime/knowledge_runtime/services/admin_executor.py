@@ -10,8 +10,9 @@ import asyncio
 import logging
 from typing import Any
 
-from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,

@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-
 from knowledge_runtime.services.admin_executor import AdminExecutor
+
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,

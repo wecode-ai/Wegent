@@ -9,13 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.content_fetcher import ContentFetcher
+
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.content_fetcher import ContentFetcher
 from shared.models import RemoteIndexRequest
 
 logger = logging.getLogger(__name__)

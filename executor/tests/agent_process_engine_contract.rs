@@ -504,6 +504,118 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
 
 #[cfg(unix)]
 #[tokio::test]
+async fn agent_process_engine_refreshes_existing_bot_skills_for_regular_claude_tasks() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-refresh-bot-skill-home");
+    let workspace_root = unique_dir("claude-refresh-bot-skill-workspace");
+    let existing_skill = home.join(".claude/skills/agent-skill");
+    fs::create_dir_all(&existing_skill).unwrap();
+    fs::write(existing_skill.join("SKILL.md"), "# Old Agent Skill\n").unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend_url =
+        serve_one_http_response(skill_zip_bytes("agent-skill"), Arc::clone(&requests)).await;
+    let fake_claude = write_fake_executable(
+        "fake-claude-refresh-bot-skill",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+"#,
+    );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 88,
+        backend_url: Some(backend_url),
+        auth_token: Some("task-token".to_owned()),
+        prompt: json!("run with refreshed bot skill"),
+        bot: json!([{
+            "id": 328,
+            "shell_type": "ClaudeCode",
+            "skills": ["agent-skill"],
+            "skill_refs": {
+                "agent-skill": {
+                    "skill_id": 44,
+                    "namespace": "default",
+                    "is_public": false,
+                    "content_hash": "sha256:new",
+                }
+            }
+        }]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    assert_eq!(
+        fs::read_to_string(existing_skill.join("SKILL.md")).unwrap(),
+        "# Task Skill"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_process_engine_skips_claude_fallback_when_skill_hash_is_missing() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("claude-skip-fallback-no-hash-home");
+    let workspace_root = unique_dir("claude-skip-fallback-no-hash-workspace");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend_url =
+        serve_one_http_response(skill_zip_bytes("agent-skill"), Arc::clone(&requests)).await;
+    let fake_claude = write_fake_executable(
+        "fake-claude-skip-fallback-no-hash",
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+"#,
+    );
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
+    let engine = AgentProcessEngine::new(planner);
+    let request = ExecutionRequest {
+        task_id: 89,
+        backend_url: Some(backend_url),
+        auth_token: Some("task-token".to_owned()),
+        prompt: json!("run with bot skill"),
+        bot: json!([{
+            "id": 329,
+            "shell_type": "ClaudeCode",
+            "skills": ["agent-skill"],
+            "skill_refs": {
+                "agent-skill": {
+                    "skill_id": 44,
+                    "namespace": "default",
+                    "is_public": false
+                }
+            }
+        }]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn agent_process_engine_restores_enabled_claude_plugin_zip_before_claude() {
     let _lock = env_lock().lock().await;
     let home = unique_dir("claude-plugin-zip-home");

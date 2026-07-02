@@ -7,7 +7,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
@@ -15,6 +14,7 @@ from knowledge_runtime.services.config_resolver import (
     IndexConfig,
     QueryConfig,
 )
+
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,

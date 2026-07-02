@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-
 from knowledge_runtime.services.query_executor import QueryExecutor
+
 from shared.models import RemoteQueryRequest, RemoteQueryResponse
 
 router = APIRouter()

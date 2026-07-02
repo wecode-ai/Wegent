@@ -7,9 +7,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.admin_executor import AdminExecutor
 from knowledge_runtime.services.config_resolver import AdminResolvedConfig
+
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
