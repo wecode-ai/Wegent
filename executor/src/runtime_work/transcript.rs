@@ -90,6 +90,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     }
                 }
                 "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
+                "plan" => assistant.blocks.push(plan_block(&item, created_at)),
                 "commandexecution" => assistant.blocks.push(command_block(&item, created_at)),
                 "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
                 | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
@@ -344,6 +345,9 @@ fn transcript_item(item: &Value) -> Value {
     let Some(payload) = codex_wrapped_item_payload(item) else {
         return item.clone();
     };
+    if let Some(plan_item) = completed_plan_event_item(item, payload) {
+        return plan_item;
+    }
     let Some(payload_object) = payload.as_object() else {
         return item.clone();
     };
@@ -357,6 +361,60 @@ fn transcript_item(item: &Value) -> Value {
         }
     }
     Value::Object(object)
+}
+
+fn completed_plan_event_item(item: &Value, payload: &Value) -> Option<Value> {
+    if item_type(item) != "eventmsg" || item_type(payload) != "itemcompleted" {
+        return None;
+    }
+    let nested_item = payload.get("item")?;
+    if item_type(nested_item) != "plan" {
+        return None;
+    }
+    let mut object = nested_item.as_object()?.clone();
+    copy_missing_fields(
+        &mut object,
+        item,
+        &[
+            "timestamp",
+            "createdAt",
+            "created_at",
+            "threadId",
+            "thread_id",
+        ],
+    );
+    copy_missing_fields(
+        &mut object,
+        payload,
+        &[
+            "threadId",
+            "thread_id",
+            "turnId",
+            "turn_id",
+            "agentPath",
+            "agent_path",
+        ],
+    );
+    if !object.contains_key("createdAt") && !object.contains_key("created_at") {
+        if let Some(completed_at) = payload
+            .get("completed_at_ms")
+            .or_else(|| payload.get("completedAtMs"))
+            .cloned()
+        {
+            object.insert("createdAt".to_owned(), completed_at);
+        }
+    }
+    Some(Value::Object(object))
+}
+
+fn copy_missing_fields(object: &mut Map<String, Value>, source: &Value, keys: &[&str]) {
+    for key in keys {
+        if !object.contains_key(*key) {
+            if let Some(value) = source.get(*key).cloned() {
+                object.insert((*key).to_owned(), value);
+            }
+        }
+    }
 }
 
 fn is_root_transcript_item(item: &Value) -> bool {
@@ -484,7 +542,10 @@ fn is_substantive_process_item_type(item_type: &str) -> bool {
     is_codex_tool_item_type(item_type)
         || is_codex_tool_output_item_type(item_type)
         || is_likely_codex_tool_item_type(item_type)
-        || matches!(item_type, "reasoning" | "filechange" | "patchapplyend")
+        || matches!(
+            item_type,
+            "reasoning" | "plan" | "filechange" | "patchapplyend"
+        )
         || is_codex_context_compaction_item_type(item_type)
 }
 
@@ -496,6 +557,7 @@ fn is_default_tool_item(item: &Value) -> bool {
             | "usermessage"
             | "agentmessage"
             | "agentmessageevent"
+            | "plan"
             | "reasoning"
             | "filechange"
             | "patchapplyend"
@@ -878,6 +940,17 @@ fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) 
     }
 }
 
+fn plan_block(item: &Value, fallback_timestamp: i64) -> Value {
+    json!({
+        "id": format!("plan-{}", item_id(item, "plan")),
+        "type": "plan",
+        "process_kind": "plan",
+        "content": extract_text(item).unwrap_or_default(),
+        "status": "done",
+        "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
+    })
+}
+
 fn collect_assistant_message(
     item: &Value,
     fallback_timestamp: i64,
@@ -896,7 +969,9 @@ fn collect_assistant_message(
                     blocks.push(process_text_block(item, content, fallback_timestamp));
                 }
                 AssistantMessagePhase::Final => {
-                    assistant_parts.push(content);
+                    if !duplicates_completed_plan_block(&content, blocks) {
+                        assistant_parts.push(content);
+                    }
                 }
             }
         }
@@ -904,6 +979,23 @@ fn collect_assistant_message(
     if let Some(memory_citation) = memory_citation(item) {
         memory_citations.push(memory_citation);
     }
+}
+
+fn duplicates_completed_plan_block(content: &str, blocks: &[Value]) -> bool {
+    let Some(plan_content) = proposed_plan_content(content) else {
+        return false;
+    };
+    blocks.iter().any(|block| {
+        item_type(block) == "plan"
+            && string_field(block, "content")
+                .is_some_and(|content| content.trim() == plan_content.trim())
+    })
+}
+
+fn proposed_plan_content(content: &str) -> Option<&str> {
+    let trimmed = content.trim();
+    let without_open = trimmed.strip_prefix("<proposed_plan>")?.trim_start();
+    Some(without_open.strip_suffix("</proposed_plan>")?.trim_end())
 }
 
 enum AssistantMessagePhase {
@@ -1964,6 +2056,127 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "completedAt": 1_780_000_010,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "user-1",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "make a plan"}]
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "id": "plan-1",
+                                "type": "plan",
+                                "text": "# Plan\n\n- Inspect the repo."
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "");
+        assert_eq!(messages[1]["blocks"][0]["id"], "plan-plan-1");
+        assert_eq!(messages[1]["blocks"][0]["type"], "plan");
+        assert_eq!(messages[1]["blocks"][0]["process_kind"], "plan");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
+        assert_eq!(messages[1]["blocks"][0]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_unwraps_completed_plan_events_and_skips_duplicate_final_text() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "completedAt": 1_780_000_010,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "id": "user-1",
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "make a plan"}]
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "type": "item_completed",
+                                "completed_at_ms": 1_780_000_003,
+                                "item": {
+                                    "id": "turn-1-plan",
+                                    "type": "Plan",
+                                    "text": "# Plan\n\n- Inspect the repo."
+                                }
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_004,
+                            "payload": {
+                                "id": "assistant-final",
+                                "type": "message",
+                                "role": "assistant",
+                                "phase": "final_answer",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "<proposed_plan>\n# Plan\n\n- Inspect the repo.\n</proposed_plan>"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "");
+        assert_eq!(messages[1]["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["blocks"][0]["id"], "plan-turn-1-plan");
+        assert_eq!(messages[1]["blocks"][0]["type"], "plan");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
     }
 
     #[test]

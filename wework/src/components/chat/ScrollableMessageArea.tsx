@@ -159,6 +159,7 @@ function areScrollableMessageAreaPropsEqual(
     previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
       ? 'onRequestUserInputIgnore'
       : null,
+    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -301,7 +302,7 @@ function ScrollableMessagePaneContent({
 
     const blockSignature = (lastMessage.blocks ?? [])
       .map(block => {
-        if (block.type === 'thinking' || block.type === 'text') {
+        if (block.type === 'thinking' || block.type === 'text' || block.type === 'plan') {
           return `${block.id}:${block.status}:${block.content.length}`
         }
         if (block.type === 'file_changes') {

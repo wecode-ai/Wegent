@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
+import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import type { Attachment, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -42,6 +43,38 @@ describe('workbench project chat hooks', () => {
     await waitFor(() =>
       expect(result.current.models).toEqual([claudeModel, gptModel, unknownModel])
     )
+  })
+
+  test('reloads models after local model settings change', async () => {
+    const codexModel: UnifiedModel = {
+      name: 'codex-runtime',
+      type: 'runtime',
+      displayName: '本机 Codex',
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    const localModel: UnifiedModel = {
+      name: 'local-model:ollama',
+      type: 'runtime',
+      displayName: 'Ollama',
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [codexModel] })
+        .mockResolvedValueOnce({ data: [codexModel, localModel] }),
+    }
+
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([codexModel]))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
   test('marks incompatible existing task model choices as disabled', async () => {

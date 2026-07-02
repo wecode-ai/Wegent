@@ -66,6 +66,7 @@ interface ToolBlocksDisplayProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }
@@ -82,6 +83,7 @@ export function ToolBlocksDisplay({
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
+  onOpenAssistantPlan,
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
@@ -160,7 +162,8 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
-  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent)
+  const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
+  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent) || hasPlanResponse
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
   const hasLiveDisplayBlock = useMemo(
@@ -179,25 +182,22 @@ export function ToolBlocksDisplay({
   const processingContent = useMemo(
     () => (
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-        {displayItems.map(item =>
-          item.type === 'request_user_input' ? (
-            isAnsweredRequestUserInputBlock(item.block) ? (
-              <RequestUserInputSummary
-                key={item.id}
-                payload={item.block.renderPayload as RequestUserInputPayload}
-              />
+        {displayItems.map(item => {
+          if (item.type === 'request_user_input') {
+            return isAnsweredRequestUserInputBlock(item.block) ? (
+              <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
             ) : (
               <RequestUserInputCard
                 key={item.id}
-                payload={item.block.renderPayload as RequestUserInputPayload}
+                payload={item.block.renderPayload}
                 disabled={item.block.status === 'error'}
                 onSubmit={onRequestUserInputSubmit}
-                onIgnore={() =>
-                  onRequestUserInputIgnore?.(item.block.renderPayload as RequestUserInputPayload)
-                }
+                onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
               />
             )
-          ) : item.type === 'activity_group' ? (
+          }
+
+          return item.type === 'activity_group' ? (
             <ToolActivityGroup
               key={item.id}
               row={item}
@@ -212,9 +212,10 @@ export function ToolBlocksDisplay({
               block={item.block}
               stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onOpenAssistantPlan={onOpenAssistantPlan}
             />
           )
-        )}
+        })}
         {isRunning && showRunningPlaceholder && !hasLiveDisplayBlock && <ThinkingIndicator />}
       </div>
     ),
@@ -223,6 +224,7 @@ export function ToolBlocksDisplay({
       hasLiveDisplayBlock,
       isRunning,
       onOpenWorkspaceFile,
+      onOpenAssistantPlan,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       showRunningPlaceholder,

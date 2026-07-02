@@ -109,7 +109,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
-  const pendingRequestUserInput = pendingRequestUserInputPayload(paneMessages)
+  const pendingRequestUserInput = pendingRequestUserInputPayload(
+    paneMessages,
+    paneSession.answeredRequestUserInputIds
+  )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneMessages.some(
@@ -303,6 +306,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
               onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+              onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
               hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
@@ -343,6 +347,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         forceDefaultCollaborationMode: shouldImplementPlan,
                       })
                     }}
+                    onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
                   />
                 ) : (
                   <ChatInput

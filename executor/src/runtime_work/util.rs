@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::protocol::ExecutionRequest;
 
@@ -17,84 +17,6 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
         .or_else(|| payload.get("execution_request"))
         .cloned()
         .and_then(|value| serde_json::from_value::<ExecutionRequest>(value).ok())
-}
-
-pub(crate) fn execution_request_from_payload(
-    payload: &Value,
-    workspace_path: &str,
-) -> Result<ExecutionRequest, String> {
-    let model_id = string_field(payload, "modelId")
-        .or_else(|| string_field(payload, "model_id"))
-        .ok_or_else(|| "modelId is required when executionRequest is not provided".to_owned())?;
-    let mut request = ExecutionRequest {
-        prompt: Value::String(
-            string_field(payload, "message")
-                .or_else(|| string_field(payload, "content"))
-                .or_else(|| string_field(payload, "prompt"))
-                .unwrap_or_default(),
-        ),
-        project_workspace_path: if workspace_path.is_empty() {
-            None
-        } else {
-            Some(workspace_path.to_owned())
-        },
-        bot: json!([{"shell_type": "ClaudeCode"}]),
-        model_config: json!({
-            "model": "openai",
-            "model_id": model_id,
-            "api_format": "responses",
-            "protocol": "openai-responses",
-        }),
-        ..ExecutionRequest::default()
-    };
-    if let Some(device_id) =
-        string_field(payload, "deviceId").or_else(|| string_field(payload, "device_id"))
-    {
-        request.device_id = Some(device_id);
-    }
-    apply_model_options_to_model_config(&mut request.model_config, payload);
-    apply_runtime_payload_metadata(&mut request, payload);
-    Ok(request)
-}
-
-fn apply_model_options_to_model_config(model_config: &mut Value, payload: &Value) {
-    let Some(model_options) = payload
-        .get("modelOptions")
-        .or_else(|| payload.get("model_options"))
-        .filter(|value| value.is_object())
-    else {
-        return;
-    };
-
-    let Some(config) = model_config.as_object_mut() else {
-        return;
-    };
-
-    if let Some(reasoning) = reasoning_from_model_options(model_options) {
-        config.insert("reasoning".to_owned(), reasoning);
-    }
-    if let Some(service_tier) =
-        string_field(model_options, "speed").or_else(|| string_field(model_options, "service_tier"))
-    {
-        config.insert("service_tier".to_owned(), Value::String(service_tier));
-    }
-}
-
-fn reasoning_from_model_options(model_options: &Value) -> Option<Value> {
-    let effort = string_field(model_options, "reasoning");
-    let summary = string_field(model_options, "summary");
-    if effort.is_none() && summary.is_none() {
-        return None;
-    }
-
-    let mut reasoning = serde_json::Map::new();
-    if let Some(effort) = effort {
-        reasoning.insert("effort".to_owned(), Value::String(effort));
-    }
-    if let Some(summary) = summary {
-        reasoning.insert("summary".to_owned(), Value::String(summary));
-    }
-    Some(Value::Object(reasoning))
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
@@ -426,13 +348,9 @@ pub(crate) fn extract_text(item: &Value) -> Option<String> {
     }
 }
 
-pub(crate) fn completed_plan_item_text(params: &Value) -> Option<String> {
+pub(crate) fn is_completed_plan_item(params: &Value) -> bool {
     let item = params.get("item").unwrap_or(params);
-    if item_type(item).as_str() != "plan" {
-        return None;
-    }
-
-    extract_text(item)
+    item_type(item).as_str() == "plan"
 }
 
 pub(crate) fn reasoning_content(item: &Value) -> Option<String> {

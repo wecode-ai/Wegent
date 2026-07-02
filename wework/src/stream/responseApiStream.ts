@@ -1,4 +1,4 @@
-import type { ChatBlock } from '@/types/api'
+import type { ChatBlock, RuntimeGoal } from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
 
 export const RESPONSE_API_STREAM_EVENTS = [
@@ -38,6 +38,8 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.block.created',
   'response.block.updated',
   'response.subagent.activity',
+  'runtime.goal.updated',
+  'runtime.goal.cleared',
   'response.status.updated',
   'error',
 ] as const
@@ -462,6 +464,24 @@ export function emitResponseApiEvent(
 
   if (eventName === 'response.subagent.activity') {
     emitSubagentActivity(handlers, base, data)
+    return
+  }
+
+  if (eventName === 'runtime.goal.updated') {
+    handlers.onRuntimeGoalUpdated?.({
+      ...base,
+      thread_id: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      goal: (data.goal ?? null) as RuntimeGoal | null,
+    })
+    return
+  }
+
+  if (eventName === 'runtime.goal.cleared') {
+    handlers.onRuntimeGoalCleared?.({
+      ...base,
+      thread_id: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      goal: null,
+    })
     return
   }
 

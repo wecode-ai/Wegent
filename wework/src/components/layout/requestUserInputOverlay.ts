@@ -6,32 +6,45 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
 
-const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
-const CODEX_PLAN_SECTION_PATTERN = /^##\s+(Summary|Key Changes|Test Plan|Assumptions)\s*$/im
-
 export function pendingRequestUserInputPayload(
   messages: WorkbenchMessage[],
   hiddenRequestUserInputIds?: ReadonlySet<string>
 ): RequestUserInputPayload | null {
   for (const message of [...messages].reverse()) {
+    if (message.role === 'user' && message.content.trim()) {
+      return null
+    }
+
     for (const block of [...(message.blocks ?? [])].reverse()) {
       if (!isPendingRequestUserInputBlock(block, hiddenRequestUserInputIds)) continue
       return block.renderPayload as RequestUserInputPayload
     }
+
+    const planPayload = pendingImplementationPlanPayload(message, hiddenRequestUserInputIds)
+    if (planPayload) return planPayload
   }
-  return pendingImplementationPlanPayload(messages)
+  return null
 }
 
 function pendingImplementationPlanPayload(
-  messages: WorkbenchMessage[]
+  message: WorkbenchMessage,
+  hiddenRequestUserInputIds?: ReadonlySet<string>
 ): RequestUserInputPayload | null {
-  const lastMessage = messages[messages.length - 1]
-  if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.status === 'streaming') {
-    return null
-  }
-  if (!isAssistantPlanContent(lastMessage.content)) return null
+  if (message.role !== 'assistant' || message.status === 'streaming') return null
+
+  const planBlock = [...(message.blocks ?? [])]
+    .reverse()
+    .find(
+      block => block.type === 'plan' && block.status === 'done' && Boolean(block.content.trim())
+    )
+  if (!planBlock) return null
+
+  const itemId = `implementation-plan:${message.id}:${planBlock.id}`
+  if (hiddenRequestUserInputIds?.has(`item:${itemId}`)) return null
+
   return {
     kind: 'request_user_input',
+    itemId,
     questions: [
       {
         id: 'implement',
@@ -45,12 +58,4 @@ function pendingImplementationPlanPayload(
       },
     ],
   }
-}
-
-function isAssistantPlanContent(content: string): boolean {
-  const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '').trim()
-  return (
-    normalizedContent !== content ||
-    (/^#\s+.+/m.test(normalizedContent) && CODEX_PLAN_SECTION_PATTERN.test(normalizedContent))
-  )
 }

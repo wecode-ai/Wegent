@@ -33,6 +33,12 @@ interface ProjectChatComposerProps {
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
+  planModeActive?: boolean
+  onSetPlanMode?: () => void
+  onClearPlanMode?: () => void
+  onSetGoal?: () => void
+  goalDraftActive?: boolean
+  onCancelGoalDraft?: () => void
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
@@ -76,6 +82,12 @@ export function ProjectChatComposer({
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
+  planModeActive = false,
+  onSetPlanMode,
+  onClearPlanMode,
+  onSetGoal,
+  goalDraftActive = false,
+  onCancelGoalDraft,
   onRemoveAttachment,
   onClearCodeComments,
   onListLocalSkills,
@@ -140,12 +152,12 @@ export function ProjectChatComposer({
   }, [disabled, onFileSelect])
 
   return (
-    <div className="relative w-full rounded-[26px] border border-border/30 bg-background shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
+    <div className="relative w-full rounded-[26px] bg-[#f3f3f3] shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
       <form
         ref={formRef}
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-surface px-4 pb-1.5 pt-2',
+          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2',
           showProjectWorkBar && 'border-b-border/35'
         )}
         onDragOver={handleDragOver}
@@ -198,6 +210,12 @@ export function ProjectChatComposer({
           onSelectModelOption={onSelectModelOption}
           onBlockedModelSelect={onBlockedModelSelect}
           onFileSelect={onFileSelect}
+          planModeActive={planModeActive}
+          onSetPlanMode={onSetPlanMode}
+          onClearPlanMode={onClearPlanMode}
+          onSetGoal={onSetGoal}
+          goalDraftActive={goalDraftActive}
+          onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}
           onPause={onPause}
         />
@@ -228,7 +246,7 @@ export function ProjectChatComposer({
           onCreateBranch={projectWork.onCreateBranch}
           worktreeBranch={projectWork.worktreeBranch}
           onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
-          className="min-h-10 rounded-b-[26px] bg-background px-4"
+          className="min-h-10 rounded-b-[26px] bg-[#f3f3f3] px-4"
           buttonClassName="h-9 px-2.5 text-[13px] leading-[18px] text-text-secondary hover:bg-surface/70 hover:text-text-primary"
         />
       )}

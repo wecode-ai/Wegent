@@ -182,4 +182,30 @@ describe('ModelCascadeContent', () => {
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
     })
   })
+
+  it('lets mobile users navigate groups before selecting a model', () => {
+    const onSelectModel = jest.fn()
+
+    render(
+      <ModelCascadeContent
+        models={models}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={onSelectModel}
+        variant="mobile"
+      />
+    )
+
+    expect(screen.getByTestId('model-mobile-primary-groups')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    expect(screen.getByTestId('model-mobile-secondary-groups')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+    expect(screen.getByTestId('model-mobile-models')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-option-model-a'))
+    expect(onSelectModel).toHaveBeenCalledWith(models[0])
+  })
 })

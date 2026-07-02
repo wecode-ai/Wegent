@@ -146,7 +146,7 @@ describe('pendingRequestUserInputPayload', () => {
     expect(pendingRequestUserInputPayload(messages)).toBeNull()
   })
 
-  test('creates an implementation confirmation for the latest completed plan', () => {
+  test('does not create an implementation confirmation from assistant plan markdown', () => {
     const messages = [
       {
         id: 'assistant-plan',
@@ -165,8 +165,33 @@ describe('pendingRequestUserInputPayload', () => {
       },
     ] as WorkbenchMessage[]
 
+    expect(pendingRequestUserInputPayload(messages)).toBeNull()
+  })
+
+  test('creates an implementation confirmation from an explicit assistant plan block', () => {
+    const messages = [
+      {
+        id: 'assistant-plan',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '2026-06-30T00:00:01.000Z',
+        blocks: [
+          {
+            id: 'plan-1',
+            turnId: 1,
+            type: 'plan',
+            content: '# 整理环境计划\n\n- 整理下载目录。',
+            status: 'done',
+            createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+          },
+        ],
+      },
+    ] as WorkbenchMessage[]
+
     expect(pendingRequestUserInputPayload(messages)).toEqual({
       kind: 'request_user_input',
+      itemId: 'implementation-plan:assistant-plan:plan-1',
       questions: [
         {
           id: 'implement',
@@ -182,22 +207,53 @@ describe('pendingRequestUserInputPayload', () => {
     })
   })
 
-  test('does not create an implementation confirmation after the user responds to a plan', () => {
+  test('does not create an implementation confirmation from a hidden assistant plan block', () => {
     const messages = [
       {
         id: 'assistant-plan',
         role: 'assistant',
-        content: [
-          '# 整理环境计划',
-          '',
-          '## Summary',
-          '整理下载目录。',
-          '',
-          '## Test Plan',
-          '确认结果。',
-        ].join('\n'),
+        content: '',
         status: 'done',
         createdAt: '2026-06-30T00:00:01.000Z',
+        blocks: [
+          {
+            id: 'plan-1',
+            turnId: 1,
+            type: 'plan',
+            content: '# 整理环境计划',
+            status: 'done',
+            createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+          },
+        ],
+      },
+    ] as WorkbenchMessage[]
+
+    expect(
+      pendingRequestUserInputPayload(
+        messages,
+        new Set(['item:implementation-plan:assistant-plan:plan-1'])
+      )
+    ).toBeNull()
+  })
+
+  test('does not create an implementation confirmation after a later user message', () => {
+    const messages = [
+      {
+        id: 'assistant-plan',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '2026-06-30T00:00:01.000Z',
+        blocks: [
+          {
+            id: 'plan-1',
+            turnId: 1,
+            type: 'plan',
+            content: '# 整理环境计划',
+            status: 'done',
+            createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+          },
+        ],
       },
       {
         id: 'user-after-plan',
