@@ -261,7 +261,7 @@ Response:
 }
 ```
 
-Batch delete allows partial success. Successfully deleted documents have their associated attachments and RAG indexes removed, and the affected knowledge base summaries are refreshed.
+Batch delete allows partial success. Duplicate `document_ids` are deduplicated in first-seen order before deletion, and `success_count`, `failed_count`, and `failed_ids` are calculated from the deduplicated document set. Successfully deleted documents have their associated attachments and RAG indexes removed, and the affected knowledge base summaries are refreshed.
 
 ### Batch Move Documents
 

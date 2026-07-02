@@ -3004,7 +3004,9 @@ class KnowledgeService:
         failure_messages = []
         kb_ids = set()  # Collect unique KB IDs from deleted documents
 
-        for doc_id in document_ids:
+        requested_ids = list(dict.fromkeys(document_ids))
+
+        for doc_id in requested_ids:
             try:
                 result = KnowledgeService.delete_document(db, doc_id, user_id)
                 if result.success:

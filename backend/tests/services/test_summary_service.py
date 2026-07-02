@@ -922,6 +922,29 @@ class TestKnowledgeServiceBatchDeleteDocuments:
         assert 99999 in result.result.failed_ids
         assert expected_kb_id in result.kb_ids
 
+    def test_batch_delete_deduplicates_document_ids(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_knowledge_base: Kind,
+        test_documents: list[KnowledgeDocument],
+    ):
+        """Test batch delete processes duplicated document IDs only once."""
+        from app.services.knowledge import KnowledgeService
+
+        document_id = test_documents[0].id
+
+        result = KnowledgeService.batch_delete_documents(
+            db=test_db,
+            document_ids=[document_id, document_id],
+            user_id=test_user.id,
+        )
+
+        assert result.result.success_count == 1
+        assert result.result.failed_count == 0
+        assert result.result.failed_ids == []
+        assert test_knowledge_base.id in result.kb_ids
+
     def test_batch_delete_mixed_unexpected_failure_uses_generic_message(
         self,
         test_db: Session,

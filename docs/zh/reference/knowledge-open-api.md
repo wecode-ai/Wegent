@@ -261,7 +261,7 @@ POST /api/knowledge/documents/batch/delete
 }
 ```
 
-批量删除允许部分成功。成功删除的文档会清理关联附件和 RAG 索引，并触发对应知识库摘要刷新。
+批量删除允许部分成功。重复的 `document_ids` 会按首次出现顺序去重后处理，`success_count`、`failed_count` 和 `failed_ids` 均按去重后的文档集合计算。成功删除的文档会清理关联附件和 RAG 索引，并触发对应知识库摘要刷新。
 
 ### 批量移动文档
 
