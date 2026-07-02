@@ -4,17 +4,21 @@
 
 import os
 
+from app.core.config import settings
+
+_EXECUTOR_MANAGER_BASE = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+
 EXECUTOR_DELETE_BY_TASK_ID_URL = os.getenv(
     "EXECUTOR_DELETE_BY_TASK_ID_URL",
-    "http://localhost:8001/executor-manager/executor/delete-by-task-id",
+    f"{_EXECUTOR_MANAGER_BASE}/executor-manager/executor/delete-by-task-id",
 )
 EXECUTOR_DELETE_POD_BY_NAME_URL = os.getenv(
     "EXECUTOR_DELETE_POD_BY_NAME_URL",
-    "http://localhost:8001/executor-manager/executor/delete-pod-by-name",
+    f"{_EXECUTOR_MANAGER_BASE}/executor-manager/executor/delete-pod-by-name",
 )
 EXECUTOR_OLD_TASK_IDS_URL = os.getenv(
     "EXECUTOR_OLD_TASK_IDS_URL",
-    "http://localhost:8001/executor-manager/executor/old-task-ids",
+    f"{_EXECUTOR_MANAGER_BASE}/executor-manager/executor/old-task-ids",
 )
 ORPHAN_POD_CLEANUP_ENABLED = (
     os.getenv("ORPHAN_POD_CLEANUP_ENABLED", "true").lower() == "true"
