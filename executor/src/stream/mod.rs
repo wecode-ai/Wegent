@@ -42,6 +42,11 @@ pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
 pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut text = String::new();
     let mut terminal_outcome = None;
+    // Mid-stream `type:error` events (e.g. GLM's "Tool call preview did not
+    // complete before the turn ended") are recoverable: the SDK often keeps the
+    // turn alive and emits a success `type:result` afterwards. Buffer them and
+    // only fall back to Failed when no authoritative result ever arrives.
+    let mut pending_error: Option<String> = None;
     let mut session_id = None;
     let mut deferred_tool_use = None;
     let mut stop_reason = None;
@@ -77,26 +82,40 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
             if let Some(tool_use) = extract_deferred_tool_use(&value) {
                 deferred_tool_use = Some(tool_use);
             }
-        }
-        if let Some(outcome) = extract_result_outcome(&value) {
-            if matches!(
-                outcome,
-                ExecutionOutcome::Cancelled { .. } | ExecutionOutcome::WaitingForUserInput { .. }
-            ) {
-                return ClaudeStreamSummary {
-                    outcome,
-                    session_id,
-                    deferred_tool_use,
-                    stop_reason,
-                    usage,
-                    retryable_api_error,
-                };
+            match extract_result_outcome(&value) {
+                Some(outcome)
+                    if matches!(
+                        outcome,
+                        ExecutionOutcome::Cancelled { .. }
+                            | ExecutionOutcome::WaitingForUserInput { .. }
+                    ) =>
+                {
+                    return ClaudeStreamSummary {
+                        outcome,
+                        session_id,
+                        deferred_tool_use,
+                        stop_reason,
+                        usage,
+                        retryable_api_error,
+                    };
+                }
+                Some(failed) => {
+                    // Authoritative failed result overrides any buffered
+                    // mid-stream error.
+                    terminal_outcome = Some(failed);
+                    pending_error = None;
+                }
+                None => {
+                    // Success result: any prior mid-stream error was recovered
+                    // from, so drop it.
+                    pending_error = None;
+                }
             }
-            terminal_outcome = Some(outcome);
             continue;
         }
         if let Some(error) = extract_error(&value) {
-            terminal_outcome.get_or_insert(ExecutionOutcome::Failed { message: error });
+            // Buffer instead of committing: a later `type:result` is authoritative.
+            pending_error = Some(error);
             continue;
         }
         if let Some(delta) = extract_text(&value) {
@@ -104,8 +123,11 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
         }
     }
 
+    let outcome = terminal_outcome
+        .or_else(|| pending_error.map(|message| ExecutionOutcome::Failed { message }))
+        .unwrap_or(ExecutionOutcome::Completed { content: text });
     ClaudeStreamSummary {
-        outcome: terminal_outcome.unwrap_or(ExecutionOutcome::Completed { content: text }),
+        outcome,
         session_id,
         deferred_tool_use,
         stop_reason,

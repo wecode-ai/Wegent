@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { LOCAL_USER } from './localSession'
+import { getLocalUser, LOCAL_USER } from './localSession'
 import { createLocalAppServices } from './localServices'
 import {
   clearLocalModelConfigs,
@@ -8,6 +8,7 @@ import {
 
 describe('createLocalAppServices', () => {
   beforeEach(() => {
+    localStorage.clear()
     clearLocalModelConfigs()
   })
 
@@ -106,9 +107,24 @@ describe('createLocalAppServices', () => {
         bind_shell: 'claudecode',
       }),
     ])
-    await expect(services.userApi?.updateCurrentUser({ preferences: {} })).resolves.toEqual(
-      LOCAL_USER
-    )
+    const preferences = {
+      wework_new_chat_model_selection: {
+        modelName: 'gpt-5.5',
+        modelType: 'runtime' as const,
+        options: { collaborationMode: 'plan' },
+      },
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree' as const,
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    }
+    await expect(services.userApi?.updateCurrentUser({ preferences })).resolves.toEqual({
+      ...LOCAL_USER,
+      preferences,
+    })
+    expect(getLocalUser().preferences).toEqual(preferences)
     await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual({
       projects: [],
       chats: [],

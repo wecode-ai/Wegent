@@ -14,6 +14,7 @@ import {
   getTerminalTheme,
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
+import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -32,11 +33,16 @@ export function EmbeddedLocalTerminal({
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const activeRef = useRef(active)
+  const onExitRef = useRef(onExit)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
 
   useEffect(() => {
     activeRef.current = active
   }, [active])
+
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
 
   useEffect(() => {
     const container = containerRef.current
@@ -52,7 +58,12 @@ export function EmbeddedLocalTerminal({
       theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
+    let inputFallback: XtermInputFallbackController = {
+      noteData: () => undefined,
+      dispose: () => undefined,
+    }
     const dataDisposable = terminal.onData(data => {
+      inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
     })
     let disposed = false
@@ -60,6 +71,13 @@ export function EmbeddedLocalTerminal({
 
     terminal.loadAddon(fitAddon)
     terminal.open(container)
+    inputFallback = installXtermInputFallback({
+      terminal,
+      writeData: data => {
+        inputFallback.noteData(data)
+        void writeLocalTerminal(sessionId, data)
+      },
+    })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     applyTerminalTheme(terminal, container)
@@ -107,7 +125,7 @@ export function EmbeddedLocalTerminal({
 
     void listenLocalTerminalExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        onExit?.()
+        onExitRef.current?.()
       }
     }).then(unlisten => {
       if (disposed) {
@@ -122,6 +140,7 @@ export function EmbeddedLocalTerminal({
       unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()
       terminalRef.current = null

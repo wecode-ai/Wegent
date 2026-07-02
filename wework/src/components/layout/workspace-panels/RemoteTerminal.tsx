@@ -9,6 +9,7 @@ import {
   getTerminalTheme,
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
+import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -28,11 +29,16 @@ export function RemoteTerminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const clientRef = useRef<RemoteTerminalClient | null>(null)
   const activeRef = useRef(active)
+  const onExitRef = useRef(onExit)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
 
   useEffect(() => {
     activeRef.current = active
   }, [active])
+
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
 
   useEffect(() => {
     const container = containerRef.current
@@ -52,7 +58,12 @@ export function RemoteTerminal({
     let disposed = false
     let scheduleThemeSync: () => void = () => undefined
 
+    let inputFallback: XtermInputFallbackController = {
+      noteData: () => undefined,
+      dispose: () => undefined,
+    }
     const dataDisposable = terminal.onData(data => {
+      inputFallback.noteData(data)
       void client.write(data).catch(error => {
         if (!disposed) {
           console.error('Failed to write to remote terminal:', error)
@@ -67,12 +78,23 @@ export function RemoteTerminal({
     })
     const unsubscribeExit = client.onExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        onExit?.()
+        onExitRef.current?.()
       }
     })
 
     terminal.loadAddon(fitAddon)
     terminal.open(container)
+    inputFallback = installXtermInputFallback({
+      terminal,
+      writeData: data => {
+        inputFallback.noteData(data)
+        void client.write(data).catch(error => {
+          if (!disposed) {
+            console.error('Failed to write fallback input to remote terminal:', error)
+          }
+        })
+      },
+    })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     clientRef.current = client
@@ -127,6 +149,7 @@ export function RemoteTerminal({
       unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
       void client

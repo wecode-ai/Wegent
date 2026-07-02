@@ -180,6 +180,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
+  const [composerPointerActive, setComposerPointerActive] = useState(false)
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const [workbenchMainWidth, setWorkbenchMainWidth] = useState(0)
   const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
@@ -785,6 +786,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDeviceUnavailable,
   ])
 
+  useLayoutEffect(() => {
+    if (!composerPointerActive) return
+
+    const clearComposerPointerActive = () => setComposerPointerActive(false)
+    window.addEventListener('pointerup', clearComposerPointerActive)
+    window.addEventListener('pointercancel', clearComposerPointerActive)
+    window.addEventListener('blur', clearComposerPointerActive)
+    return () => {
+      window.removeEventListener('pointerup', clearComposerPointerActive)
+      window.removeEventListener('pointercancel', clearComposerPointerActive)
+      window.removeEventListener('blur', clearComposerPointerActive)
+    }
+  }, [composerPointerActive])
+
   return (
     <main
       ref={workbenchMainRef}
@@ -913,6 +928,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                autoScrollSuspended={composerPointerActive}
               />
               <div
                 className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
@@ -929,6 +945,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   ref={floatingComposerCardRef}
                   className="pointer-events-auto"
                   data-testid="desktop-floating-composer-card"
+                  onPointerDownCapture={() => setComposerPointerActive(true)}
                 >
                   {showConversationDeviceBanner ? (
                     <ConversationDeviceOfflineBanner
