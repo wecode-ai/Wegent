@@ -77,6 +77,24 @@ fn claude_command_uses_headless_stream_json_mode() {
 }
 
 #[test]
+fn claude_command_sends_empty_prompt_through_stream_json_stdin() {
+    let request = ExecutionRequest {
+        prompt: json!(""),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(spec.args()[0], "-p");
+    assert_eq!(spec.args()[1], "--input-format");
+    assert_eq!(spec.args()[2], "stream-json");
+    assert_eq!(
+        spec.stdin_input().unwrap(),
+        "{\"message\":{\"content\":\"\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
+    );
+}
+
+#[test]
 fn claude_command_maps_nested_model_env_to_process_environment() {
     let _lock = env_lock();
     let home = unique_dir("claude-nested-model-home");

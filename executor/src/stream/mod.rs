@@ -62,6 +62,20 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
                 session_id = Some(value.to_owned());
             }
         }
+        if value.get("type").and_then(Value::as_str) != Some("result")
+            && is_deferred_user_input_result(&value)
+        {
+            return ClaudeStreamSummary {
+                outcome: ExecutionOutcome::WaitingForUserInput {
+                    stop_reason: "tool_deferred".to_owned(),
+                },
+                session_id,
+                deferred_tool_use,
+                stop_reason,
+                usage,
+                retryable_api_error,
+            };
+        }
         if value.get("type").and_then(Value::as_str) == Some("result") {
             if let Some(reason) = value
                 .get("stop_reason")

@@ -73,6 +73,24 @@ fn ndjson_parser_maps_interactive_form_waiting_result_to_waiting_outcome() {
 }
 
 #[test]
+fn ndjson_parser_maps_interactive_form_tool_result_to_waiting_outcome() {
+    let output = r#"
+{"type":"assistant","message":{"content":[{"id":"toolu_form","input":{"questions":[]},"name":"mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question","type":"tool_use"}]}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_form","type":"tool_result","content":"{\"result\":\"{\\\"__silent_exit__\\\": true, \\\"__deferred_user_input__\\\": true, \\\"success\\\": true, \\\"status\\\": \\\"waiting_for_user_response\\\"}\"}"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":"form displayed"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::WaitingForUserInput {
+            stop_reason: "tool_deferred".to_owned()
+        }
+    );
+}
+
+#[test]
 fn ndjson_parser_extracts_claude_session_id_from_init_or_result_events() {
     let output = r#"
 {"type":"system","subtype":"init","session_id":"init-session"}
