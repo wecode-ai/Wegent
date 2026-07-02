@@ -51,7 +51,8 @@ import {
   isSameRuntimeTaskIdentity,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
-import { findActiveAssistantMessage, findFileChangesByTurnId } from './runtimePaneMessages'
+import { findFileChangesByTurnId } from './runtimePaneMessages'
+import { findActiveAssistantMessage } from './runtimePaneStatus'
 import {
   inferRuntimeName,
   resolveAutomaticModel,

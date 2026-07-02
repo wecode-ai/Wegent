@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import {
-  findActiveAssistantMessage,
-  type RuntimePaneMessageAction,
-} from '@/features/workbench/runtimePaneMessages'
+  deriveRuntimePaneStatus,
+  getRuntimePaneTaskExecution,
+  hasSettledAssistantMessage,
+  type RuntimePaneSendPhase,
+} from '@/features/workbench/runtimePaneStatus'
 import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
@@ -74,6 +77,7 @@ const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
+    state: workbenchState,
     projectChat,
     loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,
@@ -90,8 +94,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
-  const [waitingForAssistant, setWaitingForAssistant] = useState(false)
+  const [sendPhase, setSendPhase] = useState<RuntimePaneSendPhase>('idle')
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -141,9 +144,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [currentRuntimeTask]
   )
-  const activeAssistantMessage = useMemo(() => findActiveAssistantMessage(messages), [messages])
-  const hasActiveAssistant = Boolean(activeAssistantMessage)
-  const busy = sending || waitingForAssistant || hasActiveAssistant
+  const taskExecution = useMemo(
+    () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, currentRuntimeTask),
+    [currentRuntimeTask, workbenchState.runtimeWork]
+  )
+  const paneStatus = useMemo(
+    () =>
+      deriveRuntimePaneStatus({
+        messages,
+        sendPhase,
+        currentRuntimeTask,
+        taskExecution,
+      }),
+    [currentRuntimeTask, messages, sendPhase, taskExecution]
+  )
+  const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
     const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
     if (visibleThreadGoal) return visibleThreadGoal
@@ -291,7 +306,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             messages: nextMessages,
           })
           if (hasSettledAssistantMessage(nextMessages)) {
-            setWaitingForAssistant(false)
+            setSendPhase('idle')
           }
           clearRuntimePaneMessageSeed(address)
         }
@@ -331,9 +346,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const { address } = runtimeTaskLoadTarget
     const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
       onMessageAction: dispatchMessages,
-      onAssistantStart: () => setWaitingForAssistant(false),
+      onAssistantStart: () => setSendPhase('idle'),
       onAssistantSettled: () => {
-        setWaitingForAssistant(false)
+        setSendPhase('idle')
         setSubagentStatuses(markRuntimeSubagentsSettled)
         void getRuntimeGoal(address)
           .then(response => {
@@ -537,7 +552,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     async (message: RuntimePaneQueuedMessage): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      setWaitingForAssistant(true)
+      setSendPhase('submitting')
       appendLocalUserMessage(message.content, message.attachments, {
         runtimeGoalRequest: message.runtimeGoalRequest,
       })
@@ -557,8 +572,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       })
-      if (!sent) {
-        setWaitingForAssistant(false)
+      if (sent) {
+        setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+      } else {
+        setSendPhase('idle')
       }
       return sent
     },
@@ -574,7 +591,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       const message = requestUserInputResponseText(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
-      setWaitingForAssistant(true)
+      setSendPhase('submitting')
       const runtimeModelOverride = options.forceDefaultCollaborationMode
         ? { collaborationMode: 'default' }
         : undefined
@@ -602,8 +619,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...runtimeModelFields,
         ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
       })
-      if (!sent) {
-        setWaitingForAssistant(false)
+      if (sent) {
+        setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+      } else {
+        setSendPhase('idle')
         if (requestUserInputKey) {
           setAnsweredRequestUserInputIds(current => {
             if (!current.has(requestUserInputKey)) return current
@@ -638,12 +657,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       if (!currentRuntimeTask) {
-        setWaitingForAssistant(false)
+        setSendPhase('idle')
         return
       }
 
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
-      setWaitingForAssistant(false)
+      setSendPhase('idle')
       if (!cancelled) {
         if (requestUserInputKey) {
           setAnsweredRequestUserInputIds(current => {
@@ -666,7 +685,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
 
   useEffect(() => {
-    if (!currentRuntimeTask || busy) return
+    if (!paneStatus.canSendQueuedMessage) return
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
@@ -689,7 +708,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             )
       )
     })
-  }, [busy, currentRuntimeTask, queuedMessages, sendRuntimeMessage])
+  }, [paneStatus.canSendQueuedMessage, queuedMessages, sendRuntimeMessage])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const send = useCallback(async () => {
@@ -708,7 +727,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       setInput('')
-      setSending(true)
+      setSendPhase('submitting')
       try {
         if (currentRuntimeTask) {
           const response = await setRuntimeGoal({
@@ -733,7 +752,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
 
           projectChat.resetAttachments()
-          if (busy) {
+          if (paneStatus.isBusy) {
             setQueuedMessages(messages => [...messages, queuedMessage])
             return
           }
@@ -749,7 +768,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const initialGoal = runtimeGoalCreateInput(draftGoal)
         setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
         setGoalDraftActive(false)
-        setWaitingForAssistant(true)
         const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
           runtimeGoalRequest: true,
         })
@@ -786,6 +804,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           },
         })
         if (sent) {
+          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
           if (!isRuntimeTaskAddress(sent)) {
             appendLocalUserMessage(submittedInput, currentAttachments, {
               runtimeGoalRequest: true,
@@ -807,11 +826,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
           setGoalDraftActive(true)
           setPendingGoalState(null)
-          setWaitingForAssistant(false)
+          setSendPhase('idle')
         }
         return
       } finally {
-        setSending(false)
+        setSendPhase(current => (current === 'submitting' ? 'idle' : current))
       }
     }
 
@@ -826,10 +845,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     setInput('')
-    setSending(true)
+    setSendPhase('submitting')
     try {
       if (!currentRuntimeTask) {
-        setWaitingForAssistant(true)
         const optimisticMessage = createLocalUserMessage(
           effectiveSubmittedInput,
           currentAttachments,
@@ -871,6 +889,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           },
         })
         if (sent) {
+          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
           if (!isRuntimeTaskAddress(sent)) {
             appendLocalUserMessage(effectiveSubmittedInput, currentAttachments, {
               runtimeGoalRequest: Boolean(pendingInitialGoal),
@@ -888,7 +907,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
           setCodeCommentContexts([])
         } else {
-          setWaitingForAssistant(false)
+          setSendPhase('idle')
         }
         return
       }
@@ -908,7 +927,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       projectChat.resetAttachments()
-      if (busy) {
+      if (paneStatus.isBusy) {
         setQueuedMessages(messages => [...messages, queuedMessage])
         return
       }
@@ -918,17 +937,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setCodeCommentContexts([])
       }
     } finally {
-      setSending(false)
+      setSendPhase(current => (current === 'submitting' ? 'idle' : current))
     }
   }, [
     appendLocalUserMessage,
-    busy,
     codeCommentContexts,
     currentRuntimeTask,
     goalDraftActive,
     getRuntimeModelFields,
     input,
     pendingGoalState,
+    paneStatus.isBusy,
     projectChat,
     queuedMessages.length,
     sendCurrentInput,
@@ -1140,8 +1159,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     codeCommentContexts,
     input,
     setInput,
-    sending,
-    waitingForAssistant,
+    status: paneStatus,
+    sending: paneStatus.isSubmitting,
+    waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,
     answeredRequestUserInputIds,
     transcriptLoading,
     transcriptHasMoreBefore,
@@ -1301,12 +1321,6 @@ function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessag
 
 function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
   runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
-}
-
-function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolean {
-  return (
-    messages.some(message => message.role === 'assistant') && !findActiveAssistantMessage(messages)
-  )
 }
 
 function mergeRuntimeTranscriptMessages(

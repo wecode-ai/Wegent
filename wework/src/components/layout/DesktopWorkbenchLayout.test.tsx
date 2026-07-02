@@ -40,6 +40,41 @@ vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
 }))
 
+function createPaneStatus({
+  messages = [],
+  sending = false,
+  waitingForAssistant = false,
+  taskRunning = false,
+}: {
+  messages?: WorkbenchMessage[]
+  sending?: boolean
+  waitingForAssistant?: boolean
+  taskRunning?: boolean
+} = {}) {
+  const activeAssistantMessage =
+    [...messages]
+      .reverse()
+      .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null
+  const isSubmitting = Boolean(sending)
+  const isAwaitingAssistant = Boolean(waitingForAssistant)
+  const isAssistantStreaming = Boolean(activeAssistantMessage)
+  const isResponseActive = isAwaitingAssistant || isAssistantStreaming
+  const isBusy = isSubmitting || isResponseActive || taskRunning
+
+  return {
+    sendPhase: isSubmitting ? 'submitting' : isAwaitingAssistant ? 'awaiting_assistant' : 'idle',
+    activeAssistantMessage,
+    taskExecution: { known: taskRunning, running: taskRunning, status: null },
+    isSubmitting,
+    isAwaitingAssistant,
+    isAssistantStreaming,
+    isResponseActive,
+    isBusy,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    canSendQueuedMessage: !isBusy,
+  }
+}
+
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
@@ -900,6 +935,12 @@ describe('DesktopWorkbenchLayout', () => {
       setInput: props.onInputChange ?? baseProps.onInputChange,
       sending: Boolean(state.isSending),
       waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
+      status: createPaneStatus({
+        messages: props.messages ?? [],
+        sending: Boolean(state.isSending),
+        waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
+        taskRunning: workbenchValue.currentRuntimeTaskRunning,
+      }),
       transcriptLoading: Boolean(props.isRuntimeTranscriptLoading),
       transcriptHasMoreBefore: Boolean(props.runtimeTranscriptHasMoreBefore),
       transcriptLoadingMoreBefore: Boolean(props.isRuntimeTranscriptLoadingMore),

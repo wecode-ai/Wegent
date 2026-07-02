@@ -21,6 +21,41 @@ vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
 }))
 
+function createPaneStatus({
+  messages = [],
+  sending = false,
+  waitingForAssistant = false,
+  taskRunning = false,
+}: {
+  messages?: WorkbenchMessage[]
+  sending?: boolean
+  waitingForAssistant?: boolean
+  taskRunning?: boolean
+} = {}) {
+  const activeAssistantMessage =
+    [...messages]
+      .reverse()
+      .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null
+  const isSubmitting = Boolean(sending)
+  const isAwaitingAssistant = Boolean(waitingForAssistant)
+  const isAssistantStreaming = Boolean(activeAssistantMessage)
+  const isResponseActive = isAwaitingAssistant || isAssistantStreaming
+  const isBusy = isSubmitting || isResponseActive || taskRunning
+
+  return {
+    sendPhase: isSubmitting ? 'submitting' : isAwaitingAssistant ? 'awaiting_assistant' : 'idle',
+    activeAssistantMessage,
+    taskExecution: { known: taskRunning, running: taskRunning, status: null },
+    isSubmitting,
+    isAwaitingAssistant,
+    isAssistantStreaming,
+    isResponseActive,
+    isBusy,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    canSendQueuedMessage: !isBusy,
+  }
+}
+
 const originalInnerWidth = window.innerWidth
 
 const baseState = {
@@ -305,6 +340,11 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     setInput: props.onInputChange ?? vi.fn(),
     sending: Boolean(state.isSending),
     waitingForAssistant: false,
+    status: createPaneStatus({
+      messages: props.messages ?? [],
+      sending: Boolean(state.isSending),
+      taskRunning: workbenchValue.currentRuntimeTaskRunning,
+    }),
     transcriptLoading: false,
     transcriptHasMoreBefore: false,
     transcriptLoadingMoreBefore: false,
