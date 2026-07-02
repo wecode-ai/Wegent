@@ -5,6 +5,7 @@ import type {
   ChatDonePayload,
   ChatErrorPayload,
   ChatStartPayload,
+  RuntimeGoalEventPayload,
   RuntimeSubagentActivityPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
@@ -25,6 +26,8 @@ export interface ChatStreamHandlers {
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void

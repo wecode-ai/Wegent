@@ -10,6 +10,12 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeGoalClearRequest,
+  RuntimeGoalClearResponse,
+  RuntimeGoalGetRequest,
+  RuntimeGoalGetResponse,
+  RuntimeGoalSetRequest,
+  RuntimeGoalSetResponse,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
@@ -76,6 +82,15 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
+    },
+    getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
+      return client.post('/runtime-work/goal/get', data)
+    },
+    setRuntimeGoal(data: RuntimeGoalSetRequest): Promise<RuntimeGoalSetResponse> {
+      return client.post('/runtime-work/goal/set', data)
+    },
+    clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
+      return client.post('/runtime-work/goal/clear', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)

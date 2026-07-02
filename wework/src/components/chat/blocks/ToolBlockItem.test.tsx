@@ -225,6 +225,58 @@ describe('ToolBlockItem', () => {
     expect(screen.getByText('enabled: true')).toBeInTheDocument()
   })
 
+  test('renders apply_patch blocks with file names parsed from the patch body', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'patch-1',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'apply_patch',
+          toolInput: {
+            input: [
+              '*** Begin Patch',
+              '*** Update File: /workspace/project/executor/src/server/mod.rs',
+              '@@',
+              '-old',
+              '+new',
+              '*** End Patch',
+            ].join('\n'),
+          },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('已编辑 mod.rs')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByText('/workspace/project/executor/src/server/mod.rs')).toBeInTheDocument()
+  })
+
+  test('renders unknown edit targets without an awkward file fallback', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'edit-unknown',
+          turnId: 1,
+          type: 'tool',
+          toolName: 'apply_patch',
+          toolInput: { input: 'invalid patch text' },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('已编辑文件')).toBeInTheDocument()
+    expect(screen.queryByText('已编辑 文件')).not.toBeInTheDocument()
+  })
+
   test('renders process text code blocks with shared syntax highlighting', () => {
     render(
       <ToolBlockItem

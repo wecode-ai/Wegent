@@ -4,6 +4,7 @@ import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'luci
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RequestUserInputResponse } from '@/types/api'
+import { hasImplementationPlanText } from './requestUserInputMessages'
 
 interface RequestUserInputOption {
   label?: string
@@ -374,7 +375,7 @@ function shouldSubmitOnOptionSelect(
 ): boolean {
   if (questions.length === 1) return true
   if (question.id === 'implement') return true
-  return option.label?.includes('实施此计划') ?? false
+  return hasImplementationPlanText(option.label)
 }
 
 function isImplementationPlanQuestions(questions: ReturnType<typeof normalizeQuestions>): boolean {
@@ -386,8 +387,8 @@ function implementationPlanOptionQuestion(
 ): ReturnType<typeof normalizeQuestions>[number] | undefined {
   return questions.find(question => {
     if (question.id.trim().toLowerCase() === 'implement') return true
-    if (question.question.includes('实施此计划')) return true
-    return question.options.some(option => option.label?.includes('实施此计划'))
+    if (hasImplementationPlanText(question.question)) return true
+    return question.options.some(option => hasImplementationPlanText(option.label))
   })
 }
 

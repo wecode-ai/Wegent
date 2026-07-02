@@ -4,6 +4,7 @@ import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID, TITLEBAR_RIGHT_PANEL_PORTAL_ID } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type { ReactNode } from 'react'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
@@ -40,7 +41,6 @@ export function ChromeTitlebar({
   return (
     <div
       data-testid="chrome-titlebar"
-      {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
       className={cn(
         'z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none',
         className
@@ -49,10 +49,12 @@ export function ChromeTitlebar({
       {/* macOS: traffic light spacer (left) */}
       {isTauri && platform === 'mac' && (
         <div
-          className="w-[95px] shrink-0"
+          className="w-[95px] shrink-0 self-stretch"
           data-testid="macos-traffic-light-spacer"
           data-tauri-drag-region
-        />
+        >
+          <MacOSTitleBarDragRegion />
+        </div>
       )}
 
       {beforeTabs && (
@@ -81,7 +83,7 @@ export function ChromeTitlebar({
               title={tab.label}
               aria-label={tab.label}
               className={cn(
-                'group relative flex h-7 items-center justify-center rounded-lg text-center text-[13px] font-medium leading-none transition-colors',
+                'group relative flex h-8 items-center justify-center rounded-lg text-center text-[13px] font-medium leading-none transition-colors',
                 showIconOnly ? 'w-8 min-w-0 px-0' : 'max-w-[220px] min-w-24 gap-2.5 px-3',
                 activeKey === tab.key
                   ? 'bg-black/[0.045] text-text-primary'
@@ -110,7 +112,13 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <div className="min-w-6 flex-1" {...(isTauri ? { 'data-tauri-drag-region': '' } : {})} />
+      <div
+        data-testid="chrome-titlebar-window-drag-region"
+        className="min-w-6 flex-1 self-stretch"
+        {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
+      >
+        {isTauri && <MacOSTitleBarDragRegion />}
+      </div>
       {isTauri && <TitlebarExtensionSlot />}
       <div
         data-testid="titlebar-right-workspace-zone"
@@ -127,13 +135,15 @@ export function ChromeTitlebar({
         <div
           id={TITLEBAR_ACTIONS_PORTAL_ID}
           data-testid="titlebar-actions"
-          className="pointer-events-auto flex shrink-0 items-center gap-2"
+          className="pointer-events-auto flex shrink-0 items-center gap-1 pr-3"
         />
       </div>
 
       {/* Windows/Linux: right spacer for native window controls */}
       {isTauri && platform !== 'mac' && (
-        <div className="w-[138px] shrink-0" data-tauri-drag-region />
+        <div className="w-[138px] shrink-0 self-stretch" data-tauri-drag-region>
+          <MacOSTitleBarDragRegion />
+        </div>
       )}
     </div>
   )

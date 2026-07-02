@@ -93,7 +93,7 @@ export function RightWorkspacePanel({
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const showTabs = openTabs.length > 0
-  const renderTabsInTitlebar = isTauriRuntime() && showTabs
+  const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
   const [browserTitle, setBrowserTitle] = useState<string | null>(null)
@@ -212,7 +212,7 @@ export function RightWorkspacePanel({
       {renderTabsInTitlebar ? (
         <header
           data-testid="right-workspace-titlebar-spacer"
-          className="h-[38px] shrink-0 border-b border-border bg-background"
+          className="h-[38px] shrink-0 bg-background"
         />
       ) : (
         tabBar
@@ -433,7 +433,7 @@ function RightWorkspaceLauncher({
           data-testid="right-workspace-review-option"
           onClick={onSelectReview}
           disabled={!canOpenReview}
-          className="flex h-12 w-full items-center gap-3 rounded-lg bg-surface px-4 text-left text-sm font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-8 w-full items-center gap-2 rounded-md bg-surface px-3 text-left text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           <FileDiff className="h-4 w-4 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
@@ -445,7 +445,7 @@ function RightWorkspaceLauncher({
             type="button"
             data-testid="right-workspace-browser-option"
             onClick={onSelectBrowser}
-            className="flex h-12 w-full items-center gap-3 rounded-lg bg-surface px-4 text-left text-sm font-medium text-text-primary transition-colors hover:bg-muted"
+            className="flex h-8 w-full items-center gap-2 rounded-md bg-surface px-3 text-left text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-muted"
           >
             <Globe2 className="h-4 w-4 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">{t('workbench.browser')}</span>
@@ -455,7 +455,7 @@ function RightWorkspaceLauncher({
           type="button"
           data-testid="right-workspace-file-option"
           onClick={onSelectFiles}
-          className="flex h-12 w-full items-center gap-3 rounded-lg bg-surface px-4 text-left text-sm font-medium text-text-primary transition-colors hover:bg-muted"
+          className="flex h-8 w-full items-center gap-2 rounded-md bg-surface px-3 text-left text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-muted"
         >
           <File className="h-4 w-4 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">

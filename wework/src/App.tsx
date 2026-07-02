@@ -20,7 +20,10 @@ import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarBu
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
-import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import {
+  requestDesktopSidebarToggle,
+  useDesktopSidebarCollapsed,
+} from '@/components/layout/useDesktopSidebarCollapsed'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -208,7 +211,11 @@ function TitlebarSidebarToggle() {
     <button
       type="button"
       data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-      onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+      onClick={() => {
+        if (!requestDesktopSidebarToggle()) {
+          setSidebarCollapsed(!sidebarCollapsed)
+        }
+      }}
       className={DESKTOP_TOP_BAR_BUTTON_CLASS}
       title={label}
       aria-label={label}

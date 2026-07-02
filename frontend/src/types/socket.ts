@@ -211,7 +211,31 @@ export interface SourceReference {
   /** Document title/filename */
   title: string
   /** Knowledge base ID */
-  kb_id: number
+  kb_id?: number | null
+  /** Provider-specific source ID */
+  source_id?: string
+  /** Provider source type */
+  source_type?: string
+  /** Provider source URI */
+  source_uri?: string
+  /** Provider source name */
+  source_name?: string
+}
+
+export interface RetrievalSummaryPayload {
+  searched_source_ids?: string[]
+  ignored_source_ids?: string[]
+  source_statuses?: RetrievalSourceStatus[]
+}
+
+export interface RetrievalSourceStatus {
+  provider: string
+  source_id: string
+  source_name?: string | null
+  status: 'hit' | 'no_hit' | 'ignored' | 'failed'
+  record_count: number
+  citation_count: number
+  mode?: 'rag_retrieval' | 'direct_injection' | string | null
 }
 
 /** Gemini Deep Research grounding annotation */
@@ -278,6 +302,8 @@ export interface ChatChunkPayload {
     blocks?: ChatBlock[]
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
+    /** Aggregated retrieval coverage summary */
+    retrieval_summary?: RetrievalSummaryPayload
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
@@ -300,11 +326,15 @@ export interface ChatDonePayload {
     termination_reason?: string
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
+    /** Aggregated retrieval coverage summary */
+    retrieval_summary?: RetrievalSummaryPayload
   }
   /** Message ID for ordering (primary sort key) */
   message_id?: number
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
+  /** Aggregated retrieval coverage summary */
+  retrieval_summary?: RetrievalSummaryPayload
 }
 
 export interface ChatErrorPayload {

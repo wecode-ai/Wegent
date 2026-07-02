@@ -8,6 +8,7 @@ import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-proje
 import type {
   LocalTaskSummary,
   ProjectWithTasks,
+  RuntimeGoalSetRequest,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
@@ -388,6 +389,39 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, executorClient, openRuntimeLocalTask, refreshWorkLists, state.currentRuntimeTask]
   )
 
+  const getRuntimeGoal = useCallback(
+    async (address: RuntimeTaskAddress) => executorClient.runtime.getRuntimeGoal({ address }),
+    [executorClient]
+  )
+
+  const setRuntimeGoal = useCallback(
+    async (request: RuntimeGoalSetRequest) => {
+      const response = await executorClient.runtime.setRuntimeGoal(request)
+      if (!response.accepted) {
+        dispatch({
+          type: 'error_set',
+          error: response.error || t('workbench.goal_set_failed', 'Failed to set goal'),
+        })
+      }
+      return response
+    },
+    [dispatch, executorClient, t]
+  )
+
+  const clearRuntimeGoal = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      const response = await executorClient.runtime.clearRuntimeGoal({ address })
+      if (!response.accepted) {
+        dispatch({
+          type: 'error_set',
+          error: response.error || t('workbench.goal_clear_failed', 'Failed to delete goal'),
+        })
+      }
+      return response
+    },
+    [dispatch, executorClient, t]
+  )
+
   return {
     openRuntimeTaskView,
     isCurrentRuntimeTask,
@@ -402,6 +436,9 @@ export function useWorkbenchRuntimeTasks({
     archiveChatConversations,
     searchRuntimeWork,
     forkCurrentRuntimeTask,
+    getRuntimeGoal,
+    setRuntimeGoal,
+    clearRuntimeGoal,
   }
 }
 

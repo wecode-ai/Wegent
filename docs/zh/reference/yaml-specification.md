@@ -562,19 +562,30 @@ spec:
       folderIds: [12]
       explicitDocumentIds: null
       includeSubfolders: true
+  externalKnowledgeRefs:
+    - provider: ap
+      mode: explicit
+      id: kb-1
+      name: External Product Docs
+      scope: organization
+      target_type: document
+      node_id: document:node-1
+      document_id: node-1
+      target_name: api-reference.md
 ```
 
 ### 字段说明
 
-| 字段                       | 类型   | 必填 | 说明                                                                         |
-| -------------------------- | ------ | ---- | ---------------------------------------------------------------------------- |
-| `metadata.name`            | string | 是   | Task 的唯一标识符                                                            |
-| `metadata.namespace`       | string | 是   | 命名空间，通常为 `default`                                                   |
-| `spec.title`               | string | 是   | 任务标题                                                                     |
-| `spec.prompt`              | string | 是   | 任务描述                                                                     |
-| `spec.teamRef`             | object | 是   | Team 引用                                                                    |
-| `spec.workspaceRef`        | object | 是   | Workspace 引用                                                               |
-| `spec.knowledgeBaseScopes` | array  | 否   | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+| 字段                         | 类型   | 必填 | 说明                                                                         |
+| ---------------------------- | ------ | ---- | ---------------------------------------------------------------------------- |
+| `metadata.name`              | string | 是   | Task 的唯一标识符                                                            |
+| `metadata.namespace`         | string | 是   | 命名空间，通常为 `default`                                                   |
+| `spec.title`                 | string | 是   | 任务标题                                                                     |
+| `spec.prompt`                | string | 是   | 任务描述                                                                     |
+| `spec.teamRef`               | object | 是   | Team 引用                                                                    |
+| `spec.workspaceRef`          | object | 是   | Workspace 引用                                                               |
+| `spec.knowledgeBaseScopes`   | array  | 否   | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+| `spec.externalKnowledgeRefs` | array  | 否   | Task 级外部知识源绑定，由聊天上下文选择和任务知识库管理入口自动维护          |
 
 ### 知识库范围
 
@@ -589,6 +600,23 @@ spec:
 | `folderIds`           | array   | 否   | 允许访问的目录 ID，`0` 表示根目录直接文档 |
 | `explicitDocumentIds` | array   | 否   | 显式允许访问的文档 ID                     |
 | `includeSubfolders`   | boolean | 否   | 目录范围是否包含子目录，默认 `true`       |
+
+### 外部知识源绑定
+
+`spec.externalKnowledgeRefs` 是运行时字段，描述当前 Task 已绑定的外部知识源。它由聊天发送和任务知识库管理接口维护，不用于 Ghost、Bot 或 Team 默认配置。
+
+| 字段          | 类型   | 必填     | 说明                                                     |
+| ------------- | ------ | -------- | -------------------------------------------------------- |
+| `provider`    | string | 是       | 外部知识 provider id                                     |
+| `mode`        | string | 否       | 绑定模式，默认 `explicit`；`explicit` 需要提供 `id`      |
+| `id`          | string | 条件必填 | provider 内稳定的知识源 ID                               |
+| `name`        | string | 否       | 知识源展示名                                             |
+| `scope`       | string | 否       | provider 可解释的范围                                    |
+| `target_type` | string | 否       | `knowledge_base`、`folder` 或 `document`，缺省按整库处理 |
+| `node_id`     | string | 否       | provider-neutral 节点 ID                                 |
+| `document_id` | string | 否       | provider-neutral 文档 ID                                 |
+| `parent_id`   | string | 否       | provider-neutral 父节点 ID                               |
+| `target_name` | string | 否       | 文件夹或文档目标展示名                                   |
 
 ### 任务状态
 

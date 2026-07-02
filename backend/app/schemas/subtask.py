@@ -110,9 +110,20 @@ class SubtaskContextBrief(BaseModel):
     # Knowledge base fields (from type_data)
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
+    document_ids: Optional[list[int]] = None
+    scope_restricted: Optional[bool] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
     document_id: Optional[int] = None
     source_config: Optional[dict[str, Any]] = None
+    # External knowledge fields (from type_data)
+    external_provider: Optional[str] = None
+    external_mode: Optional[str] = None
+    external_id: Optional[str] = None
+    external_scope: Optional[str] = None
+    external_target_type: Optional[str] = None
+    external_node_id: Optional[str] = None
+    external_document_id: Optional[str] = None
+    external_parent_id: Optional[str] = None
     # External web content fields
     video_count: Optional[int] = None
     site: Optional[str] = None

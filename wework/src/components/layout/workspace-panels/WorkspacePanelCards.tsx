@@ -452,6 +452,14 @@ export function WorkspacePanelCards({
       void closeLocalTerminal(sessionId)
     }
 
+    removeTerminalSession(sessionId)
+  }
+
+  const handleTerminalSessionExit = (sessionId: string) => {
+    removeTerminalSession(sessionId)
+  }
+
+  const removeTerminalSession = (sessionId: string) => {
     setTerminalSessions(sessions => {
       const closeIndex = sessions.findIndex(session => session.session_id === sessionId)
       const remaining = sessions.filter(session => session.session_id !== sessionId)
@@ -466,6 +474,10 @@ export function WorkspacePanelCards({
 
       return remaining
     })
+
+    if (hideTerminalChrome && terminalSessions.length <= 1) {
+      onRequestClose?.()
+    }
   }
 
   const handleIdeClick = async (
@@ -592,10 +604,10 @@ export function WorkspacePanelCards({
   const terminalWindow = activeTerminalSession ? (
     <div
       data-testid={testId('workspace-terminal-window')}
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
     >
       {!hideTerminalChrome && (
-        <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-[#fafafa] px-2">
+        <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-surface px-2">
           <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
             {terminalSessions.map(session => {
               const isActive = session.session_id === activeTerminalSession.session_id
@@ -605,7 +617,7 @@ export function WorkspacePanelCards({
                   key={session.session_id}
                   className={`group relative flex h-8 max-w-[200px] shrink-0 items-center overflow-hidden rounded-xl border border-transparent transition-colors ${
                     isActive
-                      ? 'border-border bg-white text-text-primary shadow-sm'
+                      ? 'border-border bg-background text-text-primary shadow-sm'
                       : 'text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
                   }`}
                   title={terminalTabLabel || session.device_id}
@@ -651,6 +663,7 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            onExit={() => handleTerminalSessionExit(session.session_id)}
             testIdsEnabled={testIdsEnabled}
           />
         ) : (
@@ -658,6 +671,7 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            onExit={() => handleTerminalSessionExit(session.session_id)}
             testIdsEnabled={testIdsEnabled}
           />
         )

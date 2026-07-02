@@ -11,9 +11,9 @@ import { parseUnifiedDiff } from './parseUnifiedDiff'
 const DEFAULT_VISIBLE_FILE_COUNT = 3
 const DIFF_PREVIEW_CLOSE_DELAY_MS = 140
 const DIFF_PREVIEW_DELAY_MS = 500
-const DIFF_PREVIEW_ESTIMATED_HEIGHT = 340
-const DIFF_PREVIEW_MAX_LINES = 14
-const DIFF_PREVIEW_MAX_WIDTH = 704
+const DIFF_PREVIEW_ESTIMATED_HEIGHT = 424
+const DIFF_PREVIEW_MAX_LINES = 240
+const DIFF_PREVIEW_MAX_WIDTH = 640
 const DIFF_PREVIEW_VIEWPORT_GUTTER = 32
 const DIFF_PREVIEW_VERTICAL_GAP = 8
 
@@ -236,6 +236,7 @@ function basename(path: string): string {
 
 interface DiffPreview {
   path: string
+  displayPath: string
   additions: number
   deletions: number
   lines: DiffPreviewLine[]
@@ -382,11 +383,13 @@ function FileChangeDiffPreview({
       onPointerLeave={onPointerLeave}
     >
       <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-[13px] font-semibold">
-        <span className="min-w-0 flex-1 truncate">{basename(preview.path)}</span>
+        <span className="min-w-0 flex-1 truncate" title={preview.displayPath}>
+          {preview.displayPath}
+        </span>
         <span className="shrink-0 font-medium text-green-400">+{preview.additions}</span>
         <span className="shrink-0 font-medium text-red-400">-{preview.deletions}</span>
       </div>
-      <div className="max-h-[18rem] overflow-auto py-1 font-mono text-[12px] leading-5">
+      <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-[12px] leading-5">
         {preview.lines.map(line =>
           line.type === 'separator' ? (
             <div key={line.key} className="my-1 h-px bg-border" />
@@ -440,11 +443,23 @@ function buildFileDiffPreview(
 
   return {
     path: file.path,
+    displayPath: absoluteFilePath(summary.workspace_path, file.path),
     additions: file.additions,
     deletions: file.deletions,
     lines: lines.slice(0, DIFF_PREVIEW_MAX_LINES),
     truncated: lines.length > DIFF_PREVIEW_MAX_LINES,
   }
+}
+
+function absoluteFilePath(workspacePath: string, filePath: string): string {
+  if (isAbsolutePath(filePath)) return filePath
+  const normalizedWorkspacePath = workspacePath.replace(/[\\/]+$/, '')
+  if (!normalizedWorkspacePath) return filePath
+  return `${normalizedWorkspacePath}/${filePath.replace(/^[\\/]+/, '')}`
+}
+
+function isAbsolutePath(path: string): boolean {
+  return /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(path)
 }
 
 function fileDiffLines(file: TurnFileChangeItem, summary: TurnFileChangesSummary): string[] {

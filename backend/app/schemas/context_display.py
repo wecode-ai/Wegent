@@ -28,6 +28,8 @@ def build_context_display_fields(
         return {
             "knowledge_id": data.get("knowledge_id"),
             "document_count": data.get("document_count"),
+            "document_ids": data.get("document_ids"),
+            "scope_restricted": data.get("scope_restricted"),
         }
 
     if context_type == "table":
@@ -41,6 +43,18 @@ def build_context_display_fields(
         document_ids = data.get("document_ids") or []
         return {
             "document_count": len(document_ids) if isinstance(document_ids, list) else 0
+        }
+
+    if context_type == "external_knowledge":
+        return {
+            "external_provider": data.get("provider"),
+            "external_mode": data.get("mode"),
+            "external_id": data.get("id"),
+            "external_scope": data.get("scope"),
+            "external_target_type": data.get("target_type"),
+            "external_node_id": data.get("node_id"),
+            "external_document_id": data.get("document_id"),
+            "external_parent_id": data.get("parent_id"),
         }
 
     return {}

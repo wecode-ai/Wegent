@@ -12,7 +12,7 @@ import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
-import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
+import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -28,7 +28,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     | 'menu'
     | 'appearance'
     | 'personal'
-    | 'codex-auth'
+    | 'model-settings'
     | 'skills'
     | 'worktrees'
     | 'archived-conversations'
@@ -162,13 +162,13 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         <section className="mt-8 space-y-3">
           <button
             type="button"
-            data-testid="mobile-settings-codex-auth-button"
-            onClick={() => setActivePage('codex-auth')}
+            data-testid="mobile-settings-model-settings-button"
+            onClick={() => setActivePage('model-settings')}
             className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
           >
             <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
-              {t('workbench.settings_nav_codex_auth', 'Codex 认证')}
+              {t('workbench.settings_nav_model_settings', '模型设置')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
@@ -177,16 +177,16 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     )
   }
 
-  if (activePage === 'codex-auth') {
+  if (activePage === 'model-settings') {
     return (
       <main
-        data-testid="mobile-codex-auth-settings-page"
+        data-testid="mobile-model-settings-page"
         className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
       >
         <header className="flex shrink-0 items-center justify-between">
           <button
             type="button"
-            data-testid="mobile-codex-auth-back-button"
+            data-testid="mobile-model-settings-back-button"
             onClick={() => setActivePage('personal')}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
             aria-label={t('workbench.settings_back_to_app', '返回')}
@@ -194,12 +194,12 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-lg font-semibold">
-            {t('workbench.settings_nav_codex_auth', 'Codex 认证')}
+            {t('workbench.settings_nav_model_settings', '模型设置')}
           </h1>
           <div className="h-11 min-w-[44px]" />
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <RuntimeConfigSettingsPage runtime="codex" />
+          <ModelSettingsPage />
         </div>
       </main>
     )
