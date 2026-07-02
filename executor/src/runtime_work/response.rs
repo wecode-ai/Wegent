@@ -505,6 +505,6 @@ fn turn_or_item_running(value: &Value) -> bool {
 fn normalized_running_status(status: &str) -> bool {
     matches!(
         status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "running" | "inprogress" | "active" | "busy" | "pending"
+        "running" | "inprogress" | "busy" | "pending"
     )
 }
