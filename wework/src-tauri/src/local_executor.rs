@@ -33,8 +33,8 @@ const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
-const LOCAL_EXECUTOR_CONNECT_RETRIES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
+const LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS: u64 = 60;
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
@@ -392,7 +392,7 @@ fn local_executor_log_path() -> Result<PathBuf, String> {
     Ok(log_dir.join(log_file))
 }
 
-fn local_executor_log_dir_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_log_dir_path() -> Result<PathBuf, String> {
     std::env::var(LOCAL_EXECUTOR_LOG_DIR_ENV)
         .ok()
         .map(|path| path.trim().to_string())
@@ -1178,6 +1178,27 @@ async fn retry_connect_delay() {
     .await;
 }
 
+fn ensure_sidecar_child_still_running(state: &LocalExecutorState) -> Result<(), String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Failed to lock local executor state".to_string())?;
+    let Some(child) = inner.child.as_mut() else {
+        return Ok(());
+    };
+    if child.is_running() {
+        return Ok(());
+    }
+
+    inner.child = None;
+    inner.running = false;
+    inner.ready = false;
+    clear_connected_stream(&mut inner);
+    let message = "Local executor sidecar exited before opening its socket".to_string();
+    inner.error = Some(message.clone());
+    Err(message)
+}
+
 #[cfg(unix)]
 async fn start_executor_if_needed_unlocked(
     app: tauri::AppHandle,
@@ -1193,28 +1214,37 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    let mut last_error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
-        Ok(()) => return Ok(()),
-        Err(error) => error,
-    };
+    if connect_and_attach_sidecar_socket(app.clone(), state)
+        .await
+        .is_ok()
+    {
+        return Ok(());
+    }
 
     spawn_sidecar_if_needed(app.clone(), state).await?;
 
-    for _ in 0..LOCAL_EXECUTOR_CONNECT_RETRIES {
-        match connect_and_attach_sidecar_socket(app.clone(), state).await {
+    let started_at = Instant::now();
+    let last_error = loop {
+        let error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
             Ok(()) => return Ok(()),
-            Err(error) => {
-                last_error = error;
-                retry_connect_delay().await;
-            }
-        }
-    }
+            Err(error) => error,
+        };
 
-    let message = if last_error.is_empty() {
-        "Failed to connect local executor socket".to_string()
-    } else {
-        last_error
+        if let Err(sidecar_error) = ensure_sidecar_child_still_running(state) {
+            let message = format!("{sidecar_error}: {error}");
+            set_executor_error(state, message.clone());
+            fail_pending_requests(state, message.clone());
+            return Err(message);
+        }
+        if started_at.elapsed() >= Duration::from_secs(LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS) {
+            break error;
+        }
+        retry_connect_delay().await;
     };
+
+    let message = format!(
+        "Timed out waiting for local executor socket after {LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS}s: {last_error}"
+    );
     set_executor_error(state, message.clone());
     fail_pending_requests(state, message.clone());
     Err(message)

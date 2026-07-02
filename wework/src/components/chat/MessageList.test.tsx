@@ -47,7 +47,45 @@ describe('MessageList', () => {
     ).toContain('0 ')
   })
 
-  test('disables message row containment while selecting message text', async () => {
+  test('keeps message row containment during a plain text click', () => {
+    const getSelectionSpy = vi.spyOn(document, 'getSelection')
+    getSelectionSpy.mockReturnValue({
+      isCollapsed: true,
+      rangeCount: 0,
+      anchorNode: null,
+      focusNode: null,
+    } as Selection)
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'user-clickable',
+              role: 'user',
+              content: 'Click this user message.',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:01Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-user')
+      const content = screen.getByTestId('user-message-content')
+      expect(article.className).toContain('[content-visibility:auto]')
+
+      fireEvent.pointerDown(content, { button: 0 })
+      fireEvent.pointerUp(document)
+
+      expect(article.className).toContain('[content-visibility:auto]')
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+    } finally {
+      getSelectionSpy.mockRestore()
+    }
+  })
+
+  test('disables message row containment only while selected message text is active', async () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     const requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
@@ -73,11 +111,21 @@ describe('MessageList', () => {
 
       const article = screen.getByTestId('message-assistant')
       const paragraph = screen.getByText('Select this assistant paragraph.')
+      const textNode = paragraph.firstChild
       expect(article.className).toContain('[content-visibility:auto]')
 
-      fireEvent.pointerDown(paragraph, { button: 0 })
-      expect(article.className).not.toContain('[content-visibility:auto]')
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+      getSelectionSpy.mockReturnValue({
+        isCollapsed: false,
+        rangeCount: 1,
+        anchorNode: textNode,
+        focusNode: textNode,
+      } as Selection)
+      fireEvent(document, new Event('selectionchange'))
+
+      await waitFor(() => {
+        expect(article.className).not.toContain('[content-visibility:auto]')
+        expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+      })
 
       getSelectionSpy.mockReturnValue({
         isCollapsed: true,
@@ -553,6 +601,42 @@ describe('MessageList', () => {
     const thinking = screen.getByTestId('thinking-indicator')
 
     expect(thinking).toHaveTextContent('正在思考')
+    expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
+  test('shows trailing thinking after partial content when processing blocks are still running', () => {
+    const runningSearchBlock: ProcessingBlock = {
+      id: 'search-running',
+      turnId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'rg -n chat src' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-done-with-running-block',
+            role: 'assistant',
+            content: '我先把硬编码中文改成 chat 命名空间翻译。',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [runningSearchBlock],
+          },
+        ]}
+      />
+    )
+
+    const content = screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')
+    const thinking = screen.getByTestId('thinking-indicator')
+
+    expect(thinking).toHaveTextContent('正在思考')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
     expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -2902,6 +2986,66 @@ describe('MessageList', () => {
     expect(thinkingIndicator).toHaveTextContent('正在思考')
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows thinking from the message list after completed processing activity', () => {
+    const completedBlock: ProcessingBlock = {
+      id: 'call-1',
+      turnId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'pwd' },
+      toolOutput: '/workspace/project',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [completedBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('does not duplicate thinking when live process text is visible', () => {
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      turnId: 1,
+      type: 'text',
+      content: 'Let me inspect the repository first.',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [processBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Let me inspect the repository first.')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('keeps running tool rows visible while showing trailing thinking', () => {

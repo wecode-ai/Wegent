@@ -187,6 +187,7 @@ async fn http_capability_provider_encodes_namespace_and_rejects_external_package
                 skill_id: 42,
                 namespace: "team a&x=y#z".to_owned(),
                 is_public: false,
+                content_hash: None,
             },
             &target,
         )

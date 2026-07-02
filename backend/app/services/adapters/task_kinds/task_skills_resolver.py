@@ -237,7 +237,19 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                     ghost_skill_ref = getattr(ghost_crd.spec, "skill_refs", {}) or {}
                     ref_meta = ghost_skill_ref.get(skill_name)
                     if ref_meta:
-                        skill_refs[skill_name] = ref_meta.model_dump()
+                        resolved_ref = ref_meta.model_dump()
+                        if not resolved_ref.get("content_hash"):
+                            skill = find_skill_by_name(
+                                db,
+                                skill_name=skill_name,
+                                owner_user_id=team_owner_id,
+                                team_namespace=team.namespace or "default",
+                            )
+                            if skill:
+                                resolved_ref["content_hash"] = build_skill_ref_meta(
+                                    skill
+                                ).get("content_hash")
+                        skill_refs[skill_name] = resolved_ref
                     else:
                         skill = find_skill_by_name(
                             db,
@@ -255,7 +267,12 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 for skill_name in ghost_crd.spec.preload_skills:
                     preload_ref = ghost_preload_refs.get(skill_name)
                     if preload_ref:
-                        preload_skill_refs[skill_name] = preload_ref.model_dump()
+                        resolved_ref = preload_ref.model_dump()
+                        if not resolved_ref.get("content_hash"):
+                            resolved_ref["content_hash"] = skill_refs.get(
+                                skill_name, {}
+                            ).get("content_hash")
+                        preload_skill_refs[skill_name] = resolved_ref
                     elif skill_name in skill_refs:
                         preload_skill_refs[skill_name] = skill_refs[skill_name]
         else:

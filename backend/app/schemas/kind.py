@@ -142,6 +142,10 @@ class SkillRefMeta(BaseModel):
     skill_id: int = Field(..., description="Unique skill ID (Kind.id)")
     namespace: str = Field("default", description="Skill namespace")
     is_public: bool = Field(False, description="Whether this is a public skill")
+    content_hash: Optional[str] = Field(
+        None,
+        description="SHA256 content hash of the skill ZIP package, prefixed with sha256:",
+    )
 
 
 class KnowledgeBaseDefaultRef(BaseModel):

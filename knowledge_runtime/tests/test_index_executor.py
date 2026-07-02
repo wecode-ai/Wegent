@@ -7,9 +7,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import IndexConfig
 from knowledge_runtime.services.index_executor import IndexExecutor
+
 from shared.models import (
     PresignedUrlContentRef,
     RemoteIndexRequest,

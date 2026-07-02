@@ -131,6 +131,8 @@ export function WorkspacePanelCards({
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
   const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
   const defaultOpenedProjectKeyRef = useRef<string | null>(null)
+  const terminalSessionsRef = useRef<WorkspaceTerminalSession[]>([])
+  const terminalProjectKeyRef = useRef<string | null>(null)
   const [toolAvailability, setToolAvailability] = useState<WorkspaceToolAvailabilityState>(() => ({
     projectKey: '',
     tools: createAvailableTools(),
@@ -230,6 +232,41 @@ export function WorkspacePanelCards({
     null
   const terminalTabLabel =
     currentProject?.name ?? activeTerminalSession?.cwd ?? activeTerminalSession?.device_id ?? ''
+
+  useEffect(() => {
+    terminalSessionsRef.current = terminalSessions
+  }, [terminalSessions])
+
+  useEffect(() => {
+    return () => {
+      terminalSessionsRef.current.forEach(session => {
+        if (session.terminal_kind === 'local') {
+          void closeLocalTerminal(session.session_id)
+        }
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (terminalProjectKeyRef.current === null) {
+      terminalProjectKeyRef.current = projectKey
+      return
+    }
+    if (terminalProjectKeyRef.current === projectKey) {
+      return
+    }
+
+    terminalSessionsRef.current.forEach(session => {
+      if (session.terminal_kind === 'local') {
+        void closeLocalTerminal(session.session_id)
+      }
+    })
+    terminalSessionsRef.current = []
+    setTerminalSessions([])
+    setActiveTerminalSessionId(null)
+    defaultOpenedProjectKeyRef.current = null
+    terminalProjectKeyRef.current = projectKey
+  }, [projectKey])
 
   const readLocalTerminalCheck = useCallback(async (): Promise<LocalTerminalCheckState> => {
     const { apiBaseUrl } = getRuntimeConfig()

@@ -10,14 +10,14 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar
 
-from sqlalchemy.orm import Session, sessionmaker
-
 from knowledge_runtime.services.config_resolver import (
     AdminResolvedConfig,
     ConfigResolver,
     IndexConfig,
     QueryConfig,
 )
+from sqlalchemy.orm import Session, sessionmaker
+
 from shared.db.sync_session import get_session_factory
 
 logger = logging.getLogger(__name__)

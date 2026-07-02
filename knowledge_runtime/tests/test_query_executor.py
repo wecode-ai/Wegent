@@ -7,9 +7,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
+
 from shared.models import (
     RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,

@@ -3,6 +3,7 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 
+use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 
 #[cfg(desktop)]
@@ -36,9 +37,15 @@ const LOG_DIRECTORY_VENDOR_NAME: &str = "Wegent";
 const RUST_LOG_FILE_NAME: &str = "wework-tauri";
 #[cfg(desktop)]
 const WEBVIEW_LOG_FILE_NAME: &str = "wework-frontend";
+#[cfg(desktop)]
+const WEBVIEW_DEVTOOLS_ENV: &str = "WEWORK_WEBVIEW_DEVTOOLS";
 
 #[cfg(desktop)]
 fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor::local_executor_log_dir_path();
+    }
+
     #[cfg(target_os = "macos")]
     {
         return Ok(app
@@ -84,13 +91,16 @@ fn create_log_plugin(
     app: &tauri::AppHandle,
 ) -> Result<tauri::plugin::TauriPlugin<tauri::Wry>, String> {
     let log_directory = app_log_directory(app)?;
+    let process_id = std::process::id();
+    let rust_log_file_name = format!("{RUST_LOG_FILE_NAME}-{process_id}");
+    let webview_log_file_name = format!("{WEBVIEW_LOG_FILE_NAME}-{process_id}");
     Ok(tauri_plugin_log::Builder::default()
         .clear_targets()
         .level(log::LevelFilter::Debug)
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
-                file_name: Some(RUST_LOG_FILE_NAME.into()),
+                file_name: Some(rust_log_file_name.into()),
             })
             .filter(|metadata| {
                 !metadata
@@ -101,7 +111,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory,
-                file_name: Some(WEBVIEW_LOG_FILE_NAME.into()),
+                file_name: Some(webview_log_file_name.into()),
             })
             .filter(|metadata| {
                 metadata
@@ -118,10 +128,279 @@ fn get_app_log_directory(app: tauri::AppHandle) -> Result<String, String> {
     Ok(app_log_directory(&app)?.to_string_lossy().to_string())
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+fn open_app_log_directory(app: tauri::AppHandle) -> Result<(), String> {
+    let log_directory = app_log_directory(&app)?;
+    std::fs::create_dir_all(&log_directory)
+        .map_err(|error| format!("Failed to create app log directory: {error}"))?;
+
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new("open")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("explorer")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run Windows explorer command: {error}"))?;
+
+    #[cfg(target_os = "linux")]
+    let output = std::process::Command::new("xdg-open")
+        .arg(&log_directory)
+        .output()
+        .map_err(|error| format!("Failed to run xdg-open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("Failed to open app log directory".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
 #[cfg(not(desktop))]
 #[tauri::command]
 fn get_app_log_directory(_app: tauri::AppHandle) -> Result<String, String> {
     Err("App log directory is only available on desktop".to_string())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn open_app_log_directory(_app: tauri::AppHandle) -> Result<(), String> {
+    Err("App log directory is only available on desktop".to_string())
+}
+
+#[cfg(desktop)]
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(normalized_non_empty)
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+#[cfg(all(desktop, any(debug_assertions, feature = "release-devtools")))]
+fn open_main_webview_devtools_impl(app: &tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    window.open_devtools();
+    Ok(())
+}
+
+#[cfg(all(desktop, not(any(debug_assertions, feature = "release-devtools"))))]
+fn open_main_webview_devtools_impl(_app: &tauri::AppHandle) -> Result<(), String> {
+    Err("Web Inspector is only available in debug builds or release-devtools builds".to_string())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn open_main_webview_devtools(app: tauri::AppHandle) -> Result<(), String> {
+    open_main_webview_devtools_impl(&app)
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn open_main_webview_devtools(_app: tauri::AppHandle) -> Result<(), String> {
+    Err("Web Inspector is only available on desktop".to_string())
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ProcessDiagnosticsProcess {
+    pid: u32,
+    ppid: u32,
+    group: String,
+    rss_kib: u64,
+    cpu_percent: f64,
+    command: String,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ProcessDiagnosticsGroup {
+    group: String,
+    process_count: usize,
+    rss_kib: u64,
+    cpu_percent: f64,
+    pids: Vec<u32>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ProcessDiagnosticsSnapshot {
+    timestamp_ms: u64,
+    main_pid: u32,
+    groups: Vec<ProcessDiagnosticsGroup>,
+    processes: Vec<ProcessDiagnosticsProcess>,
+}
+
+#[derive(Clone)]
+struct RawProcessInfo {
+    pid: u32,
+    ppid: u32,
+    rss_kib: u64,
+    cpu_percent: f64,
+    command: String,
+}
+
+fn parse_process_snapshot_line(line: &str) -> Option<RawProcessInfo> {
+    let mut parts = line.split_whitespace();
+    let pid = parts.next()?.parse::<u32>().ok()?;
+    let ppid = parts.next()?.parse::<u32>().ok()?;
+    let rss_kib = parts.next()?.parse::<u64>().ok()?;
+    let cpu_percent = parts.next()?.parse::<f64>().ok()?;
+    let command = parts.collect::<Vec<_>>().join(" ");
+    if command.is_empty() {
+        return None;
+    }
+
+    Some(RawProcessInfo {
+        pid,
+        ppid,
+        rss_kib,
+        cpu_percent,
+        command,
+    })
+}
+
+fn collect_descendant_pids(processes: &[RawProcessInfo], roots: &[u32]) -> HashSet<u32> {
+    let mut children_by_parent = HashMap::<u32, Vec<u32>>::new();
+    for process in processes {
+        children_by_parent
+            .entry(process.ppid)
+            .or_default()
+            .push(process.pid);
+    }
+
+    let mut descendants = HashSet::new();
+    let mut stack = roots.to_vec();
+    while let Some(pid) = stack.pop() {
+        if !descendants.insert(pid) {
+            continue;
+        }
+        if let Some(children) = children_by_parent.get(&pid) {
+            stack.extend(children);
+        }
+    }
+
+    descendants
+}
+
+fn classify_process(
+    process: &RawProcessInfo,
+    main_pid: u32,
+    terminal_process_ids: &HashSet<u32>,
+    terminal_descendant_ids: &HashSet<u32>,
+) -> Option<String> {
+    if process.pid == main_pid {
+        return Some("main".to_string());
+    }
+    if terminal_process_ids.contains(&process.pid) || terminal_descendant_ids.contains(&process.pid)
+    {
+        return Some("terminal".to_string());
+    }
+    if process.command.contains("com.apple.WebKit.WebContent") {
+        return Some("webkit-webcontent".to_string());
+    }
+    if process.command.contains("com.apple.WebKit.GPU") {
+        return Some("webkit-gpu".to_string());
+    }
+    if process.command.contains("com.apple.WebKit.Networking") {
+        return Some("webkit-networking".to_string());
+    }
+    if process.command.contains("com.apple.WebKit") {
+        return Some("webkit-other".to_string());
+    }
+
+    Some("child".to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_wework_process_snapshot(
+    local_terminal_state: tauri::State<'_, local_terminal::LocalTerminalState>,
+) -> Result<ProcessDiagnosticsSnapshot, String> {
+    let output = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,rss=,pcpu=,command="])
+        .output()
+        .map_err(|error| format!("Failed to run ps: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let processes = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_process_snapshot_line)
+        .collect::<Vec<_>>();
+    let main_pid = std::process::id();
+    let terminal_roots = local_terminal_state.active_process_ids()?;
+    let app_process_ids = collect_descendant_pids(&processes, &[main_pid]);
+    let terminal_process_ids = terminal_roots.iter().copied().collect::<HashSet<_>>();
+    let terminal_descendant_ids = collect_descendant_pids(&processes, &terminal_roots);
+
+    let mut related_processes = processes
+        .iter()
+        .filter(|process| app_process_ids.contains(&process.pid))
+        .filter_map(|process| {
+            let group = classify_process(
+                process,
+                main_pid,
+                &terminal_process_ids,
+                &terminal_descendant_ids,
+            )?;
+            Some(ProcessDiagnosticsProcess {
+                pid: process.pid,
+                ppid: process.ppid,
+                group,
+                rss_kib: process.rss_kib,
+                cpu_percent: process.cpu_percent,
+                command: process.command.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    related_processes.sort_by(|left, right| right.rss_kib.cmp(&left.rss_kib));
+
+    let mut groups_by_name = HashMap::<String, ProcessDiagnosticsGroup>::new();
+    for process in &related_processes {
+        let group = groups_by_name
+            .entry(process.group.clone())
+            .or_insert_with(|| ProcessDiagnosticsGroup {
+                group: process.group.clone(),
+                process_count: 0,
+                rss_kib: 0,
+                cpu_percent: 0.0,
+                pids: Vec::new(),
+            });
+        group.process_count += 1;
+        group.rss_kib += process.rss_kib;
+        group.cpu_percent += process.cpu_percent;
+        group.pids.push(process.pid);
+    }
+
+    let mut groups = groups_by_name.into_values().collect::<Vec<_>>();
+    groups.sort_by(|left, right| right.rss_kib.cmp(&left.rss_kib));
+
+    Ok(ProcessDiagnosticsSnapshot {
+        timestamp_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("System clock is before UNIX epoch: {error}"))?
+            .as_millis() as u64,
+        main_pid,
+        groups,
+        processes: related_processes,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn get_wework_process_snapshot(
+    _local_terminal_state: tauri::State<'_, local_terminal::LocalTerminalState>,
+) -> Result<ProcessDiagnosticsSnapshot, String> {
+    Err("Process diagnostics are currently available only on macOS".to_string())
 }
 
 fn normalized_non_empty(value: String) -> Option<String> {
@@ -936,7 +1215,11 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::local_workspace_opener_app_name;
+    use super::{
+        classify_process, collect_descendant_pids, local_workspace_opener_app_name,
+        parse_process_snapshot_line, RawProcessInfo,
+    };
+    use std::collections::HashSet;
 
     #[test]
     fn maps_local_workspace_openers_to_macos_app_names() {
@@ -958,6 +1241,80 @@ mod tests {
             Some("IntelliJ IDEA")
         );
         assert_eq!(local_workspace_opener_app_name("unknown"), None);
+    }
+
+    #[test]
+    fn parses_process_snapshot_lines_with_spaced_commands() {
+        let process =
+            parse_process_snapshot_line(" 123  45 6789  12.5 /Applications/WeWork.app/a b c")
+                .expect("process line should parse");
+
+        assert_eq!(process.pid, 123);
+        assert_eq!(process.ppid, 45);
+        assert_eq!(process.rss_kib, 6789);
+        assert_eq!(process.cpu_percent, 12.5);
+        assert_eq!(process.command, "/Applications/WeWork.app/a b c");
+    }
+
+    #[test]
+    fn collects_descendant_processes() {
+        let processes = vec![
+            raw_process(1, 0, "main"),
+            raw_process(2, 1, "child"),
+            raw_process(3, 2, "grandchild"),
+            raw_process(4, 0, "other"),
+        ];
+
+        let descendants = collect_descendant_pids(&processes, &[1]);
+
+        assert!(descendants.contains(&1));
+        assert!(descendants.contains(&2));
+        assert!(descendants.contains(&3));
+        assert!(!descendants.contains(&4));
+    }
+
+    #[test]
+    fn classifies_wework_process_groups() {
+        let terminal_roots = HashSet::from([3]);
+        let terminal_descendants = HashSet::from([3, 4]);
+
+        assert_eq!(
+            classify_process(
+                &raw_process(1, 0, "Wework"),
+                1,
+                &terminal_roots,
+                &terminal_descendants
+            ),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            classify_process(
+                &raw_process(2, 1, "com.apple.WebKit.WebContent"),
+                1,
+                &terminal_roots,
+                &terminal_descendants
+            ),
+            Some("webkit-webcontent".to_string())
+        );
+        assert_eq!(
+            classify_process(
+                &raw_process(4, 3, "/bin/zsh"),
+                1,
+                &terminal_roots,
+                &terminal_descendants
+            ),
+            Some("terminal".to_string())
+        );
+    }
+
+    fn raw_process(pid: u32, ppid: u32, command: &str) -> RawProcessInfo {
+        RawProcessInfo {
+            pid,
+            ppid,
+            rss_kib: 0,
+            cpu_percent: 0.0,
+            command: command.to_string(),
+        }
     }
 }
 
@@ -997,13 +1354,27 @@ pub fn run() {
                     .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
             )?;
 
+            #[cfg(desktop)]
+            println!(
+                "Wework app PID={} log dir={}",
+                std::process::id(),
+                get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
+            );
+
             log::info!(
-                "Wework app logs are written to {}",
+                "Wework app PID={} logs are written to {}",
+                std::process::id(),
                 get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
             );
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
+                if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
+                    log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1025,6 +1396,9 @@ pub fn run() {
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
             get_app_log_directory,
+            open_app_log_directory,
+            get_wework_process_snapshot,
+            open_main_webview_devtools,
             set_tray_menu_state,
             download_local_file_to_downloads,
             save_text_file_to_downloads,

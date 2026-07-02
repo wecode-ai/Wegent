@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-
 from knowledge_runtime.services.index_executor import IndexExecutor
+
 from shared.models import RemoteIndexRequest
 
 router = APIRouter()

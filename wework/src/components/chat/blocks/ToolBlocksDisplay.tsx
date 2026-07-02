@@ -61,7 +61,6 @@ interface ToolBlocksDisplayProps {
   forceExpanded?: boolean
   hasFinalContent?: boolean
   showSummary?: boolean
-  showRunningPlaceholder?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
@@ -78,7 +77,6 @@ export function ToolBlocksDisplay({
   forceExpanded = false,
   hasFinalContent = false,
   showSummary = true,
-  showRunningPlaceholder = true,
   stateKey,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
@@ -166,19 +164,6 @@ export function ToolBlocksDisplay({
   const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent) || hasPlanResponse
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
-  const hasLiveDisplayBlock = useMemo(
-    () =>
-      rows.some(
-        row =>
-          row.type === 'block' &&
-          row.block.status !== 'done' &&
-          row.block.status !== 'error' &&
-          (row.block.type === 'tool' ||
-            row.block.type === 'file_changes' ||
-            Boolean(row.block.content))
-      ),
-    [rows]
-  )
   const processingContent = useMemo(
     () => (
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
@@ -198,12 +183,7 @@ export function ToolBlocksDisplay({
           }
 
           return item.type === 'activity_group' ? (
-            <ToolActivityGroup
-              key={item.id}
-              row={item}
-              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
+            <ToolActivityGroup key={item.id} row={item} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ) : isContextCompactionToolBlock(item.block) ? (
             <ContextCompactionIndicator key={item.id} block={item.block} />
           ) : (
@@ -216,18 +196,14 @@ export function ToolBlocksDisplay({
             />
           )
         })}
-        {isRunning && showRunningPlaceholder && !hasLiveDisplayBlock && <ThinkingIndicator />}
       </div>
     ),
     [
       displayItems,
-      hasLiveDisplayBlock,
-      isRunning,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
-      showRunningPlaceholder,
       stateKey,
     ]
   )
@@ -357,7 +333,6 @@ function ToolActivityGroup({
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
-  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -564,22 +539,6 @@ function renderActivityGroupIcon(blocks: ToolBlock[]) {
     )
   }
   return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-}
-
-function ThinkingIndicator() {
-  return (
-    <div
-      className="flex items-center gap-1.5 text-[13px] text-text-muted"
-      data-testid="thinking-indicator"
-    >
-      <span>正在思考</span>
-      <span className="flex items-center gap-0.5" aria-hidden="true">
-        <span className="h-1 w-1 animate-pulse rounded-full bg-current" />
-        <span className="h-1 w-1 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-        <span className="h-1 w-1 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
-      </span>
-    </div>
-  )
 }
 
 function getDurationText(

@@ -2,7 +2,6 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
   ReactNode,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
@@ -31,11 +30,12 @@ import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
-import { isWebSearchToolName } from './blocks/toolBlockActivity'
+import { buildProcessingDisplayRows, isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
@@ -116,7 +116,6 @@ export const MessageList = memo(function MessageList({
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
-  const isPointerSelectingRef = useRef(false)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [layoutWidth, setLayoutWidth] = useState(0)
@@ -174,13 +173,7 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
-    if (!isTextSelectionActive) return
-
     const updateSelectionState = () => {
-      if (isPointerSelectingRef.current) {
-        return
-      }
-
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
@@ -195,12 +188,10 @@ export const MessageList = memo(function MessageList({
     }
 
     const handlePointerUp = () => {
-      isPointerSelectingRef.current = false
       window.requestAnimationFrame(updateSelectionState)
     }
 
     const handleBlur = () => {
-      isPointerSelectingRef.current = false
       updateSelectionState()
     }
 
@@ -215,23 +206,14 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('selectionchange', updateSelectionState)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [isTextSelectionActive])
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !isMessageTextSelectionTarget(event.target)) {
-      return
-    }
-
-    isPointerSelectingRef.current = true
-    setIsTextSelectionActive(true)
-  }
+  }, [])
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
   }
 
   return (
-    <div ref={listRef} className={cn(listLayoutClass, className)} onPointerDown={handlePointerDown}>
+    <div ref={listRef} className={cn(listLayoutClass, className)}>
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -277,7 +259,7 @@ export const MessageList = memo(function MessageList({
       })}
       {shouldShowWaitingIndicator && (
         <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
-          <WaitingAssistantIndicator />
+          <AssistantThinkingIndicator />
         </article>
       )}
     </div>
@@ -298,16 +280,6 @@ function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
   }
 
   return Boolean(node.parentElement && root.contains(node.parentElement))
-}
-
-function isMessageTextSelectionTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false
-
-  return Boolean(
-    target.closest(
-      '.assistant-markdown, [data-testid="user-message-content"], [data-testid="message-hover-time"]'
-    )
-  )
 }
 
 function areMessageListPropsEqual(previous: MessageListProps, next: MessageListProps): boolean {
@@ -362,16 +334,6 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
-}
-
-function WaitingAssistantIndicator() {
-  const { t } = useTranslation('chat')
-
-  return (
-    <div className="inline-flex items-center text-[13px]" data-testid="thinking-indicator">
-      <span className="waiting-thinking-text">{t('thinking.running')}</span>
-    </div>
-  )
 }
 
 function getTurnStartMs(createdAt: string): number | undefined {
@@ -1122,11 +1084,16 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
-  const canShowFinalArtifacts = !isStreaming
+  const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
+  const isAssistantRunning = isStreaming || hasRunningBlocks
+  const canShowFinalArtifacts = !isAssistantRunning
   const hasStreamedResponse = hasBlocks || hasVisibleContent
-  const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
-  const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
-  const shouldShowTrailingThinking = isStreaming && hasVisibleContent
+  const shouldShowProcessingSummary = hasBlocks || (isAssistantRunning && hasStreamedResponse)
+  const shouldShowThinking = shouldShowAssistantThinkingIndicator({
+    isAssistantRunning,
+    hasVisibleContent,
+    hasLiveProcessingDisplayBlock: hasLiveProcessingDisplayBlock(displayBlocks),
+  })
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
@@ -1179,7 +1146,6 @@ function AssistantMessage({
               forceExpanded={isCancelled}
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
-              showRunningPlaceholder={!hasVisibleContent}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onRequestUserInputSubmit={onRequestUserInputSubmit}
@@ -1189,11 +1155,11 @@ function AssistantMessage({
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
-          {shouldShowInitialThinking && <WaitingAssistantIndicator />}
+          {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {hasVisibleContent ? (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
-          {shouldShowTrailingThinking && <WaitingAssistantIndicator />}
+          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -1247,6 +1213,37 @@ function getMessageDisplayStateKey(
 ): string {
   const conversationPart = conversationKey == null ? 'default' : String(conversationKey)
   return `${conversationPart}:${message.id}`
+}
+
+function hasRunningProcessingBlocks(blocks: ProcessingBlock[]): boolean {
+  return blocks.some(block => block.status !== 'done' && block.status !== 'error')
+}
+
+function hasLiveProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
+  return buildProcessingDisplayRows(blocks).some(row => {
+    if (row.type !== 'block') return false
+
+    const { block } = row
+    return (
+      block.status !== 'done' &&
+      block.status !== 'error' &&
+      (block.type === 'tool' || block.type === 'file_changes' || Boolean(block.content.trim()))
+    )
+  })
+}
+
+function shouldShowAssistantThinkingIndicator({
+  isAssistantRunning,
+  hasVisibleContent,
+  hasLiveProcessingDisplayBlock,
+}: {
+  isAssistantRunning: boolean
+  hasVisibleContent: boolean
+  hasLiveProcessingDisplayBlock: boolean
+}): boolean {
+  if (!isAssistantRunning) return false
+  if (hasVisibleContent) return true
+  return !hasLiveProcessingDisplayBlock
 }
 
 function AssistantErrorCard({

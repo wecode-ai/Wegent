@@ -13,10 +13,13 @@ from app.models.kind import Kind
 
 def build_skill_ref_meta(skill: Kind) -> Dict[str, Any]:
     """Convert a skill Kind row into runtime skill reference metadata."""
+    skill_json = getattr(skill, "json", {}) or {}
+    file_hash = skill_json.get("status", {}).get("fileHash")
     return {
         "skill_id": skill.id,
         "namespace": skill.namespace or "default",
         "is_public": skill.user_id == 0,
+        "content_hash": f"sha256:{file_hash}" if file_hash else None,
     }
 
 
