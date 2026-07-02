@@ -10,7 +10,6 @@ import {
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
-const RIGHT_SPLIT_PANEL_DEFAULT_WIDTH = 360
 const RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH = 260
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MIN_HEIGHT = 220
@@ -30,7 +29,7 @@ function getRightSplitChatDefaultWidth(containerWidth: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
 
   return clamp(
-    containerWidth - RIGHT_SPLIT_PANEL_DEFAULT_WIDTH,
+    RIGHT_SPLIT_CHAT_DEFAULT_WIDTH,
     RIGHT_SPLIT_CHAT_MIN_WIDTH,
     getRightSplitChatMaxWidth(containerWidth)
   )

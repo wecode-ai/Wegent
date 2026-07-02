@@ -1,11 +1,36 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
-import { ChevronDown, MessageCircle, Search, SquareTerminal } from 'lucide-react'
+import {
+  Archive,
+  ChevronDown,
+  FileText,
+  MessageCircle,
+  Pencil,
+  Search,
+  SquareTerminal,
+} from 'lucide-react'
+import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import {
+  isAnsweredRequestUserInputBlock,
+  isHiddenRequestUserInputBlock,
+  isRequestUserInputBlock,
+  type RequestUserInputBlock,
+} from '../requestUserInputMessages'
 import { ToolBlockItem } from './ToolBlockItem'
 import {
+  RequestUserInputCard,
+  RequestUserInputSummary,
+  type RequestUserInputPayload,
+} from '../RequestUserInputCard'
+import {
   buildProcessingDisplayRows,
+  getToolActivityFilePaths,
+  getToolActivityGroupKind,
+  getToolActivityKind,
+  getToolActivitySearchItem,
   isCommandToolName,
+  isContextCompactionToolBlock,
   isGuidanceActivityGroup,
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
@@ -13,6 +38,16 @@ import {
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+
+const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
+
+type ProcessingDisplayItem =
+  | ProcessingDisplayRow
+  | {
+      type: 'request_user_input'
+      id: string
+      block: RequestUserInputBlock
+    }
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -29,6 +64,11 @@ interface ToolBlocksDisplayProps {
   showRunningPlaceholder?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
 }
 
 export function ToolBlocksDisplay({
@@ -41,6 +81,11 @@ export function ToolBlocksDisplay({
   showRunningPlaceholder = true,
   stateKey,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  onOpenAssistantPlan,
+  hideRequestUserInputBlocks = false,
+  hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
@@ -75,8 +120,50 @@ export function ToolBlocksDisplay({
   }, [completedAt, hasRenderedRunning, isRunning])
 
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-  const rows = useMemo(() => buildProcessingDisplayRows(blocks), [blocks])
-  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent)
+  const displayItems = useMemo(() => {
+    const hiddenIds = hiddenRequestUserInputIds ?? EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS
+    const items: ProcessingDisplayItem[] = []
+    let pendingRegularBlocks: ProcessingBlock[] = []
+
+    const flushRegularBlocks = () => {
+      if (pendingRegularBlocks.length === 0) return
+      items.push(...buildProcessingDisplayRows(pendingRegularBlocks))
+      pendingRegularBlocks = []
+    }
+
+    blocks.forEach(block => {
+      if (!isRequestUserInputBlock(block)) {
+        pendingRegularBlocks.push(block)
+        return
+      }
+
+      const isUnansweredRequest =
+        block.status !== 'error' && !isAnsweredRequestUserInputBlock(block)
+      const shouldHidePendingRequest =
+        isUnansweredRequest &&
+        (hideRequestUserInputBlocks || isHiddenRequestUserInputBlock(block, hiddenIds))
+      if (shouldHidePendingRequest) return
+
+      flushRegularBlocks()
+      items.push({
+        type: 'request_user_input',
+        id: block.id,
+        block,
+      })
+    })
+
+    flushRegularBlocks()
+    return items
+  }, [blocks, hiddenRequestUserInputIds, hideRequestUserInputBlocks])
+  const rows = useMemo(
+    () =>
+      displayItems.filter(
+        (item): item is ProcessingDisplayRow => item.type !== 'request_user_input'
+      ),
+    [displayItems]
+  )
+  const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
+  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent) || hasPlanResponse
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
   const hasLiveDisplayBlock = useMemo(
@@ -95,27 +182,54 @@ export function ToolBlocksDisplay({
   const processingContent = useMemo(
     () => (
       <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-        {rows.map(row =>
-          row.type === 'activity_group' ? (
+        {displayItems.map(item => {
+          if (item.type === 'request_user_input') {
+            return isAnsweredRequestUserInputBlock(item.block) ? (
+              <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
+            ) : (
+              <RequestUserInputCard
+                key={item.id}
+                payload={item.block.renderPayload}
+                disabled={item.block.status === 'error'}
+                onSubmit={onRequestUserInputSubmit}
+                onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
+              />
+            )
+          }
+
+          return item.type === 'activity_group' ? (
             <ToolActivityGroup
-              key={row.id}
-              row={row}
-              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              key={item.id}
+              row={item}
+              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
+          ) : isContextCompactionToolBlock(item.block) ? (
+            <ContextCompactionIndicator key={item.id} block={item.block} />
           ) : (
             <ToolBlockItem
-              key={row.id}
-              block={row.block}
-              stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+              key={item.id}
+              block={item.block}
+              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onOpenAssistantPlan={onOpenAssistantPlan}
             />
           )
-        )}
+        })}
         {isRunning && showRunningPlaceholder && !hasLiveDisplayBlock && <ThinkingIndicator />}
       </div>
     ),
-    [hasLiveDisplayBlock, isRunning, onOpenWorkspaceFile, rows, showRunningPlaceholder, stateKey]
+    [
+      displayItems,
+      hasLiveDisplayBlock,
+      isRunning,
+      onOpenWorkspaceFile,
+      onOpenAssistantPlan,
+      onRequestUserInputIgnore,
+      onRequestUserInputSubmit,
+      showRunningPlaceholder,
+      stateKey,
+    ]
   )
 
   if (blocks.length === 0 && !isStreaming) return null
@@ -280,27 +394,44 @@ function ToolActivityGroup({
         />
       </button>
       <CollapsibleProcessingContent expanded={expanded} testId="processing-activity-group-content">
-        <div
-          className={[
-            'mt-2 flex min-w-0 flex-col gap-3',
-            isWebSearchGroup ? '' : 'border-l border-border pl-4',
-          ].join(' ')}
-        >
+        <div className="mt-1.5 flex min-w-0 flex-col gap-1.5">
           {isWebSearchGroup ? (
             <WebSearchActivityDetails blocks={row.blocks} />
           ) : (
-            row.blocks.map(block => (
-              <ToolBlockItem
-                key={block.id}
-                block={block}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            ))
+            <ToolActivityDetails blocks={row.blocks} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           )}
         </div>
       </CollapsibleProcessingContent>
     </div>
   )
+}
+
+function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
+  const label = getContextCompactionLabel(block)
+  const textClassName = block.status === 'error' ? 'text-red-500' : 'text-text-muted'
+
+  return (
+    <div
+      className="flex w-full min-w-0 items-center gap-3 py-1"
+      data-testid="context-compaction-indicator"
+      aria-label={label}
+    >
+      <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
+      <span
+        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
+      >
+        <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span className="min-w-0 truncate">{label}</span>
+      </span>
+      <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
+    </div>
+  )
+}
+
+function getContextCompactionLabel(block: ToolBlock): string {
+  if (block.status === 'error') return '上下文压缩失败'
+  if (block.status === 'done') return '上下文已自动压缩'
+  return '正在自动压缩上下文'
 }
 
 function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
@@ -311,16 +442,126 @@ function WebSearchActivityDetails({ blocks }: { blocks: ToolBlock[] }) {
   return <WebSearchActivityRows items={items} />
 }
 
+function ToolActivityDetails({
+  blocks,
+  onOpenWorkspaceFile,
+}: {
+  blocks: ToolBlock[]
+  onOpenWorkspaceFile?: (path: string) => void
+}) {
+  return (
+    <>
+      {blocks.map(block => {
+        const item = getToolActivitySearchItem(block)
+        if (item) {
+          return <CodeSearchActivityRow key={item.id} label={item.label} />
+        }
+
+        const paths = getToolActivityFilePaths(block)
+        if (paths.length > 0) {
+          return paths.map(path => (
+            <FileReadActivityRow
+              key={`${block.id}:${path}`}
+              path={path}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+            />
+          ))
+        }
+
+        return (
+          <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+        )
+      })}
+    </>
+  )
+}
+
+function CodeSearchActivityRow({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="code-search-activity-row"
+      className="flex max-w-full text-[13px] leading-5 text-text-muted"
+    >
+      <span className="min-w-0 break-words">{label}</span>
+    </div>
+  )
+}
+
+function FileReadActivityRow({
+  path,
+  onOpenWorkspaceFile,
+}: {
+  path: string
+  onOpenWorkspaceFile?: (path: string) => void
+}) {
+  const label = `Read ${basename(path)}`
+  const content = (
+    <span data-testid="file-read-activity-row" className="min-w-0 truncate">
+      {label}
+    </span>
+  )
+
+  if (onOpenWorkspaceFile) {
+    return (
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1.5 text-left text-text-muted hover:text-text-secondary"
+        onClick={() => onOpenWorkspaceFile(path)}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return <div className="flex max-w-full items-center gap-1.5 text-text-muted">{content}</div>
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}
+
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
   return blocks.some(block => isCommandToolName(block.toolName))
 }
 
+function hasCodeSearchBlocks(blocks: ToolBlock[]): boolean {
+  return blocks.some(block => getToolActivityKind(block) === 'search')
+}
+
 function renderActivityGroupIcon(blocks: ToolBlock[]) {
+  if (hasCodeSearchBlocks(blocks)) {
+    return (
+      <Search
+        data-testid="processing-activity-search-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
+  }
   if (hasCommandBlocks(blocks)) {
     return <SquareTerminal className="h-4 w-4 shrink-0" strokeWidth={1.7} />
   }
   if (isGuidanceActivityGroup(blocks)) {
     return <MessageCircle className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+  }
+  const kind = getToolActivityGroupKind(blocks)
+  if (kind === 'edit') {
+    return (
+      <Pencil
+        data-testid="processing-activity-edit-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
+  }
+  if (kind === 'create' || kind === 'file') {
+    return (
+      <FileText
+        data-testid="processing-activity-file-icon"
+        className="h-4 w-4 shrink-0"
+        strokeWidth={1.7}
+      />
+    )
   }
   return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
 }

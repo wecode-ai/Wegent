@@ -12,25 +12,16 @@ describe('DesktopTopBar', () => {
       <DesktopTopBar
         left={<button type="button">Left</button>}
         right={<button type="button">Right</button>}
-      />,
+      />
     )
 
-    expect(screen.getByTestId('desktop-topbar')).toHaveClass(
-      'h-[52px]',
-      'items-center',
-      'px-6',
-    )
-    expect(screen.getByTestId('desktop-topbar-left-actions')).toHaveClass(
-      'gap-3.5',
-    )
-    expect(screen.getByTestId('desktop-topbar-right-actions')).toHaveClass(
-      'gap-5',
-      'ml-auto',
-    )
+    expect(screen.getByTestId('desktop-topbar')).toHaveClass('h-[52px]', 'items-center', 'px-6')
+    expect(screen.getByTestId('desktop-topbar-left-actions')).toHaveClass('gap-2')
+    expect(screen.getByTestId('desktop-topbar-right-actions')).toHaveClass('gap-1', 'ml-auto')
     expect(
       within(screen.getByTestId('desktop-topbar-drag-region')).getByTestId(
-        'macos-titlebar-drag-region',
-      ),
+        'macos-titlebar-drag-region'
+      )
     ).toHaveAttribute('data-tauri-drag-region')
   })
 })

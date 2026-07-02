@@ -14,6 +14,11 @@ import type {
   ModelOptions,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeGoalClearResponse,
+  RuntimeGoalCreateInput,
+  RuntimeGoalGetResponse,
+  RuntimeGoalSetRequest,
+  RuntimeGoalSetResponse,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
@@ -57,6 +62,7 @@ export type ArchiveRuntimeLocalTaskResult = {
 
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
+  initialGoal?: RuntimeGoalCreateInput | null
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
@@ -83,6 +89,8 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelOption: (optionId: string, value: string) => void
+    getSelectedModel?: () => UnifiedModel | null
+    getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
@@ -95,6 +103,7 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
   selectProject: (projectId: number | null) => void
@@ -124,6 +133,9 @@ export interface WorkbenchContextValue {
   archiveProjectsConversations: (runtimeProjectKeys: string[]) => Promise<void>
   archiveChatConversations: (addresses: RuntimeTaskAddress[]) => Promise<void>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
+  getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
+  setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
+  clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,

@@ -13,8 +13,14 @@ import {
   Copy,
   File as FileIcon,
   Package,
+  Target,
 } from 'lucide-react'
-import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  RequestUserInputResponse,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
@@ -25,10 +31,12 @@ import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
+import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
-import { CodexContextEvents, CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
+import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 
@@ -51,6 +59,11 @@ interface MessageListProps {
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -62,6 +75,7 @@ const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
+const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
 const CODEX_TRANSIENT_CLIPBOARD_IMAGE_PATTERN =
   /\/(?:var\/folders|private\/var\/folders)\/.*\/codex-clipboard-[^/]+\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -90,6 +104,11 @@ export const MessageList = memo(function MessageList({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  onOpenAssistantPlan,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
   renderGapAfterMessage,
 }: MessageListProps) {
   const visibleMessages = messages.filter(shouldRenderMessage)
@@ -97,8 +116,8 @@ export const MessageList = memo(function MessageList({
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-11'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-11'
+    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -134,6 +153,11 @@ export const MessageList = memo(function MessageList({
                   onRevertFileChanges={onRevertFileChanges}
                   onOpenFileChangesReview={onOpenFileChangesReview}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onRequestUserInputSubmit={onRequestUserInputSubmit}
+                  onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  onOpenAssistantPlan={onOpenAssistantPlan}
+                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
               )}
             </article>
@@ -170,6 +194,19 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onOpenFileChangesReview'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
+      ? 'onRequestUserInputSubmit'
+      : null,
+    previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
+      ? 'onRequestUserInputIgnore'
+      : null,
+    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
+      ? 'hideRequestUserInputBlocks'
+      : null,
+    previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
+      ? 'hiddenRequestUserInputIds'
+      : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
@@ -181,11 +218,7 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (message.status === 'streaming' || message.status === 'failed') return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
-  if (
-    message.references?.length ||
-    message.memoryCitations?.length ||
-    message.contextEvents?.length
-  ) {
+  if (message.references?.length || message.memoryCitations?.length) {
     return true
   }
 
@@ -340,13 +373,16 @@ function UserMessage({
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string) => void
 }) {
+  const { t } = useTranslation('common')
   const [isExpanded, setIsExpanded] = useState(false)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
   const codexLocalFileMentions = useMemo(
     () => parseCodexLocalFileMentions(message.content),
     [message.content]
   )
-  const displayContent = codexLocalFileMentions?.requestText ?? message.content
+  const displayContent = normalizeCodexUserMessageContent(
+    codexLocalFileMentions?.requestText ?? message.content
+  )
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
     [message.attachments]
@@ -377,6 +413,7 @@ function UserMessage({
     displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
+  const showGoalRequestBadge = message.runtimeGoalRequest === true
 
   return (
     <div
@@ -471,11 +508,22 @@ function UserMessage({
             <div
               data-testid="user-message-content"
               className={[
-                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-3',
+                'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
               {renderUserContent(displayContent)}
+              {showGoalRequestBadge && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="user-message-goal-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <Target className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
               {shouldCollapse && !isExpanded && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
               )}
@@ -510,6 +558,12 @@ function UserMessage({
       <MessageHoverActions message={message} align="right" visible={areHoverActionsVisible} />
     </div>
   )
+}
+
+function normalizeCodexUserMessageContent(content: string): string {
+  return content.trimStart().startsWith(CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX)
+    ? CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL
+    : content
 }
 
 function parseCodexLocalFileMentions(content: string): {
@@ -892,6 +946,11 @@ function AssistantMessage({
   onRevertFileChanges,
   onOpenFileChangesReview,
   onOpenWorkspaceFile,
+  onRequestUserInputSubmit,
+  onRequestUserInputIgnore,
+  onOpenAssistantPlan,
+  hideRequestUserInputBlocks,
+  hiddenRequestUserInputIds,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
@@ -908,6 +967,11 @@ function AssistantMessage({
     focusFilePath?: string
   }) => void
   onOpenWorkspaceFile?: (path: string) => void
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
+  onOpenAssistantPlan?: (content: string) => void
+  hideRequestUserInputBlocks?: boolean
+  hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
@@ -929,7 +993,6 @@ function AssistantMessage({
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
-  const contextEvents = message.contextEvents ?? []
   const memoryCitations = message.memoryCitations ?? []
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
@@ -964,7 +1027,7 @@ function AssistantMessage({
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
-              className="mb-3 border-b border-border pb-2 text-sm font-medium text-text-muted"
+              className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
             >
               {t('assistant_status.stopped_after', {
                 duration: getStoppedElapsedDuration(message),
@@ -982,13 +1045,17 @@ function AssistantMessage({
               showRunningPlaceholder={!hasVisibleContent}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onRequestUserInputSubmit={onRequestUserInputSubmit}
+              onRequestUserInputIgnore={onRequestUserInputIgnore}
+              onOpenAssistantPlan={onOpenAssistantPlan}
+              hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+              hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowInitialThinking && <WaitingAssistantIndicator />}
-          {contextEvents.length > 0 && <CodexContextEvents events={contextEvents} />}
-          {hasVisibleContent && (
+          {hasVisibleContent ? (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
-          )}
+          ) : null}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}

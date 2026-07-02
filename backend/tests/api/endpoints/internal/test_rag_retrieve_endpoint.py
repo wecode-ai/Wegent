@@ -14,6 +14,7 @@ from app.services.rag.runtime_specs import (
 )
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -58,7 +59,11 @@ def _make_runtime_spec(
 ) -> QueryRuntimeSpec:
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids or [1],
-        document_ids=document_ids,
+        scope=(
+            RetrievalScope(document_ids=document_ids)
+            if document_ids is not None
+            else None
+        ),
         query=query,
         route_mode=route_mode,
         knowledge_base_configs=[
@@ -323,6 +328,13 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
             "restricted_mode": False,
         },
     }
+    gateway = AsyncMock()
+    gateway.query.return_value = {
+        "mode": "rag_retrieval",
+        "records": [],
+        "total": 0,
+        "total_estimated_tokens": 0,
+    }
 
     with (
         patch(
@@ -333,15 +345,9 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-            return_value={
-                "mode": "rag_retrieval",
-                "records": [],
-                "total": 0,
-                "total_estimated_tokens": 0,
-            },
-        ) as mock_query,
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=gateway,
+        ),
         patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
@@ -353,11 +359,19 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
         )
 
     assert response.status_code == 200
-    mock_query.assert_awaited_once_with(ANY, db=ANY)
+    gateway.query.assert_awaited_once_with(ANY, db=ANY)
     mock_persist.assert_called_once()
 
 
 def test_internal_retrieve_resolves_document_names_before_query(test_client):
+    gateway = AsyncMock()
+    gateway.query.return_value = {
+        "mode": "rag_retrieval",
+        "records": [],
+        "total": 0,
+        "total_estimated_tokens": 0,
+    }
+
     with (
         patch(
             "app.api.endpoints.internal.rag._resolve_document_names",
@@ -372,15 +386,9 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
             ),
         ),
         patch(
-            "app.api.endpoints.internal.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-            return_value={
-                "mode": "rag_retrieval",
-                "records": [],
-                "total": 0,
-                "total_estimated_tokens": 0,
-            },
-        ) as mock_query,
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=gateway,
+        ),
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -394,8 +402,8 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
 
     assert response.status_code == 200
     mock_resolve.assert_called_once()
-    mock_query.assert_awaited_once()
-    assert mock_query.await_args.args[0].document_ids == [101, 102]
+    gateway.query.assert_awaited_once()
+    assert gateway.query.await_args.args[0].scope.document_ids == [101, 102]
 
 
 def test_internal_retrieve_returns_error_when_document_names_not_found(test_client):
@@ -591,7 +599,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
         knowledge_base_ids=[1],
         db=ANY,
         route_mode="auto",
-        document_ids=None,
+        scope=None,
         metadata_condition=None,
         context_window=10000,
         used_context_tokens=4200,

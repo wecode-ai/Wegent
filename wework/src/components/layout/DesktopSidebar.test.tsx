@@ -134,8 +134,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
-      'h-9',
-      'w-9',
+      'h-8',
+      'w-8',
       'shrink-0'
     )
   })
@@ -1207,8 +1207,8 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[28px]', 'group-hover/task:w-[78px]')
-    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[78px]')
+    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[104px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[104px]')
   })
 
   test('moves pinned runtime tasks to the top of the project task list', async () => {
@@ -1286,6 +1286,51 @@ describe('DesktopSidebar', () => {
       'runtime-local-task-row-middle-task',
       'runtime-local-task-row-old-task',
     ])
+  })
+
+  test('excludes pinned runtime tasks from the collapsed project task count', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 6,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: Array.from({ length: 6 }, (_, index) => ({
+                  localTaskId: `task-${index + 1}`,
+                  workspacePath: '/repo/Wegent',
+                  title: `Task ${index + 1}`,
+                  runtime: 'codex',
+                  updatedAt: `2026-06-2${6 - index}T00:00:00Z`,
+                })),
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalLocalTasks: 6,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('runtime-local-task-mark-task-1'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
+    expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 
   test('restores pinned runtime task ordering after remount', async () => {

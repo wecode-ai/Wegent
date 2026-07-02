@@ -4,6 +4,8 @@ import { ApiError } from '@/api/http'
 import { WEWORK_CLIENT_ORIGIN } from '@/api/backend/backendServices'
 import type { ExecutorClient } from '@/api/executorAccess'
 import i18n from '@/i18n'
+import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
+import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
@@ -66,6 +68,8 @@ interface RuntimeMessagingModelSelection {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  getSelectedModel?: () => UnifiedModel | null
+  getSelectedModelOptions?: () => ModelOptions
 }
 
 interface RuntimeMessagingSkillSelection {
@@ -87,6 +91,22 @@ interface UseWorkbenchRuntimeMessagingOptions {
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
   rememberExecutionDevice: (deviceId: string) => void
+}
+
+function isConfiguredLocalModel(model: UnifiedModel | null): boolean {
+  if (!model) return false
+  const override = getModelExecutionOverride(model)
+  const modelName = override?.modelName ?? model.name
+  return localModelIdFromModelName(modelName) !== null
+}
+
+function isLocalDeviceTarget(
+  devices: WorkbenchState['devices'],
+  deviceId?: string | null
+): boolean {
+  if (!deviceId) return false
+  const device = findWorkbenchDevice(devices, deviceId)
+  return device?.device_type === 'local'
 }
 
 export function useWorkbenchRuntimeMessaging({
@@ -181,7 +201,11 @@ export function useWorkbenchRuntimeMessaging({
         message,
       }
       const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
+      const selectedModelOptions =
+        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
       if (
         activeProject &&
@@ -197,22 +221,21 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+      debugRuntimeCreateFlow('model-options-resolved', {
+        selectedModel: selectedModel?.name ?? null,
+        selectedModelType: selectedModel?.type ?? null,
+        selectedModelOptions: summarizeModelOptions(selectedModelOptions),
+        executionModelOptions: summarizeModelOptions(executionModel.modelOptions),
+      })
       if (selectedModel) {
-        const executionModel = selectedModelExecutionFields(
-          selectedModel,
-          modelSelection.selectedModelOptions
-        )
         payload.force_override_bot_model = executionModel.modelId
         if (executionModel.modelType) {
           payload.force_override_bot_model_type = executionModel.modelType
         }
-        if (
-          modelSelection.selectedModel &&
-          executionModel.modelOptions &&
-          Object.keys(executionModel.modelOptions).length > 0
-        ) {
-          payload.model_options = executionModel.modelOptions
-        }
+      }
+      if (executionModel.modelOptions && Object.keys(executionModel.modelOptions).length > 0) {
+        payload.model_options = executionModel.modelOptions
       }
 
       if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
@@ -257,11 +280,13 @@ export function useWorkbenchRuntimeMessaging({
       displayMessage: string,
       payload: ChatSendPayload,
       activeDeviceId?: string,
-      options?: Pick<SendCurrentInputOptions, 'onRuntimeTaskOptimisticOpen'>
+      options?: Pick<SendCurrentInputOptions, 'initialGoal' | 'onRuntimeTaskOptimisticOpen'>
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
       const selectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
       const runtime = inferRuntimeName(selectedModel)
       const localTaskId = createRuntimeLocalTaskId(runtime)
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
@@ -315,6 +340,14 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      if (
+        isConfiguredLocalModel(selectedModel) &&
+        !isLocalDeviceTarget(state.devices, optimisticDeviceId)
+      ) {
+        reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
+        return false
+      }
+
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         localTaskId,
@@ -329,7 +362,15 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
       }
+      debugRuntimeCreateFlow('create-request-built', {
+        localTaskId,
+        runtime,
+        modelId: createRequest.modelId ?? null,
+        modelType: createRequest.modelType ?? null,
+        modelOptions: summarizeModelOptions(createRequest.modelOptions),
+      })
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         workspacePath:
@@ -468,10 +509,14 @@ export function useWorkbenchRuntimeMessaging({
         trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
       const payloadMessage = appendCodeCommentContexts(message, effectiveCodeCommentContexts)
       const runtimeSelectedModel =
-        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
+      const runtimeSelectedModelOptions =
+        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
       const runtimeModelFields = selectedModelExecutionFields(
         runtimeSelectedModel,
-        modelSelection.selectedModelOptions
+        runtimeSelectedModelOptions
       )
 
       if (state.currentRuntimeTask) {
@@ -481,6 +526,13 @@ export function useWorkbenchRuntimeMessaging({
         }
         if (currentRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
+          return false
+        }
+        if (
+          isConfiguredLocalModel(runtimeSelectedModel) &&
+          !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
+        ) {
+          reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
           return false
         }
         const currentAttachments = attachmentSelection.attachments
@@ -550,6 +602,7 @@ export function useWorkbenchRuntimeMessaging({
         prepared.payload,
         prepared.activeDeviceId,
         {
+          initialGoal: options?.initialGoal,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         }
       )
@@ -601,14 +654,22 @@ export function useWorkbenchRuntimeMessaging({
         }
         try {
           const runtimeSelectedModel =
-            modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+            modelSelection.getSelectedModel?.() ??
+            modelSelection.selectedModel ??
+            resolveAutomaticModel(modelSelection.models)
+          const runtimeSelectedModelOptions =
+            modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+          if (
+            isConfiguredLocalModel(runtimeSelectedModel) &&
+            !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
+          ) {
+            reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
+            return
+          }
           const response = await executorClient.runtime.sendRuntimeMessage({
             address: state.currentRuntimeTask,
             message: previousUserMessage.content,
-            ...selectedModelExecutionFields(
-              runtimeSelectedModel,
-              modelSelection.selectedModelOptions
-            ),
+            ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           })
           if (!response.accepted) {
             throw new Error(response.error || '发送失败')
@@ -633,6 +694,7 @@ export function useWorkbenchRuntimeMessaging({
       refreshWorkLists,
       reportSendBlocked,
       state.currentRuntimeTask,
+      state.devices,
     ]
   )
 
@@ -843,6 +905,17 @@ function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>)
     event,
     ...details,
   })
+}
+
+function summarizeModelOptions(modelOptions: ModelOptions | undefined): Record<string, unknown> {
+  if (!modelOptions) return {}
+  return {
+    keys: Object.keys(modelOptions),
+    collaborationMode: modelOptions.collaborationMode ?? modelOptions.collaboration_mode ?? null,
+    reasoning: modelOptions.reasoning ?? null,
+    summary: modelOptions.summary ?? null,
+    speed: modelOptions.speed ?? modelOptions.service_tier ?? null,
+  }
 }
 
 function isRuntimeDebugEnabled(): boolean {

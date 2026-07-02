@@ -157,6 +157,325 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('renders tagged proposed plan content as regular assistant markdown', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan',
+            role: 'assistant',
+            content:
+              '<proposed_plan>\n1. Inspect the desktop chat width.\n2. Match the reference task.\n</proposed_plan>',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
+    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
+  })
+
+  test('renders Codex plan implementation user messages as the chosen option label', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-plan-implementation',
+            role: 'user',
+            content: [
+              'PLEASE IMPLEMENT THIS PLAN:',
+              '# Wework 输入框 Codex 化视觉优化计划',
+              '',
+              '## Summary',
+              '- 保持输入框视觉与 Codex App 一致。',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('是的，执行此计划')
+    expect(screen.queryByText(/PLEASE IMPLEMENT THIS PLAN/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Wework 输入框 Codex 化视觉优化计划/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+  })
+
+  test('renders answered request user input as an assistant question summary', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-question',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'request-1',
+                turnId: 11,
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+                renderPayload: {
+                  kind: 'request_user_input',
+                  request_id: 42,
+                  questions: [
+                    {
+                      id: 'direction',
+                      question: '这个计划想落在哪个方向?',
+                    },
+                  ],
+                  response: {
+                    requestId: 42,
+                    answers: {
+                      direction: { answers: ['随便，我就想看看样式'] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-summary')).toHaveTextContent('已询问 1 个问题')
+    expect(screen.getByText('这个计划想落在哪个方向?')).toBeInTheDocument()
+    expect(screen.getByText('随便，我就想看看样式')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-user')).not.toBeInTheDocument()
+  })
+
+  test('renders explicit plan blocks as an assistant plan card', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const onOpenAssistantPlan = vi.fn()
+    const planContent = [
+      '# Wegent 代码质量与前端一致性巡检计划',
+      '',
+      '## Summary',
+      '- 目标：做一轮低风险工程改进。',
+      '',
+      '## Key Changes',
+      '- 扫描前端直接导入。',
+      '',
+      '## Test Plan',
+      '- 运行 lint。',
+    ].join('\n')
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        onOpenAssistantPlan={onOpenAssistantPlan}
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 11,
+                type: 'plan',
+                content: planContent,
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const planCard = screen.getByTestId('assistant-plan-card')
+    expect(planCard).toHaveTextContent('计划')
+    expect(planCard).toHaveAttribute('role', 'button')
+    expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
+    expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
+    expect(screen.queryByText('套餐')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-like-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-plan-dislike-button')).not.toBeInTheDocument()
+    URL.createObjectURL = vi.fn(() => 'blob:assistant-plan-markdown')
+    URL.revokeObjectURL = vi.fn()
+    await user.click(screen.getByTestId('assistant-plan-download-button'))
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    await user.click(screen.getByTestId('assistant-plan-copy-button'))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
+    expect(onOpenAssistantPlan).not.toHaveBeenCalled()
+    await user.click(planCard)
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    await user.click(screen.getByTestId('assistant-plan-expand-button'))
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
+      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
+    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
+  })
+
+  test('downloads explicit plan blocks through the Tauri native command', async () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/test/Downloads/plan.md')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                turnId: 11,
+                type: 'plan',
+                content: '# Native plan\n\n- Save through Tauri.',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-download-button'))
+
+    await waitFor(() => {
+      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('save_text_file_to_downloads', {
+        filename: 'plan.md',
+        content: '# Native plan\n\n- Save through Tauri.',
+      })
+    })
+  })
+
+  test('renders streaming plan blocks as an assistant plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-streaming',
+                turnId: 11,
+                type: 'plan',
+                content: '# 流式计划\n\n- 正在生成第一步。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+  })
+
+  test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-untagged-plan',
+            role: 'assistant',
+            content: [
+              '# Wegent 代码质量与前端一致性巡检计划',
+              '',
+              '## Summary',
+              '- 目标：做一轮低风险工程改进。',
+              '',
+              '## Test Plan',
+              '- 运行 lint。',
+            ].join('\n'),
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+  })
+
+  test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tagged-markdown-document',
+            role: 'assistant',
+            content: [
+              '<proposed_plan>',
+              '```md',
+              '# 产品需求文档示例',
+              '',
+              '## 概述',
+              '本文档用于描述一个轻量级任务管理工具的核心需求。',
+              '```',
+              '</proposed_plan>',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('md')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
+  })
+
+  test('renders streaming tagged markdown documents without a plan card', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-tagged-markdown-document',
+            role: 'assistant',
+            content: [
+              '<proposed_plan>',
+              '```md',
+              '# 产品需求文档示例',
+              '',
+              '## 概述',
+              '本文档用于描述一个轻量级任务管理工具的核心需求。',
+            ].join('\n'),
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('md')
+    expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('产品需求文档示例')
+  })
+
   test('shows stopped duration from completed time and keeps partial assistant content', () => {
     render(
       <MessageList
@@ -353,8 +672,32 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-11', 'pb-2')
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('pt-8', 'pb-2')
+    expect(screen.getByTestId('user-message-content')).toHaveClass('py-1.5')
     expect(screen.getAllByTestId('message-hover-actions')[0]).toHaveClass('min-h-5')
+  })
+
+  test('renders a goal badge on goal-first user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-goal',
+            role: 'user',
+            content: '实现 goal 功能',
+            status: 'done',
+            createdAt: '2026-06-10T08:00:00Z',
+            runtimeGoalRequest: true,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('user-message-goal-badge')).toHaveTextContent('目标')
+    expect(screen.getByTestId('user-message-content')).toHaveTextContent('实现 goal 功能')
+    expect(screen.getByTestId('user-message-content').lastElementChild).toContainElement(
+      screen.getByTestId('user-message-goal-badge')
+    )
   })
 
   const originalCreateObjectUrl = URL.createObjectURL
@@ -919,7 +1262,7 @@ describe('MessageList', () => {
     expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
   })
 
-  test('renders Codex context events, memory citations, and one-column deduped file references', async () => {
+  test('renders Codex memory citations and one-column deduped file references', async () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
       <MessageList
@@ -939,14 +1282,6 @@ describe('MessageList', () => {
               { path: '/workspace/project/logs/paas-context.log' },
               { path: '/workspace/project/scripts/notify_pr_ready.sh' },
             ],
-            contextEvents: [
-              {
-                id: 'context-1',
-                type: 'context_compaction',
-                status: 'done',
-                createdAt: Date.parse('2026-06-24T08:00:00.000Z'),
-              },
-            ],
             memoryCitations: [
               {
                 entries: [
@@ -965,7 +1300,6 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('codex-context-events')).toBeInTheDocument()
     expect(screen.queryByText('引用文件')).not.toBeInTheDocument()
     expect(screen.getByTestId('codex-memory-citations')).toBeInTheDocument()
     expect(screen.getByTestId('codex-reference-list')).toBeInTheDocument()

@@ -148,19 +148,28 @@ describe('WorkspacePanelActions', () => {
     )
 
     expect(screen.getByTestId('local-workspace-titlebar-control')).toHaveClass(
-      'border-border',
+      'h-8',
+      'overflow-hidden',
+      'rounded-[14px]',
+      'border-border/60',
       'bg-background'
     )
-    expect(screen.getByTestId('local-workspace-titlebar-control')).not.toHaveClass('bg-white')
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveClass(
-      'bg-surface',
-      'hover:bg-muted'
+      'h-8',
+      'gap-1.5',
+      'bg-transparent',
+      'hover:bg-black/[0.06]',
+      'active:bg-black/[0.10]'
+    )
+    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveTextContent(
+      /Open location|打开位置|workbench\.open_workspace_location/
     )
     expect(screen.getByTestId('open-local-workspace-picker-button')).toHaveClass(
-      'border-border',
-      'bg-background',
-      'hover:bg-muted'
+      'h-8',
+      'w-7',
+      'hover:bg-black/[0.06]'
     )
+    expect(screen.getByTestId('open-local-workspace-picker-button')).not.toHaveClass('border-l')
 
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 

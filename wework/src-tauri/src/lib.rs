@@ -390,6 +390,32 @@ fn download_local_file_to_downloads(
     Ok(target_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn save_text_file_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    if content.is_empty() {
+        return Err("File content is empty".to_string());
+    }
+
+    let downloads_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Failed to locate Downloads directory: {error}"))?;
+    std::fs::create_dir_all(&downloads_dir)
+        .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
+
+    let filename = sanitized_download_filename(&filename, std::path::Path::new("plan.md"));
+    let target_path = unique_download_path(&downloads_dir, &filename);
+    std::fs::write(&target_path, content)
+        .map_err(|error| format!("Failed to save file to Downloads: {error}"))?;
+    notify_download_finished(&target_path);
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
 fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     if let Ok(home) = std::env::var("WEGENT_EXECUTOR_HOME") {
         if let Some(home) = normalized_non_empty(home) {
@@ -901,6 +927,7 @@ pub fn run() {
             local_executor::local_executor_status,
             set_tray_menu_state,
             download_local_file_to_downloads,
+            save_text_file_to_downloads,
             local_path_exists,
             open_local_workspace,
             read_dropped_files,

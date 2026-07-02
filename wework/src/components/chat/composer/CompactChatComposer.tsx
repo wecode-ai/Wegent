@@ -1,4 +1,14 @@
-import { ArrowUp, Camera, Image, Maximize2, Minimize2, Plus, Square } from 'lucide-react'
+import {
+  ArrowUp,
+  Camera,
+  ClipboardList,
+  Image,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Square,
+  Target,
+} from 'lucide-react'
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -6,6 +16,7 @@ import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 
@@ -21,6 +32,12 @@ interface CompactChatComposerProps {
   uploadingFiles?: Map<string, { file: File; progress: number }>
   attachmentErrors?: Map<string, string>
   onFileSelect?: (files: File | File[]) => void
+  planModeActive?: boolean
+  onSetPlanMode?: () => void
+  onClearPlanMode?: () => void
+  onSetGoal?: () => void
+  goalDraftActive?: boolean
+  onCancelGoalDraft?: () => void
   onRemoveAttachment?: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
@@ -41,6 +58,12 @@ export function CompactChatComposer({
   uploadingFiles = new Map(),
   attachmentErrors = new Map(),
   onFileSelect,
+  planModeActive = false,
+  onSetPlanMode,
+  onClearPlanMode,
+  onSetGoal,
+  goalDraftActive = false,
+  onCancelGoalDraft,
   onRemoveAttachment = () => {},
   onClearCodeComments,
   onListLocalSkills,
@@ -66,6 +89,16 @@ export function CompactChatComposer({
     }
     event.target.value = ''
     setContextSheetOpen(false)
+  }
+
+  const handleSetGoal = () => {
+    setContextSheetOpen(false)
+    onSetGoal?.()
+  }
+
+  const handleSetPlanMode = () => {
+    setContextSheetOpen(false)
+    onSetPlanMode?.()
   }
 
   const handlePasteFiles: ClipboardEventHandler<HTMLTextAreaElement> = event => {
@@ -129,6 +162,19 @@ export function CompactChatComposer({
           {disabledReason}
         </div>
       )}
+      {goalDraftActive ? (
+        <GoalDraftPill onCancel={onCancelGoalDraft} className="mb-2" />
+      ) : planModeActive ? (
+        <ComposerModePill
+          label={t('workbench.plan_mode', '计划模式')}
+          testId="plan-mode-pill"
+          cancelTestId="cancel-plan-mode-button"
+          cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
+          onCancel={onClearPlanMode}
+          className="mb-2"
+          title={t('workbench.collaboration_mode', '运行模式')}
+        />
+      ) : null}
       <form
         className="flex w-full items-end gap-2"
         onSubmit={event => {
@@ -233,6 +279,28 @@ export function CompactChatComposer({
               <Image className="h-6 w-6 shrink-0 text-text-secondary" />
               <span>{t('workbench.upload_image', '上传文件')}</span>
             </button>
+            {onSetPlanMode && !planModeActive && (
+              <button
+                type="button"
+                data-testid="mobile-set-plan-mode-button"
+                onClick={handleSetPlanMode}
+                className="flex h-14 w-full items-center gap-4 rounded-2xl px-4 text-left text-base font-semibold text-text-primary hover:bg-muted"
+              >
+                <ClipboardList className="h-6 w-6 shrink-0 text-text-secondary" />
+                <span>{t('workbench.plan_mode', '计划模式')}</span>
+              </button>
+            )}
+            {onSetGoal && (
+              <button
+                type="button"
+                data-testid="mobile-set-goal-button"
+                onClick={handleSetGoal}
+                className="flex h-14 w-full items-center gap-4 rounded-2xl px-4 text-left text-base font-semibold text-text-primary hover:bg-muted"
+              >
+                <Target className="h-6 w-6 shrink-0 text-primary" />
+                <span>{t('workbench.pursue_goal', '追求目标')}</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -257,7 +325,7 @@ export function CompactChatComposer({
               onChange={event => onChange(event.target.value)}
               onPaste={handlePasteFiles}
               placeholder={placeholder}
-              className="h-full w-full resize-none rounded-2xl border border-border bg-surface px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"
+              className="h-full w-full resize-none rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"
             />
           </div>
         </div>

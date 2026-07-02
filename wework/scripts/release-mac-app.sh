@@ -5,6 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=lib/wework-mac-env.sh
+source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+
 TARGET="local"
 VERSION_OVERRIDE=""
 RELEASE_NOTES="${RELEASE_NOTES:-New Wework release.}"
@@ -178,30 +181,6 @@ maybe_notarize_and_staple() {
 
   log_signing "Stapling ticket to $(basename "$artifact_path")"
   xcrun stapler staple "$artifact_path"
-}
-
-get_local_ip() {
-  local ip
-
-  for interface in en0 en1; do
-    ip="$(ipconfig getifaddr "$interface" 2>/dev/null || true)"
-    if [ -n "$ip" ]; then
-      echo "$ip"
-      return
-    fi
-  done
-
-  local default_interface
-  default_interface="$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
-  if [ -n "$default_interface" ]; then
-    ip="$(ipconfig getifaddr "$default_interface" 2>/dev/null || true)"
-    if [ -n "$ip" ]; then
-      echo "$ip"
-      return
-    fi
-  fi
-
-  echo "127.0.0.1"
 }
 
 next_patch_version_from_text() {
@@ -513,9 +492,8 @@ ensure_notary_profile
 verify_notary_profile
 require_macos_build_target
 
-LOCAL_IP="${WEWORK_HOST:-$(get_local_ip)}"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
-BACKEND_BASE_URL="http://$LOCAL_IP:$BACKEND_PORT"
+BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
 
 export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"

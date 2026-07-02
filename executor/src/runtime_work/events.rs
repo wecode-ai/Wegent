@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
@@ -18,7 +18,10 @@ use crate::{
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     transcript::{tool_block_from_notification, tool_update_from_notification},
-    util::{extract_text, now_ms, raw_string_field, reasoning_content, string_field},
+    util::{
+        extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, reasoning_content,
+        string_field,
+    },
 };
 
 pub(crate) fn emit_response_event(
@@ -79,6 +82,7 @@ pub(crate) struct CodexNotificationEventMapper {
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
+    plan_blocks: BTreeMap<String, String>,
 }
 
 struct ProcessTextStream {
@@ -165,10 +169,44 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "item/tool/requestUserInput" => {
+                emit_request_user_input(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                    message.get("id"),
+                );
+            }
+            "item/plan/delta" => {
+                self.emit_plan_delta(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
             "item/completed" => {
                 self.observe_root_thread(notification.params);
                 if self.is_subagent_delta(notification.params) {
                     self.forget_subagent_item(notification.params);
+                    self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                if is_completed_plan_item(notification.params) {
+                    self.reset_process_text();
+                    if let Some(text) = plan_item_text(notification.params) {
+                        self.emit_completed_plan(
+                            event_tx,
+                            device_id,
+                            local_task_id,
+                            request,
+                            notification.params,
+                            text,
+                        );
+                    }
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
@@ -190,6 +228,15 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "context/compaction" => {
+                emit_context_compaction_event(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
             "collab-agent/activity" => {
                 emit_collab_agent_activity(
                     event_tx,
@@ -201,6 +248,33 @@ impl CodexNotificationEventMapper {
             }
             "thread/started" => {
                 self.observe_root_thread(notification.params);
+            }
+            "thread/goal/updated" => {
+                emit_response_event(
+                    event_tx,
+                    device_id,
+                    "runtime.goal.updated",
+                    local_task_id,
+                    request,
+                    json!({
+                        "thread_id": string_field(notification.params, "threadId")
+                            .or_else(|| string_field(notification.params, "thread_id")),
+                        "goal": notification.params.get("goal").cloned().unwrap_or(Value::Null),
+                    }),
+                );
+            }
+            "thread/goal/cleared" => {
+                emit_response_event(
+                    event_tx,
+                    device_id,
+                    "runtime.goal.cleared",
+                    local_task_id,
+                    request,
+                    json!({
+                        "thread_id": string_field(notification.params, "threadId")
+                            .or_else(|| string_field(notification.params, "thread_id")),
+                    }),
+                );
             }
             _ => {
                 debug_ignored_codex_notification(
@@ -264,6 +338,106 @@ impl CodexNotificationEventMapper {
                     "type": "text",
                     "content": delta,
                     "status": "streaming",
+                    "timestamp": now_ms(),
+                }
+            }),
+        );
+    }
+
+    fn emit_plan_delta(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some(delta) = raw_string_field(params, "delta").filter(|delta| !delta.is_empty())
+        else {
+            return;
+        };
+        let block_id = plan_block_id(params);
+        let content = self.plan_blocks.entry(block_id.clone()).or_default();
+        let is_new = content.is_empty();
+        content.push_str(&delta);
+
+        if is_new {
+            emit_response_event(
+                event_tx,
+                device_id,
+                "response.block.created",
+                local_task_id,
+                request,
+                json!({
+                    "block": {
+                        "id": block_id,
+                        "type": "plan",
+                        "content": content.clone(),
+                        "status": "streaming",
+                        "timestamp": now_ms(),
+                    }
+                }),
+            );
+            return;
+        }
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "response.block.updated",
+            local_task_id,
+            request,
+            json!({
+                "block_id": block_id,
+                "updates": {
+                    "content": content.clone(),
+                    "status": "streaming",
+                }
+            }),
+        );
+    }
+
+    fn emit_completed_plan(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+        text: String,
+    ) {
+        let block_id = plan_block_id(params);
+        let had_streaming_block = self.plan_blocks.remove(&block_id).is_some();
+        if had_streaming_block {
+            emit_response_event(
+                event_tx,
+                device_id,
+                "response.block.updated",
+                local_task_id,
+                request,
+                json!({
+                    "block_id": block_id,
+                    "updates": {
+                        "content": text,
+                        "status": "done",
+                    }
+                }),
+            );
+            return;
+        }
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "response.block.created",
+            local_task_id,
+            request,
+            json!({
+                "block": {
+                    "id": block_id,
+                    "type": "plan",
+                    "content": text,
+                    "status": "done",
                     "timestamp": now_ms(),
                 }
             }),
@@ -487,6 +661,54 @@ fn emit_reasoning_delta(
     );
 }
 
+fn emit_context_compaction_event(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+) {
+    emit_response_event(
+        event_tx,
+        device_id,
+        "response.block.created",
+        local_task_id,
+        request,
+        json!({"block": context_compaction_block(params)}),
+    );
+}
+
+fn context_compaction_block(params: &Value) -> Value {
+    let block_id = item_id(params, "context_compaction");
+    json!({
+        "id": block_id,
+        "type": "tool",
+        "tool_use_id": block_id,
+        "tool_name": "context_compaction",
+        "status": "done",
+        "timestamp": now_ms(),
+    })
+}
+
+fn plan_item_text(params: &Value) -> Option<String> {
+    if !is_completed_plan_item(params) {
+        return None;
+    }
+    params
+        .get("item")
+        .and_then(extract_text)
+        .or_else(|| extract_text(params))
+}
+
+fn plan_block_id(params: &Value) -> String {
+    let item = params.get("item").unwrap_or(params);
+    let plan_item_id = string_field(params, "itemId")
+        .or_else(|| string_field(params, "item_id"))
+        .or_else(|| string_field(item, "id"))
+        .unwrap_or_else(|| item_id(item, "plan"));
+    format!("plan-{plan_item_id}")
+}
+
 fn emit_tool_start(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
@@ -503,6 +725,64 @@ fn emit_tool_start(
             request,
             json!({"block": block}),
         );
+    }
+}
+
+fn emit_request_user_input(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    params: &Value,
+    message_request_id: Option<&Value>,
+) {
+    let request_id = params
+        .get("request_id")
+        .or_else(|| params.get("requestId"))
+        .or(message_request_id);
+    let item_id = params
+        .get("item_id")
+        .or_else(|| params.get("itemId"))
+        .and_then(Value::as_str)
+        .unwrap_or("request_user_input");
+    let block_id = request_id
+        .and_then(value_identifier)
+        .map(|id| format!("request-user-input-{id}"))
+        .unwrap_or_else(|| format!("request-user-input-{item_id}"));
+    let mut render_payload = params.clone();
+    if let Some(object) = render_payload.as_object_mut() {
+        object.insert(
+            "kind".to_owned(),
+            Value::String("request_user_input".to_owned()),
+        );
+        if let Some(request_id) = request_id {
+            object.insert("requestId".to_owned(), request_id.clone());
+        }
+    }
+    emit_response_event(
+        event_tx,
+        device_id,
+        "response.block.created",
+        local_task_id,
+        request,
+        json!({
+            "block": {
+                "id": block_id,
+                "type": "tool",
+                "tool_name": "request_user_input",
+                "status": "pending",
+                "timestamp": now_ms(),
+                "render_payload": render_payload,
+            }
+        }),
+    );
+}
+
+fn value_identifier(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
     }
 }
 
@@ -946,6 +1226,40 @@ mod tests {
     }
 
     #[test]
+    fn maps_codex_context_compacted_event_to_completed_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "id": "ctx-1",
+                    "type": "context_compacted"
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(event["payload"]["data"]["block"]["id"], "ctx-1");
+        assert_eq!(event["payload"]["data"]["block"]["type"], "tool");
+        assert_eq!(
+            event["payload"]["data"]["block"]["tool_name"],
+            "context_compaction"
+        );
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
+    }
+
+    #[test]
     fn maps_codex_started_final_agent_message_deltas_to_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -1269,6 +1583,131 @@ mod tests {
         let event = event_rx.try_recv().expect("event should be emitted");
         assert_eq!(event["event"], "response.output_text.delta");
         assert_eq!(event["payload"]["data"]["delta"], "Done.");
+    }
+
+    #[test]
+    fn emits_codex_completed_plan_items_as_plan_blocks() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(event["payload"]["data"]["block"]["id"], "plan-turn-1-plan");
+        assert_eq!(event["payload"]["data"]["block"]["type"], "plan");
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
+        assert_eq!(
+            event["payload"]["data"]["block"]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
+    }
+
+    #[test]
+    fn emits_codex_plan_deltas_as_streaming_plan_blocks() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/plan/delta",
+                "params": {
+                    "itemId": "turn-1-plan",
+                    "delta": "# Plan\n"
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/plan/delta",
+                "params": {
+                    "itemId": "turn-1-plan",
+                    "delta": "\n- Inspect the repo."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "turn-1-plan",
+                        "type": "plan",
+                        "text": "# Plan\n\n- Inspect the repo."
+                    }
+                }
+            }),
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("created event should be emitted");
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(
+            created["payload"]["data"]["block"]["id"],
+            "plan-turn-1-plan"
+        );
+        assert_eq!(created["payload"]["data"]["block"]["type"], "plan");
+        assert_eq!(created["payload"]["data"]["block"]["status"], "streaming");
+        assert_eq!(created["payload"]["data"]["block"]["content"], "# Plan\n");
+
+        let updated = event_rx
+            .try_recv()
+            .expect("updated event should be emitted");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(updated["payload"]["data"]["block_id"], "plan-turn-1-plan");
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
+        assert_eq!(updated["payload"]["data"]["updates"]["status"], "streaming");
+
+        let completed = event_rx
+            .try_recv()
+            .expect("completed event should be emitted");
+        assert_eq!(completed["event"], "response.block.updated");
+        assert_eq!(completed["payload"]["data"]["block_id"], "plan-turn-1-plan");
+        assert_eq!(
+            completed["payload"]["data"]["updates"]["content"],
+            "# Plan\n\n- Inspect the repo."
+        );
+        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
     }
 
     #[test]
@@ -1649,5 +2088,55 @@ mod tests {
             "Current directory: /tmp/project"
         );
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_codex_request_user_input_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "request_id": 42,
+                    "thread_id": "thread-1",
+                    "turn_id": "turn-1",
+                    "item_id": "item-1",
+                    "questions": [
+                        {
+                            "id": "goal",
+                            "question": "What should I prioritize?",
+                            "options": [
+                                {
+                                    "label": "Work goal",
+                                    "description": "Focus on one concrete task."
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("request user input event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["id"], "request-user-input-42");
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
     }
 }

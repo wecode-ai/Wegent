@@ -5,7 +5,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
+
+from knowledge_engine.retrieval.filters import parse_metadata_filters
+from shared.models import RetrievalScope
 
 
 class TestDeleteDocument:
@@ -218,6 +222,130 @@ class TestDropKnowledgeIndex:
 
 
 class TestRetrieve:
+    def test_retrieve_adds_native_document_scope_filter(self) -> None:
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        backend = QdrantBackend(
+            {
+                "url": "http://localhost:6333",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_vector_store = MagicMock()
+        base_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value="kb_1"),
+                )
+            ]
+        )
+        mock_vector_store._build_query_filter.return_value = base_filter
+        mock_vector_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_vector_store)
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="release checklist",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.7,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        native_filter = mock_vector_store.query.call_args.kwargs["qdrant_filters"]
+        assert native_filter.must == [
+            base_filter,
+            qdrant_models.FieldCondition(
+                key="doc_ref",
+                match=qdrant_models.MatchAny(any=["10", "11"]),
+            ),
+        ]
+
+    def test_scoped_native_filter_wraps_existing_metadata_filter(self) -> None:
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        backend = QdrantBackend(
+            {
+                "url": "http://localhost:6333",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        base_filter = qdrant_models.Filter(
+            should=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value="kb_1"),
+                ),
+                qdrant_models.FieldCondition(
+                    key="summary",
+                    match=qdrant_models.MatchText(text="release"),
+                ),
+            ]
+        )
+        mock_vector_store = MagicMock()
+        mock_vector_store._build_query_filter.return_value = base_filter
+        query = MagicMock()
+
+        native_filter = backend._build_scoped_native_filter(
+            vector_store=mock_vector_store,
+            query=query,
+            scope=RetrievalScope(document_ids=[10]),
+        )
+
+        mock_vector_store._build_query_filter.assert_called_once_with(query)
+        assert native_filter is not None
+        assert native_filter.must == [
+            base_filter,
+            qdrant_models.FieldCondition(
+                key="doc_ref",
+                match=qdrant_models.MatchAny(any=["10"]),
+            ),
+        ]
+
+    def test_metadata_or_keeps_knowledge_id_outside_user_or(self) -> None:
+        metadata_filters = parse_metadata_filters(
+            "kb_1",
+            {
+                "operator": "or",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                    {"key": "source", "operator": "==", "value": "manual"},
+                ],
+            },
+        )
+
+        vector_store = object.__new__(QdrantVectorStore)
+        native_filter = QdrantVectorStore._build_subfilter(
+            vector_store,
+            metadata_filters,
+        )
+
+        assert native_filter.must == [
+            qdrant_models.FieldCondition(
+                key="knowledge_id",
+                match=qdrant_models.MatchValue(value="kb_1"),
+            ),
+            qdrant_models.Filter(
+                should=[
+                    qdrant_models.FieldCondition(
+                        key="lang",
+                        match=qdrant_models.MatchValue(value="zh"),
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="source",
+                        match=qdrant_models.MatchValue(value="manual"),
+                    ),
+                ]
+            ),
+        ]
+
     def test_retrieve_uses_dense_query_from_search_hints(self) -> None:
         from knowledge_engine.storage.qdrant_backend import QdrantBackend
 

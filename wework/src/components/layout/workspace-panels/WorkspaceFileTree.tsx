@@ -190,9 +190,7 @@ function getEntryByTreePath(entries: Map<string, WorkspaceFileEntry>, treePath: 
   return null
 }
 
-function isDirectoryHandle(
-  item: FileTreeItemHandle | null
-): item is FileTreeDirectoryHandle {
+function isDirectoryHandle(item: FileTreeItemHandle | null): item is FileTreeDirectoryHandle {
   if (!item) return false
 
   const candidate = item as FileTreeItemHandle & {
@@ -320,7 +318,7 @@ export function WorkspaceFileTree({
       className="flex h-full min-h-0 w-[240px] shrink-0 flex-col border-l border-border bg-background"
     >
       <div className="px-3 pb-1.5 pt-2">
-        <div className="flex h-7 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
+        <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
           <Search className="h-3.5 w-3.5 text-text-muted" />
           <input
             data-testid="workspace-file-search-input"
@@ -334,7 +332,7 @@ export function WorkspaceFileTree({
             type="button"
             data-testid="workspace-file-refresh-button"
             onClick={onRefresh}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
             aria-label={t('workbench.workspace_file_refresh', '刷新文件')}
           >
             <RefreshCw className="h-3.5 w-3.5" />
