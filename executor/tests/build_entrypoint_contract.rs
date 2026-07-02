@@ -115,6 +115,29 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(!standalone_dockerfile.contains("cd /app/executor && uv pip install"));
 }
 
+#[test]
+fn windows_executor_sources_keep_unix_only_symbols_cfg_gated() {
+    let app_ipc = fs::read_to_string("src/local/app_ipc.rs").unwrap();
+    assert!(
+        !app_ipc.contains("    net::UnixListener,"),
+        "UnixListener must not be imported through always-compiled tokio::net on Windows"
+    );
+    assert!(
+        !app_ipc.contains("stream: tokio::net::UnixStream"),
+        "UnixStream method signatures must be cfg-gated for Windows builds"
+    );
+
+    let process_manager = fs::read_to_string("src/services/updater/process_manager.rs").unwrap();
+    assert!(
+        process_manager.contains("#[cfg(unix)]\n    fn terminate_forcefully"),
+        "forceful Unix signal termination must be cfg-gated"
+    );
+    assert!(
+        process_manager.contains("#[cfg(not(unix))]\n    fn terminate_forcefully"),
+        "Windows builds need a non-Unix forceful termination branch"
+    );
+}
+
 fn collect_forbidden_python_runtime_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     collect_forbidden_python_runtime_files_inner(root, &mut files);
