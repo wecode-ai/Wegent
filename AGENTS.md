@@ -49,6 +49,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/runtime-local-work.md`](docs/en/developer-guide/runtime-local-work.md)
 - Wework local-first cloud connection: [`docs/zh/developer-guide/wework-cloud-connection.md`](docs/zh/developer-guide/wework-cloud-connection.md)
 - English version: [`docs/en/developer-guide/wework-cloud-connection.md`](docs/en/developer-guide/wework-cloud-connection.md)
+- Wework performance diagnostics: [`docs/zh/developer-guide/wework-performance-diagnostics.md`](docs/zh/developer-guide/wework-performance-diagnostics.md)
+- English version: [`docs/en/developer-guide/wework-performance-diagnostics.md`](docs/en/developer-guide/wework-performance-diagnostics.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
