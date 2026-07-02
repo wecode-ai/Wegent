@@ -21,10 +21,14 @@ from app.services.adapters.task_kinds.helpers import (
     _get_team_icon,
     build_lite_task_groups,
     build_lite_task_list,
+    get_tasks_related_data_batch,
 )
 
 
-def _task_json(title: str) -> dict:
+def _task_json(title: str, team_user_id: int | None = None) -> dict:
+    team_ref = {"name": "team-a", "namespace": "default"}
+    if team_user_id is not None:
+        team_ref["user_id"] = team_user_id
     return {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Task",
@@ -36,7 +40,7 @@ def _task_json(title: str) -> dict:
         "spec": {
             "title": title,
             "prompt": "test",
-            "teamRef": {"name": "team-a", "namespace": "default"},
+            "teamRef": team_ref,
             "workspaceRef": {"name": "workspace-a", "namespace": "default"},
             "knowledgeBaseRefs": [],
         },
@@ -44,11 +48,16 @@ def _task_json(title: str) -> dict:
     }
 
 
-def _build_task(task_id: int, title: str, project_id: int = 0) -> Mock:
+def _build_task(
+    task_id: int,
+    title: str,
+    project_id: int = 0,
+    team_user_id: int | None = None,
+) -> Mock:
     task = Mock(spec=TaskResource)
     task.id = task_id
     task.project_id = project_id
-    task.json = _task_json(title)
+    task.json = _task_json(title, team_user_id=team_user_id)
     now = datetime.now()
     task.created_at = now
     task.updated_at = now
@@ -293,6 +302,37 @@ def test_batch_query_teams_includes_public_system_team_metadata(test_db):
     assert team.user_id == 0
     assert _get_team_display_name(team) == "Wegent Chat"
     assert _get_team_icon(team) == "users"
+
+
+@pytest.mark.unit
+def test_get_tasks_related_data_batch_uses_task_team_ref_owner_when_names_overlap(
+    test_db,
+):
+    public_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json=_team_json("team-a", "Public Team", "globe"),
+        is_active=True,
+    )
+    personal_team = Kind(
+        user_id=7,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json=_team_json("team-a", "Personal Team", "user"),
+        is_active=True,
+    )
+    test_db.add_all([public_team, personal_team])
+    test_db.commit()
+
+    task = _build_task(1, "Task One", team_user_id=0)
+
+    related_data = get_tasks_related_data_batch(test_db, [task], user_id=7)
+
+    assert related_data["1"]["team_id"] == public_team.id
+    assert related_data["1"]["team_display_name"] == "Public Team"
 
 
 @pytest.mark.unit
