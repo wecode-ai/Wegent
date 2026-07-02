@@ -198,12 +198,7 @@ export function ToolBlocksDisplay({
           }
 
           return item.type === 'activity_group' ? (
-            <ToolActivityGroup
-              key={item.id}
-              row={item}
-              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
+            <ToolActivityGroup key={item.id} row={item} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ) : isContextCompactionToolBlock(item.block) ? (
             <ContextCompactionIndicator key={item.id} block={item.block} />
           ) : (
@@ -357,7 +352,6 @@ function ToolActivityGroup({
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
-  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
