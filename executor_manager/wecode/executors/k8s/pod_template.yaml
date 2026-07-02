@@ -54,9 +54,14 @@ spec:
     - name: {{ executor_name }}
       image: {{ image }}
       imagePullPolicy: Always
-      {% if container_entrypoint %}
-      command: ["{{ container_entrypoint }}"]
-      {% endif %}
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          set -a
+          . /etc/wegent-executor-secret/env
+          set +a
+          exec {{ container_entrypoint }}
       ports:
         - containerPort: 8080
           name: https
@@ -207,6 +212,9 @@ spec:
         - name: wecode-ide
           mountPath: /root/.local/share/code-server/cert
           readOnly: true
+        - name: wegent-executor-secret
+          mountPath: /etc/wegent-executor-secret
+          readOnly: true
         {% if is_warm_pool %}
         # Warm pool dynamic config via Downward API
         - name: wegent-config
@@ -258,6 +266,9 @@ spec:
               apiVersion: v1
               fieldPath: metadata.annotations['aigc.weibo.com/email']
             path: data
+    - name: wegent-executor-secret
+      secret:
+        secretName: wegent-executor-secret
     {% if is_warm_pool %}
     # Warm pool dynamic config - Downward API mounting labels to files
     - name: wegent-config
