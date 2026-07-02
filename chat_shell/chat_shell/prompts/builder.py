@@ -113,7 +113,7 @@ Before deciding to proceed, mentally check:
   }
   ```
 
-> For detailed `interactive_form_question` tool parameters and examples, refer to the interactive-form-question skill instructions loaded in your context.
+> For detailed `interactive_form_question` tool parameters and examples, refer to the interactive skill instructions loaded in your context.
 
 ### Response After Receiving Answers
 
@@ -144,7 +144,7 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
     Append clarification prompt to system prompt if enabled.
 
     The CLARIFICATION_PROMPT now instructs the AI to use the interactive_form_question MCP tool
-    (provided by the interactive-form-question skill, auto-injected by TaskRequestBuilder) instead
+    (provided by the interactive skill, auto-injected by TaskRequestBuilder) instead
     of outputting the old Markdown format. This gives the AI clear guidance on
     multi-round clarification strategy while using the interactive form UI.
 
@@ -211,7 +211,7 @@ def build_system_prompt(
     compatibility but is no longer used here.
 
     Note: The CLARIFICATION_PROMPT has been updated to instruct the AI to use
-    the interactive_form_question MCP tool (provided by the interactive-form-question skill, auto-injected by
+    the interactive_form_question MCP tool (provided by the interactive skill, auto-injected by
     TaskRequestBuilder._inject_clarification_skill) instead of outputting the
     old Markdown format. This gives the AI clear multi-round clarification
     strategy guidance while using the interactive form UI.
@@ -236,7 +236,7 @@ def build_system_prompt(
 
     # Append clarification mode instructions if enabled.
     # The CLARIFICATION_PROMPT now instructs the AI to use the interactive_form_question MCP tool
-    # (from the interactive-form-question skill auto-injected by TaskRequestBuilder) instead of
+    # (from the interactive skill auto-injected by TaskRequestBuilder) instead of
     # outputting the old Markdown format.
     if enable_clarification:
         system_prompt = append_clarification_prompt(system_prompt, True)

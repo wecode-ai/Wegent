@@ -7,6 +7,7 @@
 import logging
 from typing import Any, Dict, Optional
 
+from app.services.execution.interactive_form_names import is_interactive_form_tool_name
 from shared.models import ExecutionEvent
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ def build_interactive_form_render_payload(
     event: ExecutionEvent,
 ) -> Optional[Dict[str, Any]]:
     """Build render payload for an interactive form tool event."""
-    if "interactive_form_question" not in (event.tool_name or ""):
+    if not is_interactive_form_tool_name(event.tool_name):
         return None
 
     try:

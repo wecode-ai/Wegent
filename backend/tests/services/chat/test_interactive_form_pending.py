@@ -57,6 +57,12 @@ def _form_result(tool_use_id: str = "tool-1"):
     }
 
 
+def _ask_user_question_form_result(tool_use_id: str = "tool-ask-user"):
+    result = _form_result(tool_use_id)
+    result["blocks"][0]["tool_name"] = "AskUserQuestion"
+    return result
+
+
 def _deferred_result(
     tool_use_id: str | None = "tool-1",
 ):
@@ -149,6 +155,26 @@ def test_get_pending_interactive_form_returns_latest_unanswered_form():
 
     assert pending is not None
     assert pending.tool_use_id == "tool-1"
+    assert pending.assistant_subtask_id == 10
+
+
+def test_get_pending_interactive_form_accepts_ask_user_question_tool_name():
+    db = _Db(
+        [
+            _subtask(
+                subtask_id=10,
+                role=SubtaskRole.ASSISTANT,
+                message_id=2,
+                result=_ask_user_question_form_result(),
+            ),
+            _subtask(subtask_id=9, role=SubtaskRole.USER, message_id=1),
+        ]
+    )
+
+    pending = get_pending_interactive_form(db, task_id=100)
+
+    assert pending is not None
+    assert pending.tool_use_id == "tool-ask-user"
     assert pending.assistant_subtask_id == 10
 
 

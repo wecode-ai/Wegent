@@ -10,9 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.models.subtask import SubtaskRole
+from app.services.execution.interactive_form_names import (
+    INTERACTIVE_FORM_TOOL_TYPE,
+    is_interactive_form_tool_name,
+)
 from app.stores.tasks import subtask_store
 
-INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
+INTERACTIVE_FORM_TOOL_MARKER = INTERACTIVE_FORM_TOOL_TYPE
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,7 @@ def _extract_interactive_form_from_result(
             continue
 
         tool_name = str(block_record.get("tool_name") or "")
-        if INTERACTIVE_FORM_TOOL_MARKER not in tool_name:
+        if not is_interactive_form_tool_name(tool_name):
             continue
 
         tool_use_id = str(

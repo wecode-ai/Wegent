@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 # Default number of turns to retain a loaded skill
 DEFAULT_SKILL_RETENTION_TURNS = 5
 
+SKILL_NAME_ALIASES = {
+    "interactive-form-question": "interactive",
+    "interactive_form_question": "interactive",
+}
+
 
 class LoadSkillInput(BaseModel):
     """Input schema for load_skill tool."""
@@ -195,6 +200,17 @@ class LoadSkillTool(BaseTool):
         self._state_restored = False
         self._user_selected_skills = set()
 
+    def _resolve_skill_name(self, skill_name: str) -> str:
+        """Resolve known legacy skill aliases to the configured skill name."""
+        normalized = (skill_name or "").strip()
+        if normalized in self.skill_names:
+            return normalized
+
+        canonical = SKILL_NAME_ALIASES.get(normalized, normalized)
+        if canonical in self.skill_names:
+            return canonical
+        return normalized
+
     def _load_skill_internal(
         self,
         skill_name: str,
@@ -216,6 +232,8 @@ class LoadSkillTool(BaseTool):
         Returns:
             True if skill was loaded successfully, False otherwise
         """
+        skill_name = self._resolve_skill_name(skill_name)
+
         # Get skill metadata
         skill_info = self.skill_metadata.get(skill_name, {})
         prompt = skill_info.get("prompt", "")
@@ -259,9 +277,11 @@ class LoadSkillTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Load skill and return prompt content."""
+        requested_skill_name = skill_name
+        skill_name = self._resolve_skill_name(skill_name)
         if skill_name not in self.skill_names:
             return (
-                f"Error: Skill '{skill_name}' is not available. "
+                f"Error: Skill '{requested_skill_name}' is not available. "
                 f"Available skills: {', '.join(self.skill_names)}"
             )
 
@@ -308,6 +328,7 @@ class LoadSkillTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Load skill asynchronously and materialize deferred provider tools."""
+        skill_name = self._resolve_skill_name(skill_name)
         result = self._run(skill_name, run_manager)
         if not result.startswith("Error:"):
             await self.ensure_skill_tools_loaded(skill_name)
@@ -355,6 +376,8 @@ class LoadSkillTool(BaseTool):
         Returns:
             The friendly display name or the skill_name if not found
         """
+        skill_name = self._resolve_skill_name(skill_name)
+
         # First check cache (for already loaded skills)
         if skill_name in self._skill_display_names:
             return self._skill_display_names[skill_name]
@@ -389,6 +412,8 @@ class LoadSkillTool(BaseTool):
                 for this message. User-selected skills will be highlighted in the
                 dynamic skill context to encourage the model to prioritize them.
         """
+        skill_name = self._resolve_skill_name(skill_name)
+
         # Temporarily add to skill_metadata if not present (for _load_skill_internal)
         if skill_name not in self.skill_metadata:
             self.skill_metadata[skill_name] = skill_config
@@ -622,6 +647,7 @@ The following skills provide specialized guidance for specific tasks. When your 
             skill_name: The name of the skill
             tools: List of tool instances for this skill
         """
+        skill_name = self._resolve_skill_name(skill_name)
         self._skill_tools[skill_name] = tools
         logger.debug(
             "[LoadSkillTool] Registered %d tools for skill '%s': %s",
@@ -636,12 +662,14 @@ The following skills provide specialized guidance for specific tasks. When your 
         loader: Callable[[], Awaitable[list]],
     ) -> None:
         """Register an async loader for deferred skill-backed tools."""
+        skill_name = self._resolve_skill_name(skill_name)
         self._skill_tool_loaders.setdefault(skill_name, []).append(loader)
         self._loaded_skill_tool_loaders.discard(skill_name)
         logger.debug("[LoadSkillTool] Registered lazy tool loader for '%s'", skill_name)
 
     async def ensure_skill_tools_loaded(self, skill_name: str) -> list:
         """Materialize deferred tools for a skill."""
+        skill_name = self._resolve_skill_name(skill_name)
         loaders = self._skill_tool_loaders.get(skill_name, [])
         if not loaders:
             return self._skill_tools.get(skill_name, [])
@@ -709,6 +737,7 @@ The following skills provide specialized guidance for specific tasks. When your 
 
     async def get_loaded_tool(self, skill_name: str, tool_name: str) -> Any:
         """Return a concrete tool after loading a skill's deferred tools."""
+        skill_name = self._resolve_skill_name(skill_name)
         tools = await self.ensure_skill_tools_loaded(skill_name)
         for tool in tools:
             if getattr(tool, "name", None) == tool_name and tool is not self:
@@ -726,6 +755,7 @@ The following skills provide specialized guidance for specific tasks. When your 
         Returns:
             List of tool instances for the skill, or empty list if not found
         """
+        skill_name = self._resolve_skill_name(skill_name)
         return self._skill_tools.get(skill_name, [])
 
     def get_available_tools(self) -> list:
@@ -767,6 +797,7 @@ The following skills provide specialized guidance for specific tasks. When your 
         Returns:
             True if the skill has been loaded, False otherwise
         """
+        skill_name = self._resolve_skill_name(skill_name)
         return skill_name in self._expanded_skills
 
     def get_loaded_skills(self) -> set[str]:
@@ -786,6 +817,7 @@ The following skills provide specialized guidance for specific tasks. When your 
         Returns:
             Remaining turns, or 0 if skill is not loaded
         """
+        skill_name = self._resolve_skill_name(skill_name)
         return self._skill_remaining_turns.get(skill_name, 0)
 
     def restore_from_history(self, history: list[dict[str, Any]]) -> None:
@@ -878,6 +910,7 @@ The following skills provide specialized guidance for specific tasks. When your 
         # Restore skills that are still within the retention window
         restored_count = 0
         for skill_name, turns_ago in skill_load_turns.items():
+            skill_name = self._resolve_skill_name(skill_name)
             remaining_turns = self.skill_retention_turns - turns_ago
 
             if remaining_turns > 0 and skill_name in self.skill_names:
@@ -936,7 +969,11 @@ The following skills provide specialized guidance for specific tasks. When your 
         loaded_skills.extend(matches)
 
         # Filter to only include skills that are available in this session
-        valid_skills = [s for s in loaded_skills if s in self.skill_names]
+        valid_skills = []
+        for skill_name in loaded_skills:
+            canonical = self._resolve_skill_name(skill_name)
+            if canonical in self.skill_names and canonical not in valid_skills:
+                valid_skills.append(canonical)
 
         return valid_skills
 
@@ -965,4 +1002,5 @@ The following skills provide specialized guidance for specific tasks. When your 
         Returns:
             True if the skill was user-selected, False otherwise
         """
+        skill_name = self._resolve_skill_name(skill_name)
         return skill_name in self._user_selected_skills

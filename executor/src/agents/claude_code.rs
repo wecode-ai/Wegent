@@ -28,7 +28,9 @@ use crate::{
     logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
-    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions},
+    services::skill_deployer::{
+        build_skill_deployment_plan, ensure_runtime_skill_aliases, SkillDeploymentOptions,
+    },
 };
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
@@ -666,6 +668,22 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
                 log_executor_event("claude task skill deployment failed", &fields);
             }
         }
+    }
+
+    match ensure_runtime_skill_aliases(&plan.skills_dir, &plan.skills) {
+        Ok(aliases) if !aliases.is_empty() => log_executor_event(
+            "claude task skill aliases deployed",
+            &[
+                ("alias_count", aliases.len().to_string()),
+                ("aliases", aliases.join(",")),
+                ("skills_dir", plan.skills_dir.display().to_string()),
+            ],
+        ),
+        Ok(_) => {}
+        Err(error) => log_executor_event(
+            "claude task skill alias deployment failed",
+            &[("error_len", error.len().to_string())],
+        ),
     }
 }
 

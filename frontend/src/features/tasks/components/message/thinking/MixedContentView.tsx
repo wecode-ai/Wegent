@@ -25,6 +25,11 @@ import {
   SubscriptionPreviewCard,
   type SubscriptionPreviewBlock,
 } from '../../subscription/SubscriptionPreviewCard'
+import {
+  INTERACTIVE_FORM_TYPE,
+  REQUEST_USER_INPUT_KIND,
+  isInteractiveFormToolName,
+} from '@/features/tasks/utils/interactive-form'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -50,13 +55,19 @@ const isInteractiveFormDuplicateContent = (text: string, forms: AskUserFormData[
 const isRenderableInteractiveQuestion = (question: Record<string, unknown>): boolean => {
   const questionText = typeof question.question === 'string' ? question.question.trim() : ''
   if (questionText.length === 0) return false
-  if (question.input_type === 'text') return true
+  if (Array.isArray(question.options) && question.options.length > 0) return true
 
-  return (
-    question.input_type === 'choice' &&
-    Array.isArray(question.options) &&
-    question.options.length > 0
-  )
+  return !question.input_type || question.input_type === 'text'
+}
+
+const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase()
+    if (lower === 'true') return true
+    if (lower === 'false') return false
+  }
+  return defaultValue
 }
 
 const parseRecord = (value: unknown): Record<string, unknown> | null => {
@@ -78,14 +89,66 @@ const parseRecord = (value: unknown): Record<string, unknown> | null => {
     : null
 }
 
+const normalizeInteractiveFormPayload = (
+  form: Record<string, unknown> | null
+): Record<string, unknown> | null => {
+  if (!form) return null
+  if (form.type === INTERACTIVE_FORM_TYPE) return form
+  if (form.kind === REQUEST_USER_INPUT_KIND) {
+    return {
+      ...form,
+      type: INTERACTIVE_FORM_TYPE,
+    }
+  }
+  return null
+}
+
+const normalizeInteractiveFormOption = (
+  option: unknown,
+  index: number
+): { label: string; value: string; recommended: boolean } => {
+  const fallback = `Option ${index + 1}`
+
+  if (typeof option === 'string') {
+    const normalized = option.trim() || fallback
+    return {
+      label: normalized,
+      value: normalized,
+      recommended: false,
+    }
+  }
+
+  const record = parseRecord(option)
+  if (!record) {
+    return {
+      label: fallback,
+      value: fallback,
+      recommended: false,
+    }
+  }
+
+  const rawLabel = record.label ?? record.value ?? record.name ?? record.text ?? record.title
+  const rawValue = record.value ?? record.label ?? rawLabel
+  const label =
+    typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : String(rawLabel ?? fallback)
+  const value =
+    typeof rawValue === 'string' && rawValue.trim() ? rawValue.trim() : String(rawValue ?? label)
+
+  return {
+    label,
+    value,
+    recommended: parseBoolean(record.recommended, false),
+  }
+}
+
 const getRenderableInteractiveFormPayload = (
   renderPayload: unknown
 ): {
   form: Record<string, unknown>
   questions: Array<Record<string, unknown>>
 } | null => {
-  const form = parseRecord(renderPayload)
-  if (form?.type !== 'interactive_form_question') return null
+  const form = normalizeInteractiveFormPayload(parseRecord(renderPayload))
+  if (!form) return null
 
   const questions = Array.isArray(form.questions)
     ? (form.questions as Array<Record<string, unknown>>).filter(isRenderableInteractiveQuestion)
@@ -239,20 +302,10 @@ const MixedContentView = memo(function MixedContentView({
             }
           } else if (block.type === 'tool') {
             const formPayload = getRenderableInteractiveFormPayload(block.render_payload)
+            const isInteractiveFormTool = isInteractiveFormToolName(block.tool_name)
 
             // Only render an interactive form from the UI-only render payload.
-            if (block.tool_name?.includes('interactive_form_question') && formPayload) {
-              // Helper function to parse boolean values (handles string "True"/"False" from AI)
-              const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
-                if (typeof value === 'boolean') return value
-                if (typeof value === 'string') {
-                  const lower = value.toLowerCase()
-                  if (lower === 'true') return true
-                  if (lower === 'false') return false
-                }
-                return defaultValue
-              }
-
+            if (isInteractiveFormTool && formPayload) {
               const toolUseId = block.tool_use_id || block.id
               const formTaskId =
                 typeof formPayload.form.task_id === 'number'
@@ -265,23 +318,15 @@ const MixedContentView = memo(function MixedContentView({
 
               const parsedQuestions = formPayload.questions.map(q => {
                 const qHasOptions = Array.isArray(q.options) && (q.options as unknown[]).length > 0
-                const qInputType = qHasOptions ? 'choice' : 'text'
+                const qInputType: 'choice' | 'text' = qHasOptions ? 'choice' : 'text'
+                const normalizedInputType: 'choice' | 'text' =
+                  q.input_type === 'choice' || q.input_type === 'text' ? q.input_type : qInputType
                 return {
                   id: (q.id as string) || '',
                   question: (q.question as string) || '',
-                  input_type: (q.input_type as 'choice' | 'text') || qInputType,
+                  input_type: normalizedInputType,
                   options: qHasOptions
-                    ? (
-                        q.options as Array<{
-                          label: string
-                          value: string
-                          recommended?: unknown
-                        }>
-                      ).map(opt => ({
-                        label: opt.label,
-                        value: opt.value,
-                        recommended: parseBoolean(opt.recommended, false),
-                      }))
+                    ? (q.options as unknown[]).map(normalizeInteractiveFormOption)
                     : null,
                   multi_select: parseBoolean(q.multi_select, false),
                   required: parseBoolean(q.required, true),
@@ -308,7 +353,7 @@ const MixedContentView = memo(function MixedContentView({
                 status: block.status,
               }
             }
-            if (block.tool_name?.includes('interactive_form_question')) {
+            if (isInteractiveFormTool) {
               return null
             }
             // Check for custom block renderers first (e.g., prompt optimization)

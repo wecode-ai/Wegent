@@ -14,9 +14,14 @@ use std::{
 
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::UnixListener,
+    io::{AsyncWrite, AsyncWriteExt},
     sync::broadcast,
+};
+
+#[cfg(unix)]
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::{UnixListener, UnixStream},
 };
 
 use crate::{
@@ -450,6 +455,7 @@ impl AppIpcServer {
         )
     }
 
+    #[cfg(unix)]
     pub async fn serve_forever(&self, socket_path: PathBuf) -> Result<(), String> {
         prepare_socket_path(&socket_path).map_err(|error| {
             format!(
@@ -485,7 +491,13 @@ impl AppIpcServer {
         }
     }
 
-    async fn handle_stream(&self, stream: tokio::net::UnixStream) -> Result<(), String> {
+    #[cfg(not(unix))]
+    pub async fn serve_forever(&self, _socket_path: PathBuf) -> Result<(), String> {
+        Err("app IPC sidecar requires Unix socket support".to_owned())
+    }
+
+    #[cfg(unix)]
+    async fn handle_stream(&self, stream: UnixStream) -> Result<(), String> {
         let (reader, mut writer) = stream.into_split();
         write_message(&mut writer, &self.ready_event())
             .await

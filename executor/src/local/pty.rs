@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    io::{Error, ErrorKind, Read, Write},
+    io::{Read, Write},
     path::Path,
     thread,
     time::{Duration, Instant},
@@ -11,6 +11,8 @@ use std::{
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
+#[cfg(unix)]
+use std::io::{Error, ErrorKind};
 #[cfg(unix)]
 use std::os::unix::io::RawFd;
 

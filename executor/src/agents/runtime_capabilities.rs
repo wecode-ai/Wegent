@@ -20,7 +20,8 @@ use crate::{
     process::CommandSpec,
     protocol::ExecutionRequest,
     services::skill_deployer::{
-        build_skill_deployment_plan, SkillDeploymentOptions, SkillDeploymentPlan, SkillRef,
+        build_skill_deployment_plan, ensure_runtime_skill_aliases, SkillDeploymentOptions,
+        SkillDeploymentPlan, SkillRef,
     },
 };
 
@@ -673,6 +674,22 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
                 log_executor_event("skill deployment item skipped after error", &fields);
             }
         }
+    }
+
+    match ensure_runtime_skill_aliases(&plan.skills_dir, &plan.skills) {
+        Ok(aliases) if !aliases.is_empty() => log_executor_event(
+            "skill aliases deployed",
+            &[
+                ("alias_count", aliases.len().to_string()),
+                ("aliases", aliases.join(",")),
+                ("skills_dir", plan.skills_dir.display().to_string()),
+            ],
+        ),
+        Ok(_) => {}
+        Err(error) => log_executor_event(
+            "skill alias deployment skipped after error",
+            &[("error_len", error.len().to_string())],
+        ),
     }
 
     log_executor_event(

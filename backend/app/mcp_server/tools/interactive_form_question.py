@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
+from app.services.execution.interactive_form_names import is_interactive_form_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +388,7 @@ def _build_deferred_tool_result() -> Dict[str, Any]:
 def _is_interactive_form_tool_block(block: Dict[str, Any]) -> bool:
     """Return whether a block is an interactive_form_question tool block."""
     tool_name = block.get("tool_name", "")
-    return block.get("type") == "tool" and "interactive_form_question" in tool_name
+    return block.get("type") == "tool" and is_interactive_form_tool_name(tool_name)
 
 
 def _has_interactive_form_payload(block: Dict[str, Any]) -> bool:
@@ -447,15 +448,12 @@ async def _notify_frontend(
         from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
         from shared.models.blocks import BlockStatus
 
-        # Find the interactive_form_question tool block in session_manager blocks.
-        # The tool_name may be "interactive_form_question" (Chat Shell path) or
-        # "mcp__ask-user_wegent-ask-user__ask_user" (ClaudeCode executor path),
-        # so match by checking if the name contains "interactive_form_question".
+        # Find the interactive form tool block in session_manager blocks.
         blocks = await session_manager.get_blocks(subtask_id)
         tool_use_id = None
         for block in reversed(blocks):
             tool_name = block.get("tool_name", "")
-            if block.get("type") == "tool" and "interactive_form_question" in tool_name:
+            if block.get("type") == "tool" and is_interactive_form_tool_name(tool_name):
                 tool_use_id = block.get("tool_use_id")
                 break
 
