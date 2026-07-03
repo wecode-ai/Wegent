@@ -1315,7 +1315,11 @@ class TaskRequestBuilder:
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
                             # Preload explicit reference overrides same-name skill ref
-                            skill_refs[skill_name] = ghost_preload_ref.model_dump()
+                            ref_meta = ghost_preload_ref.model_dump()
+                            ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                                build_skill_ref_meta(skill).get("content_hash")
+                            )
+                            skill_refs[skill_name] = ref_meta
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
@@ -1362,16 +1366,9 @@ class TaskRequestBuilder:
                         team_namespace=team_namespace,
                     )
                     if resolved_selected_skill:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(resolved_selected_skill, "id", None),
-                            "namespace": getattr(
-                                resolved_selected_skill,
-                                "namespace",
-                                skill_namespace,
-                            ),
-                            "is_public": getattr(resolved_selected_skill, "user_id", 1)
-                            == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(
+                            resolved_selected_skill
+                        )
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
