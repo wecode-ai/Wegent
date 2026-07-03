@@ -386,7 +386,13 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByText('已执行')).not.toBeInTheDocument()
   })
 
-  test('renders file changes inside completed processing details', () => {
+  test('renders file changes inside completed processing details', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
     render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
@@ -402,10 +408,28 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
 
-    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
+    const diff = screen.getByTestId('process-file-change-diff')
+    expect(diff).toHaveClass('max-h-[16rem]', 'select-text', 'overscroll-contain')
+    expect(diff).toHaveTextContent('OLD_ENV=remote')
     expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
       'BACKEND_URL=127.0.0.1'
     )
+
+    const headerContent = screen.getByTestId('process-file-change-diff-header-content')
+    const copyButton = screen.getByTestId('copy-process-file-change-diff-button')
+    expect(headerContent).toHaveTextContent(/env.*\+2.*-1/)
+    expect(
+      headerContent.compareDocumentPosition(copyButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(copyButton).toHaveAttribute('title', '复制代码')
+
+    fireEvent.click(copyButton)
+    expect(writeText).toHaveBeenCalledWith(
+      ['-OLD_ENV=remote', '+OLD_ENV=local', '+BACKEND_URL=127.0.0.1'].join('\n')
+    )
+    expect(
+      await screen.findByTestId('process-file-change-diff-copy-success-icon')
+    ).toBeInTheDocument()
   })
 
   test('uses an edit icon for completed edit activity groups', () => {

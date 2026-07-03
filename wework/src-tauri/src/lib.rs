@@ -615,6 +615,30 @@ fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), Str
     Err("Opening a local workspace is only supported on macOS".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn open_local_file_with_default_app(path: &str) -> Result<(), String> {
+    let output = std::process::Command::new("open")
+        .arg(path)
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("Failed to open local file".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_local_file_with_default_app(_path: &str) -> Result<(), String> {
+    Err("Opening a local file is only supported on macOS".to_string())
+}
+
 #[tauri::command]
 fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
     let opener =
@@ -628,6 +652,17 @@ fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
     }
 
     open_local_workspace_with_app(app_name, &path)
+}
+
+#[tauri::command]
+fn open_local_file(path: String) -> Result<(), String> {
+    let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
+
+    if !std::path::Path::new(&path).is_file() {
+        return Err("Local file does not exist".to_string());
+    }
+
+    open_local_file_with_default_app(&path)
 }
 
 #[derive(serde::Serialize)]
@@ -1403,6 +1438,7 @@ pub fn run() {
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
+            open_local_file,
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,

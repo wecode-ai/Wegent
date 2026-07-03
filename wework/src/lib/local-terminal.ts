@@ -91,6 +91,21 @@ export async function openLocalWorkspace({
   })
 }
 
+export async function openLocalFile(path?: string): Promise<void> {
+  if (!isLocalTerminalAvailable()) {
+    throw new Error('Local file opening is unavailable outside the macOS Tauri app')
+  }
+
+  const trimmedPath = path?.trim()
+  if (!trimmedPath) {
+    throw new Error('Local file path is empty')
+  }
+
+  await invoke('open_local_file', {
+    path: trimmedPath,
+  })
+}
+
 export async function writeLocalTerminal(sessionId: string, data: string): Promise<void> {
   await invoke('write_local_terminal', {
     sessionId,

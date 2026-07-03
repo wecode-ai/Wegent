@@ -47,6 +47,42 @@ describe('MessageList', () => {
     ).toContain('0 ')
   })
 
+  test('does not use message row content visibility in the Tauri app', () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    const getSelectionSpy = vi.spyOn(document, 'getSelection')
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-tauri-contained',
+              role: 'assistant',
+              content: 'Tauri text selection should stay native.',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:01Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-assistant')
+      const paragraph = screen.getByText('Tauri text selection should stay native.')
+      expect(article.className).not.toContain('[content-visibility:auto]')
+      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
+
+      fireEvent.pointerDown(paragraph, { button: 0, detail: 1 })
+      fireEvent.pointerDown(paragraph, { button: 0, detail: 2 })
+      fireEvent(document, new Event('selectionchange'))
+
+      expect(getSelectionSpy).not.toHaveBeenCalled()
+      expect(article.className).not.toContain('[content-visibility:auto]')
+      expect(article.style.contentVisibility).toBe('')
+    } finally {
+      getSelectionSpy.mockRestore()
+    }
+  })
+
   test('keeps message row containment during a plain text click', () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({
@@ -80,9 +116,129 @@ describe('MessageList', () => {
 
       expect(article.className).toContain('[content-visibility:auto]')
       expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+      expect(article.style.contentVisibility).toBe('')
     } finally {
       getSelectionSpy.mockRestore()
     }
+  })
+
+  test('keeps expanded process file diffs visible during selection cleanup', async () => {
+    const getSelectionSpy = vi.spyOn(document, 'getSelection')
+    getSelectionSpy.mockReturnValue({
+      isCollapsed: true,
+      rangeCount: 0,
+      anchorNode: null,
+      focusNode: null,
+    } as Selection)
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(0)
+        return 1
+      })
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'file-changes-1',
+        turnId: 11,
+        type: 'file_changes',
+        status: 'done',
+        createdAt: 1770000000000,
+        fileChanges: {
+          version: 1,
+          status: 'active',
+          artifact_id: 'artifact-1',
+          device_id: 'device-1',
+          workspace_path: '/tmp/project',
+          file_count: 1,
+          additions: 1,
+          deletions: 1,
+          files: [
+            {
+              path: 'src/config.ts',
+              change_type: 'modified',
+              additions: 1,
+              deletions: 1,
+              binary: false,
+            },
+          ],
+          diff: [
+            'diff --git a/src/config.ts b/src/config.ts',
+            '--- a/src/config.ts',
+            '+++ b/src/config.ts',
+            '@@ -1 +1 @@',
+            '-enabled: false',
+            '+enabled: true',
+          ].join('\n'),
+        },
+      },
+    ]
+
+    try {
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-file-diff',
+              role: 'assistant',
+              content: '',
+              status: 'done',
+              blocks,
+              createdAt: '2026-06-24T08:00:01.000Z',
+            },
+          ]}
+        />
+      )
+
+      const article = screen.getByTestId('message-assistant')
+      expect(article.className).toContain('[content-visibility:auto]')
+
+      fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+      fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
+      fireEvent.click(screen.getByRole('button', { name: /已编辑 config\.ts/ }))
+
+      const diff = screen.getByTestId('process-file-change-diff')
+      expect(diff).toHaveAttribute('data-message-content-visibility-lock', 'true')
+      expect(article.style.contentVisibility).toBe('visible')
+
+      fireEvent.pointerDown(diff, { button: 0 })
+      fireEvent.pointerUp(document)
+
+      await waitFor(() => {
+        expect(article.style.contentVisibility).toBe('visible')
+      })
+    } finally {
+      getSelectionSpy.mockRestore()
+      requestAnimationFrameSpy.mockRestore()
+    }
+  })
+
+  test('keeps message rows stable during double-click text selection', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-double-click',
+            role: 'assistant',
+            content: 'Double click should use the browser native selection behavior.',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    const article = screen.getByTestId('message-assistant')
+    const paragraph = screen.getByText(
+      'Double click should use the browser native selection behavior.'
+    )
+
+    fireEvent.pointerDown(paragraph, { button: 0, detail: 1 })
+    expect(article.className).toContain('[content-visibility:auto]')
+    expect(article.style.contentVisibility).toBe('')
+
+    fireEvent.pointerDown(paragraph, { button: 0, detail: 2 })
+    expect(article.className).toContain('[content-visibility:auto]')
+    expect(article.style.contentVisibility).toBe('')
   })
 
   test('disables message row containment only while selected message text is active', async () => {
@@ -970,7 +1126,8 @@ describe('MessageList', () => {
 
     expect(screen.getByText('你好')).toBeInTheDocument()
     expect(screen.getByText('你好，我在。')).toBeInTheDocument()
-    expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
+    expect(container.firstElementChild).toHaveClass('min-w-0')
+    expect(container.firstElementChild).not.toHaveClass('overflow-x-hidden', 'overflow-x-clip')
   })
 
   test('does not render blank completed assistant placeholders', () => {
@@ -2588,6 +2745,57 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-document-attachment')).toHaveTextContent('PDF')
   })
 
+  test('renders text attachments in user messages as compact clickable preview chips', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    const attachment: Attachment = {
+      id: 45,
+      filename: 'clipboard-text-1783070360990.txt',
+      file_size: 2048,
+      mime_type: 'text/plain',
+      status: 'ready',
+      file_extension: '.txt',
+      created_at: '2026-05-25T15:09:00.000+08:00',
+      text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
+      local_path:
+        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:09:00.000+08:00',
+          },
+        ]}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+
+    expect(screen.getByTestId('message-text-attachment')).toHaveClass('h-9', 'rounded-full')
+    expect(screen.getByTestId('message-text-attachment')).toHaveAttribute('type', 'button')
+    expect(screen.getByTestId('message-text-attachment-icon')).not.toHaveAttribute(
+      'data-testid',
+      'message-codex-file-braces-icon'
+    )
+    expect(screen.getByTestId('message-text-attachment-preview')).toHaveTextContent(
+      '{ "event_type": "http_exchange", "id": "e9972aac" }'
+    )
+    expect(screen.queryByTestId('message-document-attachment')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('message-text-attachment'))
+
+    await waitFor(() =>
+      expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt'
+      )
+    )
+  })
+
   test('shows user message hover actions with time, copy label, and resettable success icon', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
@@ -2620,7 +2828,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
     expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
-    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-none')
     expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
     expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
     expect(screen.getByTestId('copy-message-label')).toHaveClass(
@@ -2849,7 +3057,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
     expect(screen.getByTestId('message-hover-time')).not.toHaveClass('opacity-0')
-    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-text')
+    expect(screen.getByTestId('message-hover-time')).toHaveClass('select-none')
     expect(screen.getByTestId('message-hover-time')).not.toHaveClass('pointer-events-none')
     expect(screen.getByTestId('copy-message-label')).toHaveTextContent('复制')
     expect(screen.getByTestId('copy-message-label')).toHaveClass(
@@ -3360,11 +3568,19 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-user')).toHaveClass('overflow-x-hidden')
-    expect(screen.getByTestId('message-assistant')).toHaveClass('overflow-x-hidden')
-    expect(container.querySelector('.assistant-markdown')).toHaveClass(
-      'break-words',
-      'overflow-x-hidden'
+    expect(screen.getByTestId('message-user')).not.toHaveClass(
+      'overflow-x-hidden',
+      'overflow-x-clip'
+    )
+    expect(screen.getByTestId('message-assistant')).not.toHaveClass(
+      'overflow-x-hidden',
+      'overflow-x-clip'
+    )
+    expect(container.querySelector('.assistant-markdown')).toHaveClass('break-words', 'max-w-full')
+    expect(container.querySelector('.assistant-markdown')).not.toHaveClass(
+      'select-text',
+      'overflow-x-hidden',
+      'overflow-x-clip'
     )
     expect(container.querySelector('table')?.parentElement).toHaveClass(
       'overflow-x-auto',

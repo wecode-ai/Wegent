@@ -1306,10 +1306,13 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
-      'overflow-x-hidden',
       'overflow-y-auto',
       'scrollbar-soft',
       'pb-[var(--desktop-floating-composer-clearance)]'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
+      'overflow-x-hidden',
+      'overflow-x-clip'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
@@ -1940,11 +1943,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(getDesktopWorkbenchMainElement()).toHaveClass(
-      'transition-[margin]',
-      'duration-[300ms]',
-      'will-change-[margin]'
-    )
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]',
       'max-w-[calc(100%_-_2rem)]'

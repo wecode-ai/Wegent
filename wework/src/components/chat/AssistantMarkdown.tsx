@@ -30,7 +30,7 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
   const displayContent = normalizeAssistantMarkdownContent(content)
 
   return (
-    <div className="assistant-markdown min-w-0 overflow-x-hidden break-words">
+    <div className="assistant-markdown min-w-0 max-w-full break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
