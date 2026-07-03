@@ -1327,6 +1327,7 @@ class SessionManager:
         subtask_id: int,
         *,
         termination_reason: Optional[str] = None,
+        terminal_status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Finalize any pending text block and return all blocks.
 
@@ -1351,6 +1352,7 @@ class SessionManager:
                 blocks = self._finalize_unresolved_preview_tool_blocks(
                     blocks,
                     termination_reason=termination_reason,
+                    terminal_status=terminal_status,
                 )
                 logger.info(
                     f"[SessionManager] Finalized blocks for subtask {subtask_id}: "
@@ -1370,12 +1372,18 @@ class SessionManager:
         blocks: List[Dict[str, Any]],
         *,
         termination_reason: Optional[str] = None,
+        terminal_status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Convert unresolved preview-only tool blocks into terminal error blocks.
 
         Preview tool blocks are created while tool arguments stream, before real tool
         execution begins. If the turn ends without a matching TOOL_RESULT, those
         blocks would otherwise stay stuck in a pending state in the final result.
+
+        A successful Claude Code terminal result is authoritative. In that case,
+        unresolved preview-only blocks are treated as display-state loss and
+        closed as done so UI recovery cannot turn a completed task into a failure.
+        Explicit unexecuted-tool termination still stays an error.
 
         Only preview-only blocks without tool_output are rewritten. Legitimate
         pending blocks that already carry a semantic output payload (for example
@@ -1384,6 +1392,7 @@ class SessionManager:
         inferred_tool_limit = (
             termination_reason == "completed_with_unexecuted_tool_calls"
         )
+        successful_terminal = str(terminal_status or "").upper() == "COMPLETED"
         has_explicit_tool_error = any(
             block.get("type") == "tool"
             and block.get("status") == BlockStatus.ERROR.value
@@ -1402,6 +1411,14 @@ class SessionManager:
                 and block.get("status") in UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES
                 and not block.get("tool_output")
             ):
+                if successful_terminal and not inferred_tool_limit:
+                    finalized_blocks.append(
+                        {
+                            **block,
+                            "status": BlockStatus.DONE.value,
+                        }
+                    )
+                    continue
                 finalized_blocks.append(
                     {
                         **block,

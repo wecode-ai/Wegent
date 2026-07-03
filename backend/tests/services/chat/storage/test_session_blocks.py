@@ -333,6 +333,34 @@ async def test_finalize_and_get_blocks_uses_generic_message_without_limit_reason
 
 
 @pytest.mark.asyncio
+async def test_finalize_and_get_blocks_closes_preview_blocks_on_successful_terminal():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=508,
+        tool_use_id="write_1",
+        tool_name="Write",
+        tool_input={"file_path": "/tmp/evals.json"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=508,
+        tool_use_id="write_1",
+        status="pending",
+        tool_input={"file_path": "/tmp/evals.json"},
+    )
+
+    blocks = await manager.finalize_and_get_blocks(
+        508,
+        terminal_status="COMPLETED",
+    )
+
+    assert blocks[0]["status"] == "done"
+    assert "tool_output" not in blocks[0]
+
+
+@pytest.mark.asyncio
 async def test_finalize_and_get_blocks_uses_generic_message_when_explicit_tool_error_exists():
     manager = SessionManager()
     redis_client = FakeRedisClient()

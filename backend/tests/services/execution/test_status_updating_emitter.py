@@ -305,6 +305,71 @@ async def test_tool_events_persist_mcp_protocol_metadata():
 
 
 @pytest.mark.asyncio
+async def test_direct_block_updates_are_persisted_before_done():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+    pending_block = {
+        "id": "call_write_1",
+        "type": "tool",
+        "tool_use_id": "call_write_1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": "/tmp/evals.json"},
+        "status": "pending",
+    }
+    done_block = {
+        **pending_block,
+        "status": "done",
+        "tool_output": "The file has been updated successfully.",
+    }
+
+    mock_session_manager.get_blocks.return_value = [pending_block]
+
+    block_created = ExecutionEvent(
+        type=EventType.BLOCK_CREATED.value,
+        task_id=101,
+        subtask_id=202,
+        data={"block": pending_block},
+    )
+    block_updated = ExecutionEvent(
+        type=EventType.BLOCK_UPDATED.value,
+        task_id=101,
+        subtask_id=202,
+        data={
+            "block_id": "call_write_1",
+            "updates": {
+                "status": "done",
+                "tool_output": "The file has been updated successfully.",
+            },
+        },
+    )
+    done = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+    )
+    handle_done = AsyncMock()
+
+    with (
+        patch("app.services.chat.storage.session_manager", mock_session_manager),
+        patch.object(emitter, "_handle_done", new=handle_done),
+    ):
+        await emitter.emit(block_created)
+        await emitter.emit(block_updated)
+        await emitter.emit(done)
+
+    mock_session_manager.add_block.assert_has_awaits(
+        [
+            call(202, pending_block),
+            call(202, done_block),
+        ]
+    )
+    handle_done.assert_awaited_once_with(done)
+
+
+@pytest.mark.asyncio
 async def test_interactive_form_tool_result_persists_render_payload_on_real_tool_block():
     from app.services.execution.emitters import StatusUpdatingEmitter
 
