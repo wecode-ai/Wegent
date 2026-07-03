@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Copy,
   File as FileIcon,
+  FileText,
   Package,
   Target,
 } from 'lucide-react'
@@ -24,7 +25,14 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
-import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import {
+  getAttachmentTextPreview,
+  getAttachmentTypeLabel,
+  isImageAttachment,
+  isTextAttachment,
+} from '@/lib/attachments'
+import { openLocalFile } from '@/lib/local-terminal'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
@@ -119,11 +127,13 @@ export const MessageList = memo(function MessageList({
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [layoutWidth, setLayoutWidth] = useState(0)
+  const isTauri = isTauriRuntime()
   const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
-  const disableMessageContentVisibility = disableContentVisibility || isTextSelectionActive
+  const disableMessageContentVisibility =
+    disableContentVisibility || isTextSelectionActive || isTauri
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -133,8 +143,8 @@ export const MessageList = memo(function MessageList({
     )
   }, [layoutWidth, visibleMessages])
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
+    ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
 
   useLayoutEffect(() => {
     const element = listRef.current
@@ -173,6 +183,10 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
+    if (isTauri) {
+      return
+    }
+
     const updateSelectionState = () => {
       const selection = document.getSelection?.()
       const root = listRef.current
@@ -206,7 +220,7 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('selectionchange', updateSelectionState)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [])
+  }, [isTauri])
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -220,7 +234,7 @@ export const MessageList = memo(function MessageList({
           <Fragment key={message.id}>
             <article
               className={[
-                'min-w-0 overflow-x-hidden',
+                'min-w-0',
                 disableMessageContentVisibility ? '' : '[content-visibility:auto]',
                 message.role === 'user' ? 'flex justify-end' : '',
               ].join(' ')}
@@ -258,7 +272,7 @@ export const MessageList = memo(function MessageList({
         )
       })}
       {shouldShowWaitingIndicator && (
-        <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
+        <article className="min-w-0" data-testid="message-assistant-waiting">
           <AssistantThinkingIndicator />
         </article>
       )}
@@ -592,7 +606,11 @@ function UserMessage({
               />
             ))}
             {documentAttachments.map(attachment => (
-              <MessageDocumentAttachment key={attachment.id} attachment={attachment} />
+              <MessageDocumentAttachment
+                key={attachment.id}
+                attachment={attachment}
+                onOpenFile={onOpenWorkspaceFile}
+              />
             ))}
           </div>
         )}
@@ -772,7 +790,36 @@ function shouldUseBracesFileIcon(filename: string): boolean {
   return /\.(?:json|jsonc)$/i.test(filename)
 }
 
-function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
+function openableAttachmentPath(attachment: Attachment): string | null {
+  return attachment.local_path?.trim() || attachment.local_preview_url?.trim() || null
+}
+
+async function openLocalAttachmentPath(
+  path: string,
+  onOpenFile?: (path: string) => void
+): Promise<void> {
+  try {
+    await openLocalFile(path)
+  } catch (error) {
+    if (onOpenFile) {
+      onOpenFile(path)
+      return
+    }
+    console.error('Failed to open local attachment:', error)
+  }
+}
+
+function MessageDocumentAttachment({
+  attachment,
+  onOpenFile,
+}: {
+  attachment: Attachment
+  onOpenFile?: (path: string) => void
+}) {
+  if (isTextAttachment(attachment)) {
+    return <MessageTextAttachment attachment={attachment} onOpenFile={onOpenFile} />
+  }
+
   const typeLabel = getAttachmentTypeLabel(attachment)
 
   return (
@@ -788,6 +835,60 @@ function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
         <span className="truncate font-medium text-text-primary">{attachment.filename}</span>
         <span className="truncate text-text-muted">{typeLabel}</span>
       </span>
+    </div>
+  )
+}
+
+function MessageTextAttachment({
+  attachment,
+  onOpenFile,
+}: {
+  attachment: Attachment
+  onOpenFile?: (path: string) => void
+}) {
+  const preview = getAttachmentTextPreview(attachment) ?? attachment.filename
+  const attachmentPath = openableAttachmentPath(attachment)
+  const clickable = Boolean(attachmentPath)
+  const className =
+    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm'
+  const content = (
+    <>
+      <FileText
+        data-testid="message-text-attachment-icon"
+        className="h-3.5 w-3.5 shrink-0 text-text-muted"
+        strokeWidth={1.8}
+      />
+      <span data-testid="message-text-attachment-preview" className="min-w-0 truncate">
+        {preview}
+      </span>
+    </>
+  )
+
+  if (clickable && attachmentPath) {
+    return (
+      <button
+        type="button"
+        data-testid="message-text-attachment"
+        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+        aria-label={preview}
+        title={preview}
+        onClick={() => {
+          void openLocalAttachmentPath(attachmentPath, onOpenFile)
+        }}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      data-testid="message-text-attachment"
+      className={className}
+      aria-label={preview}
+      title={preview}
+    >
+      {content}
     </div>
   )
 }
@@ -912,7 +1013,7 @@ function MessageHoverActions({
   const timeLabel = time ? (
     <span
       data-testid="message-hover-time"
-      className="select-text whitespace-nowrap px-1 text-xs text-text-muted"
+      className="select-none whitespace-nowrap px-1 text-xs text-text-muted"
     >
       {time}
     </span>
@@ -924,7 +1025,7 @@ function MessageHoverActions({
       onMouseLeave={handleLeaveActions}
       onTransitionEnd={handleActionsTransitionEnd}
       className={[
-        'flex min-h-5 select-text items-center gap-1 text-xs text-text-muted transition-opacity duration-150',
+        'flex min-h-5 select-none items-center gap-1 text-xs text-text-muted transition-opacity duration-150',
         visible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
         align === 'right' ? 'justify-end' : 'justify-start',
       ].join(' ')}
@@ -1120,7 +1221,7 @@ function AssistantMessage({
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
+    <div className="min-w-0 max-w-full text-[13px] leading-6 text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"

@@ -1,8 +1,13 @@
-import { FileText, Loader2, MessageSquare, X } from 'lucide-react'
+import { ChevronRight, FileText, Loader2, MessageSquare, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import {
+  getAttachmentTextPreview,
+  getAttachmentTypeLabel,
+  isImageAttachment,
+  isTextAttachment,
+} from '@/lib/attachments'
 import { AttachmentImagePreview } from '../AttachmentImagePreview'
 
 interface AttachmentBadgesProps {
@@ -11,6 +16,7 @@ interface AttachmentBadgesProps {
   errors: Map<string, string>
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
+  onShowTextAttachment?: (attachment: Attachment) => void
   onClearCodeComments?: () => void
 }
 
@@ -66,6 +72,62 @@ function DocumentAttachmentCard({
   )
 }
 
+function TextAttachmentCard({
+  attachment,
+  onRemoveAttachment,
+  onShowTextAttachment,
+}: {
+  attachment: Attachment
+  onRemoveAttachment: (attachmentId: number) => void
+  onShowTextAttachment?: (attachment: Attachment) => void
+}) {
+  const { t } = useTranslation('common')
+  const preview = getAttachmentTextPreview(attachment) ?? attachment.filename
+  const canShowInTextbox = Boolean(attachment.text_content && onShowTextAttachment)
+
+  return (
+    <div
+      data-testid="attachment-badge"
+      className="relative inline-flex h-[72px] max-w-full items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm sm:max-w-[420px]"
+    >
+      <span
+        data-testid="attachment-text-icon"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-text-primary text-background"
+      >
+        <FileText className="h-5 w-5" strokeWidth={1.8} />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          data-testid="attachment-text-preview"
+          className="truncate text-[13px] font-semibold leading-5 text-text-primary"
+          title={preview}
+        >
+          {preview}
+        </span>
+        {canShowInTextbox ? (
+          <button
+            type="button"
+            data-testid="show-text-attachment-button"
+            className="inline-flex w-fit max-w-full items-center gap-1 truncate text-[13px] leading-5 text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            onClick={() => onShowTextAttachment?.(attachment)}
+          >
+            <span className="truncate">{t('workbench.show_text_attachment_in_composer')}</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          </button>
+        ) : (
+          <span className="truncate text-[13px] leading-5 text-text-secondary">
+            {getAttachmentTypeLabel(attachment)}
+          </span>
+        )}
+      </span>
+      <RemoveAttachmentButton
+        attachmentId={attachment.id}
+        onRemoveAttachment={onRemoveAttachment}
+      />
+    </div>
+  )
+}
+
 function CodeCommentBadge({ count, onRemove }: { count: number; onRemove?: () => void }) {
   const { t } = useTranslation('common')
 
@@ -97,6 +159,7 @@ export function AttachmentBadges({
   errors,
   codeComments = [],
   onRemoveAttachment,
+  onShowTextAttachment,
   onClearCodeComments,
 }: AttachmentBadgesProps) {
   const codeCommentCount = codeComments?.length ?? 0
@@ -136,6 +199,13 @@ export function AttachmentBadges({
               onRemoveAttachment={onRemoveAttachment}
             />
           </div>
+        ) : isTextAttachment(attachment) ? (
+          <TextAttachmentCard
+            key={attachment.id}
+            attachment={attachment}
+            onRemoveAttachment={onRemoveAttachment}
+            onShowTextAttachment={onShowTextAttachment}
+          />
         ) : (
           <DocumentAttachmentCard
             key={attachment.id}

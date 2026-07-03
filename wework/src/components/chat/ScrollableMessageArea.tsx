@@ -577,7 +577,7 @@ function ScrollableMessagePaneContent({
         ref={scrollRef}
         data-testid={scrollTestId}
         className={cn(
-          'h-full overflow-x-hidden overflow-y-auto',
+          'h-full overflow-y-auto',
           (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
           scrollerClassName
         )}
@@ -598,7 +598,7 @@ function ScrollableMessagePaneContent({
           ref={contentRef}
           data-testid={`${scrollTestId}-content`}
           className={cn(
-            'min-w-0 overflow-x-hidden',
+            'min-w-0',
             (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]'
           )}
         >

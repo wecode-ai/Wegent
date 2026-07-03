@@ -459,8 +459,17 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
-    # default header
-    EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
+    # Default headers forwarded to the model backend on every LLM call.
+    # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
+    # task_data). The wegent-agent-* group carries agent (Team) identity; when a
+    # placeholder resolves empty (non-Team paths), the group is dropped downstream.
+    EXECUTOR_ENV: str = (
+        '{"DEFAULT_HEADERS":{'
+        '"user":"${task_data.user.name}",'
+        '"wegent-agent-namespace":"${task_data.team.namespace}",'
+        '"wegent-agent-name":"${task_data.team.name}"'
+        "}}"
+    )
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB

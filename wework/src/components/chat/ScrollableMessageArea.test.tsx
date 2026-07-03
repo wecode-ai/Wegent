@@ -166,7 +166,8 @@ describe('ScrollableMessageArea', () => {
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
-    expect(scroller).toHaveClass('overflow-x-hidden', 'overflow-y-auto')
+    expect(scroller).toHaveClass('overflow-y-auto')
+    expect(scroller).not.toHaveClass('overflow-x-hidden', 'overflow-x-clip')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,

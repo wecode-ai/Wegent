@@ -3113,6 +3113,8 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
             copy_attachment_field(object, &mut normalized, "mime_type");
             copy_attachment_field(object, &mut normalized, "subtask_id");
             copy_attachment_field(object, &mut normalized, "file_extension");
+            copy_attachment_field(object, &mut normalized, "text_length");
+            copy_attachment_field(object, &mut normalized, "text_preview");
             copy_attachment_field_alias(
                 object,
                 &mut normalized,

@@ -1648,6 +1648,8 @@ export interface Attachment {
   mime_type: string
   status: AttachmentStatus
   text_length?: number | null
+  text_preview?: string | null
+  text_content?: string | null
   error_message?: string | null
   error_code?: string | null
   subtask_id?: string | null

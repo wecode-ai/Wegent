@@ -92,6 +92,7 @@
     "no_device_workspaces": "暂无工作区",
     "show_more": "显示更多",
     "show_less": "收起",
+    "show_text_attachment_in_composer": "在文本框中显示",
     "expand_display": "展开显示",
     "collapse_display": "折叠显示",
     "save": "保存",

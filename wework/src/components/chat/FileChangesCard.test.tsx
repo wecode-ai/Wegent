@@ -141,6 +141,11 @@ describe('FileChangesCard', () => {
       fireEvent.pointerLeave(screen.getByTestId('file-change-trigger'))
       expect(screen.getByTestId('file-change-diff-preview')).toBeInTheDocument()
 
+      fireEvent.pointerDown(preview)
+      fireEvent.blur(screen.getByRole('button', { name: /references\/github-pr-flow\.md/ }))
+      act(() => vi.advanceTimersByTime(140))
+      expect(screen.getByTestId('file-change-diff-preview')).toBeInTheDocument()
+
       fireEvent.pointerEnter(preview)
       act(() => vi.advanceTimersByTime(140))
       expect(screen.getByTestId('file-change-diff-preview')).toBeInTheDocument()

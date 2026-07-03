@@ -2367,6 +2367,50 @@ describe('ChatInput', () => {
     expect(screen.getAllByText('PDF')).toHaveLength(2)
   })
 
+  test('renders pasted text attachments as codex-style preview cards', async () => {
+    const removeAttachment = vi.fn().mockResolvedValue(undefined)
+    const attachment: Attachment = {
+      id: 45,
+      filename: 'clipboard-text-1783070360990.txt',
+      file_size: 1200,
+      mime_type: 'text/plain',
+      status: 'ready',
+      file_extension: '.txt',
+      created_at: '2026-05-27T00:00:00.000Z',
+      text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
+      text_content: '{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}',
+    }
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        projectChat={projectChatControls({
+          attachments: [attachment],
+          removeAttachment,
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('attachment-badge')).toHaveClass(
+      'h-[72px]',
+      'rounded-[20px]',
+      'bg-muted'
+    )
+    expect(screen.getByTestId('attachment-text-preview')).toHaveTextContent(
+      '{ "event_type": "http_exchange", "id": "e9972aac" }'
+    )
+    expect(screen.getByTestId('show-text-attachment-button')).toHaveTextContent(
+      'workbench.show_text_attachment_in_composer'
+    )
+
+    await userEvent.click(screen.getByTestId('show-text-attachment-button'))
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}'
+    )
+    expect(removeAttachment).toHaveBeenCalledWith(45)
+  })
+
   test('renders an image preview for image attachments', async () => {
     vi.stubGlobal(
       'fetch',

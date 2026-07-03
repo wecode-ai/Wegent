@@ -627,6 +627,7 @@ type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   local_path: string
   local_preview_url: string
   text_length?: number
+  text_preview?: string
 }
 
 function localRuntimeAttachments(
@@ -651,6 +652,7 @@ function localRuntimeAttachments(
       local_path: localPath,
       local_preview_url: attachment.local_preview_url ?? localPath,
       ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+      ...(attachment.text_preview ? { text_preview: attachment.text_preview } : {}),
     })
   })
 
