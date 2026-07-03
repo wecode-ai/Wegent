@@ -12,7 +12,7 @@ import {
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
@@ -41,7 +41,12 @@ interface CompactChatComposerProps {
   onRemoveAttachment?: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
+  selectedModelOptions?: ModelOptions
+  onSelectModel?: (model: UnifiedModel | null) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  isModelSelectionReady?: boolean
   isStreaming?: boolean
   onPause?: () => void
 }
@@ -67,7 +72,12 @@ export function CompactChatComposer({
   onRemoveAttachment = () => {},
   onClearCodeComments,
   onListLocalSkills,
+  models = [],
   selectedModel,
+  selectedModelOptions = {},
+  onSelectModel,
+  onBlockedModelSelect,
+  isModelSelectionReady = true,
   isStreaming = false,
   onPause,
 }: CompactChatComposerProps) {
@@ -213,7 +223,15 @@ export function CompactChatComposer({
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
+            models={models}
             selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            planModeActive={planModeActive}
+            onSetPlanMode={onSetPlanMode}
+            onSetGoal={onSetGoal}
+            onSelectModel={onSelectModel}
+            onBlockedModelSelect={onBlockedModelSelect}
+            isModelSelectionReady={isModelSelectionReady}
           />
           {canExpandInput && (
             <button

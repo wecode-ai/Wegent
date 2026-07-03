@@ -196,7 +196,15 @@ export function ProjectChatComposer({
           className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
+          models={models}
           selectedModel={selectedModel}
+          selectedModelOptions={selectedModelOptions}
+          planModeActive={planModeActive}
+          onSetPlanMode={onSetPlanMode}
+          onSetGoal={onSetGoal}
+          onSelectModel={onSelectModel}
+          onBlockedModelSelect={onBlockedModelSelect}
+          isModelSelectionReady={isModelSelectionReady}
         />
         <ComposerToolbar
           canSend={canSend}

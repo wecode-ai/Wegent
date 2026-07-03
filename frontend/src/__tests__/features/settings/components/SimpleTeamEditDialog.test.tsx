@@ -392,6 +392,8 @@ describe('Simple TeamEditDialog', () => {
   })
 
   it('saves a new simple solo agent through bot and team payloads', async () => {
+    const onSaved = jest.fn().mockResolvedValue(undefined)
+
     render(
       <TeamEditDialog
         open
@@ -402,6 +404,7 @@ describe('Simple TeamEditDialog', () => {
         bots={[]}
         setBots={jest.fn()}
         toast={jest.fn()}
+        onSaved={onSaved}
       />
     )
 
@@ -442,6 +445,7 @@ describe('Simple TeamEditDialog', () => {
           bots: [{ bot_id: 42, bot_prompt: '', role: 'leader' }],
         })
       )
+      expect(onSaved).toHaveBeenCalled()
     })
   })
 
