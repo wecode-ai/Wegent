@@ -220,6 +220,66 @@ Request body:
 
 Use `folder_id=0` to move the document to root.
 
+### Delete Document
+
+```http
+DELETE /api/knowledge/documents/{document_id}
+```
+
+Physically deletes the document, deletes associated attachments, and removes the corresponding RAG index. A successful deletion returns `204 No Content`.
+
+### Re-index Document
+
+```http
+POST /api/knowledge/documents/{document_id}/reindex
+```
+
+Re-indexes the document with the knowledge base's current retrieval configuration. Use this endpoint for index repair or manual rebuilds after configuration changes.
+
+### Batch Delete Documents
+
+```http
+POST /api/knowledge/documents/batch/delete
+```
+
+Request body:
+
+```json
+{
+  "document_ids": [101, 102]
+}
+```
+
+Response:
+
+```json
+{
+  "success_count": 1,
+  "failed_count": 1,
+  "failed_ids": [102],
+  "message": "Successfully deleted 1 documents, 1 failed"
+}
+```
+
+Batch delete allows partial success. Duplicate `document_ids` are deduplicated in first-seen order before deletion, and `success_count`, `failed_count`, and `failed_ids` are calculated from the deduplicated document set. Successfully deleted documents have their associated attachments and RAG indexes removed, and the affected knowledge base summaries are refreshed.
+
+### Batch Move Documents
+
+```http
+POST /api/knowledge/documents/batch/move
+```
+
+Request body:
+
+```json
+{
+  "document_ids": [101, 102],
+  "folder_id": 10
+}
+```
+
+Use `folder_id=0` to batch move documents to root. The endpoint allows partial success, and failed document IDs are returned in `failed_ids`.
+
 ## Folders
 
 Folders are knowledge document metadata, not attachment metadata. The generic attachment upload API does not accept `folder_id`.

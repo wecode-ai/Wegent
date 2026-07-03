@@ -11,7 +11,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.api.endpoints.knowledge import _update_kb_summary_after_deletion
+from app.api.knowledge_document_side_effects import (
+    schedule_kb_summary_updates_after_deletion,
+)
 from app.core import security
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.user import User
@@ -27,7 +29,6 @@ from app.services.knowledge import KnowledgeFolderService, KnowledgeService
 from app.services.knowledge.knowledge_transfer import KB_MIGRATE_CONFLICT
 from shared.telemetry.decorators import (
     add_span_event,
-    capture_trace_context,
     trace_sync,
 )
 
@@ -179,20 +180,11 @@ def transfer_documents_to_kb(
             },
         )
         if result.transferred_document_count > 0:
-            trace_ctx = capture_trace_context()
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=knowledge_base_id,
+            schedule_kb_summary_updates_after_deletion(
+                background_tasks,
+                kb_ids=[knowledge_base_id, data.target_kb_id],
                 user_id=current_user.id,
                 user_name=current_user.user_name,
-                trace_context=trace_ctx,
-            )
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=data.target_kb_id,
-                user_id=current_user.id,
-                user_name=current_user.user_name,
-                trace_context=trace_ctx,
             )
         return result
     except (CustomHTTPException, StructuredValidationException):

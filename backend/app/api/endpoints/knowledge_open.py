@@ -11,12 +11,18 @@ wegent-username header.  Business logic is fully delegated to
 KnowledgeOrchestrator so that REST API and MCP tools share the same path.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.knowledge_document_side_effects import (
+    schedule_kb_summary_updates_after_deletion,
+)
 from app.core.security import AuthContext, get_auth_context
 from app.schemas.knowledge import (
+    BatchDocumentIds,
+    BatchDocumentMoveRequest,
+    BatchOperationResult,
     DocumentContentReadResponse,
     DocumentContentUpdate,
     DocumentContentUpdateResponse,
@@ -589,6 +595,115 @@ async def search_documents_open(
 # ---------------------------------------------------------------------------
 
 
+@router.post(
+    "/documents/batch/delete",
+    response_model=BatchOperationResult,
+)
+@trace_sync("batch_delete_documents_open", "knowledge.api")
+def batch_delete_documents_open(
+    data: BatchDocumentIds,
+    background_tasks: BackgroundTasks,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> BatchOperationResult:
+    """Batch delete multiple documents from accessible knowledge bases."""
+    current_user = auth_context.user
+    batch_result = KnowledgeService.batch_delete_documents(
+        db=db,
+        document_ids=data.document_ids,
+        user_id=current_user.id,
+    )
+    result = batch_result.result
+    kb_ids = batch_result.kb_ids
+
+    add_span_event(
+        "knowledge.documents.batch_deleted.open",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "kb_ids": str(list(kb_ids)) if kb_ids else "[]",
+            "user_id": str(current_user.id),
+        },
+    )
+
+    if result.success_count == 0 and result.failed_count > 0:
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        if (
+            "permission" in error_msg
+            or "access denied" in error_msg
+            or "owner or maintainer" in error_msg
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message,
+        )
+
+    schedule_kb_summary_updates_after_deletion(
+        background_tasks,
+        kb_ids=kb_ids,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+    )
+    return result
+
+
+@router.post(
+    "/documents/batch/move",
+    response_model=BatchOperationResult,
+)
+@trace_sync("batch_move_documents_open", "knowledge.api")
+def batch_move_documents_open(
+    data: BatchDocumentMoveRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> BatchOperationResult:
+    """Batch move multiple documents to a folder. Use folder_id=0 for root."""
+    current_user = auth_context.user
+    result = KnowledgeFolderService.batch_move_documents(
+        db=db,
+        document_ids=data.document_ids,
+        folder_id=data.folder_id,
+        user_id=current_user.id,
+    )
+
+    add_span_event(
+        "knowledge.documents.batch_moved.open",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    if result.success_count == 0 and result.failed_count > 0:
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        if "permission" in error_msg or "access denied" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message,
+        )
+
+    return result
+
+
 @router.put("/documents/{document_id}", response_model=KnowledgeDocumentResponse)
 @trace_sync("update_document_open", "knowledge.api")
 def update_document_open(
@@ -624,6 +739,92 @@ def update_document_open(
             detail="Document not found",
         )
     return KnowledgeDocumentResponse.model_validate(document)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /knowledge/documents/{document_id}  — delete document
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@trace_sync("delete_document_open", "knowledge.api")
+def delete_document_open(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a document, its RAG index, and associated attachment."""
+    current_user = auth_context.user
+    try:
+        result = KnowledgeService.delete_document(
+            db=db,
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or access denied",
+        )
+
+    add_span_event(
+        "knowledge.document.deleted.open",
+        {
+            "document_id": str(document_id),
+            "kb_id": str(result.kb_id) if result.kb_id else "unknown",
+            "user_id": str(current_user.id),
+        },
+    )
+    schedule_kb_summary_updates_after_deletion(
+        background_tasks,
+        kb_ids=[result.kb_id] if result.kb_id is not None else [],
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+    )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# POST /knowledge/documents/{document_id}/reindex  — re-index document
+# ---------------------------------------------------------------------------
+
+
+@router.post("/documents/{document_id}/reindex")
+@trace_async("reindex_document_open", "knowledge.api")
+async def reindex_document_open(
+    document_id: int,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Trigger re-indexing for a document via the configured RAG runtime."""
+    current_user = auth_context.user
+    try:
+        result = knowledge_orchestrator.reindex_document(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+            trigger_summary=False,
+        )
+        add_span_event(
+            "knowledge.document.reindex.scheduled.open",
+            {
+                "document_id": str(document_id),
+                "user_id": str(current_user.id),
+            },
+        )
+        return result
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------

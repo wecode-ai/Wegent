@@ -9,7 +9,6 @@ REST API endpoints delegate business logic to KnowledgeOrchestrator,
 which provides a unified interface for both REST API and MCP tools.
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -19,6 +18,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.knowledge_document_side_effects import (
+    schedule_kb_summary_updates_after_deletion,
+)
 from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
@@ -63,9 +65,7 @@ from app.services.knowledge.orchestrator import (
 )
 from shared.telemetry.decorators import (
     add_span_event,
-    capture_trace_context,
     trace_async,
-    trace_background,
     trace_sync,
 )
 
@@ -797,14 +797,11 @@ def delete_document(
                 f"[KnowledgeAPI] Scheduling KB summary update after deletion: "
                 f"kb_id={result.kb_id}, document_id={document_id}"
             )
-            # Capture trace context for propagation to background task
-            trace_ctx = capture_trace_context()
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=result.kb_id,
+            schedule_kb_summary_updates_after_deletion(
+                background_tasks,
+                kb_ids=[result.kb_id],
                 user_id=current_user.id,
                 user_name=current_user.user_name,
-                trace_context=trace_ctx,
             )
 
         return None
@@ -950,16 +947,12 @@ def batch_delete_documents(
             f"[KnowledgeAPI] Scheduling KB summary updates after batch deletion: "
             f"kb_ids={kb_ids}, deleted_count={result.success_count}"
         )
-        # Capture trace context for propagation to background tasks
-        trace_ctx = capture_trace_context()
-        for kb_id in kb_ids:
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=kb_id,
-                user_id=current_user.id,
-                user_name=current_user.user_name,
-                trace_context=trace_ctx,
-            )
+        schedule_kb_summary_updates_after_deletion(
+            background_tasks,
+            kb_ids=kb_ids,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+        )
 
     return result
 
@@ -1659,74 +1652,6 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: st
         )
     finally:
         new_db.close()
-
-
-@trace_background("kb_summary_after_deletion_background", "knowledge.worker")
-def _update_kb_summary_after_deletion(
-    kb_id: int,
-    user_id: int,
-    user_name: str,
-    trace_context: Optional[dict] = None,
-):
-    """
-    Background task to update KB summary after document deletion.
-
-    - If no active documents remain, clear the summary
-    - If active documents remain, regenerate the summary
-    - Errors are logged but don't affect the deletion operation
-    - Respects debounce pattern (skip if summary is currently generating)
-
-    This is a synchronous function that creates its own event loop to run
-    the async summary service methods. This is necessary because FastAPI's
-    BackgroundTasks runs tasks in a thread pool without an event loop.
-
-    Args:
-        kb_id: Knowledge base ID
-        user_id: User who triggered the deletion
-        user_name: Username for placeholder resolution
-        trace_context: Trace context for distributed tracing
-    """
-    from app.services.knowledge import get_summary_service
-
-    logger.info(
-        f"[KnowledgeAPI] Starting KB summary update after deletion: kb_id={kb_id}"
-    )
-
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        summary_service = get_summary_service(db)
-
-        # Trigger KB summary with clear_if_empty=True
-        # This will:
-        # - Clear summary if no active documents remain
-        # - Regenerate summary if active documents exist with completed summaries
-        # - Skip if currently generating (debounce)
-        # Use a dedicated event loop and ensure proper cleanup
-        # to avoid "no running event loop" errors during garbage collection
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                summary_service.trigger_kb_summary(
-                    kb_id, user_id, user_name, force=False, clear_if_empty=True
-                )
-            )
-        finally:
-            # Properly shutdown async generators and close the loop
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
-
-    except Exception as e:
-        # Log error but don't re-raise - deletion should succeed regardless
-        logger.error(
-            f"[KnowledgeAPI] Failed to update KB summary after deletion: "
-            f"kb_id={kb_id}, error={str(e)}",
-            exc_info=True,
-        )
-    finally:
-        db.close()
-        logger.info(f"[KnowledgeAPI] KB summary update task completed: kb_id={kb_id}")
 
 
 # ============== Chunk Management Endpoints ==============
