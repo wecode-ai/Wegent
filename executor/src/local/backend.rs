@@ -69,11 +69,7 @@ const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
-/// Number of consecutive heartbeat failures tolerated before tearing down the
-/// connection and reconnecting. A single transient failure (timeout or socket
-/// hiccup) should not force a full reconnect, so we only reconnect once the
-/// failures persist past this threshold.
-const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 3;
+const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 2;
 
 pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -610,13 +606,9 @@ where
 
     async fn heartbeat_until_reconnect(&self) {
         let mut consecutive_failures = 0_u32;
+        let mut next_heartbeat_delay = self.client.config.heartbeat_interval;
         loop {
-            sleep(self.client.config.heartbeat_interval).await;
-            // Treat both a rejected ack and a transport error as a heartbeat
-            // failure. A single transient failure should not tear down the
-            // connection, so we only reconnect after the failures persist past
-            // MAX_CONSECUTIVE_HEARTBEAT_FAILURES. The outer run_forever loop then
-            // keeps reconnecting until registration succeeds again.
+            sleep(next_heartbeat_delay).await;
             let failure = match self
                 .client
                 .send_heartbeat(self.client.config.heartbeat_timeout)
@@ -624,6 +616,7 @@ where
             {
                 Ok(true) => {
                     consecutive_failures = 0;
+                    next_heartbeat_delay = self.client.config.heartbeat_interval;
                     continue;
                 }
                 Ok(false) => "heartbeat was rejected by backend".to_owned(),
@@ -639,6 +632,7 @@ where
                 let _ = self.client.disconnect().await;
                 return;
             }
+            next_heartbeat_delay = self.client.config.heartbeat_timeout;
         }
     }
 }

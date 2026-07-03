@@ -1392,7 +1392,7 @@ fn install_deferred_mcp_hook(config_dir: &Path) {
         .or_insert_with(|| Value::Array(Vec::new()));
     let hook_command = hook_path.display().to_string();
     let hook_entry = json!({
-        "matcher": "mcp__*interactive_form_question*",
+        "matcher": "mcp__.*interactive_form_question.*",
         "hooks": [{
             "type": "command",
             "command": hook_command
