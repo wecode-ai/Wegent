@@ -10,12 +10,13 @@ sidebar_position: 6
 
 ## 📋 本模块文档
 
-| 文档 | 说明 |
-|------|------|
-| [智能体设置](./agent-settings.md) | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
-| [配置模型](./configuring-models.md) | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等） |
-| [配置执行器](./configuring-shells.md) | 配置运行时环境（ClaudeCode、Dify、Chat） |
-| [管理 Skills](./managing-skills.md) | 上传、管理和使用 Skills 能力扩展包 |
+| 文档                                  | 说明                                                 |
+| ------------------------------------- | ---------------------------------------------------- |
+| [智能体设置](./agent-settings.md)     | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
+| [配置模型](./configuring-models.md)   | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等）      |
+| [配置执行器](./configuring-shells.md) | 配置运行时环境（ClaudeCode、Dify、Chat）             |
+| [管理 Skills](./managing-skills.md)   | 上传、管理和使用 Skills 能力扩展包                   |
+| [键盘快捷键](./keyboard-shortcuts.md) | 管理 Wework 桌面版本机快捷键                         |
 
 ---
 
@@ -31,6 +32,7 @@ sidebar_position: 6
 ```
 
 **协作模式**：
+
 - **Solo**：单个机器人独立工作
 - **Pipeline**：顺序执行，形成处理流水线
 - **Coordinate**：领导者协调并行执行，汇总结果
@@ -41,20 +43,20 @@ Web 界面当前在新建或编辑智能体时提供 Solo、Pipeline 和 Coordin
 
 支持多种 AI 模型提供商：
 
-| 提供商 | 支持的模型 |
-|--------|-----------|
+| 提供商        | 支持的模型                                   |
+| ------------- | -------------------------------------------- |
 | **Anthropic** | Claude Haiku 4、Claude Sonnet 4、Claude Opus |
-| **OpenAI** | GPT-4、GPT-4 Turbo、GPT-3.5 Turbo |
+| **OpenAI**    | GPT-4、GPT-4 Turbo、GPT-3.5 Turbo            |
 
 ### 执行器配置
 
 支持多种运行时环境：
 
-| 执行器 | 说明 | 适用场景 |
-|--------|------|----------|
+| 执行器         | 说明                                    | 适用场景           |
+| -------------- | --------------------------------------- | ------------------ |
 | **ClaudeCode** | Claude Code SDK，支持代码执行和文件操作 | 代码开发、文件处理 |
-| **Dify** | 外部 Dify API 代理 | Dify 工作流集成 |
-| **Chat** | 直接 LLM API（无 Docker） | 轻量级对话 |
+| **Dify**       | 外部 Dify API 代理                      | Dify 工作流集成    |
+| **Chat**       | 直接 LLM API（无 Docker）               | 轻量级对话         |
 
 ### Skills 管理
 

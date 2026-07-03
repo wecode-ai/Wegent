@@ -11,6 +11,7 @@ import {
   GitBranch,
   Globe2,
   Info,
+  Keyboard,
   Loader2,
   LogOut,
   Monitor,
@@ -64,6 +65,7 @@ import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
+import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -105,6 +107,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Network,
     label: 'settings_nav_proxy',
     fallback: '代理',
+    category: 'personal',
+  },
+  {
+    key: 'keyboard-shortcuts',
+    icon: Keyboard,
+    label: 'settings_nav_keyboard_shortcuts',
+    fallback: '键盘快捷键',
     category: 'personal',
   },
   {
@@ -158,6 +167,7 @@ function getSettingsNavFromPath(path: string): string {
 function getSettingsNavPath(key: string): string {
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
+  if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
 
@@ -1385,6 +1395,9 @@ export function ConnectionsSettingsPage({
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
+  const visibleSettingsNavItems = settingsNavItems.filter(
+    item => item.key !== 'keyboard-shortcuts' || usesOverlayTitlebar
+  )
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
   useEffect(() => {
@@ -1429,9 +1442,9 @@ export function ConnectionsSettingsPage({
         />
 
         <nav className="space-y-1 px-1.5">
-          {settingsNavItems.map((item, index) => {
+          {visibleSettingsNavItems.map((item, index) => {
             const showCategory =
-              item.category && settingsNavItems[index - 1]?.category !== item.category
+              item.category && visibleSettingsNavItems[index - 1]?.category !== item.category
             const categoryLabel = item.category ? settingsCategoryLabels[item.category] : null
             return (
               <div key={item.key}>
@@ -1481,6 +1494,8 @@ export function ConnectionsSettingsPage({
           <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
+        ) : activeNav === 'keyboard-shortcuts' ? (
+          <KeyboardShortcutsSettingsPage />
         ) : activeNav === 'skills' ? (
           <SkillSettingsPage />
         ) : activeNav === 'worktrees' ? (

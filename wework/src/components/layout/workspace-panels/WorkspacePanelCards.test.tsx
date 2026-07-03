@@ -248,6 +248,25 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
   })
 
+  test('opens a device root terminal without a selected project', async () => {
+    const api = createDeviceApiMock()
+    render(
+      <WorkspacePanelCards
+        currentProject={null}
+        devices={cloudDevices}
+        workspaceTarget={{ deviceId: 'device-1', path: '/', source: 'runtime' }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1', '/'))
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute(
+      'data-session-id',
+      'device-terminal-1'
+    )
+  })
+
   test('gives the embedded terminal explicit dimensions for Safari', async () => {
     render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
 

@@ -27,6 +27,25 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { createLocalAppServices } from '@/api/local/localServices'
+import {
+  KEYBINDINGS_CHANGED_EVENT,
+  GO_BACK_COMMAND,
+  GO_FORWARD_COMMAND,
+  OPEN_SETTINGS_COMMAND,
+  OPEN_TERMINAL_COMMAND,
+  TOGGLE_SIDEBAR_COMMAND,
+  TOGGLE_SIDE_PANEL_COMMAND,
+  dispatchGoBackShortcut,
+  dispatchGoForwardShortcut,
+  dispatchOpenSettingsShortcut,
+  dispatchOpenTerminalShortcut,
+  dispatchToggleSidebarShortcut,
+  dispatchToggleSidePanelShortcut,
+  isEditableShortcutTarget,
+  keybindingFromKeyboardEvent,
+  mergeKeybindings,
+} from '@/lib/keybindings'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -111,6 +130,99 @@ function AppShell() {
   const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+
+  useEffect(() => {
+    if (!isTauri) return undefined
+
+    let activeBindings = mergeKeybindings([])
+    let disposed = false
+
+    const loadKeybindings = async () => {
+      try {
+        const services = createLocalAppServices()
+        const response = await services.runtimeWorkApi?.getKeybindings()
+        if (!disposed) {
+          activeBindings = mergeKeybindings(response?.keybindings ?? [])
+        }
+      } catch (error) {
+        console.error('[Wework] Failed to load keybindings:', error)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      const terminalKey = activeBindings[OPEN_TERMINAL_COMMAND]
+      const settingsKey = activeBindings[OPEN_SETTINGS_COMMAND]
+      const goBackKey = activeBindings[GO_BACK_COMMAND]
+      const goForwardKey = activeBindings[GO_FORWARD_COMMAND]
+      const sidebarKey = activeBindings[TOGGLE_SIDEBAR_COMMAND]
+      const sidePanelKey = activeBindings[TOGGLE_SIDE_PANEL_COMMAND]
+      const eventKey = keybindingFromKeyboardEvent(event)
+      const matchesRegisteredShortcut = [
+        terminalKey,
+        settingsKey,
+        goBackKey,
+        goForwardKey,
+        sidebarKey,
+        sidePanelKey,
+      ].some(key => key && key === eventKey)
+      if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
+
+      if (settingsKey && eventKey === settingsKey) {
+        event.preventDefault()
+        dispatchOpenSettingsShortcut()
+        return
+      }
+      if (goBackKey && eventKey === goBackKey) {
+        event.preventDefault()
+        dispatchGoBackShortcut()
+        return
+      }
+      if (goForwardKey && eventKey === goForwardKey) {
+        event.preventDefault()
+        dispatchGoForwardShortcut()
+        return
+      }
+      if (sidebarKey && eventKey === sidebarKey) {
+        event.preventDefault()
+        dispatchToggleSidebarShortcut()
+        return
+      }
+      if (sidePanelKey && eventKey === sidePanelKey) {
+        event.preventDefault()
+        dispatchToggleSidePanelShortcut()
+        return
+      }
+      if (!terminalKey || eventKey !== terminalKey) return
+      event.preventDefault()
+      dispatchOpenTerminalShortcut()
+    }
+
+    const handleMouseUp = (event: MouseEvent) => {
+      if (event.defaultPrevented) return
+      if (activeBindings[GO_BACK_COMMAND] && event.button === 3) {
+        event.preventDefault()
+        dispatchGoBackShortcut()
+        return
+      }
+      if (activeBindings[GO_FORWARD_COMMAND] && event.button === 4) {
+        event.preventDefault()
+        dispatchGoForwardShortcut()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('mouseup', handleMouseUp)
+    window.addEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
+    void loadKeybindings()
+
+    return () => {
+      disposed = true
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('mouseup', handleMouseUp)
+      window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
+    }
+  }, [isTauri])
 
   useEffect(() => {
     if (

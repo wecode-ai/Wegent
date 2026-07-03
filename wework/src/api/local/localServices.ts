@@ -78,6 +78,7 @@ import {
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import type { KeybindingOverride } from '@/lib/keybindings'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -1369,6 +1370,14 @@ function createRuntimeWorkApi(
         })
         throw error
       }
+    },
+    getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
+      return request('runtime.keybindings.get', {})
+    },
+    updateKeybindings(data: {
+      keybindings: KeybindingOverride[]
+    }): Promise<{ keybindings: KeybindingOverride[] }> {
+      return request('runtime.keybindings.update', data)
     },
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')

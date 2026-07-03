@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
@@ -65,6 +65,7 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -229,17 +230,36 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance =
     floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
-  const workspaceTargetDevice = workspaceTarget?.deviceId
-    ? devices.find(device => device.device_id === workspaceTarget.deviceId)
+  const activeDeviceId =
+    currentRuntimeTask?.deviceId ??
+    getActiveWorkbenchDeviceId({
+      currentProject,
+      standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
+    })
+  const standaloneRootWorkspaceTarget = useMemo(
+    () =>
+      !workspaceProject && !workspaceTarget && activeDeviceId
+        ? {
+            deviceId: activeDeviceId,
+            path: '/',
+            source: 'runtime' as const,
+            workspaceSource: 'remote',
+          }
+        : null,
+    [activeDeviceId, workspaceProject, workspaceTarget]
+  )
+  const effectiveWorkspaceTarget = workspaceTarget ?? standaloneRootWorkspaceTarget
+  const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
+    ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
     : undefined
   const workspaceTargetUsesRemoteDevice = Boolean(
     workspaceTargetDevice &&
     (isCloudDevice(workspaceTargetDevice) || isRemoteDevice(workspaceTargetDevice))
   )
-  const workspaceTargetUsesRemoteSource = workspaceTarget?.workspaceSource === 'remote'
+  const workspaceTargetUsesRemoteSource = effectiveWorkspaceTarget?.workspaceSource === 'remote'
   const preferLocalWorkspaceTerminal =
     paneProjectWork.executionMode === 'current_workspace' &&
-    workspaceTarget?.source !== 'runtime' &&
+    effectiveWorkspaceTarget?.source !== 'runtime' &&
     !workspaceTargetUsesRemoteDevice &&
     !workspaceTargetUsesRemoteSource
 
@@ -262,12 +282,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const bottomPanelWorkspaceKey = [
     currentRuntimeTask
       ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}:${
-          currentRuntimeTask.workspacePath ?? workspaceTarget?.path ?? ''
+          currentRuntimeTask.workspacePath ?? effectiveWorkspaceTarget?.path ?? ''
         }`
       : 'workspace',
     workspaceProject?.id ?? 'projectless',
-    workspaceTarget?.deviceId ?? '',
-    workspaceTarget?.path ?? '',
+    effectiveWorkspaceTarget?.deviceId ?? '',
+    effectiveWorkspaceTarget?.path ?? '',
     preferLocalWorkspaceTerminal ? 'local' : paneProjectWork.executionMode,
   ].join(':')
   const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
@@ -276,15 +296,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       key: bottomPanelWorkspaceKey,
       currentProject: workspaceProject,
       devices,
-      workspaceTarget,
+      workspaceTarget: effectiveWorkspaceTarget,
       preferLocalTerminal: preferLocalWorkspaceTerminal,
     }),
     [
       bottomPanelWorkspaceKey,
       devices,
+      effectiveWorkspaceTarget,
       preferLocalWorkspaceTerminal,
       workspaceProject,
-      workspaceTarget,
     ]
   )
   const rememberActiveBottomPanelContext = useCallback(() => {
@@ -348,12 +368,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const hasQueuedComposerRows = paneQueuedMessages.length > 0 || paneGuidanceMessages.length > 0
-  const activeDeviceId =
-    currentRuntimeTask?.deviceId ??
-    getActiveWorkbenchDeviceId({
-      currentProject,
-      standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
-    })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -612,7 +626,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           const previousTurn =
             latestPreviousTurnSubtaskId !== null
               ? {
-                  loadDiff: () => loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
+                  loadDiff: () =>
+                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
                   defaultFileTreeVisible: false,
                 }
               : previousTurnReviewRef.current
@@ -654,6 +669,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => setCurrentBottomPanelOpen(open => !open),
     [setCurrentBottomPanelOpen]
   )
+
+  useEffect(() => {
+    const handleOpenTerminal = () => {
+      toggleBottomPanel()
+    }
+
+    window.addEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
+    return () => window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
+  }, [toggleBottomPanel])
+
   const renderWorkspacePanelActions = (mode: 'all' | 'environment' | 'panel-toggles') => (
     <WorkspacePanelActions
       mode={mode}
@@ -676,8 +701,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
-  const runtimeTaskTitle =
-    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
+  const runtimeTaskTitle = findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
   const paneTaskTitle = runtimeTaskTitle ? (
     <div
       data-testid="workbench-pane-task-title"
@@ -914,7 +938,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
-                onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
+                onLoadFileChangesDiff={subtaskId =>
+                  loadTurnFileChangesDiff(subtaskId, paneMessages)
+                }
                 onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
                 onOpenFileChangesReview={({
                   loadDiff,
@@ -1122,7 +1148,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               openTabs={rightPanelTabs}
               currentProject={workspaceProject}
               devices={devices}
-              workspaceTarget={workspaceTarget}
+              workspaceTarget={effectiveWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
