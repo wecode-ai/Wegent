@@ -6,6 +6,8 @@ use std::{collections::HashSet, path::Path};
 
 use serde_json::{json, Map, Value};
 
+use crate::codex_phase::{codex_phase_is_process, normalize_codex_phase};
+
 use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
@@ -337,8 +339,42 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     Some((tool_call_id(&item), updates))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AssistantNotificationTextKind {
+    Final,
+    Process,
+}
+
+pub(crate) fn assistant_text_kind_from_notification(
+    params: &Value,
+    fallback_phase: Option<&str>,
+) -> Option<AssistantNotificationTextKind> {
+    let item = notification_item(params);
+    if !is_assistant_text_item(&item) {
+        return None;
+    }
+    extract_text(&item).filter(|content| !content.is_empty())?;
+    let phase =
+        assistant_message_phase_name(&item).or_else(|| fallback_phase.map(normalize_codex_phase));
+    Some(if codex_phase_is_process(phase.as_deref()) {
+        AssistantNotificationTextKind::Process
+    } else {
+        AssistantNotificationTextKind::Final
+    })
+}
+
 fn notification_item(params: &Value) -> Value {
     transcript_item(params.get("item").unwrap_or(params))
+}
+
+fn is_assistant_text_item(item: &Value) -> bool {
+    match item_type(item).as_str() {
+        "agentmessage" | "agentmessageevent" => true,
+        "message" => string_field(item, "role")
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("assistant"),
+        _ => false,
+    }
 }
 
 fn transcript_item(item: &Value) -> Value {

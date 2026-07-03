@@ -708,7 +708,6 @@ describe('createLocalAppServices', () => {
           localTaskId: 'task-1',
         },
         message: 'continue',
-        message_id: expect.any(Number),
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -730,6 +729,8 @@ describe('createLocalAppServices', () => {
           },
         ],
         executionRequest: expect.objectContaining({
+          task_id: expect.any(Number),
+          subtask_id: expect.any(Number),
           prompt: 'continue',
           model_config: expect.objectContaining({
             model: 'openai',
@@ -776,6 +777,7 @@ describe('createLocalAppServices', () => {
         }),
       })
     )
+    expect(sendPayload).not.toHaveProperty('message_id')
     expect(sendPayload).not.toHaveProperty('modelId')
   })
 
@@ -975,7 +977,6 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
         message: '工作目标',
-        message_id: expect.any(Number),
         requestUserInputResponse: {
           requestId: 42,
           itemId: 'item-1',
@@ -984,6 +985,8 @@ describe('createLocalAppServices', () => {
           },
         },
         executionRequest: expect.objectContaining({
+          task_id: expect.any(Number),
+          subtask_id: expect.any(Number),
           prompt: '工作目标',
           new_session: false,
           model_config: expect.objectContaining({
@@ -995,6 +998,7 @@ describe('createLocalAppServices', () => {
         }),
       })
     )
+    expect(payload).not.toHaveProperty('message_id')
     expect(payload).not.toHaveProperty('modelId')
   })
 

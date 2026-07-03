@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
@@ -7,6 +7,39 @@ import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('createRuntimeTaskStreamHandlers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test('uses task and subtask identity for runtime assistant messages', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      task_id: 1,
+      subtask_id: 9,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      content: 'partial',
+      offset: 0,
+      result: {},
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_chunk',
+      turnId: 9,
+      content: 'partial',
+    })
+    expect('messageId' in actions[0]).toBe(false)
+  })
+
   test('passes context compaction through regular block created actions', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
@@ -20,7 +53,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onBlockCreated?.({
       task_id: 1,
       subtask_id: 9,
-      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       block: {
@@ -68,7 +100,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onBlockCreated?.({
       task_id: 1,
       subtask_id: 9,
-      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       block: {
@@ -105,7 +136,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatDone?.({
       task_id: 1,
       subtask_id: 9,
-      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       offset: 0,
@@ -139,7 +169,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatDone?.({
       task_id: 1,
       subtask_id: 9,
-      message_id: 42,
       offset: 0,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
@@ -171,7 +200,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatError?.({
       task_id: 1,
       subtask_id: 9,
-      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       error: 'interrupted',
@@ -184,7 +212,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
   })
 
-  test('ignores runtime stream message events without a message id', () => {
+  test('warns before dropping runtime stream message events without task identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       localTaskId: 'local-task-1',
@@ -196,15 +225,61 @@ describe('createRuntimeTaskStreamHandlers', () => {
 
     handlers.onChatChunk?.({
       task_id: 1,
-      subtask_id: 9,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       content: 'partial',
       offset: 0,
       result: {},
+    } as Parameters<NonNullable<typeof handlers.onChatChunk>>[0])
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped runtime stream event without task identity',
+      expect.objectContaining({
+        event: 'chat:chunk',
+        taskId: 'local-task-1',
+        localTaskId: 'local-task-1',
+        deviceId: 'device-1',
+        subtaskId: undefined,
+        hasContent: true,
+      })
+    )
+  })
+
+  test('warns before dropping runtime stream block events with invalid subtask identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onBlockUpdated?.({
+      task_id: 1,
+      subtask_id: 0,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      block_id: 'text-local-task-1-0-1',
+      content: 'partial',
+      status: 'streaming',
     })
 
     expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped runtime stream event without task identity',
+      expect.objectContaining({
+        event: 'block:updated',
+        taskId: 'local-task-1',
+        localTaskId: 'local-task-1',
+        deviceId: 'device-1',
+        subtaskId: 0,
+        blockId: 'text-local-task-1-0-1',
+        status: 'streaming',
+      })
+    )
   })
 })
 
