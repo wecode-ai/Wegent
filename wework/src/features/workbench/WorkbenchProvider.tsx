@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
@@ -347,6 +348,15 @@ export function WorkbenchProvider({
       executorClient,
       services: resolvedServices,
     })
+
+  useEffect(() => {
+    updateWorkbenchDebugSnapshot({
+      state,
+      currentRuntimeTaskRunning,
+      cloudWorkStatus,
+    })
+  }, [cloudWorkStatus, currentRuntimeTaskRunning, state])
+
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,
     dispatch,

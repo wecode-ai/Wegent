@@ -153,7 +153,7 @@ class TestTriggerKbSummaryClearIfEmpty:
             )
             mock_executor.with_managed_sessions.return_value = mock_instance
 
-            result = await summary_service.trigger_kb_summary(
+            await summary_service.trigger_kb_summary(
                 test_knowledge_base.id,
                 test_user.id,
                 test_user.user_name,
@@ -921,6 +921,66 @@ class TestKnowledgeServiceBatchDeleteDocuments:
         assert result.result.failed_count == 1
         assert 99999 in result.result.failed_ids
         assert expected_kb_id in result.kb_ids
+
+    def test_batch_delete_deduplicates_document_ids(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_knowledge_base: Kind,
+        test_documents: list[KnowledgeDocument],
+    ):
+        """Test batch delete processes duplicated document IDs only once."""
+        from app.services.knowledge import KnowledgeService
+
+        document_id = test_documents[0].id
+
+        result = KnowledgeService.batch_delete_documents(
+            db=test_db,
+            document_ids=[document_id, document_id],
+            user_id=test_user.id,
+        )
+
+        assert result.result.success_count == 1
+        assert result.result.failed_count == 0
+        assert result.result.failed_ids == []
+        assert test_knowledge_base.id in result.kb_ids
+
+    def test_batch_delete_mixed_unexpected_failure_uses_generic_message(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch,
+        caplog,
+    ):
+        """Test mixed unexpected failures do not look like pure not-found errors."""
+        from app.services.knowledge import KnowledgeService
+        from app.services.knowledge.knowledge_service import DocumentDeleteResult
+
+        def fake_delete_document(db, document_id, user_id):
+            if document_id == 99999:
+                return DocumentDeleteResult(
+                    success=False,
+                    error="Document not found",
+                )
+            raise RuntimeError("storage cleanup failed")
+
+        monkeypatch.setattr(KnowledgeService, "delete_document", fake_delete_document)
+
+        with caplog.at_level(
+            "ERROR", logger="app.services.knowledge.knowledge_service"
+        ):
+            result = KnowledgeService.batch_delete_documents(
+                db=test_db,
+                document_ids=[99999, 100000],
+                user_id=test_user.id,
+            )
+
+        assert result.result.success_count == 0
+        assert result.result.failed_count == 2
+        assert result.result.failed_ids == [99999, 100000]
+        assert result.result.message == "Successfully deleted 0 documents, 2 failed"
+        assert result.kb_ids == []
+        assert "Unexpected error deleting document 100000" in caplog.text
 
 
 class TestTriggerDocumentSummaryDeletionRace:

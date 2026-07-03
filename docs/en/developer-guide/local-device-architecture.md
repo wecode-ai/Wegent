@@ -238,6 +238,8 @@ sequenceDiagram
 | **Monitor Interval**   | 60 seconds          | Backend checks expired devices |
 | **Offline Threshold**  | 3 missed heartbeats | Device marked as offline       |
 
+If one `device:heartbeat` ACK times out, is rejected by Backend, or hits a Socket.IO transport error, the executor quickly retries the next heartbeat after 10 seconds instead of waiting for the full 30-second heartbeat interval. After two consecutive heartbeat failures, the executor proactively disconnects the current socket and enters the reconnect-and-register flow. This tolerates one transient hiccup while still normally letting the device re-register and refresh online state before the 90-second online TTL expires after a short network interruption recovers.
+
 ### Running Task Tracking
 
 Each heartbeat contains currently running task IDs, used for:

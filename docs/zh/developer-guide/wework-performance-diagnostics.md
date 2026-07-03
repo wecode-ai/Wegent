@@ -15,7 +15,7 @@ macOS: Cmd + Option + Shift + P
 Windows/Linux: Ctrl + Alt + Shift + P
 ```
 
-快捷键会切换 `localStorage` 中的 `wework:perf-debug` 标记并自动刷新应用。再次按同一快捷键会关闭诊断并刷新。
+快捷键会打开 **Developer Commands** 菜单。选择 **Enable Performance Diagnostics** 会写入 `localStorage` 中的 `wework:perf-debug` 标记并自动刷新应用；再次打开菜单选择 **Disable Performance Diagnostics** 会关闭诊断并刷新。
 
 开发环境也可以通过 URL 参数临时切换：
 
@@ -25,6 +25,17 @@ Windows/Linux: Ctrl + Alt + Shift + P
 ```
 
 也可以设置构建/运行环境变量 `VITE_WEWORK_PERF_DEBUG=1`，用于本地复现时默认开启。
+
+## Debug 面板
+
+Developer Commands 菜单中的 **Debug Panel** 用于排查 Wework 当前运行任务的问题。面板会展示：
+
+- 当前活跃 runtime task 的地址、任务是否可识别、`running` 原始值、任务状态和 pane 派生运行状态。
+- 当前 pane 的发送阶段、消息数量、队列、transcript 加载状态、subagent 状态和 goal 状态。
+- Transcript 加载消息与当前流式输出消息的字段和预期 UI 样式对比。
+- 最近的 `console.debug` 日志。
+
+Debug 面板可以展开、收起、刷新、复制快照和清空日志。收起后只保留右下角状态条，避免遮挡主界面。
 
 ## 采集内容
 
@@ -43,7 +54,7 @@ Windows/Linux: Ctrl + Alt + Shift + P
 如果 debug 包或 release 包能打开 Web Inspector，在卡顿后执行：
 
 ```js
-window.__WEWORK_PERF__.snapshot()
+window.__WEWORK_PERF__.snapshot();
 ```
 
 返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量和最近事件。需要持续观察时可以多次执行，重点比较：
@@ -56,16 +67,16 @@ window.__WEWORK_PERF__.snapshot()
 也可以手动打点：
 
 ```js
-window.__WEWORK_PERF__.mark('before-open-task', { taskId: '...' })
+window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
 ```
 
 ## 关闭方式
 
-再次按隐藏快捷键会关闭诊断并刷新应用。也可以在控制台执行：
+再次按隐藏快捷键打开 Developer Commands 菜单，然后选择 **Disable Performance Diagnostics** 会关闭诊断并刷新应用。也可以在控制台执行：
 
 ```js
-localStorage.removeItem('wework:perf-debug')
-location.reload()
+localStorage.removeItem("wework:perf-debug");
+location.reload();
 ```
 
 关闭后 `window.__WEWORK_PERF__` 不再安装，React Profiler 也不会包裹应用根节点。

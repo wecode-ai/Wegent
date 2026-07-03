@@ -1569,15 +1569,13 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
       '展开显示'
     )
-    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
-      '折叠显示'
-    )
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-collapse-1')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(25)
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-collapse-1')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 

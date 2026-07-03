@@ -7,7 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{json, Value};
@@ -119,17 +119,16 @@ fn assert_log_timestamp(line: &str) {
 }
 
 #[tokio::test]
-async fn runner_reconnects_after_repeated_heartbeat_failures() {
+async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_online_ttl() {
     let transport = ScriptedTransport::with_call_results(vec![
         Ok(json!({"success": true})),
         Err("heartbeat timeout 1".to_owned()),
         Err("heartbeat timeout 2".to_owned()),
-        Err("heartbeat timeout 3".to_owned()),
         Ok(json!({"success": true})),
     ]);
     let mut config = local_backend_config();
-    config.heartbeat_interval = Duration::from_millis(5);
-    config.heartbeat_timeout = Duration::from_millis(1);
+    config.heartbeat_interval = Duration::from_millis(80);
+    config.heartbeat_timeout = Duration::from_millis(10);
     config.reconnect_delay = Duration::from_millis(1);
     config.reconnect_delay_max = Duration::from_millis(1);
     let runner = LocalBackendRunner::new(config, transport.clone());
@@ -142,13 +141,22 @@ async fn runner_reconnects_after_repeated_heartbeat_failures() {
 
     assert!(transport.connects() >= 2);
     assert!(transport.disconnects() >= 1);
-    assert!(transport.event_count("device:heartbeat") >= 3);
+    let heartbeat_calls = transport.calls_for_event("device:heartbeat");
+    assert_eq!(heartbeat_calls.len(), 2);
+    let retry_gap = heartbeat_calls[1]
+        .recorded_at
+        .duration_since(heartbeat_calls[0].recorded_at);
+    assert!(
+        retry_gap < Duration::from_millis(40),
+        "expected retry gap to be shorter than the regular heartbeat interval, got {retry_gap:?}"
+    );
 }
 
 #[derive(Clone, Debug)]
 struct RecordedCall {
     event: String,
     timeout: Duration,
+    recorded_at: Instant,
 }
 
 #[derive(Clone, Default)]
@@ -181,11 +189,11 @@ impl ScriptedTransport {
         *self.disconnects.lock().unwrap()
     }
 
-    fn event_count(&self, event: &str) -> usize {
+    fn calls_for_event(&self, event: &str) -> Vec<RecordedCall> {
         self.calls()
-            .iter()
+            .into_iter()
             .filter(|call| call.event == event)
-            .count()
+            .collect()
     }
 
     async fn wait_for_connects(&self, count: usize) {
@@ -232,6 +240,7 @@ impl LocalBackendTransport for ScriptedTransport {
             self.calls.lock().unwrap().push(RecordedCall {
                 event: event.to_owned(),
                 timeout,
+                recorded_at: Instant::now(),
             });
             self.notify.notify_waiters();
             self.call_results

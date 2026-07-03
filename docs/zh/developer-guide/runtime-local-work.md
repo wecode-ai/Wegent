@@ -109,7 +109,7 @@ cargo test --test manual_runtime_perf -- --ignored --nocapture
 POST /api/runtime-work/send
 ```
 
-Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
+Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件携带当前 LocalTask 的 `local_task_id`、本轮 `task_id` 和 `subtask_id`；Wework 入口层把本地任务映射成统一的 task 身份，把 `subtask_id` 当作本轮 turn 身份，后续消息 reducer 不再使用单独的 `message_id`。这些事件不携带 `workspacePath`。
 
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。打包本地 app 的 `createLocalAppServices()` 是本机 Codex 模型名规范化的唯一边界：UI 可以展示 `codex-gpt-5.5`，但发送到 Codex app-server 前必须统一转换成真实模型 id `gpt-5.5`。新建任务和继续任务都必须复用同一套规范化逻辑。
 

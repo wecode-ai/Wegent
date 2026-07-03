@@ -4,12 +4,14 @@ import { createRoot } from 'react-dom/client'
 import './styles/globals.css'
 import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
+import { installDebugPanelLogCapture } from './lib/debugPanel'
 import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installDesktopExtensions } from '@extensions/desktop'
 
+installDebugPanelLogCapture()
 installAppLogging()
 installDesktopExtensions()
 installExternalLinkHandler()
