@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
+use crate::process_environment;
+
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
@@ -20,6 +22,7 @@ struct LocalTerminalSession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    child_pid: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -39,6 +42,18 @@ impl Default for LocalTerminalState {
             sessions: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
         }
+    }
+}
+
+impl LocalTerminalState {
+    pub fn active_process_ids(&self) -> Result<Vec<u32>, String> {
+        Ok(self
+            .sessions
+            .lock()
+            .map_err(|_| "Failed to lock local terminal state".to_string())?
+            .values()
+            .filter_map(|session| session.child_pid)
+            .collect())
     }
 }
 
@@ -120,6 +135,7 @@ fn process_utf8_locale_value(name: &str, default: &str) -> String {
 fn configure_terminal_environment(command: &mut CommandBuilder) {
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    command.env("PATH", process_environment::normalized_current_path());
     command.env("LANG", process_utf8_locale_value("LANG", DEFAULT_UTF8_LANG));
     command.env(
         "LC_CTYPE",
@@ -172,6 +188,7 @@ pub fn start_local_terminal(
         let session = LocalTerminalSession {
             master: pair.master,
             writer,
+            child_pid: child.process_id(),
             child,
         };
         state

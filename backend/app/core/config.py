@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -113,12 +113,18 @@ class Settings(BaseSettings):
     WEB_CONTENT_CRAWL_TIMEOUT_SECONDS: int = 180
     WEB_CONTENT_CRAWL_POLL_INTERVAL_SECONDS: float = 2.0
     WEB_CONTENT_MAX_VIDEOS_PER_CONTEXT: int = 10
+    WEB_CONTENT_MAX_IMAGES_PER_CONTEXT: int = 20
+    WEB_CONTENT_ALLOWED_MEDIA_HOSTS: list[str] = []
+
+    # Public Model CRD id used by the media-understanding MCP tool.
+    MEDIA_UNDERSTANDING_MODEL_KIND_ID: int = 237555
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
     STANDALONE_MODE: bool = False
-    # Enable in-process executor (no Docker required) when in standalone mode
+    # Enable the bundled Rust executor process when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
+    STANDALONE_EXECUTOR_DEVICE_ID: str = "standalone-admin-device"
 
     # Internal extension toggles.
     # Keep disabled by default so local/open-source development uses the public

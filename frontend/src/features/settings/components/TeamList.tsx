@@ -167,9 +167,11 @@ export default function TeamList({
     [setBots]
   )
 
-  useEffect(() => {
-    async function loadData() {
-      setIsLoading(true)
+  const loadData = useCallback(
+    async (showLoading = true) => {
+      if (showLoading) {
+        setIsLoading(true)
+      }
       try {
         const [teamsData, botsData] = await Promise.all([
           fetchTeamsList(scope, groupName),
@@ -183,11 +185,21 @@ export default function TeamList({
           title: t('teams.loading'),
         })
       } finally {
-        setIsLoading(false)
+        if (showLoading) {
+          setIsLoading(false)
+        }
       }
-    }
+    },
+    [groupName, scope, setBotsSorted, t, toast]
+  )
+
+  useEffect(() => {
     loadData()
-  }, [toast, setBotsSorted, t, scope, groupName])
+  }, [loadData])
+
+  const handleTeamSaved = useCallback(async () => {
+    await loadData(false)
+  }, [loadData])
 
   // Load groups where user has at least Developer role (for copy target selection)
   useEffect(() => {
@@ -945,6 +957,7 @@ export default function TeamList({
         groupName={
           editingTeamId === 0 && createTarget.scope === 'group' ? createTarget.groupName : groupName
         }
+        onSaved={handleTeamSaved}
       />
 
       <TeamChildNamespaceAuthorizationDialog

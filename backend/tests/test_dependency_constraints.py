@@ -19,12 +19,11 @@ def _dependency_specifier(pyproject_path: Path, dependency_name: str) -> str:
     raise AssertionError(f"{dependency_name} dependency not found in {pyproject_path}")
 
 
-def test_python_mcp_dependency_pin_matches_executor_runtime():
-    """Keep Python runtimes on one MCP SDK version to avoid API drift."""
+def test_python_mcp_dependency_pin_matches_chat_runtimes():
+    """Keep Python chat runtimes on one MCP SDK version to avoid API drift."""
     pyproject_paths = [
         PROJECT_ROOT / "backend" / "pyproject.toml",
         PROJECT_ROOT / "chat_shell" / "pyproject.toml",
-        PROJECT_ROOT / "executor" / "pyproject.toml",
     ]
 
     for pyproject_path in pyproject_paths:
@@ -32,5 +31,5 @@ def test_python_mcp_dependency_pin_matches_executor_runtime():
 
         assert specifier == EXPECTED_MCP_SPECIFIER, (
             f"{pyproject_path} must pin mcp{EXPECTED_MCP_SPECIFIER} so "
-            "backend, chat_shell, and executor share the same MCP SDK API"
+            "backend and chat_shell share the same MCP SDK API"
         )

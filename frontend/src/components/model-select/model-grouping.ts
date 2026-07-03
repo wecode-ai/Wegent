@@ -11,6 +11,7 @@ export interface GroupableModel {
   namespace?: string | null
   modelGroup?: string | null
   modelSubGroup?: string | null
+  config?: Record<string, unknown> | null
 }
 
 export interface ModelSubGroup<T extends GroupableModel = GroupableModel> {

@@ -66,12 +66,13 @@ class SQLiteHistoryStore(HistoryStoreInterface):
         session_id: str,
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
+        supports_image: bool | None = None,
         supports_video: bool = False,
     ) -> list[Message]:
         """Get chat history for a session.
 
-        Note: supports_video is ignored for local storage because messages are
-        returned with their original content.
+        Note: supports_image/supports_video are ignored for local storage because
+        messages are returned with their original content.
         """
         async with aiosqlite.connect(self.db_path) as db:
             # Build query

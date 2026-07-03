@@ -226,7 +226,9 @@ class TestGetChatHistory:
         assert history == []
 
     @pytest.mark.asyncio
-    async def test_package_mode_passes_supports_video_to_db_loader(self, monkeypatch):
+    async def test_package_mode_passes_media_capabilities_to_db_loader(
+        self, monkeypatch
+    ):
         monkeypatch.setattr("chat_shell.history.loader._is_http_mode", lambda: False)
         captured = {}
 
@@ -235,8 +237,10 @@ class TestGetChatHistory:
             is_group_chat,
             exclude_after_message_id=None,
             limit=None,
+            supports_image=None,
             supports_video=False,
         ):
+            captured["supports_image"] = supports_image
             captured["supports_video"] = supports_video
             return []
 
@@ -248,10 +252,12 @@ class TestGetChatHistory:
         history = await get_chat_history(
             task_id=1,
             is_group_chat=False,
+            supports_image=True,
             supports_video=True,
         )
 
         assert history == []
+        assert captured["supports_image"] is True
         assert captured["supports_video"] is True
 
 
@@ -278,6 +284,112 @@ class _FakeDb:
 
 
 class TestPackageModeVideoHistory:
+    def test_uses_image_metadata_when_model_does_not_support_image(self):
+        subtask = SimpleNamespace(
+            id=10,
+            task_id=20,
+            role=SubtaskRole.USER,
+            prompt="describe the image",
+        )
+        context = SimpleNamespace(
+            id=30,
+            context_type=ContextType.ATTACHMENT.value,
+            status=ContextStatus.READY.value,
+            name="photo.png",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            extracted_text="",
+            binary_data=b"image",
+            text_length=0,
+            type_data={},
+        )
+
+        messages = _build_history_messages(
+            _FakeDb([context]),
+            subtask,
+            sender_username=None,
+            is_group_chat=False,
+            supports_image=False,
+        )
+
+        content = messages[0]["content"]
+        assert content[0] == {"type": "text", "text": "describe the image"}
+        assert len(content) == 2
+        assert "image_url" not in str(content)
+        assert "Image Attachment: photo.png" in content[1]["text"]
+        assert "ID: 30" in content[1]["text"]
+
+    def test_builds_image_blocks_when_model_supports_image(self):
+        subtask = SimpleNamespace(
+            id=10,
+            task_id=20,
+            role=SubtaskRole.USER,
+            prompt="describe the image",
+        )
+        context = SimpleNamespace(
+            id=30,
+            context_type=ContextType.ATTACHMENT.value,
+            status=ContextStatus.READY.value,
+            name="photo.png",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            extracted_text="",
+            binary_data=b"image",
+            text_length=0,
+            type_data={},
+        )
+
+        messages = _build_history_messages(
+            _FakeDb([context]),
+            subtask,
+            sender_username=None,
+            is_group_chat=False,
+            supports_image=True,
+        )
+
+        content = messages[0]["content"]
+        assert content[0] == {"type": "text", "text": "describe the image"}
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "data:image/png;base64,aW1hZ2U="
+        assert "Image Attachment: photo.png" in content[2]["text"]
+
+    def test_builds_image_blocks_when_model_image_capability_unset(self):
+        subtask = SimpleNamespace(
+            id=10,
+            task_id=20,
+            role=SubtaskRole.USER,
+            prompt="describe the image",
+        )
+        context = SimpleNamespace(
+            id=30,
+            context_type=ContextType.ATTACHMENT.value,
+            status=ContextStatus.READY.value,
+            name="photo.png",
+            original_filename="photo.png",
+            mime_type="image/png",
+            file_extension=".png",
+            image_base64="aW1hZ2U=",
+            extracted_text="",
+            binary_data=b"image",
+            text_length=0,
+            type_data={},
+        )
+
+        messages = _build_history_messages(
+            _FakeDb([context]),
+            subtask,
+            sender_username=None,
+            is_group_chat=False,
+        )
+
+        content = messages[0]["content"]
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "data:image/png;base64,aW1hZ2U="
+
     def test_builds_video_blocks_when_model_supports_video(self, monkeypatch):
         subtask = SimpleNamespace(
             id=10,
@@ -317,8 +429,9 @@ class TestPackageModeVideoHistory:
         content = messages[0]["content"]
         assert content[0] == {"type": "text", "text": "describe the video"}
         assert content[1] == {
-            "type": "video_url",
-            "video_url": {"url": "https://example.com/video.mp4"},
+            "type": "input_video",
+            "video_url": "https://example.com/video.mp4",
+            "mime_type": "video/mp4",
         }
         assert "Video Attachment" in content[2]["text"]
 

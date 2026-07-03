@@ -24,10 +24,17 @@ class _FakeQuery:
 
 
 class _FakeDb:
-    def __init__(self, contexts):
+    def __init__(self, contexts, *next_results):
         self.contexts = contexts
+        self.next_results = list(next_results)
+        self.query_count = 0
 
     def query(self, *args, **kwargs):
+        self.query_count += 1
+        if self.query_count == 1:
+            return _FakeQuery(self.contexts)
+        if self.next_results:
+            return _FakeQuery(self.next_results.pop(0))
         return _FakeQuery(self.contexts)
 
 
@@ -57,11 +64,11 @@ def test_history_uses_video_metadata_when_model_does_not_support_video():
         model_config={"modelCapabilities": {"supportsVideo": False}},
     )
 
-    assert content[0] == {"type": "text", "text": "describe the video"}
     assert len(content) == 2
     assert "video_url" not in str(content)
-    assert "Video Attachment: clip.mp4" in content[1]["text"]
-    assert "ID: 30" in content[1]["text"]
+    assert "Video Attachment: clip.mp4" in content[0]["text"]
+    assert "ID: 30" in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "describe the video"}
 
 
 def test_history_uses_video_metadata_when_fid_is_missing():
@@ -90,11 +97,11 @@ def test_history_uses_video_metadata_when_fid_is_missing():
         model_config={"modelCapabilities": {"supportsVideo": False}},
     )
 
-    assert content[0] == {"type": "text", "text": "describe the video"}
     assert len(content) == 2
     assert "video_url" not in str(content)
-    assert "Video Attachment: clip.mp4" in content[1]["text"]
-    assert '"fid"' not in content[1]["text"]
+    assert "Video Attachment: clip.mp4" in content[0]["text"]
+    assert '"fid"' not in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "describe the video"}
 
 
 def test_history_keeps_video_metadata_with_stored_extra_blocks():
@@ -135,8 +142,148 @@ def test_history_keeps_video_metadata_with_stored_extra_blocks():
         model_config={"modelCapabilities": {"supportsVideo": False}},
     )
 
-    assert content[0] == {"type": "text", "text": "describe the video"}
-    assert "Video Attachment: clip.mp4" in content[1]["text"]
-    assert "stale" not in content[1]["text"]
+    assert "Video Attachment: clip.mp4" in content[0]["text"]
+    assert "stale" not in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "describe the video"}
     assert content[2]["text"].startswith("<system-reminder>")
     assert "video_url" not in str(content)
+
+
+def test_history_replays_external_web_content_page_text():
+    subtask = SimpleNamespace(id=10, user_id=20, prompt="summarize this page")
+    context = SimpleNamespace(
+        id=40,
+        user_id=20,
+        context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+        status=ContextStatus.READY.value,
+        name="External Note",
+        type_data={
+            "source": "external_web_content",
+            "external_source_url": "https://example.com/post/1",
+            "site": "example.com",
+            "title": "Page Title",
+            "body": "desc text\n\nbody text",
+            "asset_context_ids": {"videos": [], "comments": []},
+        },
+        created_at=None,
+    )
+
+    content = _build_user_message_content(
+        _FakeDb([context]),
+        subtask,
+        sender_username=None,
+        is_group_chat=False,
+        model_config={"modelCapabilities": {"supportsVideo": False}},
+    )
+
+    assert len(content) == 2
+    assert "<attachment>" in content[0]["text"]
+    assert "[External Web Content: External Note]" in content[0]["text"]
+    assert "Source: https://example.com/post/1" in content[0]["text"]
+    assert "Title: Page Title" in content[0]["text"]
+    assert "desc text" in content[0]["text"]
+    assert "body text" in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "summarize this page"}
+
+
+def test_history_skips_non_ready_external_web_content():
+    subtask = SimpleNamespace(id=10, user_id=20, prompt="summarize this page")
+    context = SimpleNamespace(
+        id=40,
+        user_id=20,
+        context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+        status=ContextStatus.PENDING.value,
+        name="External Note",
+        type_data={
+            "source": "external_web_content",
+            "external_source_url": "https://example.com/post/1",
+            "title": "Page Title",
+            "body": "not ready body",
+            "asset_context_ids": {"videos": [], "comments": []},
+        },
+        created_at=None,
+    )
+
+    content = _build_user_message_content(
+        _FakeDb([context]),
+        subtask,
+        sender_username=None,
+        is_group_chat=False,
+        model_config={"modelCapabilities": {"supportsVideo": False}},
+    )
+
+    assert content == "summarize this page"
+
+
+def test_history_replays_external_web_content_image_urls():
+    subtask = SimpleNamespace(id=10, user_id=20, prompt="describe the image")
+    aggregate_context = SimpleNamespace(
+        id=40,
+        user_id=20,
+        context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+        status=ContextStatus.READY.value,
+        name="External Note",
+        type_data={
+            "source": "external_web_content",
+            "external_source_url": "https://example.com/post/1",
+            "title": "Page Title",
+            "body": "page body",
+            "image_urls": [
+                {
+                    "url": "https://public.example.com/external-image.jpg",
+                    "source_index": 0,
+                }
+            ],
+            "asset_context_ids": {"videos": [], "comments": []},
+        },
+        created_at=None,
+    )
+
+    content = _build_user_message_content(
+        _FakeDb([aggregate_context]),
+        subtask,
+        sender_username=None,
+        is_group_chat=False,
+        model_config={"modelCapabilities": {"supportsVideo": False}},
+    )
+
+    assert "<attachment>" in content[0]["text"]
+    assert "[External Web Content: External Note]" in content[0]["text"]
+    assert "Image Attachment" not in content[0]["text"]
+    assert content[1]["type"] == "image_url"
+    assert (
+        content[1]["image_url"]["url"]
+        == "https://public.example.com/external-image.jpg"
+    )
+    assert content[2] == {"type": "text", "text": "describe the image"}
+
+
+def test_history_omits_external_web_image_block_without_image_urls():
+    subtask = SimpleNamespace(id=10, user_id=20, prompt="describe the image")
+    aggregate_context = SimpleNamespace(
+        id=40,
+        user_id=20,
+        context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+        status=ContextStatus.READY.value,
+        name="External Note",
+        type_data={
+            "source": "external_web_content",
+            "external_source_url": "https://example.com/post/1",
+            "title": "Page Title",
+            "body": "page body",
+            "asset_context_ids": {"videos": [], "comments": []},
+        },
+        created_at=None,
+    )
+
+    content = _build_user_message_content(
+        _FakeDb([aggregate_context]),
+        subtask,
+        sender_username=None,
+        is_group_chat=False,
+        model_config={"modelCapabilities": {"supportsVideo": False}},
+    )
+
+    assert [block["type"] for block in content] == ["text", "text"]
+    assert "Image Attachment" not in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "describe the image"}

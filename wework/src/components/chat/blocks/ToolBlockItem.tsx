@@ -1,26 +1,46 @@
 import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, FileDiff, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import { AssistantPlanCard } from '../AssistantPlanCard'
+import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
+import { parseUnifiedDiff } from '../parseUnifiedDiff'
+import { isWebSearchToolName } from './toolBlockActivity'
+import {
+  getFileInputPath,
+  getFileInputPaths,
+  getInputField,
+  isCommandToolName,
+  isFileCreateToolName,
+  isFileEditToolName,
+  isGuidanceToolName,
+  isFileReadToolName,
+} from './toolBlockKinds'
+import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
+const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
   forceExpanded?: boolean
+  stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
+  onOpenAssistantPlan?: (content: string) => void
 }
 
 export function ToolBlockItem({
   block,
   forceExpanded = false,
   onOpenWorkspaceFile,
+  onOpenAssistantPlan,
 }: ToolBlockItemProps) {
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const expanded = forceExpanded || userExpanded
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -28,49 +48,354 @@ export function ToolBlockItem({
   if (block.type === 'text') {
     return <ProcessTextBlockItem block={block} isRunning={isRunning} />
   }
+  if (block.type === 'plan') {
+    return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
+  }
+  if (block.type === 'file_changes') {
+    return <ProcessFileChangesBlockItem block={block} />
+  }
 
   const { icon, label } = getBlockLabel(block)
   const workspaceFilePath = getWorkspaceFilePath(block)
+  const hasDetail = hasBlockDetail(block)
+  const expanded = hasDetail && (forceExpanded || userExpanded)
+  const labelContent = (
+    <>
+      {icon}
+      <span className="min-w-0 truncate">{label}</span>
+      {isRunning && <span className="animate-pulse text-xs">...</span>}
+    </>
+  )
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
       <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
-        <button
-          type="button"
-          onClick={() => {
-            if (workspaceFilePath && onOpenWorkspaceFile) {
-              onOpenWorkspaceFile(workspaceFilePath)
-              return
-            }
-            setUserExpanded(value => !value)
-          }}
-          className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
-        >
-          {icon}
-          <span className="min-w-0 truncate">{label}</span>
-          {isRunning && <span className="animate-pulse text-xs">...</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => setUserExpanded(value => !value)}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
-          aria-label={expanded ? '收起工具详情' : '展开工具详情'}
-          aria-expanded={expanded}
-        >
-          <svg
-            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
+        {workspaceFilePath && onOpenWorkspaceFile ? (
+          <button
+            type="button"
+            onClick={() => onOpenWorkspaceFile(workspaceFilePath)}
+            className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+            {labelContent}
+          </button>
+        ) : hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setUserExpanded(value => !value)}
+            className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
+          >
+            {labelContent}
+          </button>
+        ) : (
+          <span className="flex min-w-0 items-center gap-1.5">{labelContent}</span>
+        )}
+        {hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setUserExpanded(value => !value)}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
+            aria-label={expanded ? '收起工具详情' : '展开工具详情'}
+            aria-expanded={expanded}
+          >
+            <svg
+              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        ) : null}
       </div>
-      {expanded && <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>}
+      {expanded ? (
+        <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>
+      ) : null}
     </div>
   )
+}
+
+function PlanBlockItem({
+  block,
+  onOpenAssistantPlan,
+}: {
+  block: Extract<ProcessingBlock, { type: 'plan' }>
+  onOpenAssistantPlan?: (content: string) => void
+}) {
+  if (!block.content.trim()) return null
+
+  return <AssistantPlanCard content={block.content} onOpenPlan={onOpenAssistantPlan} />
+}
+
+function ProcessFileChangesBlockItem({
+  block,
+}: {
+  block: Extract<ProcessingBlock, { type: 'file_changes' }>
+}) {
+  const { t } = useTranslation('chat')
+  const summary = block.fileChanges
+  const [expanded, setExpanded] = useState(false)
+  const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+
+  if (!summary.files.length) return null
+
+  return (
+    <div className="min-w-0 overflow-hidden text-[13px]" data-testid="process-file-changes-block">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
+      >
+        <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t)}</span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
+          strokeWidth={2}
+        />
+      </button>
+      {expanded ? (
+        <div className="mt-2 min-w-0 space-y-1.5">
+          {summary.files.map(file => {
+            const previewLines = fileDiffPreviewLines(file, summary)
+            const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+            return (
+              <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
+                <button
+                  type="button"
+                  disabled={previewLines.length === 0}
+                  onClick={() =>
+                    setExpandedFilePath(current => (current === file.path ? null : file.path))
+                  }
+                  className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+                >
+                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t)}</span>
+                  {!file.binary ? (
+                    <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
+                      <span className="text-green-600">+{file.additions}</span>
+                      <span className="text-red-500">-{file.deletions}</span>
+                    </span>
+                  ) : null}
+                  {previewLines.length > 0 ? (
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
+                        fileExpanded ? '' : '-rotate-90'
+                      }`}
+                      strokeWidth={2}
+                    />
+                  ) : null}
+                </button>
+                {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function fileChangesSummaryLabel(
+  summary: TurnFileChangesSummary,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const changeType = uniformChangeType(summary.files)
+  const count = summary.file_count || summary.files.length
+  if (changeType === 'created') return t('file_changes.created_files', { count })
+  if (changeType === 'deleted') return t('file_changes.deleted_files', { count })
+  if (changeType === 'renamed') return t('file_changes.renamed_files', { count })
+  return t('file_changes.edited_files', { count })
+}
+
+function uniformChangeType(files: TurnFileChangeItem[]): TurnFileChangeItem['change_type'] | null {
+  const first = files[0]?.change_type
+  if (!first) return null
+  return files.every(file => file.change_type === first) ? first : null
+}
+
+function fileChangeRowLabel(
+  file: TurnFileChangeItem,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const filename = basename(file.path)
+  switch (file.change_type) {
+    case 'created':
+      return t('file_changes.created_file', { filename })
+    case 'deleted':
+      return t('file_changes.deleted_file', { filename })
+    case 'renamed':
+      return t('file_changes.renamed_file', { filename })
+    case 'modified':
+    default:
+      return t('file_changes.edited_file', { filename })
+  }
+}
+
+function InlineDiffPreview({
+  file,
+  lines,
+}: {
+  file: TurnFileChangeItem
+  lines: DiffPreviewLine[]
+}) {
+  const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
+  const truncated = lines.length > INLINE_DIFF_MAX_LINES
+
+  return (
+    <div
+      className="mt-2 max-h-[22rem] min-w-0 overflow-auto rounded-lg border border-border bg-surface font-mono text-[12px] leading-5"
+      data-testid="process-file-change-diff"
+    >
+      <div className="sticky top-0 z-10 flex h-8 items-center gap-2 border-b border-border bg-surface px-3 font-sans text-xs text-text-secondary">
+        <span className="min-w-0 flex-1 truncate">{basename(file.path)}</span>
+        <span className="shrink-0 text-green-600">+{file.additions}</span>
+        <span className="shrink-0 text-red-500">-{file.deletions}</span>
+      </div>
+      <div className="py-1">
+        {visibleLines.map(line => (
+          <div
+            key={line.key}
+            className={[
+              'grid min-w-max grid-cols-[3.25rem_max-content]',
+              line.type === 'addition'
+                ? 'border-l-4 border-green-500 bg-green-500/10'
+                : line.type === 'deletion'
+                  ? 'border-l-4 border-red-500 bg-red-500/10'
+                  : line.type === 'separator'
+                    ? 'border-l-4 border-transparent bg-muted/60'
+                    : 'border-l-4 border-transparent',
+            ].join(' ')}
+          >
+            <span
+              className={[
+                'select-none px-3 text-right',
+                line.type === 'addition'
+                  ? 'text-green-600'
+                  : line.type === 'deletion'
+                    ? 'text-red-500'
+                    : 'text-text-muted',
+              ].join(' ')}
+            >
+              {line.lineNumber ?? ''}
+            </span>
+            <span className="pr-4 whitespace-pre text-text-primary">{line.content || ' '}</span>
+          </div>
+        ))}
+        {truncated ? <div className="px-3 py-1 text-xs text-text-muted">...</div> : null}
+      </div>
+    </div>
+  )
+}
+
+interface DiffPreviewLine {
+  key: string
+  type: 'addition' | 'deletion' | 'context' | 'separator'
+  lineNumber?: number
+  content: string
+}
+
+function fileDiffPreviewLines(
+  file: TurnFileChangeItem,
+  summary: TurnFileChangesSummary
+): DiffPreviewLine[] {
+  if (file.binary || !summary.diff?.trim()) return []
+  const sectionLines = fileDiffLines(file, summary)
+  return parseDiffPreviewLines(sectionLines)
+}
+
+function fileDiffLines(file: TurnFileChangeItem, summary: TurnFileChangesSummary): string[] {
+  const diff = summary.diff?.trimEnd()
+  if (!diff) return []
+
+  const sections = parseUnifiedDiff(diff)
+  if (sections.length === 0) {
+    return summary.files.length === 1 ? diff.split('\n') : []
+  }
+
+  const section = sections.find(
+    item =>
+      pathsMatch(item.path, file.path) ||
+      (file.old_path ? pathsMatch(item.oldPath, file.old_path) : false)
+  )
+  return section?.lines ?? []
+}
+
+function pathsMatch(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false
+  return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`)
+}
+
+function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
+  const previewLines: DiffPreviewLine[] = []
+  let oldLine: number | undefined
+  let newLine: number | undefined
+  let seenHunk = false
+
+  lines.forEach((rawLine, index) => {
+    if (
+      rawLine.startsWith('diff --git') ||
+      rawLine.startsWith('---') ||
+      rawLine.startsWith('+++') ||
+      rawLine.startsWith('index ')
+    ) {
+      return
+    }
+
+    const hunk = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    if (hunk) {
+      if (seenHunk && previewLines.length > 0) {
+        previewLines.push({
+          key: `separator-${index}`,
+          type: 'separator',
+          content: '',
+        })
+      }
+      oldLine = Number(hunk[1])
+      newLine = Number(hunk[2])
+      seenHunk = true
+      return
+    }
+
+    if (!seenHunk && !rawLine.startsWith('+') && !rawLine.startsWith('-')) return
+
+    const prefix = rawLine[0]
+    if (prefix === '+') {
+      previewLines.push({
+        key: `addition-${index}`,
+        type: 'addition',
+        lineNumber: newLine,
+        content: rawLine.slice(1),
+      })
+      if (newLine !== undefined) newLine += 1
+      return
+    }
+    if (prefix === '-') {
+      previewLines.push({
+        key: `deletion-${index}`,
+        type: 'deletion',
+        lineNumber: oldLine,
+        content: rawLine.slice(1),
+      })
+      if (oldLine !== undefined) oldLine += 1
+      return
+    }
+
+    previewLines.push({
+      key: `context-${index}`,
+      type: 'context',
+      lineNumber: newLine ?? oldLine,
+      content: prefix === ' ' ? rawLine.slice(1) : rawLine,
+    })
+    if (oldLine !== undefined) oldLine += 1
+    if (newLine !== undefined) newLine += 1
+  })
+
+  return previewLines
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
 function ThinkingBlockItem({
@@ -185,14 +510,9 @@ function ProcessMarkdown({ content }: { content: string }) {
             if (isBlock) {
               const lang = match ? match[1] || '' : ''
               return (
-                <code className="mb-1.5 block max-w-full overflow-hidden rounded border border-border">
-                  <span className="block border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">
-                    {lang || 'text'}
-                  </span>
-                  <span className="block max-w-full overflow-x-auto px-4 py-2 font-mono text-xs leading-5 text-text-primary">
-                    {String(children).replace(/\n$/, '')}
-                  </span>
-                </code>
+                <MarkdownCodeBlock lang={lang} compact>
+                  {children}
+                </MarkdownCodeBlock>
               )
             }
             return (
@@ -201,9 +521,7 @@ function ProcessMarkdown({ content }: { content: string }) {
               </code>
             )
           },
-          pre: ({ children }) => (
-            <pre className="mb-1.5 max-w-full overflow-hidden">{children}</pre>
-          ),
+          pre: ({ children }) => <>{children}</>,
           blockquote: ({ children }) => (
             <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
               {children}
@@ -231,27 +549,43 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
-  if (name === 'bash' || name === 'execute_command' || name === 'run_terminal_command') {
-    const command = getInputField(block, 'command', 'cmd')
+  if (isCommandToolName(name)) {
+    const command = getInputField(block, 'command', 'cmd', 'commandLine')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
-  if (name === 'write' || name === 'create_file' || name === 'write_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `${prefix.create} ${fileName}` }
+  if (isFileCreateToolName(name)) {
+    return { icon: <FileIcon />, label: getFileToolLabel(prefix.create, block, '新增') }
   }
-  if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <EditIcon />, label: `${prefix.edit} ${fileName}` }
+  if (isFileEditToolName(name)) {
+    return { icon: <EditIcon />, label: getFileToolLabel(prefix.edit, block, '编辑') }
   }
-  if (name === 'read' || name === 'read_file') {
-    const filePath = getInputField(block, 'file_path', 'path')
-    const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
+  if (isFileReadToolName(name)) {
+    return { icon: <FileIcon />, label: getFileToolLabel(prefix.read, block, '读取') }
   }
-  return { icon: <ToolIcon />, label: `${prefix.generic} ${block.toolName}` }
+  if (isWebSearchToolName(name)) {
+    return {
+      icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
+      label: prefix.webSearch,
+    }
+  }
+  if (isGuidanceToolName(name)) {
+    return { icon: <ToolIcon />, label: prefix.guidance }
+  }
+  return { icon: <ToolIcon />, label: prefix.generic }
+}
+
+function getFileToolLabel(prefix: string, block: ToolBlock, action: string): string {
+  const filePaths = getFileInputPaths(block)
+  if (filePaths.length === 1) return `${prefix} ${basename(filePaths[0])}`
+  if (filePaths.length > 1) return `${prefix} ${filePaths.length} 个文件`
+  return fileToolFallbackLabel(block.status, action)
+}
+
+function fileToolFallbackLabel(status: ToolBlock['status'], action: string): string {
+  if (status === 'error') return `${action}文件失败`
+  if (status === 'done') return `已${action}文件`
+  return `正在${action}文件`
 }
 
 function getToolStatusPrefix(block: ToolBlock) {
@@ -261,6 +595,8 @@ function getToolStatusPrefix(block: ToolBlock) {
       create: '新增失败',
       edit: '编辑失败',
       read: '读取失败',
+      webSearch: '搜索网页失败',
+      guidance: '引导对话失败',
       generic: '执行失败',
     }
   }
@@ -271,7 +607,9 @@ function getToolStatusPrefix(block: ToolBlock) {
       create: '已新增',
       edit: '已编辑',
       read: '已读取',
-      generic: '已运行',
+      webSearch: '已搜索网页',
+      guidance: '已引导对话',
+      generic: '已执行',
     }
   }
 
@@ -280,7 +618,9 @@ function getToolStatusPrefix(block: ToolBlock) {
     create: '正在新增',
     edit: '正在编辑',
     read: '正在读取',
-    generic: '正在运行',
+    webSearch: '正在搜索网页',
+    guidance: '正在引导对话',
+    generic: '正在执行',
   }
 }
 
@@ -359,44 +699,58 @@ function ToolIcon() {
 function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
 
-  if (name === 'bash' || name === 'execute_command' || name === 'run_terminal_command') {
+  if (isCommandToolName(name)) {
     return <BashBlockDetail block={block} />
   }
-  if (name === 'write' || name === 'create_file' || name === 'write_file') {
+  if (isFileCreateToolName(name)) {
     return <FileWriteDetail block={block} />
   }
-  if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
+  if (isFileEditToolName(name)) {
     return <FileEditDetail block={block} />
   }
+  if (isWebSearchToolName(name)) {
+    return <WebSearchBlockDetail block={block} />
+  }
+  if (isGuidanceToolName(name)) {
+    return null
+  }
 
-  const input = block.toolInput
-  if (!input) return null
+  return null
+}
+
+function hasBlockDetail(block: ToolBlock): boolean {
+  const name = block.toolName.toLowerCase()
   return (
-    <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs text-text-secondary">
-      {JSON.stringify(input, null, 2)}
-    </pre>
+    isCommandToolName(name) ||
+    isFileCreateToolName(name) ||
+    isFileEditToolName(name) ||
+    isWebSearchToolName(name)
+  )
+}
+
+function WebSearchBlockDetail({ block }: { block: ToolBlock }) {
+  const items = getWebSearchActivityItems([block])
+
+  if (items.length === 0) return null
+
+  return (
+    <div data-testid="web-search-block-detail">
+      <WebSearchActivityRows items={items} />
+    </div>
   )
 }
 
 function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   const name = block.toolName.toLowerCase()
-  if (
-    name !== 'read' &&
-    name !== 'read_file' &&
-    name !== 'write' &&
-    name !== 'create_file' &&
-    name !== 'write_file' &&
-    name !== 'edit' &&
-    name !== 'str_replace_editor' &&
-    name !== 'edit_file'
-  ) {
+  if (!isFileReadToolName(name) && !isFileCreateToolName(name) && !isFileEditToolName(name)) {
     return undefined
   }
-  return getInputField(block, 'file_path', 'path')
+  return getFileInputPath(block)
 }
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {
-  const command = getInputField(block, 'command', 'cmd')
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')
+  const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
   const outputText =
     typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
@@ -452,6 +806,11 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
           {command}
         </div>
       )}
+      {cwd && (
+        <div className="mt-1 min-w-0 truncate font-mono text-xs text-text-muted" title={cwd}>
+          cwd: {cwd}
+        </div>
+      )}
       {outputText && (
         <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
           {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
@@ -481,11 +840,15 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileWriteDetail({ block }: { block: ToolBlock }) {
-  const filePath = getInputField(block, 'file_path', 'path')
-  const content = getInputField(block, 'content', 'file_text')
+  const filePaths = getFileInputPaths(block)
+  const content = getInputField(block, 'content', 'file_text', 'fileText')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
+      {filePaths.map(filePath => (
+        <p key={filePath} className="break-words text-xs text-text-muted">
+          {filePath}
+        </p>
+      ))}
       {content && (
         <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs leading-5 text-text-primary">
           {content.length > 500 ? content.substring(0, 500) + '...' : content}
@@ -496,31 +859,62 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
 }
 
 function FileEditDetail({ block }: { block: ToolBlock }) {
-  const filePath = getInputField(block, 'file_path', 'path')
-  const oldStr = getInputField(block, 'old_string', 'old_str')
-  const newStr = getInputField(block, 'new_string', 'new_str')
+  const filePaths = getFileInputPaths(block)
+  const previews = getEditPreviews(block)
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
-      {oldStr && (
-        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-          {oldStr.length > 300 ? oldStr.substring(0, 300) + '...' : oldStr}
-        </pre>
-      )}
-      {newStr && (
-        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
-          {newStr.length > 300 ? newStr.substring(0, 300) + '...' : newStr}
-        </pre>
-      )}
+      {filePaths.map(filePath => (
+        <p key={filePath} className="break-words text-xs text-text-muted">
+          {filePath}
+        </p>
+      ))}
+      {previews.map((preview, index) => (
+        <div
+          key={`${index}:${preview.oldText ?? ''}:${preview.newText ?? ''}`}
+          className="space-y-1"
+        >
+          {preview.oldText && (
+            <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+              {truncate(preview.oldText, 300)}
+            </pre>
+          )}
+          {preview.newText && (
+            <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
+              {truncate(preview.newText, 300)}
+            </pre>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
 
-function getInputField(block: ToolBlock, ...keys: string[]): string | undefined {
-  if (!block.toolInput) return undefined
+function getEditPreviews(block: ToolBlock): Array<{ oldText?: string; newText?: string }> {
+  const directOldText = getInputField(block, 'old_string', 'old_str', 'oldString')
+  const directNewText = getInputField(block, 'new_string', 'new_str', 'newString', 'new_source')
+  if (directOldText || directNewText) {
+    return [{ oldText: directOldText, newText: directNewText }]
+  }
+
+  const edits = block.toolInput?.edits
+  if (!Array.isArray(edits)) return []
+
+  return edits.flatMap(edit => {
+    if (!isRecord(edit)) return []
+    const oldText = getStringField(edit, 'old_string', 'old_str', 'oldString')
+    const newText = getStringField(edit, 'new_string', 'new_str', 'newString')
+    return oldText || newText ? [{ oldText, newText }] : []
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function getStringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
-    const val = block.toolInput[key]
-    if (typeof val === 'string') return val
+    const value = record[key]
+    if (typeof value === 'string') return value
   }
   return undefined
 }

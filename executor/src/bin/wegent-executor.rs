@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+#[tokio::main]
+async fn main() {
+    if let Some(result) = wegent_executor::wecode::command::run_from_args().await {
+        if let Err(error) = result {
+            eprintln!("Warning: wecode command failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Err(error) = wegent_executor::app::run_from_env().await {
+        wegent_executor::logging::write_executor_error_line(&error.to_string());
+        std::process::exit(error.exit_code());
+    }
+}

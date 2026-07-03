@@ -8,7 +8,6 @@ const httpMocks = vi.hoisted(() => ({
   shouldUseTauriFetch: vi.fn(),
 }))
 
-
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({
     appBasePath: '',

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -131,6 +132,87 @@ class TestErpEntityResolver:
                 db, 1, "org_department", ["d1", "d2", "d3"]
             )
             assert sorted(result) == ["d1", "d3"]
+
+    def test_resolve_employee_id_uses_existing_profile_before_erp(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        profile = SimpleNamespace(employee_id="230473")
+        db.query.return_value.filter.return_value.first.return_value = profile
+
+        with patch(
+            "wecode.service.erp_entity_resolver.erp_client.search_employee"
+        ) as mock_search:
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result == "230473"
+        mock_search.assert_not_called()
+
+    def test_resolve_employee_id_lazy_syncs_by_email_when_profile_missing(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+        profile_query = MagicMock()
+        user_query = MagicMock()
+        user = SimpleNamespace(email="user@example.com")
+        erp_employee = SimpleNamespace(
+            ssn="230473",
+            department="Engineering",
+            name="Test User",
+            email="user@example.com",
+        )
+        independent_db = MagicMock()
+        lock = MagicMock()
+        lock.__enter__.return_value = True
+        lock.__exit__.return_value = None
+
+        profile_query.filter.return_value.first.side_effect = [None, None]
+        user_query.filter.return_value.first.return_value = user
+        db.query.side_effect = [profile_query, user_query, profile_query]
+
+        with (
+            patch(
+                "wecode.service.erp_entity_resolver.distributed_lock.acquire_context",
+                return_value=lock,
+            ),
+            patch(
+                "wecode.service.erp_entity_resolver.erp_client.search_employee",
+                return_value=erp_employee,
+            ) as mock_search,
+            patch("app.db.session.SessionLocal", return_value=independent_db),
+            patch(
+                "wecode.service.erp_entity_resolver.ErpUserService.upsert_profile"
+            ) as mock_upsert,
+        ):
+            result = resolver.resolve_employee_id(db, 1)
+
+        assert result == "230473"
+        mock_search.assert_called_once_with("user@example.com")
+        mock_upsert.assert_called_once_with(
+            db=independent_db,
+            user_id=1,
+            employee_id="230473",
+            department_name="Engineering",
+            erp_name="Test User",
+            email="user@example.com",
+        )
+        independent_db.close.assert_called_once()
+
+    def test_resolve_employee_id_for_user_manages_session(self):
+        resolver = ErpEntityResolver()
+        db = MagicMock()
+
+        with (
+            patch("app.db.session.SessionLocal", return_value=db),
+            patch.object(
+                resolver,
+                "resolve_employee_id",
+                return_value="230473",
+            ) as mock_resolve,
+        ):
+            result = resolver.resolve_employee_id_for_user(1)
+
+        assert result == "230473"
+        mock_resolve.assert_called_once_with(db, 1, None)
+        db.close.assert_called_once()
 
     def test_redis_lazy_load(self):
         """Constructor must not eagerly call get_redis_client.

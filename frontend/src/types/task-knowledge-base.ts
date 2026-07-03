@@ -6,6 +6,8 @@
  * Types for task knowledge base binding feature
  */
 
+import type { ExternalKnowledgeRef } from './context'
+
 export interface KnowledgeBaseRef {
   name: string
   namespace: string
@@ -39,4 +41,15 @@ export interface UnbindKnowledgeBaseResponse {
   message: string
   kb_name: string
   kb_namespace: string
+}
+
+export interface BoundExternalKnowledgeRefListResponse {
+  items: ExternalKnowledgeRef[]
+  total: number
+}
+
+export interface RemoveExternalKnowledgeRefResponse {
+  message: string
+  items: ExternalKnowledgeRef[]
+  total: number
 }

@@ -10,6 +10,7 @@
  */
 
 import i18next from 'i18next'
+import { loadWecodeKnowledgeExtensions } from '@wecode/extensions/knowledge'
 
 // Supported languages (must match main setup.ts)
 const supportedLanguages = ['en', 'zh-CN']
@@ -34,6 +35,8 @@ async function loadWecodeResources() {
       }
     }
   }
+
+  await loadWecodeKnowledgeExtensions()
 }
 
 // Auto-load wecode translations when i18next is ready

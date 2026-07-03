@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
@@ -111,9 +112,13 @@ class RerankConfig(BaseModel):
 class ModelCapabilities(BaseModel):
     """Declared multimodal capabilities for LLM-style models."""
 
+    supportsImage: Optional[bool] = Field(
+        None,
+        description="Whether the model supports image understanding in chat attachments.",
+    )
     supportsVideo: Optional[bool] = Field(
         None,
-        description="Whether the model supports video input in chat attachments.",
+        description="Whether the model supports video understanding in chat attachments.",
     )
 
 
@@ -150,6 +155,10 @@ class SkillRefMeta(BaseModel):
     skill_id: int = Field(..., description="Unique skill ID (Kind.id)")
     namespace: str = Field("default", description="Skill namespace")
     is_public: bool = Field(False, description="Whether this is a public skill")
+    content_hash: Optional[str] = Field(
+        None,
+        description="SHA256 content hash of the skill ZIP package, prefixed with sha256:",
+    )
 
 
 class KnowledgeBaseDefaultRef(BaseModel):
@@ -272,7 +281,7 @@ class ModelSpec(BaseModel):
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared chat capabilities for LLM-style models "
-        "(e.g. video attachment understanding).",
+        "(e.g. image or video attachment understanding).",
     )
     videoConfig: Optional[VideoGenerationConfig] = Field(
         None, description="Video generation configuration (when modelType='video')"
@@ -620,6 +629,7 @@ class TaskSpec(BaseModel):
     knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
         None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )
+    externalKnowledgeRefs: List[ExternalKnowledgeRef] = Field(default_factory=list)
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None
     fork: Optional[TaskForkSpec] = None

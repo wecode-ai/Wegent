@@ -411,6 +411,10 @@ class RuntimeSendRequest(BaseModel):
     message: str = Field(..., min_length=1)
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     source: Optional[RuntimeMessageSource] = None
+    request_user_input_response: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="requestUserInputResponse",
+    )
 
 
 class RuntimeSendResponse(BaseModel):

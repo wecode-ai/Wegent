@@ -45,6 +45,17 @@
     "quoted_text": "Quoted text",
     "remove_quote": "Remove quote"
   },
+  "sourceReferences": {
+    "title": "References",
+    "openSource": "Open source",
+    "unavailableSource": "Unable to open source",
+    "footerCited": "Cited {{documents}} documents from {{sources}} knowledge sources",
+    "footerNoHit": "{{count}} knowledge sources had no hits",
+    "footerSkipped": "Skipped {{count}} unavailable sources",
+    "footerSearchedNoReferences": "Searched {{searched}} knowledge sources, but no citable content was returned",
+    "footerSearched": "Searched {{searched}} knowledge sources",
+    "footerSearchedAndIgnored": "Searched {{searched}} knowledge sources · skipped {{ignored}} unavailable sources"
+  },
   "guidance": {
     "send": "Send guidance",
     "applied": "Guidance applied",
@@ -410,6 +421,17 @@
     "stale_update_10m": "Task is still running, but no stream updates for over 10 minutes. Consider stopping and retrying.",
     "started_over_20m": "Task has been running for over 20 minutes. Please check execution status and consider stopping and retrying."
   },
+  "knowledgeBinding": {
+    "title": "Knowledge Sources",
+    "count": "{{count}} bound",
+    "externalKnowledge": "External knowledge source",
+    "empty": "No knowledge sources bound",
+    "loadFailed": "Failed to load knowledge sources",
+    "externalLoadFailed": "External knowledge sources could not be loaded. Internal knowledge bases remain available.",
+    "remove": "Remove {{name}}",
+    "removeSuccess": "Removed \"{{name}}\"",
+    "removeFailed": "Failed to remove knowledge source"
+  },
   "groupChat": {
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",
@@ -725,6 +747,9 @@
     "referencedDocsLabel": "Referenced DingTalk Documents:",
     "myDocsTab": "My Documents",
     "wikispaceTab": "Knowledge Base",
+    "allDocs": "All Documents",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
     "wikispaceSync": "Sync",
     "wikispaceSyncing": "Syncing...",
     "wikispaceEmpty": "No knowledge base content",
@@ -735,23 +760,27 @@
   "externalWebContent": {
     "trigger": "External content",
     "title": "Add external content",
-    "description": "Currently supports crawling video content from Douyin, Bilibili, Xiaohongshu, and similar sites.",
-    "placeholder": "https://www.douyin.com/video/...",
+    "description": "Supports crawling videos, image posts, and first-screen comments from Douyin, Bilibili, Xiaohongshu, and similar sites.",
+    "placeholder": "https://www.xiaohongshu.com/explore/...",
     "crawl": "Crawl",
     "crawlingHint": "Crawling may take a few minutes. Keep this page open until it finishes.",
-    "added": "External video added",
+    "added": "External content added",
+    "attachmentCount": "{{count}} items",
+    "textCount": "{{count}} page contents",
     "videoCount": "{{count}} videos",
+    "imageCount": "{{count}} images",
+    "commentCount": "{{count}} first-screen comments",
     "videoMetadataOnlyTitle": "The current model does not support visual video understanding",
     "videoMetadataOnlyDescription": "Switch to a video-understanding model for visual analysis.",
     "errors": {
       "urlRequired": "Enter a web page URL",
       "duplicate": "This URL has already been added",
       "invalidUrl": "Enter a valid HTTP(S) web page URL",
-      "noVideo": "No addable video was found. Try again later.",
-      "tooManyVideos": "This page contains more videos than allowed",
-      "videoDownloadFailed": "Failed to download the external video. Try again later.",
-      "videoUploadFailed": "Failed to upload the external video to the video platform. Try again later.",
-      "videoTooLarge": "The external video exceeds the size limit.",
+      "noSupportedMedia": "No addable external content was found. Try again later.",
+      "tooManyMedia": "This page contains more media items than allowed",
+      "mediaDownloadFailed": "Failed to download the external media. Try again later.",
+      "mediaImportFailed": "Failed to import the external media. Try again later.",
+      "mediaTooLarge": "The external media exceeds the size limit.",
       "serviceUnavailable": "External content crawling is temporarily unavailable. Try again later.",
       "crawlFailed": "Failed to crawl external content"
     }

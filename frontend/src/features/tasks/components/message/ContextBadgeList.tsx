@@ -5,7 +5,14 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2, Video } from 'lucide-react'
+import {
+  Database,
+  FileText,
+  Image as ImageIcon,
+  MessageSquareText,
+  Table2,
+  Video,
+} from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -60,6 +67,7 @@ interface ContextBadgeListProps {
  * - attachment: Uses AttachmentPreview component (reuse existing logic)
  * - knowledge_base: Displays KB name with document count
  * - table: Displays table name with clickable link to view/reselect
+ * - external_knowledge: Displays external KB name with provider metadata
  */
 export function ContextBadgeList({
   contexts,
@@ -97,13 +105,20 @@ function ContextBadgeItem({
   shareToken?: string
 }) {
   switch (context.context_type) {
+    case 'external_web_content':
+      return <ExternalWebContentBadge context={context} />
     case 'attachment':
-      if (context.source_url && context.video_count != null) {
+      if (
+        context.source_url &&
+        (context.external_media_type || context.text_count != null || context.video_count != null)
+      ) {
         return <ExternalWebContentBadge context={context} />
       }
       return <AttachmentContextBadge context={context} shareToken={shareToken} />
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
+    case 'external_knowledge':
+      return <ExternalKnowledgeBadge context={context} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -191,6 +206,29 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   )
 }
 
+function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('knowledge')
+  const targetLabel =
+    context.external_target_type === 'document'
+      ? t('picker.target.document')
+      : context.external_target_type === 'folder'
+        ? t('picker.target.folder')
+        : t('picker.target.knowledgeBase')
+  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <div>
+      <ContextPreviewBase
+        icon={<Database className="text-primary" />}
+        title={context.name}
+        subtitle={subtitle}
+      />
+    </div>
+  )
+}
+
 /**
  * Table badge - displays table name and source URL
  *
@@ -252,12 +290,38 @@ function TableBadge({
 function ExternalWebContentBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('chat')
   const sourceLabel = context.site || parseHostname(context.source_url)
-  const subtitle = [
-    sourceLabel,
-    t('chat:externalWebContent.videoCount', { count: context.video_count ?? 0 }),
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  const mediaType = context.external_media_type || 'video'
+  const hasText = (context.text_count ?? 0) > 0
+  const hasVideo = (context.video_count ?? 0) > 0
+  const hasImage = (context.image_count ?? 0) > 0
+  const hasComments = (context.fetched_comment_count ?? context.comment_count ?? 0) > 0
+  const hasOnlyPageText =
+    !hasVideo && !hasImage && !hasComments && (hasText || mediaType === 'mixed')
+  const mediaLabels = [
+    hasText ? t('chat:externalWebContent.textCount', { count: context.text_count ?? 1 }) : null,
+    hasVideo ? t('chat:externalWebContent.videoCount', { count: context.video_count ?? 1 }) : null,
+    hasImage ? t('chat:externalWebContent.imageCount', { count: context.image_count ?? 1 }) : null,
+    hasComments
+      ? t('chat:externalWebContent.commentCount', {
+          count: context.fetched_comment_count ?? context.comment_count ?? 0,
+        })
+      : null,
+  ].filter(Boolean)
+  const mediaLabel =
+    mediaLabels.length > 0
+      ? mediaLabels.join(' · ')
+      : t('chat:externalWebContent.textCount', { count: 1 })
+  const icon =
+    mediaType === 'text' || hasOnlyPageText ? (
+      <FileText />
+    ) : mediaType === 'image' || (!hasVideo && hasImage) ? (
+      <ImageIcon />
+    ) : mediaType === 'comments' || (!hasVideo && !hasImage && hasComments) ? (
+      <MessageSquareText />
+    ) : (
+      <Video />
+    )
+  const subtitle = [sourceLabel, mediaLabel].filter(Boolean).join(' · ')
 
   const handleClick = () => {
     if (context.source_url) {
@@ -273,7 +337,7 @@ function ExternalWebContentBadge({ context }: { context: SubtaskContextBrief }) 
       title={context.source_url || undefined}
     >
       <ContextPreviewBase
-        icon={<Video />}
+        icon={icon}
         title={context.name}
         subtitle={subtitle}
         className={

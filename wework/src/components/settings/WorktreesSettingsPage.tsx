@@ -38,10 +38,7 @@ function statusDotClass(status: string) {
   return 'bg-text-muted'
 }
 
-function getDeviceStatusLabel(
-  status: string,
-  t: (key: string, fallback: string) => string,
-) {
+function getDeviceStatusLabel(status: string, t: (key: string, fallback: string) => string) {
   if (status === 'online') {
     return t('workbench.project_device_status_online', '在线')
   }
@@ -51,9 +48,7 @@ function getDeviceStatusLabel(
   return t('workbench.project_device_status_offline', '离线')
 }
 
-function groupWorktreesByProject(
-  data: ProjectWorktreeListResponse | null,
-): WorktreeProjectGroup[] {
+function groupWorktreesByProject(data: ProjectWorktreeListResponse | null): WorktreeProjectGroup[] {
   if (!data) return []
 
   const groups = new Map<string, WorktreeProjectGroup>()
@@ -78,7 +73,7 @@ function groupWorktreesByProject(
   })
 
   return [...groups.values()].sort((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
+    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
   )
 }
 
@@ -145,9 +140,7 @@ function WorktreeRow({
       <span className="shrink-0 text-sm font-semibold text-text-primary">
         {t('workbench.worktrees_item_title', '工作树')}
       </span>
-      <p className="min-w-0 flex-1 truncate font-mono text-sm text-text-secondary">
-        {item.path}
-      </p>
+      <p className="min-w-0 flex-1 truncate font-mono text-sm text-text-secondary">{item.path}</p>
       <WorktreeTaskEntry item={item} />
       {item.project && (
         <button
@@ -192,10 +185,7 @@ function WorktreeProjectGroupSection({
           className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted"
         >
           {group.sourcePath && (
-            <span
-              className="min-w-0 max-w-full truncate font-mono"
-              title={group.sourcePath}
-            >
+            <span className="min-w-0 max-w-full truncate font-mono" title={group.sourcePath}>
               {group.sourcePath}
             </span>
           )}
@@ -211,9 +201,7 @@ function WorktreeProjectGroupSection({
                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(device.device_status)}`}
                 aria-hidden="true"
               />
-              <span className="shrink-0">
-                {getDeviceStatusLabel(device.device_status, t)}
-              </span>
+              <span className="shrink-0">{getDeviceStatusLabel(device.device_status, t)}</span>
             </span>
           ))}
         </div>
@@ -269,12 +257,10 @@ function DeleteWorktreeDialog({
             <p className="mt-1.5 text-xs leading-5 text-text-secondary">
               {t(
                 'workbench.worktrees_delete_desc',
-                '将删除这个工作树目录，并一并删除使用该工作树的任务。',
+                '将删除这个工作树目录，并一并删除使用该工作树的任务。'
               )}
             </p>
-            <p className="mt-2 break-all font-mono text-xs text-text-muted">
-              {item.path}
-            </p>
+            <p className="mt-2 break-all font-mono text-xs text-text-muted">{item.path}</p>
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -398,10 +384,7 @@ export function WorktreesSettingsPage() {
               {t('workbench.worktrees_empty', '尚无工作树')}
             </h2>
             <div className="mt-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm text-text-secondary">
-              {t(
-                'workbench.worktrees_empty_description',
-                '创建的工作树将显示在此处。',
-              )}
+              {t('workbench.worktrees_empty_description', '创建的工作树将显示在此处。')}
             </div>
           </div>
         )}

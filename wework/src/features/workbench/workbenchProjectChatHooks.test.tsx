@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
+import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import type { Attachment, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -44,6 +45,38 @@ describe('workbench project chat hooks', () => {
     )
   })
 
+  test('reloads models after local model settings change', async () => {
+    const codexModel: UnifiedModel = {
+      name: 'codex-runtime',
+      type: 'runtime',
+      displayName: '本机 Codex',
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    const localModel: UnifiedModel = {
+      name: 'local-model:ollama',
+      type: 'runtime',
+      displayName: 'Ollama',
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [codexModel] })
+        .mockResolvedValueOnce({ data: [codexModel, localModel] }),
+    }
+
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([codexModel]))
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
+  })
+
   test('marks incompatible existing task model choices as disabled', async () => {
     const currentClaudeModel: UnifiedModel = {
       name: 'wecode-claude-sonnet-4-5',
@@ -73,17 +106,15 @@ describe('workbench project chat hooks', () => {
       type: 'user',
     }
     const api = {
-      listModels: vi
-        .fn()
-        .mockResolvedValue({
-          data: [
-            currentClaudeModel,
-            nextClaudeCompatibleModel,
-            claudeCompatibleKimi,
-            gptModel,
-            unknownModel,
-          ],
-        }),
+      listModels: vi.fn().mockResolvedValue({
+        data: [
+          currentClaudeModel,
+          nextClaudeCompatibleModel,
+          claudeCompatibleKimi,
+          gptModel,
+          unknownModel,
+        ],
+      }),
     }
 
     const { result } = renderHook(() =>
@@ -145,11 +176,9 @@ describe('workbench project chat hooks', () => {
       displayName: 'DeepSeek Without env.model',
     }
     const api = {
-      listModels: vi
-        .fn()
-        .mockResolvedValue({
-          data: [currentGptModel, nextGptModel, claudeCompatibleKimi, unknownDeepseek],
-        }),
+      listModels: vi.fn().mockResolvedValue({
+        data: [currentGptModel, nextGptModel, claudeCompatibleKimi, unknownDeepseek],
+      }),
     }
 
     const { result } = renderHook(() =>
@@ -260,7 +289,7 @@ describe('workbench project chat hooks', () => {
           selectionConfig,
           selectionReady,
         }),
-      { initialProps: { selectionReady: false } },
+      { initialProps: { selectionReady: false } }
     )
 
     await waitFor(() => expect(result.current.models).toEqual([claudeModel, gptModel]))
@@ -284,6 +313,52 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([claudeModel]))
     expect(result.current.selectedModel).toBeNull()
     expect(result.current.selectedModelOptions).toEqual({})
+  })
+
+  test('persists options when using the default model selection', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 10,
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [gptModel] }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: '',
+          modelType: null,
+          options: { collaborationMode: 'plan' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([gptModel]))
+    await waitFor(() =>
+      expect(result.current.selectedModelOptions).toEqual({ collaborationMode: 'plan' })
+    )
+    expect(result.current.selectedModel).toBeNull()
+
+    act(() => result.current.setSelectedModelOption('collaborationMode', 'default'))
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      modelName: '',
+      modelType: null,
+      options: { collaborationMode: 'default' },
+    })
   })
 
   test('loads skills and ignores skill changes when locked', async () => {

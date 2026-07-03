@@ -25,9 +25,11 @@ class ContextType(str, Enum):
     """Context type enumeration."""
 
     ATTACHMENT = "attachment"
+    EXTERNAL_WEB_CONTENT = "external_web_content"
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"
+    EXTERNAL_KNOWLEDGE = "external_knowledge"
 
 
 class ContextStatus(str, Enum):
@@ -104,11 +106,27 @@ class SubtaskContextBrief(BaseModel):
     # Knowledge base fields (from type_data)
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
+    document_ids: Optional[list[int]] = None
+    scope_restricted: Optional[bool] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
     document_id: Optional[int] = None
     source_config: Optional[Dict[str, Any]] = None
+    # External knowledge fields (from type_data)
+    external_provider: Optional[str] = None
+    external_mode: Optional[str] = None
+    external_id: Optional[str] = None
+    external_scope: Optional[str] = None
+    external_target_type: Optional[str] = None
+    external_node_id: Optional[str] = None
+    external_document_id: Optional[str] = None
+    external_parent_id: Optional[str] = None
     # External web content fields
+    external_media_type: Optional[str] = None
+    text_count: Optional[int] = None
     video_count: Optional[int] = None
+    image_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    fetched_comment_count: Optional[int] = None
     site: Optional[str] = None
     source_url: Optional[str] = None
     cover_url: Optional[str] = None
@@ -157,7 +175,12 @@ class AttachmentResponse(BaseModel):
     error_code: Optional[str] = None  # Error code for i18n mapping
     truncation_info: Optional[TruncationInfo] = None
     created_at: Optional[datetime] = None
+    external_media_type: Optional[str] = None
+    text_count: Optional[int] = None
     video_count: Optional[int] = None
+    image_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    fetched_comment_count: Optional[int] = None
     site: Optional[str] = None
     source_url: Optional[str] = None
     cover_url: Optional[str] = None
@@ -188,7 +211,12 @@ class AttachmentResponse(BaseModel):
             error_message=context.error_message,
             truncation_info=truncation_info,
             created_at=context.created_at,
+            external_media_type=display_fields.get("external_media_type"),
+            text_count=display_fields.get("text_count"),
             video_count=display_fields.get("video_count"),
+            image_count=display_fields.get("image_count"),
+            comment_count=display_fields.get("comment_count"),
+            fetched_comment_count=display_fields.get("fetched_comment_count"),
             site=display_fields.get("site"),
             source_url=display_fields.get("source_url"),
             cover_url=display_fields.get("cover_url"),
@@ -225,7 +253,12 @@ class AttachmentDetailResponse(AttachmentResponse):
             truncation_info=truncation_info,
             created_at=context.created_at,
             subtask_id=context.subtask_id if context.subtask_id > 0 else None,
+            external_media_type=display_fields.get("external_media_type"),
+            text_count=display_fields.get("text_count"),
             video_count=display_fields.get("video_count"),
+            image_count=display_fields.get("image_count"),
+            comment_count=display_fields.get("comment_count"),
+            fetched_comment_count=display_fields.get("fetched_comment_count"),
             site=display_fields.get("site"),
             source_url=display_fields.get("source_url"),
             cover_url=display_fields.get("cover_url"),

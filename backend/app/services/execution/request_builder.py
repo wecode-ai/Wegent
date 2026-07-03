@@ -36,7 +36,11 @@ from app.services.skill_binding_service import (
     SkillBindingContext,
     skill_binding_service,
 )
-from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
+from app.services.skill_resolution import (
+    build_skill_ref_meta,
+    find_skill_by_name,
+    find_skill_by_ref,
+)
 from app.services.user_mcp_service import user_mcp_service
 from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
@@ -386,7 +390,7 @@ class TaskRequestBuilder:
         fork_runtime = self._extract_task_fork_runtime(task)
         inherited_sessions = self._extract_inherited_sessions(fork_runtime)
 
-        return ExecutionRequest(
+        execution_request = ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
             team_id=team.id,
@@ -449,8 +453,22 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
-            executor_name=subtask.executor_name,
+            executor_name=getattr(subtask, "executor_name", None),
+            executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        logger.info(
+            "[TaskRequestBuilder] Execution request attachment diagnostics: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
+            "attachment_ids=%s, has_auth_token=%s, backend_url_present=%s",
+            execution_request.task_id,
+            execution_request.subtask_id,
+            bot_config[0].get("shell_type", "") if bot_config else "",
+            len(execution_request.attachments),
+            [attachment.get("id") for attachment in execution_request.attachments],
+            bool(execution_request.auth_token),
+            bool(execution_request.backend_url),
+        )
+        return execution_request
 
     @staticmethod
     def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:
@@ -669,7 +687,7 @@ class TaskRequestBuilder:
     ) -> str:
         """Build a concise execution environment label for web guidance."""
         if has_device_id:
-            if device_type == "local":
+            if device_type in {"local", "app"}:
                 return "local device selected in Wegent"
             if device_type == "cloud":
                 return "cloud device or remote sandbox selected in Wegent"
@@ -1280,13 +1298,13 @@ class TaskRequestBuilder:
                     # Build skill_refs entry (prefer Ghost stored refs for precision)
                     ghost_skill_ref = ghost_skill_refs.get(skill_name)
                     if ghost_skill_ref:
-                        skill_refs[skill_name] = ghost_skill_ref.model_dump()
+                        ref_meta = ghost_skill_ref.model_dump()
+                        ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                            build_skill_ref_meta(skill).get("content_hash")
+                        )
+                        skill_refs[skill_name] = ref_meta
                     else:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(skill, "id", None),
-                            "namespace": getattr(skill, "namespace", "default"),
-                            "is_public": getattr(skill, "user_id", 1) == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     # Add to preload and user_selected if configured in Ghost
                     # All preloaded skills are treated as user-selected so the model
@@ -1376,11 +1394,7 @@ class TaskRequestBuilder:
                     user_selected_skills.append(skill_name)
 
                     # Build skill_refs entry for user-selected skill
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
@@ -1429,11 +1443,7 @@ class TaskRequestBuilder:
                     skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
                     logger.info(
                         "[_get_bot_skills] Added available skill '%s' (not preloaded)",
                         skill_name,
@@ -2247,11 +2257,7 @@ Response template:
 
                 resolved_skills.append(self._build_skill_data(skill, user=user))
                 existing_skill_names.add(skill_name)
-                skill_refs[skill_name] = {
-                    "skill_id": getattr(skill, "id", None),
-                    "namespace": getattr(skill, "namespace", "default"),
-                    "is_public": getattr(skill, "user_id", 1) == 0,
-                }
+                skill_refs[skill_name] = build_skill_ref_meta(skill)
 
     @staticmethod
     def _extract_skill_mcp_to_list(skill_configs: list) -> list:

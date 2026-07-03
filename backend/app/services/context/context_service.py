@@ -340,6 +340,8 @@ class ContextService:
         filename: str,
         binary_data: bytes,
         subtask_id: int = 0,
+        extra_type_data: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -350,6 +352,8 @@ class ContextService:
             filename: Original filename
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
+            extra_type_data: Additional metadata to merge into type_data
+            commit: Whether to commit and refresh before returning
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -384,6 +388,11 @@ class ContextService:
             **context.type_data,
             "storage_key": storage_key,
         }
+        if extra_type_data:
+            context.type_data = {
+                **context.type_data,
+                **extra_type_data,
+            }
 
         try:
             self._store_attachment_binary(
@@ -411,11 +420,15 @@ class ContextService:
                 extension=extension,
             )
         except DocumentParseError as e:
-            db.commit()
+            if commit:
+                db.commit()
             raise
 
-        db.commit()
-        db.refresh(context)
+        if commit:
+            db.commit()
+            db.refresh(context)
+        else:
+            db.flush()
 
         logger.info(
             f"Attachment uploaded successfully: id={context.id}, "
@@ -1065,7 +1078,9 @@ class ContextService:
         # marker already flags partiality and points to the file. Fall back to a
         # prefix note only when parsing truncated the stored text but the inject
         # cap did not re-truncate (rare; e.g. an unusually small cap).
-        note = build_truncation_note(context.is_truncated and not inj_truncated)
+        note = build_truncation_note(
+            bool(getattr(context, "is_truncated", False)) and not inj_truncated
+        )
         return f"{header}\n{note}{inject_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================

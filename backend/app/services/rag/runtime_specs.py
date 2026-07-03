@@ -10,6 +10,7 @@ from app.services.knowledge.splitter_config import (
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteKnowledgeBaseRetrievalOverride,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -78,7 +79,7 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     max_results: int = 5
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto"
     direct_injection_budget: Optional[DirectInjectionBudget] = None
-    document_ids: Optional[list[int]] = None
+    scope: Optional[RetrievalScope] = None
     metadata_condition: Optional[dict] = None
     restricted_mode: bool = False
     user_id: Optional[int] = None

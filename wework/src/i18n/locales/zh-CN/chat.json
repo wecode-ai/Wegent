@@ -1,4 +1,11 @@
 {
+  "message_navigation": {
+    "label": "历史发言导航",
+    "jump_to_message": "跳转到第 {{index}} 条发言",
+    "loading_target": "正在加载目标位置...",
+    "gap_missing": "部分记录未加载",
+    "loading_gap": "正在加载缺失记录..."
+  },
   "thinking": {
     "running": "正在思考",
     "updating": "正在整理思路...",
@@ -11,10 +18,51 @@
   "assistant_status": {
     "stopped_after": "你在 {{duration}} 后停止了"
   },
+  "request_user_input": {
+    "asked_count": "已询问 {{count}} 个问题",
+    "ignore": "取消",
+    "submit": "提交",
+    "custom_placeholder": "输入你的回答"
+  },
+  "plan_card": {
+    "title": "计划",
+    "download": "下载计划",
+    "copy": "复制计划",
+    "copy_success": "已复制",
+    "expand": "全屏查看计划",
+    "close": "关闭计划"
+  },
+  "codex_context": {
+    "compacting": "正在自动压缩上下文",
+    "compacted": "上下文已自动压缩"
+  },
+  "codex_references": {
+    "title": "引用文件",
+    "open_label": "打开 {{path}}",
+    "open_with": "打开方式",
+    "preview_label": "打开预览",
+    "show_more": "显示另外 {{count}} 个",
+    "show_less": "收起文件",
+    "kind": "文档",
+    "kind_with_extension": "文档 · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} 条记忆引用",
+    "line_label": "{{range}} 行",
+    "open_label": "打开 {{path}}"
+  },
   "file_changes": {
     "edited_files": "已编辑 {{count}} 个文件",
+    "created_files": "已创建 {{count}} 个文件",
+    "deleted_files": "已删除 {{count}} 个文件",
+    "renamed_files": "已重命名 {{count}} 个文件",
+    "edited_file": "已编辑 {{filename}}",
+    "created_file": "已创建 {{filename}}",
+    "deleted_file": "已删除 {{filename}}",
+    "renamed_file": "已重命名 {{filename}}",
+    "view_changes": "查看更改",
     "show_more": "再显示 {{count}} 个文件",
-    "show_less": "收起",
+    "show_less": "收起文件",
     "review": "审核",
     "review_title": "本轮文件变更",
     "preview_file_label": "预览 {{path}} 的文件变更",
@@ -111,7 +159,7 @@
       },
       "container_error": {
         "title": "执行环境异常",
-        "description": "容器或本地执行器暂时不可用，请稍后重试。"
+        "description": "容器或本地任务服务暂时不可用，请稍后重试。"
       },
       "content_filter": {
         "title": "内容触发安全审核，请修改敏感内容后重试",

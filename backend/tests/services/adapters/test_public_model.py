@@ -32,7 +32,7 @@ def test_public_model_adapter_forwards_model_capabilities():
                         "model_id": "qwen3.6-plus",
                     }
                 },
-                "modelCapabilities": {"supportsVideo": True},
+                "modelCapabilities": {"supportsImage": True, "supportsVideo": True},
             },
             "status": {"state": "Available"},
         },
@@ -40,7 +40,10 @@ def test_public_model_adapter_forwards_model_capabilities():
 
     result = ModelAdapter.to_model_dict(model)
 
-    assert result["config"]["modelCapabilities"] == {"supportsVideo": True}
+    assert result["config"]["modelCapabilities"] == {
+        "supportsImage": True,
+        "supportsVideo": True,
+    }
     assert result["config"]["env"] == {}
     assert result["provider"] == "openai"
     assert result["model_id"] == "qwen3.6-plus"

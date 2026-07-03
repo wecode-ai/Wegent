@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
-import { BranchSelector } from '@/components/common/BranchSelector'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice, isOnlineDevice, sortStandaloneDevices } from '@/lib/device-selection'
@@ -23,7 +22,7 @@ import {
   isSelectableProjectWorkspace,
 } from '@/lib/project-workspace-selection'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -109,24 +108,12 @@ function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
   return project.config?.execution?.deviceId ?? project.config?.device_id
 }
 
-function runtimeProjectToProject(
-  projectWork: RuntimeWorkListResponse['projects'][number]
-): ProjectWithTasks {
-  return {
-    id: runtimeProjectUiId(projectWork.project),
-    name: projectWork.project.name,
-    description: projectWork.project.description,
-    color: projectWork.project.color,
-    tasks: [],
-  }
-}
-
 function isLocalStandaloneDevice(device: DeviceInfo): boolean {
   return device.device_type !== 'cloud' && device.device_type !== 'remote'
 }
 
 function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
-  return device?.device_type === 'local'
+  return Boolean(device && isLocalStandaloneDevice(device))
 }
 
 function extractNetworkHost(value?: string | null): string | null {
@@ -177,6 +164,28 @@ function getProjectMenuDeviceLabel(
   )
 }
 
+function resolveProjectExecutionUi({
+  project,
+  executionMode,
+  executionModeLocked,
+  selectedWorkspaceIsRemote,
+}: {
+  project: ProjectWithTasks | null | undefined
+  executionMode: ProjectExecutionMode
+  executionModeLocked: boolean
+  selectedWorkspaceIsRemote: boolean
+}) {
+  const supportsWorktree = Boolean(project && supportsGitWorktreeExecution(project))
+  const displayedMode: ProjectExecutionMode =
+    supportsWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+
+  return {
+    displayedMode,
+    canShowModeControl: Boolean(project),
+    canOpenModeMenu: supportsWorktree && !selectedWorkspaceIsRemote && !executionModeLocked,
+  }
+}
+
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
@@ -200,8 +209,8 @@ interface ProjectWorkBarProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  worktreeBaseBranch?: string | null
-  onWorktreeBaseBranchChange?: (branchName: string) => void
+  worktreeBranch?: string | null
+  onWorktreeBranchChange?: (branchName: string | null) => void
   className?: string
   buttonClassName?: string
   menuClassName?: string
@@ -225,12 +234,9 @@ export function ProjectWorkBar({
   onCreateProjectMode,
   branchName,
   branchLoading,
-  onRefreshBranch,
   onListBranches,
-  onCheckoutBranch,
-  onCreateBranch,
-  worktreeBaseBranch,
-  onWorktreeBaseBranchChange,
+  worktreeBranch,
+  onWorktreeBranchChange,
   className,
   buttonClassName,
   menuClassName,
@@ -273,21 +279,6 @@ export function ProjectWorkBar({
         ? currentProjectProp
         : runtimeProjectChoices.find(project => project.id === currentProjectId),
     [currentProjectId, currentProjectProp, runtimeProjectChoices]
-  )
-  const hasGitBranch = Boolean(branchName?.trim())
-  const hasLoadedBranchState = branchLoading === false
-  const supportsGitWorktree = Boolean(
-    currentProject && hasGitBranch && supportsGitWorktreeExecution(currentProject)
-  )
-  const canShowExecutionModeControl = Boolean(currentProject)
-  const canShowBranchSelector = Boolean(currentProject && (hasGitBranch || onListBranches))
-  const canShowWorktreeBranchSelector = Boolean(
-    currentProject &&
-    executionMode === 'git_worktree' &&
-    !executionModeLocked &&
-    hasGitBranch &&
-    onListBranches &&
-    onWorktreeBaseBranchChange
   )
   const getDeviceForProject = useCallback(
     (project: ProjectWithTasks): DeviceInfo | undefined => {
@@ -340,11 +331,14 @@ export function ProjectWorkBar({
   const selectedWorkspaceDeviceIp = selectedWorkspaceIsRemote
     ? getProjectMenuDeviceLabel(selectedWorkspaceDevice, selectedDeviceWorkspace)
     : null
-  const canOpenExecutionModeMenu = supportsGitWorktree && !selectedWorkspaceIsRemote
+  const projectExecutionUi = resolveProjectExecutionUi({
+    project: currentProject,
+    executionMode,
+    executionModeLocked,
+    selectedWorkspaceIsRemote,
+  })
   const executionModeOpen =
-    canOpenExecutionModeMenu && executionModeOpenProjectId === currentProjectId
-  const displayedExecutionMode =
-    supportsGitWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+    projectExecutionUi.canOpenModeMenu && executionModeOpenProjectId === currentProjectId
 
   const updateMenuLayout = useCallback(() => {
     if (!open || typeof window === 'undefined') return
@@ -421,33 +415,6 @@ export function ProjectWorkBar({
 
     searchInputRef.current?.focus()
   }, [isMobile, open])
-
-  useEffect(() => {
-    if (!canShowWorktreeBranchSelector || worktreeBaseBranch?.trim() || !branchName?.trim()) {
-      return
-    }
-    onWorktreeBaseBranchChange?.(branchName.trim())
-  }, [branchName, canShowWorktreeBranchSelector, onWorktreeBaseBranchChange, worktreeBaseBranch])
-
-  useEffect(() => {
-    if (
-      executionMode !== 'git_worktree' ||
-      executionModeLocked ||
-      !currentProject ||
-      !hasLoadedBranchState ||
-      hasGitBranch
-    ) {
-      return
-    }
-    onExecutionModeChange('current_workspace')
-  }, [
-    currentProject,
-    executionMode,
-    executionModeLocked,
-    hasGitBranch,
-    hasLoadedBranchState,
-    onExecutionModeChange,
-  ])
 
   const handleSelectDeviceWorkspace = useCallback(
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
@@ -553,7 +520,7 @@ export function ProjectWorkBar({
   }
 
   const handleToggleExecutionModeMenu = () => {
-    if (!canOpenExecutionModeMenu) {
+    if (!projectExecutionUi.canOpenModeMenu) {
       closeExecutionModeMenu()
       return
     }
@@ -567,12 +534,12 @@ export function ProjectWorkBar({
 
   const executionModeTriggerLabel = selectedWorkspaceIsRemote
     ? t('workbench.remote_short', '远程')
-    : displayedExecutionMode === 'git_worktree'
+    : projectExecutionUi.displayedMode === 'git_worktree'
       ? t('workbench.execution_mode_git_worktree', '新工作树')
       : t('workbench.execution_mode_current_workspace_trigger', '本地模式')
   const ExecutionModeTriggerIcon = selectedWorkspaceIsRemote
     ? Cloud
-    : displayedExecutionMode === 'git_worktree'
+    : projectExecutionUi.displayedMode === 'git_worktree'
       ? GitBranch
       : Laptop
 
@@ -637,7 +604,7 @@ export function ProjectWorkBar({
               isMobile
                 ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                 : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-              !isMobile && (menuLayout.placement === 'below' ? 'top-11' : 'bottom-11'),
+              !isMobile && (menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'),
               !isMobile && menuClassName
             )}
             style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
@@ -923,8 +890,8 @@ export function ProjectWorkBar({
           data-testid="project-work-button"
           onClick={handleToggleMenu}
           className={cn(
-            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-            open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
             buttonClassName
           )}
           aria-expanded={open}
@@ -952,7 +919,7 @@ export function ProjectWorkBar({
           <ChevronDown className="h-4 w-4" />
         </button>
       </div>
-      {canShowExecutionModeControl && (
+      {projectExecutionUi.canShowModeControl && (
         <div ref={executionModeContainerRef} className="relative">
           {executionModeOpen && isMobile && renderMobileBackdrop(closeExecutionModeMenu)}
           {executionModeOpen && (
@@ -1026,9 +993,9 @@ export function ProjectWorkBar({
             data-testid="execution-mode-button"
             onClick={handleToggleExecutionModeMenu}
             className={cn(
-              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               executionModeOpen &&
-                'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
+                'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
             )}
             aria-expanded={executionModeOpen}
             aria-label={t('workbench.execution_mode_label', '启动模式')}
@@ -1040,31 +1007,18 @@ export function ProjectWorkBar({
         </div>
       )}
       {currentProject &&
-        executionMode === 'current_workspace' &&
+        projectExecutionUi.displayedMode === 'git_worktree' &&
         !executionModeLocked &&
-        canShowBranchSelector &&
         onListBranches &&
-        onCheckoutBranch && (
-          <BranchSelector
-            variant="workbar"
-            mobileSheet
+        onWorktreeBranchChange && (
+          <WorktreeBranchSelector
             currentBranch={branchName}
+            selectedBranch={worktreeBranch}
             loading={branchLoading}
-            onRefresh={onRefreshBranch}
             onListBranches={onListBranches}
-            onCheckoutBranch={onCheckoutBranch}
-            onCreateBranch={onCreateBranch}
+            onSelectBranch={onWorktreeBranchChange}
           />
         )}
-      {canShowWorktreeBranchSelector && onListBranches && onWorktreeBaseBranchChange && (
-        <WorktreeBranchSelector
-          currentBranch={branchName}
-          selectedBranch={worktreeBaseBranch}
-          loading={branchLoading}
-          onListBranches={onListBranches}
-          onSelectBranch={onWorktreeBaseBranchChange}
-        />
-      )}
       {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
         <div
           data-testid="project-work-remote-status"

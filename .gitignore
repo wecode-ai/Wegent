@@ -107,7 +107,8 @@ coverage/
 *.spec
 executor/build/
 executor/dist/
-.worktrees/
+executor/target/
+wework/src-tauri/binaries/
 docs/superpowers/
 .worktrees/
 .gstack/

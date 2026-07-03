@@ -115,6 +115,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 result=event.result,
                 block_id=block_id,
                 block_offset=block_offset,
+                message_id=event.message_id,
             )
 
         elif event.type == EventType.TOOL_START.value:
@@ -149,6 +150,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 content="",
                 offset=event.offset,
                 result={"reasoning_chunk": event.content},
+                message_id=event.message_id,
             )
 
         elif event.type == EventType.DONE.value:

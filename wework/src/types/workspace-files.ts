@@ -20,10 +20,16 @@ export interface WorkspaceTextFileResponse {
   modifiedAt?: string | null
 }
 
+export interface WorkspaceFileApi {
+  listWorkspaceEntries: (deviceId: string, path: string) => Promise<WorkspaceTreeResponse>
+  readWorkspaceTextFile: (deviceId: string, filePath: string) => Promise<WorkspaceTextFileResponse>
+}
+
 export interface WorkspaceTarget {
   deviceId: string
   path: string
   source: 'project' | 'runtime'
+  workspaceSource?: 'local' | 'remote' | string | null
 }
 
 export interface WorkspaceFileOpenRequest {

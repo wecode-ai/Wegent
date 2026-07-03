@@ -1,35 +1,33 @@
 import type {
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
-  ChatCancelAck,
-  ChatCancelPayload,
   ChatChunkPayload,
   ChatDonePayload,
   ChatErrorPayload,
-  ChatGuideAck,
-  ChatGuidePayload,
-  ChatGuidanceAppliedPayload,
-  ChatGuidanceExpiredPayload,
-  ChatGuidanceQueuedPayload,
-  ChatMessagePayload,
   ChatStartPayload,
+  RuntimeGoalEventPayload,
+  RuntimeSubagentActivityPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
+import {
+  createResponseApiStreamState,
+  emitResponseApiEvent,
+  RESPONSE_API_STREAM_EVENTS,
+} from './responseApiStream'
 
 export type WorkbenchSocket = SocketClientSocket
 
 export interface ChatStreamHandlers {
-  onChatMessage?: (payload: ChatMessagePayload) => void
   onChatStart?: (payload: ChatStartPayload) => void
   onChatChunk?: (payload: ChatChunkPayload) => void
   onChatDone?: (payload: ChatDonePayload) => void
   onChatError?: (payload: ChatErrorPayload) => void
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
-  onGuidanceQueued?: (payload: ChatGuidanceQueuedPayload) => void
-  onGuidanceApplied?: (payload: ChatGuidanceAppliedPayload) => void
-  onGuidanceExpired?: (payload: ChatGuidanceExpiredPayload) => void
+  onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void
@@ -37,69 +35,20 @@ export interface ChatStreamHandlers {
   onDeviceUpgradeStatus?: (payload: DeviceUpgradeStatusPayload) => void
 }
 
-const SEND_TIMEOUT_MS = 30_000
-
-function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
-  if (!response) {
-    return { success: false, error: '引导发送失败' }
-  }
-  if (response.error) {
-    return { ...response, success: false }
-  }
-  return { ...response, success: response.success ?? true }
-}
-
 export function createChatStream(
   socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>
 ) {
   return {
-    sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
-      return new Promise(resolve => {
-        if (!socket.connected) {
-          resolve({ success: false, error: '连接未建立，请刷新页面重试' })
-          return
-        }
-
-        const timer = setTimeout(() => {
-          resolve({ success: false, error: '引导发送超时，请重试' })
-        }, SEND_TIMEOUT_MS)
-
-        socket.emit('chat:guide', payload, (response: ChatGuideAck) => {
-          clearTimeout(timer)
-          resolve(normalizeGuideAck(response))
-        })
-      })
-    },
-    cancelStream(payload: ChatCancelPayload): Promise<ChatCancelAck> {
-      return new Promise(resolve => {
-        if (!socket.connected) {
-          resolve({ success: false, error: '连接未建立，请刷新页面重试' })
-          return
-        }
-
-        socket.emit('chat:cancel', payload, (response: ChatCancelAck) => {
-          if (!response) {
-            resolve({ success: false, error: '取消失败' })
-            return
-          }
-          resolve({
-            ...response,
-            success: response.error ? false : (response.success ?? true),
-          })
-        })
-      })
-    },
     subscribe(handlers: ChatStreamHandlers): () => void {
-      if (handlers.onChatMessage) socket.on('chat:message', handlers.onChatMessage)
-      if (handlers.onChatStart) socket.on('chat:start', handlers.onChatStart)
-      if (handlers.onChatChunk) socket.on('chat:chunk', handlers.onChatChunk)
-      if (handlers.onChatDone) socket.on('chat:done', handlers.onChatDone)
-      if (handlers.onChatError) socket.on('chat:error', handlers.onChatError)
-      if (handlers.onBlockCreated) socket.on('chat:block_created', handlers.onBlockCreated)
-      if (handlers.onBlockUpdated) socket.on('chat:block_updated', handlers.onBlockUpdated)
-      if (handlers.onGuidanceQueued) socket.on('chat:guidance_queued', handlers.onGuidanceQueued)
-      if (handlers.onGuidanceApplied) socket.on('chat:guidance_applied', handlers.onGuidanceApplied)
-      if (handlers.onGuidanceExpired) socket.on('chat:guidance_expired', handlers.onGuidanceExpired)
+      const responseState = createResponseApiStreamState()
+      const responseHandlers = RESPONSE_API_STREAM_EVENTS.map(eventName => {
+        const handler = (payload: unknown) => {
+          emitResponseApiEvent(handlers, eventName, payload, responseState)
+        }
+        socket.on(eventName, handler)
+        return { eventName, handler }
+      })
+
       if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
       if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
       if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
@@ -111,18 +60,9 @@ export function createChatStream(
       }
 
       return () => {
-        if (handlers.onChatMessage) socket.off('chat:message', handlers.onChatMessage)
-        if (handlers.onChatStart) socket.off('chat:start', handlers.onChatStart)
-        if (handlers.onChatChunk) socket.off('chat:chunk', handlers.onChatChunk)
-        if (handlers.onChatDone) socket.off('chat:done', handlers.onChatDone)
-        if (handlers.onChatError) socket.off('chat:error', handlers.onChatError)
-        if (handlers.onBlockCreated) socket.off('chat:block_created', handlers.onBlockCreated)
-        if (handlers.onBlockUpdated) socket.off('chat:block_updated', handlers.onBlockUpdated)
-        if (handlers.onGuidanceQueued) socket.off('chat:guidance_queued', handlers.onGuidanceQueued)
-        if (handlers.onGuidanceApplied)
-          socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
-        if (handlers.onGuidanceExpired)
-          socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
+        responseHandlers.forEach(({ eventName, handler }) => {
+          socket.off(eventName, handler)
+        })
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)

@@ -45,6 +45,17 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "sourceReferences": {
+    "title": "引用来源",
+    "openSource": "打开来源",
+    "unavailableSource": "无法打开来源",
+    "footerCited": "引用 {{documents}} 个文档，来自 {{sources}} 个知识源",
+    "footerNoHit": "{{count}} 个知识源未命中",
+    "footerSkipped": "跳过 {{count}} 个不可用来源",
+    "footerSearchedNoReferences": "已检索 {{searched}} 个知识源，但未返回可引用内容",
+    "footerSearched": "本次检索 {{searched}} 个知识源",
+    "footerSearchedAndIgnored": "本次检索 {{searched}} 个知识源 · 跳过 {{ignored}} 个不可用来源"
+  },
   "guidance": {
     "send": "发送引导",
     "applied": "引导已生效",
@@ -410,6 +421,17 @@
     "stale_update_10m": "任务仍在运行，但已超过 10 分钟没有新的流更新，建议停止后重试",
     "started_over_20m": "任务已运行超过 20 分钟，请关注执行状态，建议停止后重试"
   },
+  "knowledgeBinding": {
+    "title": "知识来源",
+    "count": "已绑定 {{count}} 个",
+    "externalKnowledge": "外部知识来源",
+    "empty": "暂未绑定知识来源",
+    "loadFailed": "加载知识来源失败",
+    "externalLoadFailed": "外部知识来源加载失败，内部知识库仍可管理。",
+    "remove": "移除 {{name}}",
+    "removeSuccess": "已移除「{{name}}」",
+    "removeFailed": "移除知识来源失败"
+  },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
@@ -725,6 +747,9 @@
     "referencedDocsLabel": "引用的钉钉文档：",
     "myDocsTab": "我的文档",
     "wikispaceTab": "知识库",
+    "allDocs": "全部文档",
+    "selectAll": "选择全部",
+    "deselectAll": "取消全选",
     "wikispaceSync": "同步",
     "wikispaceSyncing": "同步中...",
     "wikispaceEmpty": "暂无知识库内容",
@@ -735,23 +760,27 @@
   "externalWebContent": {
     "trigger": "外站内容",
     "title": "添加外站内容",
-    "description": "目前仅支持抓取抖音、B站、小红书等视频内容。",
-    "placeholder": "https://www.douyin.com/video/...",
+    "description": "支持抓取抖音、B站、小红书等外站的视频、多图和首屏评论。",
+    "placeholder": "https://www.xiaohongshu.com/explore/...",
     "crawl": "抓取",
     "crawlingHint": "抓取可能需要几分钟，请勿关闭或退出当前页面。",
-    "added": "已添加外站视频",
+    "added": "已添加外站内容",
+    "attachmentCount": "{{count}} 个内容",
+    "textCount": "{{count}} 篇正文",
     "videoCount": "{{count}} 个视频",
+    "imageCount": "{{count}} 张图片",
+    "commentCount": "{{count}} 条首屏评论",
     "videoMetadataOnlyTitle": "当前模型不支持视频画面理解",
     "videoMetadataOnlyDescription": "如需理解画面，请切换到视频理解模型。",
     "errors": {
       "urlRequired": "请输入网页地址",
       "duplicate": "该地址已添加",
       "invalidUrl": "请输入有效的 HTTP(S) 网页地址",
-      "noVideo": "暂未抓取到可添加的视频，可等会再试试",
-      "tooManyVideos": "该网页包含的视频数量超过上限",
-      "videoDownloadFailed": "外站视频下载失败，请稍后重试",
-      "videoUploadFailed": "外站视频上传到视频平台失败，请稍后重试",
-      "videoTooLarge": "外站视频文件超过大小上限",
+      "noSupportedMedia": "暂未抓取到可添加的外站内容，可等会再试试",
+      "tooManyMedia": "该网页包含的媒体数量超过上限",
+      "mediaDownloadFailed": "外站媒体下载失败，请稍后重试",
+      "mediaImportFailed": "外站媒体导入失败，请稍后重试",
+      "mediaTooLarge": "外站媒体文件超过大小上限",
       "serviceUnavailable": "外站内容抓取服务暂时不可用，请稍后重试",
       "crawlFailed": "抓取外站内容失败"
     }

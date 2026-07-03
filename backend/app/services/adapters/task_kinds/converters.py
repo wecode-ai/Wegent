@@ -75,6 +75,34 @@ def get_task_execution_workspace_path(task_crd: Task) -> str | None:
     return None
 
 
+def resolve_task_ref_team(
+    db: Session, task_crd: Task, viewer_user_id: int
+) -> Kind | None:
+    team_ref = task_crd.spec.teamRef
+    team_ref_user_id = getattr(team_ref, "user_id", None)
+    if team_ref_user_id is not None:
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team_ref_user_id,
+                Kind.kind == KindType.TEAM.value,
+                Kind.namespace == team_ref.namespace,
+                Kind.name == team_ref.name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        return team
+
+    return kindReader.get_by_name_and_namespace(
+        db,
+        viewer_user_id,
+        KindType.TEAM,
+        team_ref.namespace,
+        team_ref.name,
+    )
+
+
 def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any]:
     """
     Convert kinds Task to task-like dictionary.
@@ -115,15 +143,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
             # Handle workspaces with incomplete repository data
             pass
 
-    # Get team data (including shared teams)
-    team = kindReader.get_by_name_and_namespace(
-        db,
-        user_id,
-        KindType.TEAM,
-        task_crd.spec.teamRef.namespace,
-        task_crd.spec.teamRef.name,
-    )
-
+    team = resolve_task_ref_team(db, task_crd, user_id)
     team_id = team.id if team else None
 
     # Parse timestamps
@@ -195,6 +215,10 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
     execution_workspace_source = get_task_execution_workspace_source(task_crd)
     execution_workspace_path = get_task_execution_workspace_path(task_crd)
+    external_knowledge_refs = [
+        ref.model_dump(exclude_none=True)
+        for ref in (task_crd.spec.externalKnowledgeRefs or [])
+    ]
 
     return {
         "id": task.id,
@@ -226,6 +250,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "execution_workspace_source": execution_workspace_source,
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
+        "external_knowledge_refs": external_knowledge_refs,
     }
 
 
@@ -264,6 +289,10 @@ def convert_to_task_dict_optimized(
         and task_crd.metadata.labels.get("preserveExecutor") == "true"
     )
     model_selection = _get_model_selection_labels(task_crd)
+    external_knowledge_refs = [
+        ref.model_dump(exclude_none=True)
+        for ref in (task_crd.spec.externalKnowledgeRefs or [])
+    ]
 
     return {
         "id": task.id,
@@ -299,6 +328,7 @@ def convert_to_task_dict_optimized(
         "execution_workspace_source": execution_workspace_source,
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
+        "external_knowledge_refs": external_knowledge_refs,
     }
 
 

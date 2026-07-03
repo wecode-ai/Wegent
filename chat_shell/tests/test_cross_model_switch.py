@@ -8,7 +8,9 @@ Simulates the full serialize → store → load → filter → convert cycle whe
 switching between different LLM providers mid-conversation.
 """
 
-from langchain_core.messages import AIMessage, ToolMessage
+import pytest
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from chat_shell.agents.graph_builder import (
     _convert_validated_messages,
@@ -18,6 +20,109 @@ from chat_shell.agents.graph_builder import (
 
 class TestCrossModelSwitch:
     """End-to-end tests for cross-model think block round-trips."""
+
+    def test_input_video_to_anthropic_message_payload(self):
+        """Canonical video blocks become Anthropic video.source.url blocks."""
+        history = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this"},
+                    {
+                        "type": "input_video",
+                        "video_url": "https://example.com/video.mp4",
+                    },
+                ],
+            }
+        ]
+        lc_messages = _convert_validated_messages(
+            history,
+            context="test",
+            target_provider="anthropic",
+            supports_video=True,
+        )
+
+        assert lc_messages[0].content[1] == {
+            "type": "video",
+            "source": {"type": "url", "url": "https://example.com/video.mp4"},
+        }
+
+    def test_anthropic_formatter_preserves_video_source_url_payload(self):
+        """LangChain Anthropic formatting passes through video.source.url blocks."""
+        captured_payload: dict = {}
+
+        class CapturePayload(Exception):
+            pass
+
+        def capture_create(**kwargs):
+            captured_payload.update(kwargs)
+            raise CapturePayload
+
+        model = ChatAnthropic(
+            model="claude-3-sonnet",
+            api_key="test-key",
+            max_retries=0,
+        )
+        model._client.messages.create = capture_create
+
+        with pytest.raises(CapturePayload):
+            model.invoke(
+                [
+                    HumanMessage(
+                        content=[
+                            {"type": "text", "text": "Describe this"},
+                            {
+                                "type": "video",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.com/video.mp4",
+                                },
+                            },
+                        ]
+                    )
+                ]
+            )
+
+        assert captured_payload["messages"] == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this"},
+                    {
+                        "type": "video",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/video.mp4",
+                        },
+                    },
+                ],
+            }
+        ]
+
+    def test_input_video_dropped_when_model_does_not_support_video(self):
+        """Unsupported models keep metadata text but do not receive video URLs."""
+        history = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Video Attachment: clip.mp4"},
+                    {
+                        "type": "input_video",
+                        "video_url": "https://example.com/video.mp4",
+                    },
+                ],
+            }
+        ]
+        lc_messages = _convert_validated_messages(
+            history,
+            context="test",
+            target_provider="anthropic",
+            supports_video=False,
+        )
+
+        assert lc_messages[0].content == [
+            {"type": "text", "text": "Video Attachment: clip.mp4"}
+        ]
 
     def test_claude_thinking_to_gpt(self):
         """Claude thinking blocks are stripped when loading for GPT."""

@@ -1,4 +1,11 @@
 {
+  "message_navigation": {
+    "label": "Previous message navigation",
+    "jump_to_message": "Jump to message {{index}}",
+    "loading_target": "Loading target position...",
+    "gap_missing": "Some history is not loaded",
+    "loading_gap": "Loading missing history..."
+  },
   "thinking": {
     "running": "Thinking",
     "updating": "Organizing thoughts...",
@@ -11,10 +18,51 @@
   "assistant_status": {
     "stopped_after": "You stopped after {{duration}}"
   },
+  "request_user_input": {
+    "asked_count": "Asked {{count}} question(s)",
+    "ignore": "Cancel",
+    "submit": "Submit",
+    "custom_placeholder": "Type your answer"
+  },
+  "plan_card": {
+    "title": "Plan",
+    "download": "Download plan",
+    "copy": "Copy plan",
+    "copy_success": "Copied",
+    "expand": "Open plan full screen",
+    "close": "Close plan"
+  },
+  "codex_context": {
+    "compacting": "Compacting context",
+    "compacted": "Context compacted"
+  },
+  "codex_references": {
+    "title": "Referenced files",
+    "open_label": "Open {{path}}",
+    "open_with": "Open with",
+    "preview_label": "Open preview",
+    "show_more": "Show {{count}} more",
+    "show_less": "Collapse files",
+    "kind": "Document",
+    "kind_with_extension": "Document · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} memory citations",
+    "line_label": "lines {{range}}",
+    "open_label": "Open {{path}}"
+  },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
+    "created_files": "Created {{count}} files",
+    "deleted_files": "Deleted {{count}} files",
+    "renamed_files": "Renamed {{count}} files",
+    "edited_file": "Edited {{filename}}",
+    "created_file": "Created {{filename}}",
+    "deleted_file": "Deleted {{filename}}",
+    "renamed_file": "Renamed {{filename}}",
+    "view_changes": "View changes",
     "show_more": "Show {{count}} more files",
-    "show_less": "Show less",
+    "show_less": "Collapse files",
     "review": "Review",
     "review_title": "Changes from this turn",
     "preview_file_label": "Preview file changes for {{path}}",
@@ -110,8 +158,8 @@
         "description": "Start a new conversation to retry, or contact an administrator to increase memory."
       },
       "container_error": {
-        "title": "Executor error",
-        "description": "The container or local executor is temporarily unavailable. Try again later."
+        "title": "Task service error",
+        "description": "The container or local task service is temporarily unavailable. Try again later."
       },
       "content_filter": {
         "title": "Content triggered security review and was rejected",

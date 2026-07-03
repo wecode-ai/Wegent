@@ -15,6 +15,7 @@ const testState = vi.hoisted(() => ({
     open: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
     focus: ReturnType<typeof vi.fn>
+    options: { theme?: unknown }
   }>,
   resizeObserverInstances: [] as Array<{
     trigger: () => void
@@ -48,6 +49,7 @@ vi.mock('@xterm/xterm', () => ({
       open: vi.fn(),
       dispose: vi.fn(),
       focus: vi.fn(),
+      options: {},
     }
     testState.terminalInstances.push(terminal)
     return terminal
@@ -122,30 +124,59 @@ describe('RemoteTerminal', () => {
     testState.terminalInstances[0].emitData('pwd\r')
 
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to write to remote terminal:',
-        error
-      )
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to write to remote terminal:', error)
     })
   })
 
-  test('catches rejected resize observer syncs', async () => {
-    const error = new Error('resize failed')
+  test('calls exit handler without writing process exited text', () => {
+    let exitHandler: ((payload: { session_id: string }) => void) | null = null
     const client = createClient({
       attach: vi.fn(() => new Promise(() => undefined)),
-      resize: vi.fn().mockRejectedValue(error),
+      onExit: vi.fn(handler => {
+        exitHandler = handler
+        return vi.fn()
+      }),
+    })
+    const onExit = vi.fn()
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    render(<RemoteTerminal sessionId="terminal-1" active={false} onExit={onExit} />)
+    exitHandler?.({ session_id: 'terminal-1' })
+
+    expect(onExit).toHaveBeenCalledTimes(1)
+    expect(testState.terminalInstances[0].writeln).not.toHaveBeenCalledWith(
+      expect.stringContaining('Process exited')
+    )
+  })
+
+  test('skips resize observer syncs while inactive', () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
     render(<RemoteTerminal sessionId="terminal-1" active={false} />)
     testState.resizeObserverInstances[0].trigger()
 
-    await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to resize remote terminal:',
-        error
-      )
+    expect(client.resize).not.toHaveBeenCalled()
+  })
+
+  test('does not resend unchanged terminal size when reactivated', async () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
     })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    const { rerender } = render(<RemoteTerminal sessionId="terminal-1" active />)
+
+    await waitFor(() => {
+      expect(client.resize).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    rerender(<RemoteTerminal sessionId="terminal-1" active />)
+
+    expect(client.resize).toHaveBeenCalledTimes(1)
   })
 
   test('catches rejected active terminal size syncs', async () => {

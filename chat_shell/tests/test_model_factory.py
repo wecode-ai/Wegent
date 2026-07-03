@@ -261,7 +261,20 @@ class TestCreateFromConfigThinkConfig:
         config = self._base_config()
         model = LangChainModelFactory.create_from_config(config)
         assert type(model) is ChatOpenAI
+        assert model._wegent_supports_video is False
         assert model._wegent_supports_developer_role is True
+
+    @patch("chat_shell.models.factory.add_span_event")
+    @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
+    def test_supports_video_capability_is_attached(self, _span):
+        """supportsVideo is exposed to graph-level payload adaptation."""
+        config = self._base_config(
+            modelCapabilities={
+                "supportsVideo": True,
+            }
+        )
+        model = LangChainModelFactory.create_from_config(config)
+        assert model._wegent_supports_video is True
 
     @patch("chat_shell.models.factory.add_span_event")
     @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)

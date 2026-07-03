@@ -10,6 +10,12 @@ import {
 } from '@/components/model-select/ModelCascadeSelect'
 import type { GroupableModel } from '@/components/model-select/model-grouping'
 
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (_key: string, fallback?: string) => fallback ?? _key,
+  }),
+}))
+
 global.ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
@@ -150,6 +156,36 @@ describe('ModelCascadeContent', () => {
     expect(footer).toHaveClass('shrink-0')
   })
 
+  it('shows model capability icons for image and video understanding', () => {
+    render(
+      <ModelCascadeContent
+        models={[
+          {
+            name: 'vision-model',
+            displayName: 'Vision Model',
+            provider: 'provider-one',
+            modelId: 'vision-model-id',
+            modelGroup: 'Primary One',
+            modelSubGroup: 'Secondary One',
+            config: {
+              modelCapabilities: {
+                supportsImage: true,
+                supportsVideo: true,
+              },
+            },
+          },
+        ]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.getByLabelText('图片理解')).toBeInTheDocument()
+    expect(screen.getByLabelText('视频理解')).toBeInTheDocument()
+  })
+
   it('scrolls the selected model into view when the active subgroup contains many models', async () => {
     const scrollIntoView = jest.fn()
     Object.defineProperty(Element.prototype, 'scrollIntoView', {
@@ -181,5 +217,31 @@ describe('ModelCascadeContent', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
     })
+  })
+
+  it('lets mobile users navigate groups before selecting a model', () => {
+    const onSelectModel = jest.fn()
+
+    render(
+      <ModelCascadeContent
+        models={models}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={onSelectModel}
+        variant="mobile"
+      />
+    )
+
+    expect(screen.getByTestId('model-mobile-primary-groups')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    expect(screen.getByTestId('model-mobile-secondary-groups')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+    expect(screen.getByTestId('model-mobile-models')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-mobile-option-model-a'))
+    expect(onSelectModel).toHaveBeenCalledWith(models[0])
   })
 })

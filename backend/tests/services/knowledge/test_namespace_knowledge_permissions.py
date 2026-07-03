@@ -193,6 +193,29 @@ def test_all_scope_does_not_duplicate_organization_knowledge_base(
 
 
 @pytest.mark.unit
+def test_grouped_organization_returns_namespace_without_knowledge_bases(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "empty-org-owner")
+    viewer = _create_user(test_db, "empty-org-viewer")
+    namespace = _create_namespace(
+        test_db,
+        owner,
+        "empty-org-space",
+        level="organization",
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, viewer, GroupRole.Developer, owner.id)
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, viewer.id)
+
+    assert grouped.organization.namespace == namespace.name
+    assert grouped.organization.display_name == namespace.display_name
+    assert grouped.organization.kb_count == 0
+    assert grouped.organization.knowledge_bases == []
+
+
+@pytest.mark.unit
 def test_explicitly_shared_organization_kb_stays_in_organization_grouping(
     test_db: Session,
 ) -> None:

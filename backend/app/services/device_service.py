@@ -316,6 +316,7 @@ class DeviceService:
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        app_device_id: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -328,12 +329,13 @@ class DeviceService:
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
             client_ip: Device's client IP address (stored in spec.clientIp)
-            device_type: Device type ('local', 'cloud', or 'remote'). If None, defaults
+            device_type: Device type ('local', 'app', 'cloud', or 'remote'). If None, defaults
                          to 'local' for new devices or preserves existing value.
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
             runtime_transfer_host: Host peers should use for direct transfers
+            app_device_id: Desktop app IPC device ID for app registrations
 
         Returns:
             Kind model instance for the device
@@ -370,6 +372,8 @@ class DeviceService:
                 device_json["spec"]["clientIp"] = client_ip
             if runtime_transfer_host is not None:
                 device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
+            if app_device_id is not None:
+                device_json["spec"]["appDeviceId"] = app_device_id
             # Update bind_shell if provided, otherwise preserve existing value
             if bind_shell is not None:
                 device_json["spec"]["bindShell"] = bind_shell
@@ -382,6 +386,11 @@ class DeviceService:
             db.add(device_kind)
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")
         else:
+            # Resolve device type: use provided value, or default to 'local'
+            resolved_device_type = device_type or DeviceType.LOCAL.value
+            # Resolve bind_shell: use provided value, or default to 'claudecode'
+            resolved_bind_shell = bind_shell or "claudecode"
+
             # Check if this is the first device for the user
             existing_devices = (
                 db.query(Kind)
@@ -401,12 +410,10 @@ class DeviceService:
                 if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
                 == DeviceType.LOCAL.value
             )
-            is_first_device = existing_device_count == 0
-
-            # Resolve device type: use provided value, or default to 'local'
-            resolved_device_type = device_type or DeviceType.LOCAL.value
-            # Resolve bind_shell: use provided value, or default to 'claudecode'
-            resolved_bind_shell = bind_shell or "claudecode"
+            is_first_device = (
+                resolved_device_type == DeviceType.LOCAL.value
+                and existing_device_count == 0
+            )
 
             # Create new device CRD
             device_json = {
@@ -425,6 +432,7 @@ class DeviceService:
                     "capabilities": None,
                     "clientIp": client_ip,
                     "runtimeTransferHost": runtime_transfer_host,
+                    "appDeviceId": app_device_id,
                 },
                 "status": {
                     "state": "Available",

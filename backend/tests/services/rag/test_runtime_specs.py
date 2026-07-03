@@ -13,6 +13,7 @@ from app.services.rag.runtime_specs import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.models import RetrievalScope
 
 
 def test_index_runtime_spec_keeps_control_plane_free_fields():
@@ -152,7 +153,7 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
             context_buffer_ratio=0.1,
             max_direct_chunks=500,
         ),
-        document_ids=[11],
+        scope=RetrievalScope(document_ids=[11]),
         metadata_condition={"key": "source", "operator": "==", "value": "kb"},
         restricted_mode=False,
         user_id=3,
@@ -185,7 +186,7 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
         retrieval_policy="summary_first",
     )
     assert spec.knowledge_base_ids == [1, 2]
-    assert spec.document_ids == [11]
+    assert spec.scope == RetrievalScope(document_ids=[11])
     assert spec.metadata_condition == {
         "key": "source",
         "operator": "==",

@@ -87,9 +87,12 @@ class TestExtractThinkingConfig:
     def test_model_capabilities_extracted(self, _decrypt):
         """spec.modelCapabilities is forwarded to runtime model_config."""
         spec = _make_spec()
-        spec["modelCapabilities"] = {"supportsVideo": True}
+        spec["modelCapabilities"] = {"supportsImage": True, "supportsVideo": True}
         result = _extract_model_config(spec)
-        assert result["modelCapabilities"] == {"supportsVideo": True}
+        assert result["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
 
     @_DECRYPT_PATCH
     def test_model_capabilities_omitted_when_absent(self, _decrypt):

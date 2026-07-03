@@ -946,6 +946,10 @@ class TaskKnowledgeBaseService:
                 boundAt=datetime.utcnow().isoformat() + "Z",
             )
             kb_refs.append(new_ref.model_dump())
+            scope_refs = spec.get("knowledgeBaseScopes", []) or []
+            spec["knowledgeBaseScopes"] = [
+                ref for ref in scope_refs if ref.get("id") != kb.id
+            ]
 
             # Update task spec
             spec["knowledgeBaseRefs"] = kb_refs
@@ -967,6 +971,189 @@ class TaskKnowledgeBaseService:
             )
             db.rollback()
             return False
+
+    def sync_subtask_kb_scope_to_task(
+        self,
+        db: Session,
+        task: TaskResource,
+        knowledge_id: int,
+        document_ids: list[int],
+        user_id: int,
+        user_name: str,
+    ) -> bool:
+        """Sync a document-scoped KB selection to task-level scope refs."""
+        normalized_document_ids = self._normalize_document_ids(document_ids)
+        if not normalized_document_ids:
+            logger.info(
+                "[sync_subtask_kb_scope_to_task] Skip empty document scope: "
+                "task_id=%s, knowledge_id=%s, user_id=%s",
+                task.id,
+                knowledge_id,
+                user_id,
+            )
+            return False
+
+        try:
+            kb = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == knowledge_id,
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not kb:
+                logger.info(
+                    "[sync_subtask_kb_scope_to_task] Skip missing KB: "
+                    "task_id=%s, knowledge_id=%s, user_id=%s",
+                    task.id,
+                    knowledge_id,
+                    user_id,
+                )
+                return False
+
+            kb_spec = kb.json.get("spec", {}) if kb.json else {}
+            kb_name = kb_spec.get("name")
+            kb_namespace = kb.namespace
+            if not kb_name:
+                logger.info(
+                    "[sync_subtask_kb_scope_to_task] Skip KB without display name: "
+                    "task_id=%s, knowledge_id=%s, user_id=%s",
+                    task.id,
+                    knowledge_id,
+                    user_id,
+                )
+                return False
+
+            if not self.can_access_knowledge_base(
+                db,
+                user_id,
+                kb_name,
+                kb_namespace,
+                knowledge_id=knowledge_id,
+            ):
+                logger.info(
+                    "[sync_subtask_kb_scope_to_task] Skip inaccessible KB %s/%s: "
+                    "task_id=%s, knowledge_id=%s, user_id=%s",
+                    kb_name,
+                    kb_namespace,
+                    task.id,
+                    knowledge_id,
+                    user_id,
+                )
+                return False
+
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.setdefault("spec", {})
+            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+            if any(ref.get("id") == kb.id for ref in kb_refs):
+                logger.info(
+                    "[sync_subtask_kb_scope_to_task] Skip scoped sync because KB is "
+                    "already bound as whole KB: task_id=%s, knowledge_id=%s",
+                    task.id,
+                    knowledge_id,
+                )
+                return False
+
+            scope_refs = spec.get("knowledgeBaseScopes", []) or []
+            if any(
+                ref.get("id") == kb.id and not bool(ref.get("scopeRestricted", False))
+                for ref in scope_refs
+            ):
+                logger.info(
+                    "[sync_subtask_kb_scope_to_task] Skip scoped sync because KB is "
+                    "already bound as unrestricted scope: task_id=%s, knowledge_id=%s",
+                    task.id,
+                    knowledge_id,
+                )
+                return False
+
+            next_scope_refs: list[dict] = []
+            merged = False
+            for ref in scope_refs:
+                if ref.get("id") != kb.id:
+                    next_scope_refs.append(ref)
+                    continue
+
+                existing_ids = self._normalize_document_ids(
+                    ref.get("explicitDocumentIds") or []
+                )
+                merged_ids = self._normalize_document_ids(
+                    existing_ids + normalized_document_ids
+                )
+                next_scope_refs.append(
+                    {
+                        **ref,
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": merged_ids,
+                        "folderIds": None,
+                        "includeSubfolders": True,
+                        "boundBy": ref.get("boundBy") or user_name,
+                        "boundAt": ref.get("boundAt")
+                        or datetime.utcnow().isoformat() + "Z",
+                    }
+                )
+                merged = True
+
+            if not merged:
+                next_scope_refs.append(
+                    {
+                        "id": kb.id,
+                        "namespace": kb_namespace,
+                        "name": kb_name,
+                        "scopeRestricted": True,
+                        "folderIds": None,
+                        "explicitDocumentIds": normalized_document_ids,
+                        "includeSubfolders": True,
+                        "boundBy": user_name,
+                        "boundAt": datetime.utcnow().isoformat() + "Z",
+                    }
+                )
+
+            if scope_refs == next_scope_refs:
+                return False
+
+            spec["knowledgeBaseScopes"] = next_scope_refs
+            task_json["spec"] = spec
+            task_store.update_json(db, task=task, payload=task_json)
+            db.commit()
+            db.refresh(task)
+            logger.info(
+                "[sync_subtask_kb_scope_to_task] Synced scoped KB %s/%s to task %s "
+                "(documents=%s, selected_by=%s)",
+                kb_name,
+                kb_namespace,
+                task.id,
+                normalized_document_ids,
+                user_id,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "[sync_subtask_kb_scope_to_task] Failed to sync scoped KB %s "
+                "to task %s: %s",
+                knowledge_id,
+                task.id,
+                e,
+            )
+            db.rollback()
+            return False
+
+    @staticmethod
+    def _normalize_document_ids(document_ids: list[int]) -> list[int]:
+        normalized_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for document_id in document_ids or []:
+            try:
+                normalized_id = int(document_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized_id <= 0 or normalized_id in seen_ids:
+                continue
+            normalized_ids.append(normalized_id)
+            seen_ids.add(normalized_id)
+        return normalized_ids
 
 
 task_knowledge_base_service = TaskKnowledgeBaseService()

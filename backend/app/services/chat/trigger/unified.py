@@ -27,6 +27,10 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.external_knowledge_refs import (
+    extract_task_external_knowledge_refs,
+    validate_external_knowledge_refs,
+)
 from app.services.context import context_service
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
@@ -48,6 +52,7 @@ logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
+EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS = {"ClaudeCode", "Agno", "CodeX", "Codex"}
 SERVICE_TIER_ALIASES = {
     "fast": "priority",
     "priority": "priority",
@@ -59,6 +64,18 @@ SERVICE_TIER_ALIASES = {
     "标准": "default",
     "运行标准": "default",
 }
+
+
+def _request_shell_type(request: "ExecutionRequest") -> str:
+    """Extract the primary shell type from an execution request."""
+    if request.bot and isinstance(request.bot[0], dict):
+        return str(request.bot[0].get("shell_type") or "")
+    return ""
+
+
+def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
+    """Return whether parsed attachment content should be injected into prompt."""
+    return _request_shell_type(request) not in EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS
 
 
 def _reasoning_from_model_options(payload: Any) -> Optional[Dict[str, Any]]:
@@ -486,6 +503,15 @@ async def build_execution_request(
             runtime_model_config=runtime_model_config,
         )
         request.device_id = device_id or request.device_id
+        # Task spec is the runtime source of truth. Message-level external
+        # contexts are materialized into Task.spec before execution is built.
+        task_refs = extract_task_external_knowledge_refs(task)
+        if task_refs:
+            validate_external_knowledge_refs(
+                task_refs,
+                binding_level="conversation",
+            )
+            request.external_knowledge_refs = task_refs
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
@@ -677,6 +703,7 @@ async def _process_contexts(
 
     # Get context_window from model_config for selected_documents injection threshold
     model_context_window = request.model_config.get("context_window")
+    inline_attachment_content = _should_inline_attachment_content(request)
 
     # Process contexts (attachments, knowledge bases, etc.)
     ctx = await prepare_contexts_for_chat(
@@ -689,6 +716,7 @@ async def _process_contexts(
         context_window=model_context_window,
         model_config=request.model_config,
         metadata_only_for_large_attachments=_is_local_file_capable_shell(request),
+        inline_attachment_content=inline_attachment_content,
     )
 
     # Update request with all processed context results.
@@ -703,6 +731,13 @@ async def _process_contexts(
         _build_executor_attachment_payload(context)
         for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
     ]
+    logger.info(
+        "[ai_trigger_unified] Executor attachment payload built: "
+        "task_id=%d, user_subtask_id=%d, attachment_ids=%s",
+        request.task_id,
+        user_subtask_id,
+        [attachment.get("id") for attachment in request.attachments],
+    )
     if ctx.kb.knowledge_base_ids:
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
@@ -714,11 +749,13 @@ async def _process_contexts(
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, attachments=%d",
+        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
+        "attachments=%d, inline_attachment_content=%s",
         user_subtask_id,
         request.knowledge_base_ids,
         len(ctx.table_contexts),
         len(request.attachments),
+        inline_attachment_content,
     )
 
     return request

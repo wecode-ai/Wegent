@@ -103,7 +103,7 @@ def build_pod_configuration(
     init_container_volume = None
     init_container_volume_mount = None
     container_image = image
-    container_entrypoint = None
+    container_entrypoint = "/app/executor"
 
     if use_init_container:
         # Get InitContainer configuration

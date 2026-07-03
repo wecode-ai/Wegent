@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shared.models import RuntimeRetrievalConfig, SearchHints
+from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
 
 
 @pytest.mark.asyncio
@@ -39,10 +39,7 @@ async def test_query_executor_delegates_to_storage_backend_with_normalized_confi
             vector_weight=0.8,
             keyword_weight=0.2,
         ),
-        metadata_condition={
-            "operator": "and",
-            "conditions": [{"key": "doc_ref", "operator": "in", "value": ["12"]}],
-        },
+        scope=RetrievalScope(document_ids=[12]),
         user_id=7,
     )
 
@@ -67,12 +64,33 @@ async def test_query_executor_delegates_to_storage_backend_with_normalized_confi
             "vector_weight": 0.8,
             "keyword_weight": 0.2,
         },
-        metadata_condition={
-            "operator": "and",
-            "conditions": [{"key": "doc_ref", "operator": "in", "value": ["12"]}],
-        },
+        scope=RetrievalScope(document_ids=[12]),
+        metadata_condition=None,
         user_id=7,
     )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_rejects_scope_when_storage_backend_does_not_support_it():
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.supports_retrieval_scope = False
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    with pytest.raises(ValueError, match="Retrieval scope is not supported"):
+        await executor.execute(
+            knowledge_id="1",
+            query="release checklist",
+            retrieval_config=RuntimeRetrievalConfig(
+                top_k=8,
+                score_threshold=0.45,
+                retrieval_mode="vector",
+            ),
+            scope=RetrievalScope(document_ids=[12]),
+        )
+
+    storage_backend.retrieve.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -102,6 +120,7 @@ async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> N
             "score_threshold": 0.7,
             "retrieval_mode": "vector",
         },
+        scope=None,
         metadata_condition=None,
     )
 
@@ -143,6 +162,7 @@ async def test_query_executor_carries_search_hints_into_retrieval_setting() -> N
                 "phrases": ["release checklist"],
             },
         },
+        scope=None,
         metadata_condition=None,
     )
 
@@ -196,6 +216,7 @@ async def test_query_executor_prefers_explicit_query_plan_over_search_hints() ->
                 "phrases": ["ignored phrase"],
             },
         },
+        scope=None,
         metadata_condition=None,
     )
 
@@ -235,6 +256,7 @@ async def test_query_executor_uses_original_query_as_partial_plan_fallback() -> 
             "phrases": ["phrase one"],
             "hint_source": "explicit_hints",
         },
+        scope=None,
         metadata_condition=None,
     )
 

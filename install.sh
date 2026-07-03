@@ -47,7 +47,7 @@ HOST_EXECUTOR_INSTALL_URL="${WEGENT_HOST_EXECUTOR_INSTALL_URL:-https://github.co
 HOST_EXECUTOR_BINARY="${WEGENT_HOST_EXECUTOR_BINARY:-$HOME/.wegent-executor/bin/wegent-executor}"
 HOST_EXECUTOR_HOME="${WEGENT_HOST_EXECUTOR_HOME:-$HOME/.wegent-executor}"
 HOST_EXECUTOR_PID_FILE="${HOST_EXECUTOR_HOME}/wegent-executor.pid"
-HOST_EXECUTOR_LOG_FILE="${HOST_EXECUTOR_HOME}/logs/standalone-host-executor.log"
+HOST_EXECUTOR_LOG_FILE="${HOST_EXECUTOR_HOME}/logs/executor.log"
 
 # Temporary files cleanup
 TMPFILES=()
@@ -1207,8 +1207,9 @@ start_host_executor() {
 
     ui_info "Starting host executor..."
     WEGENT_EXECUTOR_HOME="$HOST_EXECUTOR_HOME" \
+        WEGENT_EXECUTOR_LOG_FILE="$HOST_EXECUTOR_LOG_FILE" \
         LOCAL_WORKSPACE_ROOT="${HOST_EXECUTOR_HOME}/workspace" \
-        nohup "$HOST_EXECUTOR_BINARY" >> "$HOST_EXECUTOR_LOG_FILE" 2>&1 &
+        nohup "$HOST_EXECUTOR_BINARY" >/dev/null 2>&1 &
     echo $! > "$HOST_EXECUTOR_PID_FILE"
     sleep 1
 
@@ -1318,7 +1319,7 @@ source "\$STATE_FILE"
 : "\${HOST_EXECUTOR_HOME:=\$HOME/.wegent-executor}"
 : "\${HOST_EXECUTOR_BINARY:=\$HOST_EXECUTOR_HOME/bin/wegent-executor}"
 : "\${HOST_EXECUTOR_PID_FILE:=\$HOST_EXECUTOR_HOME/wegent-executor.pid}"
-: "\${HOST_EXECUTOR_LOG_FILE:=\$HOST_EXECUTOR_HOME/logs/standalone-host-executor.log}"
+: "\${HOST_EXECUTOR_LOG_FILE:=\$HOST_EXECUTOR_HOME/logs/executor.log}"
 
 container_executor_enabled() {
     case "\$STANDALONE_EXECUTOR_MODE" in
@@ -1501,8 +1502,9 @@ start_host_executor() {
     stop_host_executor
     echo "Starting host executor..."
     WEGENT_EXECUTOR_HOME="\$HOST_EXECUTOR_HOME" \\
+        WEGENT_EXECUTOR_LOG_FILE="\$HOST_EXECUTOR_LOG_FILE" \\
         LOCAL_WORKSPACE_ROOT="\$HOST_EXECUTOR_HOME/workspace" \\
-        nohup "\$HOST_EXECUTOR_BINARY" >> "\$HOST_EXECUTOR_LOG_FILE" 2>&1 < /dev/null &
+        nohup "\$HOST_EXECUTOR_BINARY" >/dev/null 2>&1 < /dev/null &
     echo \$! > "\$HOST_EXECUTOR_PID_FILE"
     sleep 1
     if ! kill -0 "\$(cat "\$HOST_EXECUTOR_PID_FILE")" >/dev/null 2>&1; then

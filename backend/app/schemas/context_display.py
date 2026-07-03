@@ -16,8 +16,11 @@ def build_context_display_fields(
     """Build public display fields for a SubtaskContext."""
     data = type_data or {}
 
+    if context_type == "external_web_content":
+        return _build_external_web_content_aggregate_fields(data)
+
     if context_type == "attachment" and data.get("source") == "external_web_content":
-        fields = _build_external_web_video_fields(data)
+        fields = _build_external_web_content_fields(data)
         fields.update(_build_attachment_fields(data))
         return fields
 
@@ -28,6 +31,8 @@ def build_context_display_fields(
         return {
             "knowledge_id": data.get("knowledge_id"),
             "document_count": data.get("document_count"),
+            "document_ids": data.get("document_ids"),
+            "scope_restricted": data.get("scope_restricted"),
         }
 
     if context_type == "table":
@@ -43,6 +48,18 @@ def build_context_display_fields(
             "document_count": len(document_ids) if isinstance(document_ids, list) else 0
         }
 
+    if context_type == "external_knowledge":
+        return {
+            "external_provider": data.get("provider"),
+            "external_mode": data.get("mode"),
+            "external_id": data.get("id"),
+            "external_scope": data.get("scope"),
+            "external_target_type": data.get("target_type"),
+            "external_node_id": data.get("node_id"),
+            "external_document_id": data.get("document_id"),
+            "external_parent_id": data.get("parent_id"),
+        }
+
     return {}
 
 
@@ -54,13 +71,52 @@ def _build_attachment_fields(type_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_external_web_video_fields(type_data: dict[str, Any]) -> dict[str, Any]:
+def _build_external_web_content_fields(type_data: dict[str, Any]) -> dict[str, Any]:
+    media_type = type_data.get("external_media_type") or "video"
+    if media_type == "text":
+        return {
+            "external_media_type": "text",
+            "text_count": 1,
+            "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+            "source_url": type_data.get("external_source_url"),
+            "cover_url": _first_raw_item(type_data).get("cover_s3")
+            or _first_raw_item(type_data).get("cover"),
+        }
+    if media_type == "comments":
+        return {
+            "external_media_type": "comments",
+            "comment_count": type_data.get("comment_count"),
+            "fetched_comment_count": type_data.get("fetched_comment_count"),
+            "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+            "source_url": type_data.get("external_source_url"),
+            "cover_url": _first_raw_item(type_data).get("cover_s3")
+            or _first_raw_item(type_data).get("cover"),
+        }
+
     item = _find_external_web_video_item(type_data)
     return {
+        "external_media_type": "video",
         "video_count": 1,
         "site": item.get("site"),
         "source_url": type_data.get("external_source_url"),
         "cover_url": item.get("cover_s3") or item.get("cover"),
+    }
+
+
+def _build_external_web_content_aggregate_fields(
+    type_data: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "external_media_type": type_data.get("external_media_type") or "mixed",
+        "video_count": type_data.get("video_count") or 0,
+        "image_count": type_data.get("image_count") or 0,
+        "comment_count": type_data.get("comment_count"),
+        "fetched_comment_count": type_data.get("fetched_comment_count"),
+        "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+        "source_url": type_data.get("external_source_url"),
+        "cover_url": type_data.get("cover_url")
+        or _first_raw_item(type_data).get("cover_s3")
+        or _first_raw_item(type_data).get("cover"),
     }
 
 
@@ -84,6 +140,17 @@ def _find_external_web_video_item(type_data: dict[str, Any]) -> dict[str, Any]:
     if video_index < len(videos):
         return videos[video_index]
     return videos[0] if videos else {}
+
+
+def _first_raw_item(type_data: dict[str, Any]) -> dict[str, Any]:
+    items = _as_raw_items(type_data.get("raw_result"))
+    return items[0] if items else {}
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _as_raw_items(raw_result: Any) -> list[dict[str, Any]]:

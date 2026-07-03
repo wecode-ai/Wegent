@@ -24,6 +24,32 @@ export type TaskStatus =
  */
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
 
+export interface SourceReference {
+  index: number
+  title: string
+  kb_id?: number | null
+  source_id?: string
+  source_type?: string
+  source_uri?: string
+  source_name?: string
+}
+
+export interface RetrievalSummaryPayload {
+  searched_source_ids?: string[]
+  ignored_source_ids?: string[]
+  source_statuses?: RetrievalSourceStatus[]
+}
+
+export interface RetrievalSourceStatus {
+  provider: string
+  source_id: string
+  source_name?: string | null
+  status: 'hit' | 'no_hit' | 'ignored' | 'failed'
+  record_count: number
+  citation_count: number
+  mode?: 'rag_retrieval' | 'direct_injection' | string | null
+}
+
 /**
  * Unified message structure
  */
@@ -37,6 +63,7 @@ export interface UnifiedMessage {
   contexts?: unknown[]
   timestamp: number
   subtaskId?: number
+  turnId?: number
   messageId?: number
   error?: string
   errorType?: string
@@ -53,11 +80,8 @@ export interface UnifiedMessage {
     thinking?: unknown[]
     workbench?: Record<string, unknown>
     shell_type?: string
-    sources?: Array<{
-      index: number
-      title: string
-      kb_id: number
-    }>
+    sources?: SourceReference[]
+    retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
@@ -70,11 +94,7 @@ export interface UnifiedMessage {
       duration?: number
     }
   }
-  sources?: Array<{
-    index: number
-    title: string
-    kb_id: number
-  }>
+  sources?: SourceReference[]
 }
 
 /**
@@ -161,7 +181,7 @@ export interface TaskRuntimeVerifyResult {
  * Pending chunk event to be applied after sync completes
  */
 export interface PendingChunkEvent {
-  subtaskId: number
+  turnId: number
   content: string
   offset?: number
   result?: UnifiedMessage['result']
@@ -204,14 +224,14 @@ export type Event =
     }
   | {
       type: 'CHAT_START'
-      subtaskId: number
+      turnId: number
       shellType?: string
       messageId?: number
       botName?: string
     }
   | {
       type: 'CHAT_CHUNK'
-      subtaskId: number
+      turnId: number
       content: string
       offset?: number
       result?: UnifiedMessage['result']
@@ -220,7 +240,7 @@ export type Event =
     }
   | {
       type: 'CHAT_DONE'
-      subtaskId: number
+      turnId: number
       content?: string
       result?: UnifiedMessage['result']
       messageId?: number
@@ -228,8 +248,8 @@ export type Event =
       hasError?: boolean
       errorMessage?: string
     }
-  | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
-  | { type: 'CHAT_CANCELLED'; subtaskId: number }
+  | { type: 'CHAT_ERROR'; turnId: number; error: string; messageId?: number; errorType?: string }
+  | { type: 'CHAT_CANCELLED'; turnId: number }
   | { type: 'SEND_ACCEPTED'; acceptedAt: string }
   | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }
   | { type: 'TASK_DETAIL_SYNCED'; taskStatus: ApiTaskStatus; updatedAt?: string }

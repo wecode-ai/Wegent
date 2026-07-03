@@ -243,6 +243,7 @@ async def get_chat_history(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_image: bool | None = None,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
@@ -257,8 +258,11 @@ async def get_chat_history(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
+        supports_image: Whether the model supports image input.
+            If True or None, image attachments keep the legacy image_url blocks.
+            If False, image attachments are replayed as metadata only.
         supports_video: Whether the model supports video input.
-            If True, video attachments will include video_url blocks.
+            If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
 
     Returns:
@@ -267,11 +271,12 @@ async def get_chat_history(
     is_http = _is_http_mode()
     logger.debug(
         "[history] get_chat_history: task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s, limit=%s, supports_video=%s, is_http_mode=%s",
+        "exclude_after=%s, limit=%s, supports_image=%s, supports_video=%s, is_http_mode=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_image,
         supports_video,
         is_http,
     )
@@ -286,11 +291,21 @@ async def get_chat_history(
 
     if is_http:
         history = await _load_history_from_remote(
-            task_id, is_group_chat, exclude_after_message_id, limit, supports_video
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            supports_image,
+            supports_video,
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id, limit, supports_video
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            supports_image,
+            supports_video,
         )
 
     logger.debug(
@@ -310,6 +325,7 @@ async def _load_history_from_remote(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_image: bool | None = None,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
@@ -321,17 +337,21 @@ async def _load_history_from_remote(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        supports_image: Whether the model supports image input.
+            If True or None, image attachments keep the legacy image_url blocks.
+            If False, image attachments are replayed as metadata only.
         supports_video: Whether the model supports video input.
-            If True, video attachments will include video_url blocks.
+            If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
     """
     logger.info(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s, limit=%s, supports_video=%s",
+        "exclude_after=%s, limit=%s, supports_image=%s, supports_video=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_image,
         supports_video,
     )
 
@@ -344,11 +364,12 @@ async def _load_history_from_remote(
         before_id = str(exclude_after_message_id) if exclude_after_message_id else None
         logger.debug(
             "[history] Calling remote store.get_history: session_id=%s, "
-            "before_id=%s, is_group_chat=%s, limit=%s, supports_video=%s",
+            "before_id=%s, is_group_chat=%s, limit=%s, supports_image=%s, supports_video=%s",
             session_id,
             before_id,
             is_group_chat,
             limit,
+            supports_image,
             supports_video,
         )
 
@@ -357,6 +378,7 @@ async def _load_history_from_remote(
             before_message_id=before_id,
             is_group_chat=is_group_chat,
             limit=limit,
+            supports_image=supports_image,
             supports_video=supports_video,
         )
 
@@ -420,6 +442,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_image: bool | None = None,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
@@ -431,6 +454,9 @@ async def _load_history_from_db(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        supports_image: Whether the model supports image input.
+            If True or None, image attachments keep the legacy image_url blocks.
+            If False, image attachments are replayed as metadata only.
     """
     return await asyncio.to_thread(
         _load_history_from_db_sync,
@@ -438,6 +464,7 @@ async def _load_history_from_db(
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_image,
         supports_video,
     )
 
@@ -447,6 +474,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_image: bool | None = None,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
@@ -494,7 +522,12 @@ def _load_history_from_db_sync(
 
         for subtask, sender_username in subtasks:
             msgs = _build_history_messages(
-                db, subtask, sender_username, is_group_chat, supports_video
+                db,
+                subtask,
+                sender_username,
+                is_group_chat,
+                supports_image,
+                supports_video,
             )
             history.extend(msgs)
     finally:
@@ -508,6 +541,7 @@ def _build_history_messages(
     subtask,
     sender_username: str | None,
     is_group_chat: bool = False,
+    supports_image: bool | None = None,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Build history messages from a subtask.
@@ -616,12 +650,20 @@ def _build_history_messages(
         for attachment in attachments:
             vision_block = _build_vision_content_block(attachment)
             if vision_block:
-                vision_parts.append(vision_block)
                 # Add image metadata header for reference in text content
                 image_header = _build_image_metadata_header(
                     attachment, task_id=task_id, subtask_id=subtask_id
                 )
                 image_metadata_headers.append(image_header)
+                if supports_image is False:
+                    attachment_text_parts.append(image_header)
+                    total_attachment_text_length += len(image_header)
+                    logger.info(
+                        "[history] Added metadata-only image attachment: id=%s",
+                        attachment.id,
+                    )
+                    continue
+                vision_parts.append(vision_block)
                 logger.info(
                     f"[history] Loaded image attachment: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
@@ -641,8 +683,9 @@ def _build_history_messages(
                     continue
                 video_parts.append(
                     {
-                        "type": "video_url",
-                        "video_url": {"url": payload.video_url},
+                        "type": "input_video",
+                        "video_url": payload.video_url,
+                        "mime_type": attachment.mime_type,
                     }
                 )
                 video_text = f"{payload.metadata_text}\n"

@@ -13,6 +13,7 @@ def _preload_skill_refs() -> dict:
             "skill_id": 101,
             "namespace": "default",
             "is_public": True,
+            "content_hash": None,
         }
     }
 
