@@ -119,8 +119,21 @@ interface MessageSummary {
   total: number
   byRole: Record<string, number>
   byStatus: Record<string, number>
-  activeAssistantMessage: WorkbenchMessage | null
-  lastMessage: WorkbenchMessage | null
+  activeAssistantMessage: MessageSummaryItem | null
+  lastMessage: MessageSummaryItem | null
+}
+
+interface MessageSummaryItem {
+  id: string
+  role: WorkbenchMessage['role']
+  status: WorkbenchMessage['status']
+  runtimeStatus: WorkbenchMessage['runtimeStatus'] | null
+  runtimeMessageIndex: number | null
+  contentLength: number
+  blockCount: number
+  hasFileChanges: boolean
+  referenceCount: number
+  memoryCitationCount: number
 }
 
 const DEBUG_LOG_LIMIT = 500
@@ -201,15 +214,36 @@ export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
 }
 
 export function summarizeMessages(messages: WorkbenchMessage[]): MessageSummary {
+  const activeAssistantMessage =
+    [...messages]
+      .reverse()
+      .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null
+  const lastMessage = messages.at(-1) ?? null
+
   return {
     total: messages.length,
     byRole: countBy(messages, message => message.role || 'unknown'),
     byStatus: countBy(messages, message => message.status || 'unknown'),
-    activeAssistantMessage:
-      [...messages]
-        .reverse()
-        .find(message => message.role === 'assistant' && message.status === 'streaming') ?? null,
-    lastMessage: messages.at(-1) ?? null,
+    activeAssistantMessage: activeAssistantMessage
+      ? createMessageSummaryItem(activeAssistantMessage)
+      : null,
+    lastMessage: lastMessage ? createMessageSummaryItem(lastMessage) : null,
+  }
+}
+
+function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem {
+  return {
+    id: message.id,
+    role: message.role,
+    status: message.status,
+    runtimeStatus: message.runtimeStatus ?? null,
+    runtimeMessageIndex:
+      typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : null,
+    contentLength: message.content.length,
+    blockCount: message.blocks?.length ?? 0,
+    hasFileChanges: Boolean(message.fileChanges),
+    referenceCount: message.references?.length ?? 0,
+    memoryCitationCount: message.memoryCitations?.length ?? 0,
   }
 }
 

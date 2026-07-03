@@ -87,7 +87,7 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
   'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 2
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 
 interface DesktopWorkbenchMainProps {

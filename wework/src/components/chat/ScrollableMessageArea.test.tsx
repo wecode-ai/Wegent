@@ -606,7 +606,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('keeps previously selected conversation DOM mounted when switching back', () => {
+  test('unmounts previously selected conversation DOM while preserving switch-back rendering', () => {
     const messageA = {
       id: 'cached-message-a',
       role: 'assistant' as const,
@@ -628,17 +628,19 @@ describe('ScrollableMessageArea', () => {
 
     rerender(<ScrollableMessageArea conversationKey="cached-b" messages={[messageB]} />)
 
-    expect(messageElementA?.isConnected).toBe(true)
+    expect(messageElementA?.isConnected).toBe(false)
     expect(screen.getByText('cached conversation b')).toBeInTheDocument()
 
     rerender(<ScrollableMessageArea conversationKey="cached-a" messages={[messageA]} />)
 
-    expect(screen.getByText('cached conversation a').closest('[data-message-id]')).toBe(
-      messageElementA
-    )
+    const nextMessageElementA = screen
+      .getByText('cached conversation a')
+      .closest('[data-message-id]')
+    expect(nextMessageElementA).not.toBe(messageElementA)
+    expect(nextMessageElementA).toBeInTheDocument()
   })
 
-  test('does not re-render a cached inactive conversation when switching away', () => {
+  test('does not read inactive conversation content after switching away', () => {
     let messageAContentReads = 0
     const messageA = {
       id: 'cached-render-message-a',

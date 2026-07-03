@@ -79,6 +79,8 @@ const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
+const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -1271,14 +1273,16 @@ function pendingRuntimeGoalState(
 }
 
 function seedRuntimePaneGoal(address: RuntimeTaskAddress, goal: RuntimeGoal) {
-  runtimePaneGoalSeeds.set(
+  setLruMapValue(
+    runtimePaneGoalSeeds,
     runtimeTranscriptPaneIdentityKey(address),
-    pendingRuntimeGoalState(goal, address)
+    pendingRuntimeGoalState(goal, address),
+    MAX_CACHED_RUNTIME_PANE_GOALS
   )
 }
 
 function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoalState | null {
-  return runtimePaneGoalSeeds.get(runtimeTranscriptPaneIdentityKey(address)) ?? null
+  return getLruMapValue(runtimePaneGoalSeeds, runtimeTranscriptPaneIdentityKey(address)) ?? null
 }
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
@@ -1339,7 +1343,7 @@ function createLocalUserMessage(
 
 function seedRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
   const key = runtimeTranscriptPaneKey(address)
-  runtimePaneMessageSeeds.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSeeds, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
@@ -1348,21 +1352,42 @@ function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: Work
     runtimePaneMessageSnapshots.delete(key)
     return
   }
-  runtimePaneMessageSnapshots.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSnapshots, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function getRuntimePaneMessageSnapshot(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSnapshots.get(key) ?? [])]
+  const snapshot = getLruMapValue(runtimePaneMessageSnapshots, key)
+  return [...(snapshot ?? [])]
 }
 
 function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSeeds.get(key) ?? [])]
+  const seed = getLruMapValue(runtimePaneMessageSeeds, key)
+  return [...(seed ?? [])]
 }
 
 function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
   runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
+}
+
+function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const value = map.get(key)
+  if (value === undefined) return undefined
+  map.delete(key)
+  map.set(key, value)
+  return value
+}
+
+function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number) {
+  map.delete(key)
+  map.set(key, value)
+
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey === undefined) return
+    map.delete(oldestKey)
+  }
 }
 
 function mergeRuntimeTranscriptMessages(
