@@ -61,6 +61,7 @@ fn claude_assistant_thinking_blocks_are_reasoning_chunks() {
     let event = json!({
         "type": "assistant",
         "message": {
+            "role": "assistant",
             "content": [
                 {"type": "thinking", "thinking": "checking cwd before answering"},
                 {"type": "text", "text": "visible answer"}
@@ -72,6 +73,38 @@ fn claude_assistant_thinking_blocks_are_reasoning_chunks() {
         extract_reasoning(&event),
         Some("checking cwd before answering".to_owned())
     );
+}
+
+#[test]
+fn claude_user_skill_context_text_is_not_final_answer_text() {
+    let output = r#"
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: /root/.claude/skills/example\n\n# Skill instructions"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"visible answer"}]}}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "visible answer".to_owned()
+        }
+    );
+}
+
+#[test]
+fn claude_user_thinking_blocks_are_not_reasoning_chunks() {
+    let event = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "thinking", "thinking": "not assistant reasoning"}
+            ]
+        }
+    });
+
+    assert_eq!(extract_reasoning(&event), None);
 }
 
 #[test]
@@ -115,6 +148,48 @@ fn claude_user_tool_result_blocks_are_extracted_for_ui_tool_events() {
     assert_eq!(tool_results.len(), 1);
     assert_eq!(tool_results[0].tool_use_id, "Read_0");
     assert_eq!(tool_results[0].content.as_deref(), Some("# Project"));
+    assert!(!tool_results[0].is_error);
+}
+
+#[test]
+fn claude_skill_tool_load_result_is_extracted_for_ui_tool_events() {
+    let tool_use_event = json!({
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": "call_skill_creator",
+                "name": "Skill",
+                "input": {"skill": "skill-creator"}
+            }]
+        }
+    });
+    let tool_result_event = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "call_skill_creator",
+                "content": "Loaded skill: skill-creator",
+                "is_error": false
+            }]
+        }
+    });
+
+    let tool_uses = extract_claude_tool_uses(&tool_use_event);
+    let tool_results = extract_claude_tool_results(&tool_result_event);
+
+    assert_eq!(tool_uses.len(), 1);
+    assert_eq!(tool_uses[0].name, "Skill");
+    assert_eq!(tool_uses[0].input, json!({"skill": "skill-creator"}));
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "call_skill_creator");
+    assert_eq!(
+        tool_results[0].content.as_deref(),
+        Some("Loaded skill: skill-creator")
+    );
     assert!(!tool_results[0].is_error);
 }
 
