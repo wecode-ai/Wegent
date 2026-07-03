@@ -21,6 +21,7 @@ from .model_resolver import (
     extract_and_process_model_config,
     get_bot_system_prompt,
     get_model_config_for_bot,
+    strip_empty_wegent_headers,
 )
 from .shell_checker import (
     get_shell_type,
@@ -36,6 +37,7 @@ __all__ = [
     "get_bot_system_prompt",
     "extract_and_process_model_config",
     "build_default_headers_with_placeholders",
+    "strip_empty_wegent_headers",
     # Shell checker
     "get_shell_type",
     "get_team_first_bot_shell_type",
