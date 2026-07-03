@@ -334,6 +334,12 @@ export function createHybridWorkbenchServices(
     async listRuntimeWork() {
       return listLocalRuntimeWork()
     },
+    getKeybindings() {
+      return localServices.runtimeWorkApi!.getKeybindings()
+    },
+    updateKeybindings(data) {
+      return localServices.runtimeWorkApi!.updateKeybindings(data)
+    },
     upsertDeviceWorkspace(data) {
       return runtimeApi(data.deviceId).upsertDeviceWorkspace(data)
     },

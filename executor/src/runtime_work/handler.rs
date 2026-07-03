@@ -47,7 +47,7 @@ use super::{
         retain_runtime_handle_user_messages, set_runtime_handle_messages,
         CodexNotificationCacheMapper,
     },
-    store::RuntimeWorkStore,
+    store::{runtime_work_dir, RuntimeWorkStore},
     transcript::transcript_messages,
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
@@ -295,6 +295,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
+            "runtime.keybindings.get" => self.get_keybindings().await,
+            "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
@@ -316,6 +318,64 @@ impl RuntimeWorkRpcHandler {
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn get_keybindings(&self) -> Result<Value, AppIpcError> {
+        let path = runtime_work_dir().join("keybindings.json");
+        let Ok(content) = fs::read_to_string(&path) else {
+            return Ok(json!({ "keybindings": [] }));
+        };
+        let keybindings = serde_json::from_str::<Value>(&content).map_err(|error| {
+            AppIpcError::new(
+                "invalid_keybindings",
+                format!("Failed to parse {}: {error}", path.display()),
+            )
+        })?;
+        if !keybindings.is_array() {
+            return Err(AppIpcError::new(
+                "invalid_keybindings",
+                "keybindings.json must contain an array",
+            ));
+        }
+        Ok(json!({ "keybindings": keybindings }))
+    }
+
+    async fn update_keybindings(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(keybindings) = payload.get("keybindings").cloned() else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "Missing keybindings array",
+            ));
+        };
+        if !keybindings.is_array() {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "keybindings must be an array",
+            ));
+        }
+
+        let path = runtime_work_dir().join("keybindings.json");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                AppIpcError::new(
+                    "keybindings_write_failed",
+                    format!("Failed to create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        let payload = serde_json::to_vec_pretty(&keybindings).map_err(|error| {
+            AppIpcError::new(
+                "keybindings_write_failed",
+                format!("Failed to serialize keybindings: {error}"),
+            )
+        })?;
+        fs::write(&path, payload).map_err(|error| {
+            AppIpcError::new(
+                "keybindings_write_failed",
+                format!("Failed to write {}: {error}", path.display()),
+            )
+        })?;
+        Ok(json!({ "keybindings": keybindings }))
     }
 
     async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
