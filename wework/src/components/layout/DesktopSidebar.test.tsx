@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -115,6 +115,10 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -489,6 +493,47 @@ describe('DesktopSidebar', () => {
       workspacePath: chatPath,
       localTaskId: 'chat-1',
     })
+  })
+
+  test('refreshes relative runtime task time while the sidebar stays mounted', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-03T12:01:00.000Z'))
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: '/workspace/chats/chat-time',
+            workspaceKind: 'chat',
+            localTasks: [
+              {
+                localTaskId: 'chat-time',
+                workspacePath: '/workspace/chats/chat-time',
+                workspaceKind: 'chat',
+                title: 'Time sensitive chat',
+                runtime: 'codex',
+                updatedAt: '2026-07-03T12:00:00.000Z',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 1,
+      },
+    })
+
+    expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('1m')
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('2m')
   })
 
   test('renames a runtime conversation from double click dialog', async () => {
