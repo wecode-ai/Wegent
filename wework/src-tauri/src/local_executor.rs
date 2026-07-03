@@ -392,7 +392,7 @@ fn local_executor_log_path() -> Result<PathBuf, String> {
     Ok(log_dir.join(log_file))
 }
 
-fn local_executor_log_dir_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_log_dir_path() -> Result<PathBuf, String> {
     std::env::var(LOCAL_EXECUTOR_LOG_DIR_ENV)
         .ok()
         .map(|path| path.trim().to_string())

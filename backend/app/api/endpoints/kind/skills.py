@@ -6,6 +6,7 @@
 Skills API endpoints for managing Claude Code Skills
 """
 
+import hashlib
 import io
 import logging
 import zipfile
@@ -24,7 +25,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
@@ -62,6 +63,17 @@ router = APIRouter(prefix="/kinds/skills")
 def _release_read_transaction(db: Session) -> None:
     """Release read-only DB transactions before slow response streaming."""
     db.rollback()
+
+
+def _skill_content_etag(binary_data: bytes) -> str:
+    return f'"sha256:{hashlib.sha256(binary_data).hexdigest()}"'
+
+
+def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
+    if not if_none_match or not isinstance(if_none_match, str):
+        return False
+    candidates = [value.strip() for value in if_none_match.split(",")]
+    return "*" in candidates or etag in candidates
 
 
 def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
@@ -1415,6 +1427,7 @@ def download_skill(
         description="Task ID for task-based authorization. "
         "If provided, allows downloading skills owned by the task owner.",
     ),
+    if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
@@ -1503,6 +1516,11 @@ def download_skill(
     if not binary_data:
         raise HTTPException(status_code=404, detail="Skill binary not found")
 
+    etag = _skill_content_etag(binary_data)
+    if _etag_matches(if_none_match, etag):
+        _release_read_transaction(db)
+        return Response(status_code=304, headers={"ETag": etag})
+
     # Return as streaming response
     # RFC 5987 encoding for non-ASCII filenames
     filename = f"{skill.metadata.name}.zip"
@@ -1514,7 +1532,7 @@ def download_skill(
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={"Content-Disposition": content_disposition},
+        headers={"Content-Disposition": content_disposition, "ETag": etag},
     )
 
 

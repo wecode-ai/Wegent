@@ -87,6 +87,7 @@ pub(crate) struct CodexNotificationEventMapper {
 
 struct ProcessTextStream {
     id: String,
+    item_id: Option<String>,
     content: String,
 }
 
@@ -160,7 +161,6 @@ impl CodexNotificationEventMapper {
                     return;
                 }
                 self.agent_message_phases.observe_item(notification.params);
-                self.reset_process_text();
                 emit_tool_start(
                     event_tx,
                     device_id,
@@ -192,6 +192,27 @@ impl CodexNotificationEventMapper {
                 self.observe_root_thread(notification.params);
                 if self.is_subagent_delta(notification.params) {
                     self.forget_subagent_item(notification.params);
+                    self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                let phase = self
+                    .agent_message_phases
+                    .phase_for_item(notification.params);
+                if codex_phase_is_process(phase.as_deref()) {
+                    log_codex_event_mapper_text(
+                        local_task_id,
+                        &notification.method,
+                        "emit_completed_process_block",
+                        phase.as_deref(),
+                        notification.params,
+                    );
+                    self.emit_completed_process_text(
+                        event_tx,
+                        device_id,
+                        local_task_id,
+                        request,
+                        notification.params,
+                    );
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
@@ -297,8 +318,11 @@ impl CodexNotificationEventMapper {
         let Some(delta) = agent_text(params) else {
             return;
         };
+        let item_id = notification_item_id(params);
 
-        if let Some(process_text) = self.process_text.as_mut() {
+        if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
+            process_text.item_id.is_none() || item_id.is_none() || process_text.item_id == item_id
+        }) {
             process_text.content.push_str(&delta);
             emit_response_event(
                 event_tx,
@@ -324,6 +348,7 @@ impl CodexNotificationEventMapper {
         );
         self.process_text = Some(ProcessTextStream {
             id: id.clone(),
+            item_id,
             content: delta.clone(),
         });
         emit_response_event(
@@ -338,6 +363,64 @@ impl CodexNotificationEventMapper {
                     "type": "text",
                     "content": delta,
                     "status": "streaming",
+                    "timestamp": now_ms(),
+                }
+            }),
+        );
+    }
+
+    fn emit_completed_process_text(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some(text) = completed_agent_text(params) else {
+            return;
+        };
+        let item_id = notification_item_id(params);
+
+        if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
+            process_text.item_id.is_none() || item_id.is_none() || process_text.item_id == item_id
+        }) {
+            process_text.content = text.clone();
+            emit_response_event(
+                event_tx,
+                device_id,
+                "response.block.updated",
+                local_task_id,
+                request,
+                json!({
+                    "block_id": process_text.id.clone(),
+                    "updates": {
+                        "content": text,
+                        "status": "done",
+                    }
+                }),
+            );
+            self.reset_process_text();
+            return;
+        }
+
+        self.process_text_count += 1;
+        let id = format!(
+            "text-{local_task_id}-{}-{}",
+            request.subtask_id, self.process_text_count
+        );
+        emit_response_event(
+            event_tx,
+            device_id,
+            "response.block.created",
+            local_task_id,
+            request,
+            json!({
+                "block": {
+                    "id": id,
+                    "type": "text",
+                    "content": text,
+                    "status": "done",
                     "timestamp": now_ms(),
                 }
             }),
@@ -590,6 +673,13 @@ fn log_codex_event_mapper_text(
 
 fn agent_text(params: &Value) -> Option<String> {
     raw_string_field(params, "delta").or_else(|| extract_text(params))
+}
+
+fn completed_agent_text(params: &Value) -> Option<String> {
+    params
+        .get("item")
+        .and_then(extract_text)
+        .or_else(|| agent_text(params))
 }
 
 fn json_string_field(value: &Value, key: &str) -> String {
@@ -1226,6 +1316,118 @@ mod tests {
     }
 
     #[test]
+    fn maps_completed_codex_commentary_agent_messages_to_process_text_blocks() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": "I will inspect."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(event["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(
+            event["payload"]["data"]["block"]["content"],
+            "I will inspect."
+        );
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
+    }
+
+    #[test]
+    fn completes_streamed_codex_commentary_agent_message_without_duplicate_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-commentary",
+                    "delta": "I will inspect."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": "I will inspect."
+                    }
+                }
+            }),
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("created event should be emitted");
+        let updated = event_rx
+            .try_recv()
+            .expect("updated event should be emitted");
+
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(
+            updated["payload"]["data"]["block_id"],
+            created["payload"]["data"]["block"]["id"]
+        );
+        assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_codex_context_compacted_event_to_completed_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -1553,6 +1755,102 @@ mod tests {
         assert_eq!(
             updated["payload"]["data"]["updates"]["content"],
             "I will inspect."
+        );
+    }
+
+    #[test]
+    fn keeps_codex_process_text_stream_open_across_tool_start() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest {
+            task_id: 7,
+            subtask_id: 8,
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-commentary",
+                    "delta": "I found "
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-commentary",
+                    "delta": "the issue."
+                }
+            }),
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("process text created event should be emitted");
+        let tool_created = event_rx
+            .try_recv()
+            .expect("tool created event should be emitted");
+        let updated = event_rx
+            .try_recv()
+            .expect("process text updated event should be emitted");
+        let block_id = created["payload"]["data"]["block"]["id"]
+            .as_str()
+            .expect("block id should be present");
+
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(created["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(tool_created["event"], "response.block.created");
+        assert_eq!(tool_created["payload"]["data"]["block"]["type"], "tool");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(updated["payload"]["data"]["block_id"], block_id);
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["content"],
+            "I found the issue."
         );
     }
 

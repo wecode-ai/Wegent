@@ -4,20 +4,17 @@ import { createRoot } from 'react-dom/client'
 import './styles/globals.css'
 import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
+import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
-import {
-  installPerformanceDiagnostics,
-  installPerformanceDiagnosticsToggle,
-  recordReactCommit,
-} from './lib/performanceDiagnostics'
+import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installDesktopExtensions } from '@extensions/desktop'
 
 installAppLogging()
 installDesktopExtensions()
 installExternalLinkHandler()
 installPageZoomGuard()
-installPerformanceDiagnosticsToggle()
+installDeveloperCommandMenu()
 const performanceDiagnostics = installPerformanceDiagnostics()
 
 createRoot(document.getElementById('root')!).render(

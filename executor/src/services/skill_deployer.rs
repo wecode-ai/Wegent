@@ -13,6 +13,7 @@ pub struct SkillRef {
     pub skill_id: i64,
     pub namespace: String,
     pub is_public: bool,
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,11 +206,28 @@ fn skill_ref_from_value(value: &Value) -> Option<SkillRef> {
         .get("is_public")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let content_hash = value
+        .get("content_hash")
+        .or_else(|| value.get("contentHash"))
+        .or_else(|| value.get("file_hash"))
+        .or_else(|| value.get("fileHash"))
+        .and_then(Value::as_str)
+        .map(normalize_content_hash);
     Some(SkillRef {
         skill_id,
         namespace,
         is_public,
+        content_hash,
     })
+}
+
+pub fn normalize_content_hash(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"');
+    if trimmed.is_empty() || trimmed.starts_with("sha256:") {
+        trimmed.to_owned()
+    } else {
+        format!("sha256:{trimmed}")
+    }
 }
 
 fn add_skill_names(names: &mut Vec<String>, value: Option<&Value>) {

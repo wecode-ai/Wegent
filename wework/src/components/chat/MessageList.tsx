@@ -30,11 +30,12 @@ import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
-import { isWebSearchToolName } from './blocks/toolBlockActivity'
+import { buildProcessingDisplayRows, isWebSearchToolName } from './blocks/toolBlockActivity'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
@@ -258,7 +259,7 @@ export const MessageList = memo(function MessageList({
       })}
       {shouldShowWaitingIndicator && (
         <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
-          <WaitingAssistantIndicator />
+          <AssistantThinkingIndicator />
         </article>
       )}
     </div>
@@ -333,16 +334,6 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
-}
-
-function WaitingAssistantIndicator() {
-  const { t } = useTranslation('chat')
-
-  return (
-    <div className="inline-flex items-center text-[13px]" data-testid="thinking-indicator">
-      <span className="waiting-thinking-text">{t('thinking.running')}</span>
-    </div>
-  )
 }
 
 function getTurnStartMs(createdAt: string): number | undefined {
@@ -1093,11 +1084,16 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
-  const canShowFinalArtifacts = !isStreaming
+  const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
+  const isAssistantRunning = isStreaming || hasRunningBlocks
+  const canShowFinalArtifacts = !isAssistantRunning
   const hasStreamedResponse = hasBlocks || hasVisibleContent
-  const shouldShowProcessingSummary = hasBlocks || (isStreaming && hasStreamedResponse)
-  const shouldShowInitialThinking = isStreaming && !hasStreamedResponse
-  const shouldShowTrailingThinking = isStreaming && hasVisibleContent
+  const shouldShowProcessingSummary = hasBlocks || (isAssistantRunning && hasStreamedResponse)
+  const shouldShowThinking = shouldShowAssistantThinkingIndicator({
+    isAssistantRunning,
+    hasVisibleContent,
+    hasLiveProcessingDisplayBlock: hasLiveProcessingDisplayBlock(displayBlocks),
+  })
   const webSearchSources = isStreaming
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
@@ -1150,7 +1146,6 @@ function AssistantMessage({
               forceExpanded={isCancelled}
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
-              showRunningPlaceholder={!hasVisibleContent}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onRequestUserInputSubmit={onRequestUserInputSubmit}
@@ -1160,11 +1155,11 @@ function AssistantMessage({
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
-          {shouldShowInitialThinking && <WaitingAssistantIndicator />}
+          {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {hasVisibleContent ? (
             <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
           ) : null}
-          {shouldShowTrailingThinking && <WaitingAssistantIndicator />}
+          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -1218,6 +1213,37 @@ function getMessageDisplayStateKey(
 ): string {
   const conversationPart = conversationKey == null ? 'default' : String(conversationKey)
   return `${conversationPart}:${message.id}`
+}
+
+function hasRunningProcessingBlocks(blocks: ProcessingBlock[]): boolean {
+  return blocks.some(block => block.status !== 'done' && block.status !== 'error')
+}
+
+function hasLiveProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
+  return buildProcessingDisplayRows(blocks).some(row => {
+    if (row.type !== 'block') return false
+
+    const { block } = row
+    return (
+      block.status !== 'done' &&
+      block.status !== 'error' &&
+      (block.type === 'tool' || block.type === 'file_changes' || Boolean(block.content.trim()))
+    )
+  })
+}
+
+function shouldShowAssistantThinkingIndicator({
+  isAssistantRunning,
+  hasVisibleContent,
+  hasLiveProcessingDisplayBlock,
+}: {
+  isAssistantRunning: boolean
+  hasVisibleContent: boolean
+  hasLiveProcessingDisplayBlock: boolean
+}): boolean {
+  if (!isAssistantRunning) return false
+  if (hasVisibleContent) return true
+  return !hasLiveProcessingDisplayBlock
 }
 
 function AssistantErrorCard({

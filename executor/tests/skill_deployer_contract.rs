@@ -64,6 +64,7 @@ fn resolve_skill_download_map_prefers_explicit_refs_over_skill_configs() {
                 "skill_id": 222,
                 "namespace": "team-a",
                 "is_public": false,
+                "content_hash": "sha256:new",
             }),
         )]),
         &BTreeMap::new(),
@@ -75,6 +76,7 @@ fn resolve_skill_download_map_prefers_explicit_refs_over_skill_configs() {
             skill_id: 222,
             namespace: "team-a".to_owned(),
             is_public: false,
+            content_hash: Some("sha256:new".to_owned()),
         }
     );
 }

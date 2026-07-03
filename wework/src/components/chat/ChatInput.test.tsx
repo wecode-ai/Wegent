@@ -482,7 +482,235 @@ describe('ChatInput', () => {
       '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) '
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
-    expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
+    expect(await screen.findByTestId('local-skill-caret')).toHaveClass(
+      'local-skill-caret',
+      'bg-text-primary'
+    )
+  })
+
+  test('selects plan mode from the slash command menu', async () => {
+    const setSelectedModelOption = vi.fn()
+    const onSubmit = vi.fn()
+    render(
+      <ControlledChatInput
+        onSubmit={onSubmit}
+        variant="desktop"
+        projectChat={projectChatControls({ setSelectedModelOption })}
+      />
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '/pla')
+
+    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('slash-command-menu')).not.toHaveTextContent(
+      'workbench.slash_command_menu_title'
+    )
+    expect(screen.getByTestId('slash-command-menu')).not.toHaveTextContent(
+      'workbench.slash_command_group_actions'
+    )
+    expect(screen.getByTestId('slash-command-option-plan')).toHaveTextContent(
+      'workbench.slash_command_plan'
+    )
+    expect(screen.getByTestId('slash-command-option-plan')).toHaveClass('rounded-lg')
+
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+    })
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(input).toHaveValue('')
+  })
+
+  test('opens goal draft mode from a compact slash command', async () => {
+    function GoalDraftSlashInput() {
+      const [value, setValue] = useState('')
+      const [goalDraftActive, setGoalDraftActive] = useState(false)
+
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          goalDraftActive={goalDraftActive}
+          onSetGoal={() => setGoalDraftActive(true)}
+          onCancelGoalDraft={() => setGoalDraftActive(false)}
+          projectChat={projectChatControls()}
+        />
+      )
+    }
+
+    render(<GoalDraftSlashInput />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '/goal')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('goal-draft-pill')).toHaveTextContent('目标')
+    })
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+  })
+
+  test('opens a model-only list from the slash command menu', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'gpt-5.5',
+      type: 'public',
+      displayName: 'GPT-5.5',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: 'GPT-5.5',
+          sortOrder: 10,
+          description: 'Frontier model for complex coding, research, and real-world work.',
+        },
+      },
+    }
+    const sparkModel: UnifiedModel = {
+      name: 'gpt-5.3-codex-spark',
+      type: 'public',
+      displayName: 'GPT-5.3-Codex-Spark',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: 'GPT-5.3-Codex-Spark',
+          sortOrder: 40,
+          description: 'Ultra-fast coding model.',
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [sparkModel, selectedModel],
+          selectedModel,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '/model')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('slash-model-menu')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-family-gpt')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-high')).not.toBeInTheDocument()
+    expect(screen.getByTestId('slash-model-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('slash-model-option-gpt-5.5')).toHaveTextContent(
+      'Frontier model for complex coding'
+    )
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+
+    await userEvent.click(screen.getByTestId('slash-model-option-gpt-5.3-codex-spark'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(sparkModel)
+    expect(screen.queryByTestId('slash-model-menu')).not.toBeInTheDocument()
+  })
+
+  test('inserts a local skill mention from slash commands', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+      scope: 'user',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '/env')
+    const slashSkillOption = await screen.findByTestId('slash-command-option-skill-env-context')
+    expect(slashSkillOption).toHaveTextContent('Personal')
+    await userEvent.click(slashSkillOption)
+
+    expect(input).toHaveValue(
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) '
+    )
+    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
+  })
+
+  test('filters slash skills by name and aliases without duplicating skill rows', async () => {
+    const skills: LocalDeviceSkill[] = [
+      {
+        name: 'imagegen',
+        description: 'Generate or edit raster images',
+        path: '/Users/crystal/.codex/skills/imagegen/SKILL.md',
+        source: 'codex',
+        scope: 'user',
+        source_priority: 0,
+      },
+      {
+        name: 'gmail',
+        description: 'Search images and attachments in email',
+        path: '/Users/crystal/.codex/plugins/cache/openai-curated/gmail/old/skills/gmail/SKILL.md',
+        source: 'codex-plugin',
+        scope: 'user',
+        source_priority: 40,
+      },
+      {
+        name: 'gmail',
+        description: 'Manage Gmail inbox',
+        path: '/Users/crystal/.codex/plugins/cache/openai-curated-remote/gmail/0.1.3/skills/gmail/SKILL.md',
+        source: 'codex-plugin',
+        scope: 'user',
+        source_priority: 20,
+      },
+    ]
+    const listLocalSkills = vi.fn().mockResolvedValue(skills)
+
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '/image')
+
+    expect(await screen.findByTestId('slash-command-option-skill-imagegen')).toBeInTheDocument()
+    expect(screen.queryByTestId('slash-command-option-skill-gmail')).not.toBeInTheDocument()
+
+    await userEvent.clear(screen.getByTestId('chat-message-input'))
+    await userEvent.type(screen.getByTestId('chat-message-input'), '/gmail')
+
+    expect(await screen.findAllByTestId('slash-command-option-skill-gmail')).toHaveLength(1)
+  })
+
+  test('does not open slash commands for a slash inside a word', async () => {
+    render(<ControlledChatInput projectChat={projectChatControls()} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello/')
+
+    expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
+  })
+
+  test('closes slash commands with Escape and outside pointer down', async () => {
+    render(<ControlledChatInput projectChat={projectChatControls()} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '/')
+    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
+    })
+
+    await userEvent.clear(input)
+    await userEvent.type(input, '/')
+    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    await waitFor(() => {
+      expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
+    })
   })
 
   test('keeps only one local skill autocomplete option highlighted', async () => {
@@ -524,37 +752,21 @@ describe('ChatInput', () => {
     })
   })
 
-  test('shows local skill sources at the end of each autocomplete option', async () => {
+  test('shows local skill scopes at the end of each autocomplete option', async () => {
     const skills: LocalDeviceSkill[] = [
       {
-        name: 'agents-skill',
-        description: 'Shared agents skill',
-        path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
-        source: 'agents',
-      },
-      {
-        name: 'claude-skill',
-        description: 'Claude skill',
-        path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-        source: 'claude',
-      },
-      {
-        name: 'claude-plugin-skill',
-        description: 'Claude plugin skill',
-        path: '/Users/crystal/.claude/plugins/cache/market/plugin/skills/skill/SKILL.md',
-        source: 'claude-plugin',
-      },
-      {
-        name: 'codex-skill',
+        name: 'personal-skill',
         description: 'Codex skill',
-        path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+        path: '/Users/crystal/.codex/skills/personal-skill/SKILL.md',
         source: 'codex',
+        scope: 'user',
       },
       {
-        name: 'codex-plugin-skill',
+        name: 'system-skill',
         description: 'Codex plugin skill',
-        path: '/Users/crystal/.codex/plugins/cache/market/plugin/skills/skill/SKILL.md',
+        path: '/Users/crystal/.codex/plugins/cache/openai-bundled/plugin/1.0.0/skills/system-skill/SKILL.md',
         source: 'codex-plugin',
+        scope: 'system',
       },
     ]
     const listLocalSkills = vi.fn().mockResolvedValue(skills)
@@ -563,15 +775,10 @@ describe('ChatInput', () => {
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
-    expect(await screen.findByTestId('local-skill-source-agents-skill')).toHaveTextContent('agents')
-    expect(screen.getByTestId('local-skill-source-claude-skill')).toHaveTextContent('claude')
-    expect(screen.getByTestId('local-skill-source-claude-plugin-skill')).toHaveTextContent(
-      'claude plugins'
+    expect(await screen.findByTestId('local-skill-source-personal-skill')).toHaveTextContent(
+      'Personal'
     )
-    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('codex')
-    expect(screen.getByTestId('local-skill-source-codex-plugin-skill')).toHaveTextContent(
-      'codex plugins'
-    )
+    expect(screen.getByTestId('local-skill-source-system-skill')).toHaveTextContent('System')
   })
 
   test('only allows Claude sourced skills for Claude models', async () => {
@@ -660,7 +867,7 @@ describe('ChatInput', () => {
     expect(option).toBeInTheDocument()
     expect(option).not.toBeDisabled()
     expect(screen.getByTestId('local-skill-option-agents-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('codex plugins')
+    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('Personal')
     expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
 
     await userEvent.click(option)

@@ -115,9 +115,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneMessages.some(
-    message => message.role === 'assistant' && message.status === 'streaming'
-  )
+  const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {
@@ -163,7 +161,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.sending ||
+    paneSession.status.isSubmitting ||
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
@@ -284,7 +282,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
             <ScrollableMessageArea
               messages={paneMessages}
               loading={paneSession.transcriptLoading}
-              isWaitingForAssistant={paneSession.waitingForAssistant}
+              isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
               hasMoreBefore={paneSession.transcriptHasMoreBefore}
               loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
               turnNavigation={paneSession.turnNavigation}

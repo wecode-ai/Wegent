@@ -5,6 +5,7 @@
 use std::{env, future::Future, pin::Pin};
 
 mod agno;
+mod backend_url;
 mod claude_code;
 mod claude_options;
 mod codex;
@@ -14,6 +15,7 @@ mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
 pub(crate) mod runtime_capabilities;
+mod skill_download;
 mod task_identity;
 
 use crate::{

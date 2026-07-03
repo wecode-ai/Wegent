@@ -621,6 +621,7 @@ class DeviceCapabilitySyncService:
     ) -> dict[str, Any]:
         name = skill.json.get("metadata", {}).get("name") or skill.name
         namespace = skill.json.get("metadata", {}).get("namespace") or skill.namespace
+        file_hash = (skill.json or {}).get("status", {}).get("fileHash")
         return {
             "id": skill.id,
             "skill_id": skill.id,
@@ -628,6 +629,7 @@ class DeviceCapabilitySyncService:
             "name": name,
             "namespace": namespace,
             "is_public": skill.user_id == 0,
+            "content_hash": f"sha256:{file_hash}" if file_hash else None,
             "download_path": (
                 f"/api/v1/kinds/skills/{skill.id}/download?namespace={namespace}"
             ),

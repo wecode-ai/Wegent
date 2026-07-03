@@ -35,8 +35,8 @@ import {
   getBlockedModelSelectionMessage,
   getCurrentRuntimeTaskCompatibilityFamily,
   getNewChatModelSelection,
-  isRuntimeLocalTaskRunning,
 } from './workbenchProviderHelpers'
+import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   findSelectableProject,
   findProjectDeviceWorkspace,
@@ -142,7 +142,7 @@ export function WorkbenchProvider({
   >(new Map())
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   const currentRuntimeTaskRunning = useMemo(
-    () => isRuntimeLocalTaskRunning(state.runtimeWork, state.currentRuntimeTask),
+    () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
 

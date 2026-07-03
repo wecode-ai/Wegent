@@ -20,6 +20,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onBlockCreated?.({
       task_id: 1,
       subtask_id: 9,
+      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       block: {
@@ -67,6 +68,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onBlockCreated?.({
       task_id: 1,
       subtask_id: 9,
+      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       block: {
@@ -103,6 +105,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatDone?.({
       task_id: 1,
       subtask_id: 9,
+      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       offset: 0,
@@ -136,6 +139,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatDone?.({
       task_id: 1,
       subtask_id: 9,
+      message_id: 42,
       offset: 0,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
@@ -167,6 +171,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     handlers.onChatError?.({
       task_id: 1,
       subtask_id: 9,
+      message_id: 42,
       local_task_id: 'local-task-1',
       device_id: 'device-1',
       error: 'interrupted',
@@ -177,6 +182,29 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_cancelled',
       turnId: 9,
     })
+  })
+
+  test('ignores runtime stream message events without a message id', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      localTaskId: 'local-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      task_id: 1,
+      subtask_id: 9,
+      local_task_id: 'local-task-1',
+      device_id: 'device-1',
+      content: 'partial',
+      offset: 0,
+      result: {},
+    })
+
+    expect(actions).toHaveLength(0)
   })
 })
 

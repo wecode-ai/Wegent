@@ -72,13 +72,6 @@ export function getCurrentRuntimeTaskCompatibilityFamily(
   return getRuntimeCompatibilityFamily(findRuntimeLocalTask(runtimeWork, address)?.runtime)
 }
 
-export function isRuntimeLocalTaskRunning(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): boolean {
-  return Boolean(findRuntimeLocalTask(runtimeWork, address)?.running)
-}
-
 export function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
