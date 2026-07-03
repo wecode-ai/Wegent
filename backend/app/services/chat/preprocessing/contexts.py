@@ -1451,8 +1451,13 @@ async def prepare_contexts_for_chat(
     external_web_content_texts = build_external_web_content_texts(
         external_web_content_contexts
     )
-    external_web_content_images = build_external_web_content_images(
+    all_external_web_content_images = build_external_web_content_images(
         external_web_content_contexts
+    )
+    model_capabilities = (model_config or {}).get("modelCapabilities") or {}
+    supports_image = model_capabilities.get("supportsImage")
+    external_web_content_images = (
+        all_external_web_content_images if supports_image is not False else []
     )
     # External web video/comment assets are only expanded for inline LLM paths.
     # Local executor runtimes such as ClaudeCode intentionally receive external
@@ -1487,6 +1492,8 @@ async def prepare_contexts_for_chat(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
         f"{len(attachment_contexts)} attachments, "
         f"{len(external_web_content_contexts)} external web contents, "
+        f"{len(external_web_content_images)} external web content images, "
+        f"{len(all_external_web_content_images) - len(external_web_content_images)} skipped external web content images, "
         f"{len(kb_contexts)} knowledge bases, "
         f"{len(table_contexts)} tables, {len(selected_docs_contexts)} selected_documents"
     )
