@@ -93,6 +93,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
         is_group_chat: bool = False,
+        supports_image: bool | None = None,
         supports_video: bool = False,
     ) -> list[Message]:
         """Get chat history for a session.
@@ -102,6 +103,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
             limit: Maximum number of messages to return
             before_message_id: Only return messages before this ID (for pagination)
             is_group_chat: Whether this is a group chat
+            supports_image: Whether the model supports image input.
             supports_video: Whether the model supports video input.
                 If True, video attachments will include canonical video blocks.
                 If False (default), video attachments cannot be resolved as model input.
@@ -119,7 +121,9 @@ class RemoteHistoryStore(HistoryStoreInterface):
             params["before_message_id"] = before_message_id
         # Pass is_group_chat to API for proper username prefix handling
         params["is_group_chat"] = str(is_group_chat).lower()
-        # Pass supports_video to API for video attachment handling
+        # Pass attachment capabilities to API for attachment history handling
+        if supports_image is not None:
+            params["supports_image"] = str(supports_image).lower()
         params["supports_video"] = str(supports_video).lower()
 
         url = f"/chat/history/{session_id}"
