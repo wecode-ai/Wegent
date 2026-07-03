@@ -47,6 +47,7 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   CachedWorkbenchPaneStack,
   getWorkbenchPaneKey,
+  useWorkbenchPaneActive,
   WorkbenchPaneActiveOnly,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
@@ -148,6 +149,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const paneActive = useWorkbenchPaneActive()
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -1103,7 +1105,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={rightPanelOpen}
+              visible={paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={rightPanelTabs}
               currentProject={workspaceProject}

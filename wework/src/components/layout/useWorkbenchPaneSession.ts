@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import {
+  compareMessageStyles,
+  summarizeMessages,
+  updateRuntimePaneDebugSnapshot,
+} from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import {
   deriveRuntimePaneStatus,
@@ -1151,6 +1156,43 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [clearRuntimeGoal, currentRuntimeTask, goal])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
+
+  useEffect(() => {
+    updateRuntimePaneDebugSnapshot({
+      currentRuntimeTask,
+      status: paneStatus,
+      messageSummary: summarizeMessages(messages),
+      messageStyleComparison: compareMessageStyles(messages),
+      queuedMessages,
+      guidanceMessages,
+      codeCommentContextCount: codeCommentContexts.length,
+      inputLength: input.length,
+      transcript: {
+        loading: transcriptLoading,
+        hasMoreBefore: transcriptHasMoreBefore,
+        loadingMoreBefore: transcriptLoadingMoreBefore,
+        turnNavigationCount: turnNavigation.length,
+      },
+      subagentStatuses,
+      goal,
+      goalDraftActive,
+    })
+  }, [
+    codeCommentContexts.length,
+    currentRuntimeTask,
+    goal,
+    goalDraftActive,
+    guidanceMessages,
+    input.length,
+    messages,
+    paneStatus,
+    queuedMessages,
+    subagentStatuses,
+    transcriptHasMoreBefore,
+    transcriptLoading,
+    transcriptLoadingMoreBefore,
+    turnNavigation.length,
+  ])
 
   return {
     messages,
