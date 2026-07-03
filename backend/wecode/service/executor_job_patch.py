@@ -47,7 +47,7 @@ async def _cleanup_orphan_pod(
 
     # Step 1: try the normal stale cleanup path
     cleanup_result = await _original_cleanup_stale_task_executor(
-        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=True
+        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
     )
 
     if cleanup_result.get("deleted"):
@@ -81,20 +81,6 @@ async def _cleanup_orphan_pod(
         pod_name,
         cleanup_result,
     )
-    # TEMP: direct pod deletion disabled during safe rollout. Only log the
-    # candidate instead of calling delete_pod_by_name_async.
-    logger.info(
-        "+++ [executor_job] Direct pod delete disabled, skipping task_id=%s pod_name=%s",
-        task_id,
-        pod_name,
-    )
-    return {
-        "task_id": task_id,
-        "pod_name": pod_name,
-        "deleted": False,
-        "skipped": True,
-        "reason": "direct_delete_disabled",
-    }
     try:
         result = await ek_service.delete_pod_by_name_async(pod_name)
     except Exception as exc:
@@ -186,10 +172,6 @@ async def cleanup_orphan_pods(
         logger.info("+++ [executor_job] No old pods found for orphan cleanup")
         return result
 
-    # TEMP: cap real deletions per run for safe rollout. Manually adjust or
-    # set to None to disable.
-    max_deletions: Optional[int] = 1
-
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
         task_id_str: Optional[str] = pod_info.get("task_id")
@@ -237,22 +219,6 @@ async def cleanup_orphan_pods(
         if dry_run:
             result["skipped"].append(
                 {"task_id": task_id, "pod_name": pod_name, "reason": "dry_run"}
-            )
-            continue
-
-        if max_deletions is not None and len(result["deleted"]) >= max_deletions:
-            logger.info(
-                "+++ [executor_job] Max deletions reached, skipping pod "
-                "task_id=%s pod_name=%s",
-                task_id,
-                pod_name,
-            )
-            result["skipped"].append(
-                {
-                    "task_id": task_id,
-                    "pod_name": pod_name,
-                    "reason": "max_deletions_reached",
-                }
             )
             continue
 

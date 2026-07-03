@@ -516,8 +516,13 @@ async def test_cleanup_stale_task_executor_orphan_pod_error_fallback():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
-    """Pods returned by K8s that have no subtask rows should be deleted."""
+async def test_cleanup_orphan_pods_delegates_each_pod_to_cleanup_orphan_pod():
+    """Every eligible old pod is delegated to _cleanup_orphan_pod and aggregated.
+
+    The subtask-record decision lives inside _cleanup_orphan_pod (via
+    cleanup_stale_task_executor), so cleanup_orphan_pods itself simply iterates
+    all pods above the task_id threshold and aggregates the per-pod outcome.
+    """
     job_service_instance = JobService(Mock())
     old_pods = [
         {"task_id": "1001", "pod_name": "wegent-task-1001-xyz"},
@@ -532,19 +537,25 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
             job_service_instance,
             "_cleanup_orphan_pod",
             new_callable=AsyncMock,
-            return_value={
-                "task_id": 1001,
-                "pod_name": "wegent-task-1001-xyz",
-                "deleted": True,
-                "skipped": False,
-                "reason": "pod_deleted",
-            },
+            side_effect=[
+                {
+                    "task_id": 1001,
+                    "pod_name": "wegent-task-1001-xyz",
+                    "deleted": True,
+                    "skipped": False,
+                    "reason": "pod_deleted",
+                },
+                {
+                    "task_id": 1002,
+                    "pod_name": "wegent-task-1002-abc",
+                    "deleted": False,
+                    "skipped": True,
+                    "reason": "not_stale",
+                },
+            ],
         ) as mock_cleanup,
     ):
         executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
-        job_service_instance._get_cleanup_subtasks_for_task = AsyncMock(
-            side_effect=[[], [Mock()]]
-        )
 
         result = await job_service_instance.cleanup_orphan_pods(
             AsyncMock(spec=AsyncSession), older_than_hours=48
@@ -553,13 +564,14 @@ async def test_cleanup_orphan_pods_deletes_pods_with_no_subtask_records():
     assert result["total_scanned"] == 2
     assert len(result["deleted"]) == 1
     assert result["deleted"][0]["task_id"] == 1001
+    assert len(result["skipped"]) == 1
     assert result["skipped"][0]["task_id"] == 1002
-    assert result["skipped"][0]["reason"] == "has_subtask_records"
-    mock_cleanup.assert_awaited_once()
-    call_kwargs = mock_cleanup.call_args.kwargs
-    assert call_kwargs["task_id"] == 1001
-    assert call_kwargs["pod_name"] == "wegent-task-1001-xyz"
-    assert call_kwargs["inactive_hours"] == 24  # stale_hours default
+    assert result["skipped"][0]["reason"] == "not_stale"
+    assert mock_cleanup.await_count == 2
+    first_call_kwargs = mock_cleanup.call_args_list[0].kwargs
+    assert first_call_kwargs["task_id"] == 1001
+    assert first_call_kwargs["pod_name"] == "wegent-task-1001-xyz"
+    assert first_call_kwargs["inactive_hours"] == 24  # stale_hours default
 
 
 @pytest.mark.unit
