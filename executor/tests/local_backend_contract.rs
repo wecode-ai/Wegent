@@ -118,8 +118,8 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
     let emits = transport.emits();
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "response.completed");
-    assert_eq!(emits[0].payload["task_id"], "1");
-    assert_eq!(emits[0].payload["subtask_id"], "2");
+    assert_eq!(emits[0].payload["task_id"], 1);
+    assert_eq!(emits[0].payload["subtask_id"], 2);
     assert_eq!(emits[0].payload["data"]["response"]["id"], "resp-test");
 }
 
