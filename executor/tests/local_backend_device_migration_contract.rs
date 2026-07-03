@@ -713,7 +713,7 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         .unwrap());
     assert_eq!(
         heartbeat_transport.calls()[0].payload["running_task_ids"],
-        json!([501])
+        json!(["501"])
     );
 
     assert!(

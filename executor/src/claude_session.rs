@@ -9,7 +9,8 @@ use serde_json::Value;
 use crate::protocol::ExecutionRequest;
 
 pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String> {
-    if request.new_session || request.task_id.trim().is_empty() {
+    let task_id = task_session_identifier(&request.task_id);
+    if request.new_session || task_id.is_none() {
         if request.new_session {
             delete_saved_session_files(request);
         }
@@ -21,7 +22,7 @@ pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String
 
 pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
     let session_id = session_id.trim();
-    if session_id.is_empty() || request.task_id.trim().is_empty() {
+    if session_id.is_empty() || task_session_identifier(&request.task_id).is_none() {
         return;
     }
 
@@ -33,14 +34,12 @@ pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
 }
 
 pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
-    if request.task_id.trim().is_empty() {
-        return None;
-    }
+    let task_id = task_session_identifier(&request.task_id)?;
 
     workspace_roots()
         .into_iter()
         .next()
-        .map(|root| root.join(request.task_id.trim()))
+        .map(|root| root.join(task_id))
 }
 
 fn read_session_file(request: &ExecutionRequest) -> Option<String> {
@@ -125,14 +124,16 @@ fn removable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf>
 }
 
 fn writable_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
-    session_file_paths(
-        executor_home_session_root().join(request.task_id.to_string()),
-        request,
-    )
+    let Some(task_id) = task_session_identifier(&request.task_id) else {
+        return Vec::new();
+    };
+    session_file_paths(executor_home_session_root().join(task_id), request)
 }
 
 fn legacy_workspace_session_file_candidates(request: &ExecutionRequest) -> Vec<PathBuf> {
-    let task_id = request.task_id.to_string();
+    let Some(task_id) = task_session_identifier(&request.task_id) else {
+        return Vec::new();
+    };
     let mut candidates = Vec::new();
 
     for root in workspace_roots() {
@@ -267,4 +268,12 @@ fn safe_session_identifier(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_owned())
+}
+
+fn task_session_identifier(value: &str) -> Option<String> {
+    let value = safe_session_identifier(value)?;
+    if value.parse::<i64>().ok().is_some_and(|id| id <= 0) {
+        return None;
+    }
+    Some(value)
 }

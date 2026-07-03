@@ -97,14 +97,11 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
     assert_eq!(result["success"], true);
     assert_eq!(result["workspaces"][0]["workspacePath"], "/tmp/project");
     assert_eq!(result["workspaces"][0]["workspaceKind"], "workspace");
+    assert_eq!(result["workspaces"][0]["tasks"][0]["taskId"], "thread-1");
+    assert_eq!(result["workspaces"][0]["tasks"][0]["runtime"], "codex");
+    assert_eq!(result["workspaces"][0]["tasks"][0]["title"], "Fix CI");
     assert_eq!(
-        result["workspaces"][0]["localTasks"][0]["localTaskId"],
-        "thread-1"
-    );
-    assert_eq!(result["workspaces"][0]["localTasks"][0]["runtime"], "codex");
-    assert_eq!(result["workspaces"][0]["localTasks"][0]["title"], "Fix CI");
-    assert_eq!(
-        result["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"],
+        result["workspaces"][0]["tasks"][0]["runtimeHandle"]["threadId"],
         "thread-1"
     );
 
@@ -176,11 +173,11 @@ async fn app_runtime_preserves_codex_thread_list_recency_order() {
         .await
         .expect("runtime task list should succeed");
 
-    let task_ids = listed["workspaces"][0]["localTasks"]
+    let task_ids = listed["workspaces"][0]["tasks"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|task| task["localTaskId"].as_str().unwrap())
+        .map(|task| task["taskId"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         task_ids,
@@ -206,7 +203,7 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 50
@@ -216,7 +213,7 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
         .expect("runtime transcript should succeed");
 
     assert_eq!(response["success"], true);
-    assert_eq!(response["localTaskId"], "thread-1");
+    assert_eq!(response["taskId"], "thread-1");
     assert_eq!(response["workspacePath"], "/tmp/project");
     assert_eq!(response["runtime"], "codex");
     assert_eq!(response["messages"][0]["role"], "user");
@@ -272,7 +269,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1
@@ -284,7 +281,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1,
@@ -337,7 +334,7 @@ async fn app_runtime_reads_transcript_from_cached_thread_list_rollout_path() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-fast",
+                "taskId": "thread-fast",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-fast"},
                 "limit": 50
@@ -370,7 +367,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-signature",
+                "taskId": "thread-signature",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
@@ -383,7 +380,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-signature",
+                "taskId": "thread-signature",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
@@ -402,7 +399,7 @@ async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript(
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-signature",
+                "taskId": "thread-signature",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-signature"},
                 "limit": 50,
@@ -436,7 +433,7 @@ async fn app_runtime_rebuilds_transcript_from_rollout_when_thread_read_has_no_tu
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "thread-rollout",
+                "taskId": "thread-rollout",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-rollout"},
                 "limit": 50
@@ -495,7 +492,7 @@ async fn app_runtime_persists_local_task_thread_mapping() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "workspacePath": "/tmp/project",
                 "title": "Persist me",
                 "executionRequest": {
@@ -515,17 +512,17 @@ async fn app_runtime_persists_local_task_thread_mapping() {
         .expect("create should be accepted");
 
     assert_eq!(created["accepted"], true);
-    assert_eq!(created["localTaskId"], "local-task-1");
+    assert_eq!(created["taskId"], "local-task-1");
 
     let restored_handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
     let restored = wait_for_persisted_mapping(&restored_handler).await;
 
     assert_eq!(
-        restored["workspaces"][0]["localTasks"][0]["localTaskId"],
+        restored["workspaces"][0]["tasks"][0]["taskId"],
         "local-task-1"
     );
     assert_eq!(
-        restored["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"],
+        restored["workspaces"][0]["tasks"][0]["runtimeHandle"]["threadId"],
         "thread-1"
     );
     let codex_state: Value = serde_json::from_str(
@@ -558,7 +555,7 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "standalone-chat-1",
+                "taskId": "standalone-chat-1",
                 "title": "Standalone chat",
                 "executionRequest": {
                     "task_id": 1904,
@@ -580,7 +577,7 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
         .expect("standalone chat create should be accepted");
 
     assert_eq!(created["accepted"], true);
-    assert_eq!(created["localTaskId"], "standalone-chat-1");
+    assert_eq!(created["taskId"], "standalone-chat-1");
     let workspace_path = created["workspacePath"].as_str().unwrap();
     assert!(workspace_path.contains("/Documents/Codex/"));
     assert!(workspace_path.ends_with("/standalone-chat-1"));
@@ -609,7 +606,7 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "running-tool-task",
+                "taskId": "running-tool-task",
                 "workspacePath": "/tmp/project",
                 "title": "Running tool task",
                 "executionRequest": {
@@ -638,7 +635,7 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "localTaskId": "running-tool-task",
+                "taskId": "running-tool-task",
                 "workspacePath": "/tmp/project",
                 "limit": 50
             }
@@ -650,7 +647,7 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         .expect("transcript messages should exist");
     let assistant = messages
         .iter()
-        .find(|message| message["role"] == "assistant" && message["subtaskId"] == 92)
+        .find(|message| message["role"] == "assistant" && message["subtaskId"] == "92")
         .expect("assistant message should exist");
     let blocks = assistant["blocks"]
         .as_array()
@@ -661,7 +658,7 @@ async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mappi
         .expect("running task transcript should include cached tool block");
 
     assert_eq!(assistant["role"], "assistant");
-    assert_eq!(assistant["subtaskId"], 92);
+    assert_eq!(assistant["subtaskId"], "92");
     assert_eq!(assistant["status"], "streaming");
     assert_eq!(assistant["content"], "done");
     assert!(assistant.get("completedAt").is_none());
@@ -698,7 +695,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.archive",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project"
             }
         }))
@@ -707,7 +704,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
 
     assert_eq!(archived["success"], true);
     assert_eq!(archived["accepted"], true);
-    assert_eq!(archived["localTaskId"], "thread-1");
+    assert_eq!(archived["taskId"], "thread-1");
     assert_eq!(archived["workspacePath"], "/tmp/project");
 
     let listed = handler
@@ -719,7 +716,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
         .expect("archived list should succeed");
 
     assert_eq!(listed["total"], 1);
-    assert_eq!(listed["items"][0]["localTaskId"], "thread-1");
+    assert_eq!(listed["items"][0]["taskId"], "thread-1");
     assert_eq!(listed["items"][0]["workspacePath"], "/tmp/project");
     assert_eq!(listed["items"][0]["source"], "local");
 
@@ -727,7 +724,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
         .handle_runtime_rpc(json!({
             "method": "runtime.archived_conversations.unarchive",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project"
             }
         }))
@@ -736,7 +733,7 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
 
     assert_eq!(unarchived["success"], true);
     assert_eq!(unarchived["accepted"], true);
-    assert_eq!(unarchived["localTaskId"], "thread-1");
+    assert_eq!(unarchived["taskId"], "thread-1");
 
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().any(|call| call["method"] == "thread/archive"));
@@ -766,7 +763,7 @@ async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.archive",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project"
             }
         }))
@@ -777,7 +774,7 @@ async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
         .handle_runtime_rpc(json!({
             "method": "runtime.archived_conversations.delete",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project"
             }
         }))
@@ -787,7 +784,7 @@ async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     assert_eq!(deleted["success"], true);
     assert_eq!(deleted["accepted"], true);
     assert_eq!(deleted["deleted"], true);
-    assert_eq!(deleted["localTaskId"], "thread-1");
+    assert_eq!(deleted["taskId"], "thread-1");
 
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().any(|call| call["method"] == "thread/delete"));
@@ -814,7 +811,7 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.rename",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "title": "New Codex Title"
             }
@@ -824,7 +821,7 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
 
     assert_eq!(renamed["success"], true);
     assert_eq!(renamed["accepted"], true);
-    assert_eq!(renamed["localTaskId"], "thread-1");
+    assert_eq!(renamed["taskId"], "thread-1");
 
     let listed = handler
         .handle_runtime_rpc(json!({
@@ -835,7 +832,7 @@ async fn app_runtime_renames_codex_threads_through_app_server() {
         .expect("runtime task list should succeed");
 
     assert_eq!(
-        listed["workspaces"][0]["localTasks"][0]["title"],
+        listed["workspaces"][0]["tasks"][0]["title"],
         "New Codex Title"
     );
 
@@ -870,10 +867,7 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
         .expect("title search should succeed");
 
     assert_eq!(title_result["success"], true);
-    assert_eq!(
-        title_result["items"][0]["address"]["localTaskId"],
-        "thread-1"
-    );
+    assert_eq!(title_result["items"][0]["address"]["taskId"], "thread-1");
     assert_eq!(title_result["items"][0]["address"]["deviceId"], "device-1");
     assert_eq!(title_result["items"][0]["title"], "Fix CI");
     assert_eq!(title_result["items"][0]["snippet"], "Fix CI");
@@ -889,7 +883,7 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
 
     assert_eq!(transcript_result["success"], true);
     assert_eq!(
-        transcript_result["items"][0]["address"]["localTaskId"],
+        transcript_result["items"][0]["address"]["taskId"],
         "thread-1"
     );
     assert_eq!(transcript_result["items"][0]["snippet"], "please fix ci");
@@ -916,7 +910,7 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.archive",
             "payload": {
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project"
             }
         }))
@@ -940,10 +934,7 @@ async fn app_runtime_search_excludes_archived_threads_by_default() {
 
     assert_eq!(default_result["success"], true);
     assert_eq!(default_result["items"].as_array().unwrap().len(), 0);
-    assert_eq!(
-        archived_result["items"][0]["address"]["localTaskId"],
-        "thread-1"
-    );
+    assert_eq!(archived_result["items"][0]["address"]["taskId"], "thread-1");
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
@@ -1354,8 +1345,8 @@ async fn wait_for_persisted_mapping(handler: &RuntimeWorkRpcHandler) -> Value {
             }))
             .await
             .expect("runtime task list should succeed");
-        if response["workspaces"][0]["localTasks"][0]["localTaskId"] == "local-task-1"
-            && response["workspaces"][0]["localTasks"][0]["runtimeHandle"]["threadId"] == "thread-1"
+        if response["workspaces"][0]["tasks"][0]["taskId"] == "local-task-1"
+            && response["workspaces"][0]["tasks"][0]["runtimeHandle"]["threadId"] == "thread-1"
         {
             return response;
         }

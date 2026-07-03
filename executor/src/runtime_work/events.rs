@@ -26,7 +26,7 @@ pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
     event: &str,
-    _local_task_id: &str,
+    local_task_id: &str,
     request: &ExecutionRequest,
     data: Value,
 ) {
@@ -38,7 +38,7 @@ pub(crate) fn emit_response_event(
         "event": event,
         "payload": {
             "event_type": event,
-            "taskId": request.task_id.to_string(),
+            "taskId": local_task_id,
             "subtaskId": request.subtask_id.to_string(),
             "data": data,
             "deviceId": device_id,
