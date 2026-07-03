@@ -22,6 +22,7 @@ struct LocalTerminalSession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    child_pid: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -41,6 +42,18 @@ impl Default for LocalTerminalState {
             sessions: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
         }
+    }
+}
+
+impl LocalTerminalState {
+    pub fn active_process_ids(&self) -> Result<Vec<u32>, String> {
+        Ok(self
+            .sessions
+            .lock()
+            .map_err(|_| "Failed to lock local terminal state".to_string())?
+            .values()
+            .filter_map(|session| session.child_pid)
+            .collect())
     }
 }
 
@@ -175,6 +188,7 @@ pub fn start_local_terminal(
         let session = LocalTerminalSession {
             master: pair.master,
             writer,
+            child_pid: child.process_id(),
             child,
         };
         state

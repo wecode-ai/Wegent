@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
     future::Future,
+    io::Write,
     path::PathBuf,
     pin::Pin,
     process::Stdio,
@@ -40,6 +41,8 @@ const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
 const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
+const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
+const STDERR_PREVIEW_MAX_CHARS: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -503,6 +506,7 @@ async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandO
     };
     fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
     fields.extend(command_outcome_fields(&outcome));
+    fields.extend(debug_claude_stdout_fields(&spec, &outcome, None, None));
     log_executor_event("process finished", &fields);
     outcome
 }
@@ -539,6 +543,11 @@ where
 
     let mut fields = command_log_fields(&spec);
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
+    let debug_stdout_path =
+        debug_claude_stdout_path_for_spec(&spec, Some(task_id), Some(subtask_id));
+    if let Some(path) = debug_stdout_path.as_ref() {
+        fields.push(("debug_stdout_path", path.display().to_string()));
+    }
     log_executor_event("process started", &fields);
     let started = Instant::now();
     let outcome = match timeout(
@@ -550,6 +559,7 @@ where
             builder,
             task_id,
             subtask_id,
+            debug_stdout_path,
         ),
     )
     .await
@@ -563,6 +573,9 @@ where
     };
     fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
     fields.extend(command_outcome_fields(&outcome));
+    if let Some(path) = debug_claude_stdout_path_for_spec(&spec, Some(task_id), Some(subtask_id)) {
+        fields.push(("debug_stdout_path", path.display().to_string()));
+    }
     log_executor_event("process finished", &fields);
     outcome
 }
@@ -574,6 +587,7 @@ async fn run_prepared_streaming_command<S>(
     builder: ResponsesEventBuilder,
     task_id: i64,
     subtask_id: i64,
+    debug_stdout_path: Option<PathBuf>,
 ) -> CommandOutcome
 where
     S: EventSink,
@@ -598,7 +612,12 @@ where
     let stderr = child.stderr.take();
     let stdout_task = stdout.map(|stdout| {
         tokio::spawn(read_streaming_stdout(
-            stdout, sink, builder, task_id, subtask_id,
+            stdout,
+            sink,
+            builder,
+            task_id,
+            subtask_id,
+            debug_stdout_path,
         ))
     });
     let stderr_task = stderr.map(|stderr| tokio::spawn(read_process_output(stderr)));
@@ -639,18 +658,24 @@ async fn read_streaming_stdout<R, S>(
     builder: ResponsesEventBuilder,
     task_id: i64,
     subtask_id: i64,
+    debug_stdout_path: Option<PathBuf>,
 ) -> String
 where
     R: AsyncRead + Unpin,
     S: EventSink,
 {
     let mut output = String::new();
+    let mut debug_stdout_file =
+        debug_stdout_path.and_then(|path| open_debug_claude_stdout_file(&path).ok());
     let mut offset = 0usize;
     let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
     let mut lines = BufReader::new(stdout).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         output.push_str(&line);
         output.push('\n');
+        if let Some(file) = debug_stdout_file.as_mut() {
+            let _ = writeln!(file, "{line}");
+        }
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
@@ -942,9 +967,87 @@ fn command_outcome_fields(outcome: &CommandOutcome) -> Vec<(&'static str, String
             if let Some(exit_code) = exit_code {
                 fields.push(("exit_code", exit_code.to_string()));
             }
+            if !stderr.is_empty() {
+                fields.push(("stderr_preview", preview_log_value(stderr)));
+            }
             fields
         }
     }
+}
+
+fn preview_log_value(value: &str) -> String {
+    let value = value.replace(['\r', '\n'], "\\n");
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(STDERR_PREVIEW_MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+fn debug_claude_stdout_fields(
+    spec: &CommandSpec,
+    outcome: &CommandOutcome,
+    task_id: Option<i64>,
+    subtask_id: Option<i64>,
+) -> Vec<(&'static str, String)> {
+    let Some(path) = debug_claude_stdout_path_for_spec(spec, task_id, subtask_id) else {
+        return Vec::new();
+    };
+
+    let stdout = match outcome {
+        CommandOutcome::Success { stdout } | CommandOutcome::Failure { stdout, .. } => stdout,
+    };
+    if stdout.is_empty() {
+        return Vec::new();
+    }
+
+    match append_debug_claude_stdout(&path, stdout) {
+        Ok(()) => vec![("debug_stdout_path", path.display().to_string())],
+        Err(error) => vec![("debug_stdout_error", error.to_string())],
+    }
+}
+
+fn open_debug_claude_stdout_file(path: &PathBuf) -> std::io::Result<fs::File> {
+    fs::OpenOptions::new().create(true).append(true).open(path)
+}
+
+fn append_debug_claude_stdout(path: &PathBuf, stdout: &str) -> std::io::Result<()> {
+    let mut file = open_debug_claude_stdout_file(path)?;
+    file.write_all(stdout.as_bytes())?;
+    if !stdout.ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+fn debug_claude_stdout_path_for_spec(
+    spec: &CommandSpec,
+    task_id: Option<i64>,
+    subtask_id: Option<i64>,
+) -> Option<PathBuf> {
+    (spec.program == "claude" && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+        .then(|| debug_claude_stdout_path(task_id, subtask_id))
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            !matches!(value.as_str(), "0" | "false" | "no" | "off")
+        })
+        .unwrap_or(false)
+}
+
+fn debug_claude_stdout_path(task_id: Option<i64>, subtask_id: Option<i64>) -> PathBuf {
+    let filename = match (task_id, subtask_id) {
+        (Some(task_id), Some(subtask_id)) => {
+            format!("wegent-claude-stdout-{task_id}-{subtask_id}.jsonl")
+        }
+        _ => format!("wegent-claude-stdout-{}.jsonl", std::process::id()),
+    };
+    env::temp_dir().join(filename)
 }
 
 fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
@@ -983,6 +1086,12 @@ mod tests {
             std::env::remove_var(key);
             Self { key, previous }
         }
+
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -1003,5 +1112,56 @@ mod tests {
 
         assert_eq!(stream_chunk_chars(), 20);
         assert_eq!(stream_chunk_delay_ms(), 0);
+    }
+
+    #[test]
+    fn debug_claude_stdout_appends_existing_task_log() {
+        let _lock = env_lock();
+        let _debug = EnvGuard::set(DEBUG_CLAUDE_STDOUT_ENV, "1");
+        let task_id = i64::from(std::process::id());
+        let subtask_id = 987_654_321;
+        let spec = CommandSpec::new("claude");
+        let path = debug_claude_stdout_path(Some(task_id), Some(subtask_id));
+        let _ = fs::remove_file(&path);
+
+        debug_claude_stdout_fields(
+            &spec,
+            &CommandOutcome::Success {
+                stdout: "first".to_owned(),
+            },
+            Some(task_id),
+            Some(subtask_id),
+        );
+        debug_claude_stdout_fields(
+            &spec,
+            &CommandOutcome::Success {
+                stdout: "second".to_owned(),
+            },
+            Some(task_id),
+            Some(subtask_id),
+        );
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn debug_claude_stdout_is_disabled_by_default() {
+        let _lock = env_lock();
+        let _debug = EnvGuard::remove(DEBUG_CLAUDE_STDOUT_ENV);
+        let spec = CommandSpec::new("claude");
+
+        assert!(debug_claude_stdout_path_for_spec(&spec, Some(1), Some(2)).is_none());
+    }
+
+    #[test]
+    fn command_outcome_fields_include_stderr_preview_on_failure() {
+        let fields = command_outcome_fields(&CommandOutcome::Failure {
+            stderr: "first line\nsecond line".to_owned(),
+            stdout: String::new(),
+            exit_code: Some(1),
+        });
+
+        assert!(fields.contains(&("stderr_preview", "first line\\nsecond line".to_owned())));
     }
 }

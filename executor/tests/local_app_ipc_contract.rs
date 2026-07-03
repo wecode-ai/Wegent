@@ -6,10 +6,11 @@ use std::{
     fs,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use serde_json::{json, Value};
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
     app_ipc::{
         app_ipc_listening_log_line, app_ipc_socket_path, AppIpcError, AppIpcServer,
@@ -36,9 +37,9 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
-fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+async fn env_lock() -> AsyncMutexGuard<'static, ()> {
+    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| AsyncMutex::new(())).lock().await
 }
 
 struct EnvGuard {
@@ -214,6 +215,125 @@ async fn app_ipc_lists_and_reads_workspace_files_locally() {
     assert_eq!(file_response["result"]["stdout"]["content"], json!("hello"));
 
     let _ = fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn app_ipc_lists_codex_skills_from_runtime_directories() {
+    let _lock = env_lock().await;
+    let home = unique_dir("local-skills-home");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let agents_skill = home.join(".agents/skills/env-context");
+    let claude_skill = home.join(".claude/skills/claude-review");
+    let codex_skill = home.join(".codex/skills/codex-review");
+    let codex_system_skill = home.join(".codex/skills/.system/codex-system");
+    let claude_plugin_skill = home.join(".claude/plugins/cache/vendor/example/skills/plugin-skill");
+    let codex_plugin_skill = home
+        .join(".codex/plugins/cache/openai-curated-remote/codex-pack/0.1.0/skills/codex-plugin");
+    let old_codex_plugin_skill =
+        home.join(".codex/plugins/cache/openai-curated/codex-pack/deadbeef/skills/codex-plugin");
+    fs::create_dir_all(&agents_skill).unwrap();
+    fs::create_dir_all(&claude_skill).unwrap();
+    fs::create_dir_all(&codex_skill).unwrap();
+    fs::create_dir_all(&codex_system_skill).unwrap();
+    fs::create_dir_all(&claude_plugin_skill).unwrap();
+    fs::create_dir_all(&codex_plugin_skill).unwrap();
+    fs::create_dir_all(&old_codex_plugin_skill).unwrap();
+    fs::write(
+        agents_skill.join("SKILL.md"),
+        "---\nname: env-context\ndescription: Environment facts\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        claude_skill.join("SKILL.md"),
+        "---\nname: claude-review\ndescription: Claude review\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        codex_skill.join("SKILL.md"),
+        "---\nname: codex-review\ndescription: |\n  Review with Codex\n  across files\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        codex_system_skill.join("SKILL.md"),
+        "---\nname: codex-system\ndescription: Built in Codex skill\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        claude_plugin_skill.join("SKILL.md"),
+        "---\nname: plugin-skill\ndescription: Claude plugin skill\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        codex_plugin_skill.join("SKILL.md"),
+        "---\nname: codex-plugin\ndescription: Current Codex plugin skill\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        old_codex_plugin_skill.join("SKILL.md"),
+        "---\nname: codex-plugin\ndescription: Old Codex plugin skill\n---\n",
+    )
+    .unwrap();
+
+    let server = AppIpcServer::new();
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-skills",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "ls_skills",
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 4096
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    let skills = response["result"]["stdout"].as_array().unwrap();
+    assert_eq!(skills.len(), 3);
+    assert_eq!(skills[0]["name"], json!("codex-review"));
+    assert_eq!(
+        skills[0]["description"],
+        json!("Review with Codex\nacross files")
+    );
+    assert_eq!(skills[0]["source"], json!("codex"));
+    assert_eq!(skills[0]["scope"], json!("user"));
+    assert_eq!(skills[0]["source_priority"], json!(0));
+    assert_eq!(
+        skills[0]["path"],
+        json!(codex_skill.join("SKILL.md").display().to_string())
+    );
+    assert_eq!(skills[1]["name"], json!("codex-system"));
+    assert_eq!(skills[1]["description"], json!("Built in Codex skill"));
+    assert_eq!(skills[1]["source"], json!("codex"));
+    assert_eq!(skills[1]["scope"], json!("system"));
+    assert_eq!(skills[1]["source_priority"], json!(10));
+    assert_eq!(
+        skills[1]["path"],
+        json!(codex_system_skill.join("SKILL.md").display().to_string())
+    );
+    assert_eq!(skills[2]["name"], json!("codex-plugin"));
+    assert_eq!(
+        skills[2]["description"],
+        json!("Current Codex plugin skill")
+    );
+    assert_eq!(skills[2]["source"], json!("codex-plugin"));
+    assert_eq!(skills[2]["scope"], json!("user"));
+    assert_eq!(skills[2]["plugin_name"], json!("codex-pack"));
+    assert_eq!(skills[2]["plugin_provider"], json!("openai-curated-remote"));
+    assert_eq!(skills[2]["plugin_version"], json!("0.1.0"));
+    assert_eq!(skills[2]["source_priority"], json!(20));
+    assert_eq!(
+        skills[2]["path"],
+        json!(codex_plugin_skill.join("SKILL.md").display().to_string())
+    );
+
+    let _ = fs::remove_dir_all(home);
 }
 
 #[tokio::test]
@@ -484,9 +604,9 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 }
 
-#[test]
-fn app_ipc_socket_path_can_be_overridden() {
-    let _lock = env_lock();
+#[tokio::test]
+async fn app_ipc_socket_path_can_be_overridden() {
+    let _lock = env_lock().await;
     let socket_path = std::env::temp_dir().join("wegent-executor-local-app.sock");
     let _socket = EnvGuard::set(
         "WEGENT_EXECUTOR_APP_IPC_SOCKET",

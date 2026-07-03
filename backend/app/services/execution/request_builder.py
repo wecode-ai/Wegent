@@ -36,7 +36,11 @@ from app.services.skill_binding_service import (
     SkillBindingContext,
     skill_binding_service,
 )
-from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
+from app.services.skill_resolution import (
+    build_skill_ref_meta,
+    find_skill_by_name,
+    find_skill_by_ref,
+)
 from app.services.user_mcp_service import user_mcp_service
 from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
@@ -1294,13 +1298,13 @@ class TaskRequestBuilder:
                     # Build skill_refs entry (prefer Ghost stored refs for precision)
                     ghost_skill_ref = ghost_skill_refs.get(skill_name)
                     if ghost_skill_ref:
-                        skill_refs[skill_name] = ghost_skill_ref.model_dump()
+                        ref_meta = ghost_skill_ref.model_dump()
+                        ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                            build_skill_ref_meta(skill).get("content_hash")
+                        )
+                        skill_refs[skill_name] = ref_meta
                     else:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(skill, "id", None),
-                            "namespace": getattr(skill, "namespace", "default"),
-                            "is_public": getattr(skill, "user_id", 1) == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     # Add to preload and user_selected if configured in Ghost
                     # All preloaded skills are treated as user-selected so the model
@@ -1390,11 +1394,7 @@ class TaskRequestBuilder:
                     user_selected_skills.append(skill_name)
 
                     # Build skill_refs entry for user-selected skill
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
@@ -1443,11 +1443,7 @@ class TaskRequestBuilder:
                     skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
                     logger.info(
                         "[_get_bot_skills] Added available skill '%s' (not preloaded)",
                         skill_name,
@@ -2261,11 +2257,7 @@ Response template:
 
                 resolved_skills.append(self._build_skill_data(skill, user=user))
                 existing_skill_names.add(skill_name)
-                skill_refs[skill_name] = {
-                    "skill_id": getattr(skill, "id", None),
-                    "namespace": getattr(skill, "namespace", "default"),
-                    "is_public": getattr(skill, "user_id", 1) == 0,
-                }
+                skill_refs[skill_name] = build_skill_ref_meta(skill)
 
     @staticmethod
     def _extract_skill_mcp_to_list(skill_configs: list) -> list:

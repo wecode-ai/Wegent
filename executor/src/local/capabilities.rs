@@ -93,6 +93,7 @@ pub struct SkillSyncSpec {
     pub skill_id: i64,
     pub namespace: String,
     pub is_public: bool,
+    pub content_hash: Option<String>,
 }
 
 impl SkillSyncSpec {
@@ -110,16 +111,33 @@ impl SkillSyncSpec {
             .or_else(|| value.get("isPublic"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let content_hash = value
+            .get("content_hash")
+            .or_else(|| value.get("contentHash"))
+            .or_else(|| value.get("file_hash"))
+            .or_else(|| value.get("fileHash"))
+            .and_then(Value::as_str)
+            .map(normalize_content_hash);
         Ok(Self {
             name,
             skill_id,
             namespace,
             is_public,
+            content_hash,
         })
     }
 
     fn store_dir_name(&self) -> String {
         format!("{}-{}-{}", self.skill_id, self.namespace, self.name)
+    }
+}
+
+fn normalize_content_hash(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"');
+    if trimmed.is_empty() || trimmed.starts_with("sha256:") {
+        trimmed.to_owned()
+    } else {
+        format!("sha256:{trimmed}")
     }
 }
 
@@ -535,7 +553,7 @@ where
             ));
         }
 
-        if !store_path.join("SKILL.md").is_file() {
+        if !is_installed_skill_current(spec, &store_path, manifest) {
             remove_existing_path(&store_path)?;
             self.package_provider.stage_skill(spec, &store_path).await?;
         }
@@ -549,6 +567,7 @@ where
                 "skill_id": spec.skill_id,
                 "namespace": spec.namespace,
                 "is_public": spec.is_public,
+                "content_hash": spec.content_hash,
                 "store_path": store_path.display().to_string(),
                 "runtime": {
                     "claude_link": runtime_link.display().to_string(),
@@ -721,6 +740,26 @@ where
         }
         Ok(())
     }
+}
+
+fn is_installed_skill_current(spec: &SkillSyncSpec, store_path: &Path, manifest: &Value) -> bool {
+    if !store_path.join("SKILL.md").is_file() {
+        return false;
+    }
+    let Some(expected_hash) = spec.content_hash.as_deref() else {
+        return true;
+    };
+    object_map(manifest.get("skills"))
+        .and_then(|skills| skills.get(&spec.name).cloned())
+        .and_then(|entry| {
+            Some(
+                value_i64(entry.get("skill_id"))? == spec.skill_id
+                    && value_string(entry.get("namespace")).as_deref()
+                        == Some(spec.namespace.as_str())
+                    && value_string(entry.get("content_hash")).as_deref() == Some(expected_hash),
+            )
+        })
+        .unwrap_or(false)
 }
 
 pub struct GlobalCapabilityReporter {

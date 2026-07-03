@@ -320,9 +320,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneMessages.some(
-    message => message.role === 'assistant' && message.status === 'streaming'
-  )
+  const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
   const latestPreviousTurnTurnId = useMemo(() => {
     for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
       const message = paneMessages[index]
@@ -365,7 +363,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !activeDeviceId &&
     !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.sending ||
+    paneSession.status.isSubmitting ||
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
@@ -875,7 +873,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               <ScrollableMessageArea
                 messages={paneMessages}
                 loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={paneSession.waitingForAssistant}
+                isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
                 hasMoreBefore={paneSession.transcriptHasMoreBefore}
                 loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                 turnNavigation={paneSession.turnNavigation}
