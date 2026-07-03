@@ -5,6 +5,7 @@ import {
   isValidFileSize,
   uploadAttachment as defaultUploadAttachment,
 } from '@/api/attachments'
+import { readTextAttachmentMetadata } from '@/lib/attachments'
 
 interface UseWorkbenchAttachmentsOptions {
   uploadAttachment?: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
@@ -59,6 +60,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
         })
 
         try {
+          const textMetadataPromise = readTextAttachmentMetadata(file)
           const attachment = await uploadAttachment(file, progress => {
             setState(current => {
               const uploadingFiles = new Map(current.uploadingFiles)
@@ -69,13 +71,22 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
               return { ...current, uploadingFiles }
             })
           })
+          const textMetadata = await textMetadataPromise
+          const enrichedAttachment = textMetadata
+            ? {
+                ...attachment,
+                text_preview: attachment.text_preview ?? textMetadata.text_preview,
+                text_content: attachment.text_content ?? textMetadata.text_content,
+                text_length: attachment.text_length ?? textMetadata.text_length,
+              }
+            : attachment
 
           setState(current => {
             const uploadingFiles = new Map(current.uploadingFiles)
             uploadingFiles.delete(fileId)
             return {
               ...current,
-              attachments: [...current.attachments, attachment],
+              attachments: [...current.attachments, enrichedAttachment],
               uploadingFiles,
             }
           })

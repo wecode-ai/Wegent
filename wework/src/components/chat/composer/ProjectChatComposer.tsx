@@ -115,6 +115,14 @@ export function ProjectChatComposer({
     const files = Array.from(event.dataTransfer.files)
     if (files.length > 0) onFileSelect(files)
   }
+  const handleShowTextAttachment = (attachment: Attachment) => {
+    const text = attachment.text_content
+    if (!text) return
+
+    onChange(value ? `${value}\n${text}` : text)
+    onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   useEffect(() => {
     if (!isTauriRuntime()) return
@@ -173,6 +181,7 @@ export function ProjectChatComposer({
           errors={attachmentErrors}
           codeComments={codeComments}
           onRemoveAttachment={onRemoveAttachment}
+          onShowTextAttachment={handleShowTextAttachment}
           onClearCodeComments={onClearCodeComments}
         />
         {disabledReason && (
