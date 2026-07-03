@@ -81,7 +81,6 @@ function eventBase(payload: Record<string, unknown>) {
   return {
     task_id: numberField(payload, 'task_id'),
     subtask_id: numberField(payload, 'subtask_id'),
-    message_id: optionalNumberField(payload, 'message_id'),
     device_id: stringField(payload, 'device_id'),
     local_task_id: stringField(payload, 'local_task_id'),
   }
@@ -109,12 +108,7 @@ function parseRecord(value: unknown): Record<string, unknown> | undefined {
 
 function eventContent(payload: Record<string, unknown>): string {
   const result = eventResult(payload)
-  return (
-    stringField(result, 'delta') ??
-    stringField(result, 'value') ??
-    stringField(result, 'output_text') ??
-    ''
-  )
+  return stringField(result, 'delta') ?? ''
 }
 
 function completedContent(data: Record<string, unknown>): string | undefined {
@@ -428,9 +422,11 @@ export function emitResponseApiEvent(
   }
 
   if (eventName === 'response.output_text.delta' || eventName === 'response.refusal.delta') {
+    const content = eventContent(payload)
+    if (!content) return
     handlers.onChatChunk?.({
       ...base,
-      content: eventContent(payload),
+      content,
       offset: numberField(payload, 'offset'),
       result: eventResult(payload),
     })

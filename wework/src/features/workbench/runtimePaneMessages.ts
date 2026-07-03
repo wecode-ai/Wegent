@@ -40,60 +40,74 @@ export function createRuntimeTaskStreamHandlers(
   return {
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('chat:start', address, payload)
+        return
+      }
       debugRuntimeStreamEvent('chat:start', address, payload, true)
       handlers.onAssistantStart?.()
       handlers.onMessageAction({
         type: 'assistant_started',
-        messageId,
         taskId: payload.task_id,
-        turnId: payload.subtask_id,
+        turnId: identity.subtaskId,
         shellType: payload.shell_type,
       })
       handlers.onRefreshWorkLists?.()
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('chat:chunk', address, payload, {
+          hasContent: Boolean(payload.content),
+          hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
+        })
+        return
+      }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
         hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
-        blockCount: getResultBlocks(payload.subtask_id, payload.result)?.length ?? 0,
+        blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onMessageAction({
         type: 'assistant_chunk',
-        messageId,
-        turnId: payload.subtask_id,
+        turnId: identity.subtaskId,
         content: payload.content,
         reasoningChunk: getReasoningChunk(payload.result),
-        blocks: getResultBlocks(payload.subtask_id, payload.result),
+        blocks: getResultBlocks(identity.subtaskId, payload.result),
       })
     },
     onChatDone: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('chat:done', address, payload)
+        return
+      }
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
         hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.file_changes)),
-        blockCount: getResultBlocks(payload.subtask_id, payload.result)?.length ?? 0,
+        blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
       handlers.onMessageAction({
         type: 'assistant_done',
-        messageId,
-        turnId: payload.subtask_id,
+        turnId: identity.subtaskId,
         content: doneContent(payload.result),
-        blocks: getResultBlocks(payload.subtask_id, payload.result),
+        blocks: getResultBlocks(identity.subtaskId, payload.result),
         fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
       })
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('chat:error', address, payload, {
+          errorType: payload.type,
+        })
+        return
+      }
       debugRuntimeStreamEvent('chat:error', address, payload, true, {
         error: payload.error,
         errorType: payload.type,
@@ -102,14 +116,12 @@ export function createRuntimeTaskStreamHandlers(
       if (isCancelledRuntimeError(payload)) {
         handlers.onMessageAction({
           type: 'assistant_cancelled',
-          messageId,
-          turnId: payload.subtask_id,
+          turnId: identity.subtaskId,
         })
       } else {
         handlers.onMessageAction({
           type: 'assistant_error',
-          messageId,
-          turnId: payload.subtask_id,
+          turnId: identity.subtaskId,
           error: payload.error,
           errorType: payload.type,
         })
@@ -118,9 +130,14 @@ export function createRuntimeTaskStreamHandlers(
     },
     onBlockCreated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
-      const block = normalizeChatBlock(payload.subtask_id, payload.block)
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('block:created', address, payload, {
+          rawBlockType: isRecord(payload.block) ? payload.block.type : null,
+        })
+        return
+      }
+      const block = normalizeChatBlock(identity.subtaskId, payload.block)
       debugRuntimeStreamEvent('block:created', address, payload, true, {
         rawBlockType: isRecord(payload.block) ? payload.block.type : null,
         normalizedBlockType: block?.type ?? null,
@@ -128,15 +145,20 @@ export function createRuntimeTaskStreamHandlers(
       if (!block) return
       handlers.onMessageAction({
         type: 'block_created',
-        messageId,
-        turnId: payload.subtask_id,
+        turnId: identity.subtaskId,
         block,
       })
     },
     onBlockUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
-      const messageId = runtimeStreamMessageId(payload)
-      if (!messageId) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('block:updated', address, payload, {
+          blockId: payload.block_id,
+          status: payload.status ?? null,
+        })
+        return
+      }
       debugRuntimeStreamEvent('block:updated', address, payload, true, {
         blockId: payload.block_id,
         status: payload.status ?? null,
@@ -146,8 +168,7 @@ export function createRuntimeTaskStreamHandlers(
       })
       handlers.onMessageAction({
         type: 'block_updated',
-        messageId,
-        turnId: payload.subtask_id,
+        turnId: identity.subtaskId,
         blockId: payload.block_id,
         updates: {
           ...(payload.content !== undefined && { content: payload.content }),
@@ -242,7 +263,7 @@ function isRuntimeTaskStreamPayload(
   )
 }
 
-function runtimeStreamMessageId(
+function runtimeStreamTaskSubtaskIdentity(
   payload:
     | ChatStartPayload
     | ChatChunkPayload
@@ -251,12 +272,16 @@ function runtimeStreamMessageId(
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
     | RuntimeSubagentActivityPayload
-): string | null {
-  const rawMessageId = typeof payload.message_id === 'number' ? payload.message_id : null
-  if (rawMessageId !== null) {
-    return `${payload.local_task_id ?? 'runtime'}:message:${rawMessageId}`
+): { taskId: string; subtaskId: number } | null {
+  const taskId = payload.local_task_id
+  if (!taskId) return null
+
+  const subtaskId = payload.subtask_id
+  if (typeof subtaskId !== 'number' || !Number.isFinite(subtaskId) || subtaskId <= 0) {
+    return null
   }
-  return null
+
+  return { taskId, subtaskId }
 }
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {
@@ -313,6 +338,23 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function warnAndDropRuntimeStreamEvent(
+  event: string,
+  address: RuntimeTaskAddress,
+  payload: { task_id?: number; local_task_id?: string; device_id?: string; subtask_id?: number },
+  details: Record<string, unknown> = {}
+): void {
+  console.warn('[Wework] Dropped runtime stream event without task identity', {
+    event,
+    address: runtimeAddressDebug(address),
+    taskId: payload.local_task_id ?? payload.task_id,
+    localTaskId: payload.local_task_id,
+    deviceId: payload.device_id,
+    subtaskId: payload.subtask_id,
+    ...details,
+  })
 }
 
 function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean | undefined {

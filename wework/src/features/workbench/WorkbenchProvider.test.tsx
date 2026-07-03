@@ -2287,13 +2287,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.some(handler => handler.onChatChunk)).toBe(true))
     await act(async () => {
       const startPayload = {
-        message_id: 701,
         subtask_id: 102,
         device_id: 'device-1',
         local_task_id: request.localTaskId,
       }
       const chunkPayload = {
-        message_id: 701,
         subtask_id: 102,
         content: 'streamed answer',
         offset: 0,
@@ -3171,7 +3169,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 501,
         task_id: 77,
         subtask_id: 102,
         shell_type: 'Codex',
@@ -3179,7 +3176,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         local_task_id: request.localTaskId,
       })
       streamHandlers.onChatChunk?.({
-        message_id: 501,
         task_id: 77,
         subtask_id: 102,
         content: 'streamed answer',
@@ -4292,7 +4288,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4351,7 +4346,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4394,7 +4388,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4439,7 +4432,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatDone?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4488,7 +4480,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onChatStart?.({
-        message_id: 601,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Codex',
@@ -4500,7 +4491,6 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onBlockCreated?.({
-        message_id: 601,
         task_id: 77,
         subtask_id: 101,
         local_task_id: 'runtime-a',
@@ -4625,7 +4615,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4642,7 +4631,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     runtimeRunning = false
     await act(async () => {
       streamHandlers.onChatDone?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4770,7 +4758,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 801,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4789,7 +4776,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     runtimeRunning = false
     await act(async () => {
       streamHandlers.onChatDone?.({
-        message_id: 801,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4883,7 +4869,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -4983,7 +4968,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -5132,7 +5116,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         task_id: 77,
         subtask_id: 101,
         shell_type: 'Chat',
@@ -5236,7 +5219,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         subtask_id: 101,
         shell_type: 'Codex',
         device_id: 'device-1',
@@ -5454,14 +5436,12 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatStart?.({
-        message_id: 701,
         subtask_id: 101,
         shell_type: 'Codex',
         device_id: 'device-1',
         local_task_id: 'runtime-a',
       })
       streamHandlers.onChatDone?.({
-        message_id: 701,
         subtask_id: 101,
         offset: 0,
         result: { value: 'stale runtime a output' },
@@ -5469,14 +5449,12 @@ describe('WorkbenchProvider runtime tasks', () => {
         local_task_id: 'runtime-a',
       })
       streamHandlers.onChatStart?.({
-        message_id: 702,
         subtask_id: 102,
         shell_type: 'Codex',
         device_id: 'device-1',
         local_task_id: 'runtime-b',
       })
       streamHandlers.onChatDone?.({
-        message_id: 702,
         subtask_id: 102,
         offset: 0,
         result: { value: 'current runtime b output' },

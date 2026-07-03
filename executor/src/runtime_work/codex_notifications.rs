@@ -75,9 +75,7 @@ pub(crate) fn debug_ignored_codex_notification(message: &Value, method: &str, pa
 
 fn wrapped_item_method(wrapper_type: &str, payload_type: &str) -> Option<&'static str> {
     match (wrapper_type, payload_type) {
-        ("eventmsg", "agentmessage") | ("responseitem", "message") => {
-            Some("item/agentMessage/delta")
-        }
+        ("eventmsg", "agentmessage") | ("responseitem", "message") => Some("item/completed"),
         ("eventmsg", "subagentactivity") | ("responseitem", "subagentactivity") => {
             Some("subagent/activity")
         }
@@ -191,7 +189,7 @@ mod tests {
             }
         });
         let notification = codex_notification(&message);
-        assert_eq!(notification.method, "item/agentMessage/delta");
+        assert_eq!(notification.method, "item/completed");
 
         let message = json!({
             "type": "event_msg",
