@@ -346,6 +346,10 @@ pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {
+    if !is_claude_assistant_message(value) {
+        return None;
+    }
+
     let content = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -360,6 +364,19 @@ fn extract_claude_assistant_text(value: &Value) -> Option<String> {
         }
     }
     (!text.is_empty()).then_some(text)
+}
+
+fn is_claude_assistant_message(value: &Value) -> bool {
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+
+    value
+        .get("message")
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str)
+        .map(|role| role == "assistant")
+        .unwrap_or(true)
 }
 
 fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {
@@ -397,6 +414,10 @@ fn extract_claude_thinking_delta(value: &Value) -> Option<String> {
 }
 
 fn extract_claude_assistant_thinking(value: &Value) -> Option<String> {
+    if !is_claude_assistant_message(value) {
+        return None;
+    }
+
     let content = value
         .get("message")
         .and_then(|message| message.get("content"))

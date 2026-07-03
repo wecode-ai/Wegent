@@ -728,10 +728,8 @@ def test_transfer_endpoint_uses_extracted_module(
             return_value=transfer_response,
         ) as mock_transfer,
         patch(
-            "app.api.endpoints.knowledge_transfer.capture_trace_context",
-            return_value={"traceparent": "test"},
-        ),
-        patch("app.api.endpoints.knowledge_transfer._update_kb_summary_after_deletion"),
+            "app.api.endpoints.knowledge_transfer.schedule_kb_summary_updates_after_deletion"
+        ) as mock_schedule,
     ):
         response = test_client.post(
             "/api/knowledge-bases/10/transfer-documents",
@@ -746,6 +744,8 @@ def test_transfer_endpoint_uses_extracted_module(
     assert response.status_code == 200
     assert response.json()["transferred_document_count"] == 1
     mock_transfer.assert_called_once()
+    mock_schedule.assert_called_once()
+    assert mock_schedule.call_args.kwargs["kb_ids"] == [10, 20]
     assert mock_transfer.call_args.kwargs["source_kb_id"] == 10
     assert mock_transfer.call_args.kwargs["target_kb_id"] == 20
 

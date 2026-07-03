@@ -17,7 +17,10 @@ use crate::{
 
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
-    transcript::{tool_block_from_notification, tool_update_from_notification},
+    transcript::{
+        assistant_text_kind_from_notification, tool_block_from_notification,
+        tool_update_from_notification, AssistantNotificationTextKind,
+    },
     util::{
         extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, reasoning_content,
         string_field,
@@ -43,7 +46,6 @@ pub(crate) fn emit_response_event(
             "task_id": request.task_id,
             "subtask_id": request.subtask_id,
             "turn_id": request.subtask_id,
-            "message_id": request.message_id,
             "data": data,
             "device_id": device_id,
             "local_task_id": local_task_id,
@@ -198,6 +200,39 @@ impl CodexNotificationEventMapper {
                 let phase = self
                     .agent_message_phases
                     .phase_for_item(notification.params);
+                if let Some(assistant_text_kind) =
+                    assistant_text_kind_from_notification(notification.params, phase.as_deref())
+                {
+                    match assistant_text_kind {
+                        AssistantNotificationTextKind::Process => {
+                            log_codex_event_mapper_text(
+                                local_task_id,
+                                &notification.method,
+                                "emit_completed_process_block",
+                                phase.as_deref(),
+                                notification.params,
+                            );
+                            self.emit_completed_process_text(
+                                event_tx,
+                                device_id,
+                                local_task_id,
+                                request,
+                                notification.params,
+                            );
+                        }
+                        AssistantNotificationTextKind::Final => {
+                            log_codex_event_mapper_text(
+                                local_task_id,
+                                &notification.method,
+                                "ignore_completed_final_snapshot",
+                                phase.as_deref(),
+                                notification.params,
+                            );
+                        }
+                    }
+                    self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
                 if codex_phase_is_process(phase.as_deref()) {
                     log_codex_event_mapper_text(
                         local_task_id,
@@ -315,7 +350,7 @@ impl CodexNotificationEventMapper {
         request: &ExecutionRequest,
         params: &Value,
     ) {
-        let Some(delta) = agent_text(params) else {
+        let Some(delta) = agent_delta(params) else {
             return;
         };
         let item_id = notification_item_id(params);
@@ -671,8 +706,12 @@ fn log_codex_event_mapper_text(
     );
 }
 
+fn agent_delta(params: &Value) -> Option<String> {
+    raw_string_field(params, "delta")
+}
+
 fn agent_text(params: &Value) -> Option<String> {
-    raw_string_field(params, "delta").or_else(|| extract_text(params))
+    agent_delta(params).or_else(|| extract_text(params))
 }
 
 fn completed_agent_text(params: &Value) -> Option<String> {
@@ -718,7 +757,7 @@ fn emit_text_delta(
     request: &ExecutionRequest,
     params: &Value,
 ) {
-    let Some(delta) = agent_text(params) else {
+    let Some(delta) = agent_delta(params) else {
         return;
     };
     emit_response_event(
@@ -1280,7 +1319,7 @@ mod tests {
             event["payload"]["data"]["block"]["content"],
             "I will inspect."
         );
-        assert_eq!(event["payload"]["data"]["block"]["status"], "streaming");
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
     }
 
     #[test]
@@ -1855,7 +1894,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_codex_final_agent_messages_to_output_text_deltas() {
+    fn ignores_legacy_final_agent_message_snapshots_for_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: 7,
@@ -1878,9 +1917,7 @@ mod tests {
             }),
         );
 
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.output_text.delta");
-        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        assert!(event_rx.try_recv().is_err());
     }
 
     #[test]

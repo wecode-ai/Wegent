@@ -473,7 +473,6 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
-  message_id?: number
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: ModelOptions
@@ -734,7 +733,6 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
-  message_id?: number
   title?: string
   modelId?: string
   modelType?: ModelType | null
@@ -1101,7 +1099,6 @@ export interface ChatStartPayload {
   subtask_id: number
   bot_name?: string
   shell_type?: string
-  message_id?: number
   device_id?: string
   local_task_id?: string
 }
@@ -1117,7 +1114,6 @@ export type ChatResultPayload = Record<string, unknown> & {
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   content: string
   offset: number
   result?: ChatResultPayload
@@ -1130,7 +1126,6 @@ export interface ChatDonePayload {
   subtask_id: number
   offset: number
   result: ChatResultPayload
-  message_id?: number
   device_id?: string
   local_task_id?: string
 }
@@ -1140,7 +1135,6 @@ export interface ChatErrorPayload {
   subtask_id: number
   error: string
   type?: string
-  message_id?: number
   device_id?: string
   local_task_id?: string
 }
@@ -1148,7 +1142,6 @@ export interface ChatErrorPayload {
 export interface ChatMessagePayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   role: string
   content: string
   sender?: Record<string, unknown>
@@ -1535,7 +1528,6 @@ export interface ChatBlock {
 export interface ChatBlockCreatedPayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   block: ChatBlock
   device_id?: string
   local_task_id?: string
@@ -1544,7 +1536,6 @@ export interface ChatBlockCreatedPayload {
 export interface ChatBlockUpdatedPayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   block_id: string
   content?: string
   tool_output?: unknown
@@ -1557,7 +1548,6 @@ export interface ChatBlockUpdatedPayload {
 export interface RuntimeSubagentActivityPayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   device_id?: string
   local_task_id?: string
   agent_path: string
@@ -1572,7 +1562,6 @@ export interface RuntimeSubagentActivityPayload {
 export interface RuntimeGoalEventPayload {
   task_id?: number
   subtask_id: number
-  message_id?: number
   device_id?: string
   local_task_id?: string
   thread_id?: string
