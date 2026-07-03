@@ -570,7 +570,7 @@ export function MobileDrawer({
                               })}
                               {(hasHiddenTasks || canCollapseTasks) && (
                                 <div className="flex h-10 items-center gap-2">
-                                  {hasHiddenTasks && (
+                                  {hasHiddenTasks ? (
                                     <button
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-expand-${project.id}`}
@@ -587,8 +587,7 @@ export function MobileDrawer({
                                     >
                                       {t('workbench.expand_display', '展开显示')}
                                     </button>
-                                  )}
-                                  {canCollapseTasks && (
+                                  ) : (
                                     <button
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-collapse-${project.id}`}

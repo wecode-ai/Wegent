@@ -57,11 +57,8 @@ function project(overrides: Partial<ProjectWithTasks> = {}): ProjectWithTasks {
   }
 }
 
-function renderSidebar(
-  overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
-  cloudConnection?: Partial<CloudConnectionContextValue>
-) {
-  const props: Parameters<typeof DesktopSidebar>[0] = {
+function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {}) {
+  return {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     projects: [project()],
     devices: [localDevice()],
@@ -79,6 +76,13 @@ function renderSidebar(
     onLogout: vi.fn(),
     ...overrides,
   }
+}
+
+function renderSidebar(
+  overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
+  cloudConnection?: Partial<CloudConnectionContextValue>
+) {
+  const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
 
   const tree = <DesktopSidebar {...props} />
   if (cloudConnection) {
@@ -2202,13 +2206,13 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
-    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toHaveTextContent('折叠显示')
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(25)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
@@ -2220,6 +2224,53 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+  })
+
+  test('shows one project runtime task action after the task list grows past the current limit', async () => {
+    const runtimeWorkWithTaskCount = (count: number) => ({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalLocalTasks: count,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              localTasks: Array.from({ length: count }, (_, index) => ({
+                localTaskId: `task-${index + 1}`,
+                workspacePath: '/repo/Wegent',
+                title: `Task ${index + 1}`,
+                runtime: 'codex',
+                updatedAt: '2026-06-20T06:00:00Z',
+              })),
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: count,
+    })
+
+    const view = renderSidebar({ runtimeWork: runtimeWorkWithTaskCount(6) })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
+    expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+
+    view.rerender(
+      <DesktopSidebar {...createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })} />
+    )
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 
