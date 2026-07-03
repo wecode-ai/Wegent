@@ -321,6 +321,32 @@ class StatusUpdatingEmitter(ResultEmitter):
                 if render_payload is not None:
                     update_kwargs["render_payload"] = render_payload
                 await session_manager.update_tool_block_status(**update_kwargs)
+        elif event.type == EventType.BLOCK_CREATED.value:
+            block = event.data.get("block") if event.data else None
+            if isinstance(block, dict):
+                await session_manager.add_block(self._subtask_id, block)
+        elif event.type == EventType.BLOCK_UPDATED.value:
+            block_id = event.data.get("block_id") if event.data else None
+            updates = event.data.get("updates") if event.data else None
+            if block_id and isinstance(updates, dict):
+                blocks = await session_manager.get_blocks(self._subtask_id)
+                existing_block = next(
+                    (block for block in blocks if block.get("id") == str(block_id)),
+                    None,
+                )
+                if existing_block is not None:
+                    existing_block.update(updates)
+                    await session_manager.add_block(self._subtask_id, existing_block)
+                else:
+                    await session_manager.add_block(
+                        self._subtask_id,
+                        {
+                            "id": str(block_id),
+                            "type": "tool",
+                            "tool_use_id": str(block_id),
+                            **updates,
+                        },
+                    )
         elif event.type in STREAM_CONTENT_EVENT_TYPES:
             # Content is persisted by the 1s stream storage buffer.
             pass

@@ -12,7 +12,11 @@ class _SessionManager:
         return ""
 
     async def finalize_and_get_blocks(
-        self, _subtask_id: int, *, termination_reason: str | None = None
+        self,
+        _subtask_id: int,
+        *,
+        termination_reason: str | None = None,
+        terminal_status: str | None = None,
     ) -> list[dict]:
         return [
             {
@@ -44,7 +48,11 @@ class _TextBlockSessionManager:
         return ""
 
     async def finalize_and_get_blocks(
-        self, _subtask_id: int, *, termination_reason: str | None = None
+        self,
+        _subtask_id: int,
+        *,
+        termination_reason: str | None = None,
+        terminal_status: str | None = None,
     ) -> list[dict]:
         return [
             {
@@ -61,7 +69,11 @@ class _OutputTextBlockSessionManager:
         return ""
 
     async def finalize_and_get_blocks(
-        self, _subtask_id: int, *, termination_reason: str | None = None
+        self,
+        _subtask_id: int,
+        *,
+        termination_reason: str | None = None,
+        terminal_status: str | None = None,
     ) -> list[dict]:
         return [
             {
