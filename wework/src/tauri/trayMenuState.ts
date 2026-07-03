@@ -4,7 +4,7 @@ import {
   getRuntimeTaskAddress,
   sortRuntimeTaskItems,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
-import type { LocalTaskSummary, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import { createTrayTaskMenuId } from './trayTaskMenuId'
 
 export interface TrayMenuTaskItem {
@@ -37,11 +37,11 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
 
 interface TrayRuntimeTaskItem {
   workspace: RuntimeDeviceWorkspace
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
   projectName: string
 }
 
-function isPinnedRuntimeTask(task: LocalTaskSummary): boolean {
+function isPinnedRuntimeTask(task: RuntimeTaskSummary): boolean {
   const taskRecord = task as unknown as Record<string, unknown>
   return PINNED_TASK_FIELDS.some(field => taskRecord[field] === true)
 }
@@ -71,7 +71,7 @@ function collectRuntimeTaskItems(
   const sortedItems = sortRuntimeTaskItems([...projectItems, ...chatItems]) as TrayRuntimeTaskItem[]
 
   return sortedItems.filter(({ workspace, task }) => {
-    const taskKey = `${workspace.deviceId}\n${task.localTaskId}`
+    const taskKey = `${workspace.deviceId}\n${task.taskId}`
     if (seenTaskKeys.has(taskKey)) {
       return false
     }
@@ -93,8 +93,8 @@ function getProjectDisplayName(
   )
 }
 
-function getTrayTaskTitle(task: LocalTaskSummary): string {
-  return task.title.trim() || task.localTaskId
+function getTrayTaskTitle(task: RuntimeTaskSummary): string {
+  return task.title.trim() || String(task.taskId)
 }
 
 function toTrayMenuTaskItem({

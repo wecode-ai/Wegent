@@ -160,7 +160,7 @@
       },
       "container_error": {
         "title": "Task service error",
-        "description": "The container or local task service is temporarily unavailable. Try again later."
+        "description": "The container or runtime task service is temporarily unavailable. Try again later."
       },
       "content_filter": {
         "title": "Content triggered security review and was rejected",

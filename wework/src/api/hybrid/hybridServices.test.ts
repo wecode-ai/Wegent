@@ -164,8 +164,8 @@ function createServices() {
 describe('createHybridWorkbenchServices', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.localListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
-    mocks.cloudListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
+    mocks.localListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    mocks.cloudListRuntimeWork.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
     mocks.localListDevices.mockResolvedValue([
       {
         id: 0,
@@ -268,12 +268,12 @@ describe('createHybridWorkbenchServices', () => {
       projects: [
         {
           project: { key: 'local', name: 'Local' },
-          totalLocalTasks: 0,
+          totalTasks: 0,
           deviceWorkspaces: [],
         },
       ],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     })
 
     const services = createServices()
@@ -323,7 +323,7 @@ describe('createHybridWorkbenchServices', () => {
       projects: [
         {
           project: { key: 'app', name: 'Current App' },
-          totalLocalTasks: 1,
+          totalTasks: 1,
           deviceWorkspaces: [
             {
               deviceId: 'local-device',
@@ -331,9 +331,9 @@ describe('createHybridWorkbenchServices', () => {
               deviceStatus: 'online',
               available: true,
               workspacePath: '/app',
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'app-task',
+                  taskId: 'app-task',
                   workspacePath: '/app',
                   title: 'App task',
                   runtime: 'codex',
@@ -344,7 +344,7 @@ describe('createHybridWorkbenchServices', () => {
         },
         {
           project: { key: 'cloud', name: 'Cloud' },
-          totalLocalTasks: 1,
+          totalTasks: 1,
           deviceWorkspaces: [
             {
               deviceId: 'cloud-device',
@@ -352,9 +352,9 @@ describe('createHybridWorkbenchServices', () => {
               deviceStatus: 'online',
               available: true,
               workspacePath: '/cloud',
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'cloud-task',
+                  taskId: 'cloud-task',
                   workspacePath: '/cloud',
                   title: 'Cloud task',
                   runtime: 'codex',
@@ -372,9 +372,9 @@ describe('createHybridWorkbenchServices', () => {
           available: true,
           workspacePath: '/app-chat',
           workspaceKind: 'chat',
-          localTasks: [
+          tasks: [
             {
-              localTaskId: 'app-chat',
+              taskId: 'app-chat',
               workspacePath: '/app-chat',
               title: 'App chat',
               runtime: 'codex',
@@ -382,7 +382,7 @@ describe('createHybridWorkbenchServices', () => {
           ],
         },
       ],
-      totalLocalTasks: 3,
+      totalTasks: 3,
     })
 
     const services = createServices()
@@ -391,7 +391,7 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(runtimeWork?.projects.map(project => project.project.key)).toEqual(['cloud'])
     expect(runtimeWork?.chats).toEqual([])
-    expect(runtimeWork?.totalLocalTasks).toBe(1)
+    expect(runtimeWork?.totalTasks).toBe(1)
   })
 
   it('routes runtime task creation by device source', async () => {
@@ -400,13 +400,13 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localCreateRuntimeTask.mockResolvedValue({
       accepted: true,
       deviceId: 'local-device',
-      localTaskId: 'local-task',
+      taskId: 'local-task',
       workspacePath: '/tmp/local',
     })
     mocks.cloudCreateRuntimeTask.mockResolvedValue({
       accepted: true,
       deviceId: 'cloud-device',
-      localTaskId: 'cloud-task',
+      taskId: 'cloud-task',
       workspacePath: '/tmp/cloud',
     })
 
@@ -434,7 +434,7 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localSearchRuntimeWork.mockResolvedValue({
       items: [
         {
-          address: { deviceId: 'local-device', localTaskId: 'local-task' },
+          address: { deviceId: 'local-device', taskId: 'local-task' },
           runtime: 'codex',
           title: 'Older local result',
           snippet: 'local',
@@ -449,7 +449,7 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudSearchRuntimeWork.mockResolvedValue({
       items: [
         {
-          address: { deviceId: 'cloud-device', localTaskId: 'cloud-task' },
+          address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
           runtime: 'codex',
           title: 'Newer cloud result',
           snippet: 'cloud',

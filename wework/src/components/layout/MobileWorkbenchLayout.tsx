@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -31,7 +31,11 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
-import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
+import {
+  CachedWorkbenchPaneStack,
+  getRunningRuntimeWorkbenchPaneKeys,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
@@ -44,12 +48,18 @@ export function MobileWorkbenchLayout() {
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
+    standaloneChatKey: state.standaloneChatKey,
   }
+  const pinnedPaneKeys = useMemo(
+    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
 
   return (
     <CachedWorkbenchPaneStack
       activePane={activePane}
       maxPanes={1}
+      pinnedKeys={pinnedPaneKeys}
       className="h-dvh"
       renderPane={renderMobileWorkbenchPane}
     />
@@ -77,7 +87,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     startNewChat: onNewChat,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
-    openRuntimeLocalTask: onOpenRuntimeLocalTask,
+    openRuntimeTask: onOpenRuntimeTask,
     createProject: onCreateProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
@@ -291,7 +301,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
                 currentRuntimeTask
-                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                   : null
               }
               className="h-full"
@@ -301,8 +311,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 void retryFailedMessage(message.id, paneMessages)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
-              onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
+              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
+              onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
               onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
@@ -492,7 +502,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         onUpdateProjectName={onUpdateProjectName}
         onRemoveProject={onRemoveProject}
         onSelectProject={onSelectProject}
-        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onOpenRuntimeTask={onOpenRuntimeTask}
         onRefreshWorkLists={onRefreshWorkLists}
       />
       <ContinueInImDialog
@@ -500,7 +510,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         {...continueInIm.dialog}
       />
       <TaskForkDialog
-        key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
         open={forkDialogOpen}
         source={currentRuntimeTask}
         runtimeWork={state.runtimeWork}

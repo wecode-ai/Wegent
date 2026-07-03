@@ -130,12 +130,12 @@ function runtimeWork(
           available: item.available ?? true,
           workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     })),
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
   }
 }
 

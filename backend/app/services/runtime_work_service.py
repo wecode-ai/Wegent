@@ -295,18 +295,18 @@ async def list_runtime_work(
 
     projects: list[RuntimeProjectWork] = []
     conversations: list[RuntimeDeviceWorkspace] = []
-    total_local_tasks = 0
+    total_tasks = 0
 
     for (device_id, workspace_path), workspace_listing in sorted(
         runtime_workspaces.items(),
         key=lambda item: _runtime_workspace_order_key(item, device_order),
     ):
-        local_tasks = workspace_listing.local_tasks
-        total_local_tasks += len(local_tasks)
+        tasks = workspace_listing.local_tasks
+        total_tasks += len(tasks)
         device = devices_by_id.get(device_id)
         workspace_kind_fields = _runtime_workspace_kind_fields_from_tasks(
             workspace_path,
-            local_tasks,
+            tasks,
         )
         workspace = RuntimeDeviceWorkspace(
             id=None,
@@ -321,7 +321,7 @@ async def list_runtime_work(
             remoteHostId=workspace_listing.remote_host_id,
             mapped=True,
             available=True,
-            localTasks=local_tasks,
+            tasks=tasks,
         )
         if workspace.workspace_kind == "chat":
             conversations.append(workspace)
@@ -341,7 +341,7 @@ async def list_runtime_work(
     return RuntimeWorkListResponse(
         projects=projects,
         chats=conversations,
-        totalLocalTasks=total_local_tasks,
+        totalTasks=total_tasks,
     )
 
 
@@ -1026,7 +1026,7 @@ async def create_runtime_task(
         "executionRequest": execution_request.to_dict(),
     }
     if request.local_task_id:
-        payload["localTaskId"] = request.local_task_id
+        payload["taskId"] = request.local_task_id
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -1807,12 +1807,12 @@ def _runtime_send_response(
     if result.get("success") is False:
         return RuntimeSendResponse(
             accepted=False,
-            localTaskId=str(result.get("localTaskId") or local_task_id),
+            taskId=str(result.get("taskId") or local_task_id),
             error=str(result.get("error") or "Runtime send failed"),
         )
     return RuntimeSendResponse(
         accepted=bool(result.get("accepted", True)),
-        localTaskId=str(result.get("localTaskId") or local_task_id),
+        taskId=str(result.get("taskId") or local_task_id),
         error=result.get("error"),
     )
 
@@ -1824,13 +1824,13 @@ def _runtime_archive_response(
     if result.get("success") is False:
         return RuntimeTaskArchiveResponse(
             accepted=False,
-            localTaskId=str(result.get("localTaskId") or address.local_task_id),
+            taskId=str(result.get("taskId") or address.local_task_id),
             workspacePath=result.get("workspacePath") or address.workspace_path,
             error=str(result.get("error") or "Runtime archive failed"),
         )
     return RuntimeTaskArchiveResponse(
         accepted=bool(result.get("accepted", True)),
-        localTaskId=str(result.get("localTaskId") or address.local_task_id),
+        taskId=str(result.get("taskId") or address.local_task_id),
         workspacePath=result.get("workspacePath") or address.workspace_path,
         error=result.get("error"),
     )
@@ -1843,13 +1843,13 @@ def _runtime_cancel_response(
     if result.get("success") is False:
         return RuntimeTaskCancelResponse(
             accepted=False,
-            localTaskId=str(result.get("localTaskId") or address.local_task_id),
+            taskId=str(result.get("taskId") or address.local_task_id),
             workspacePath=result.get("workspacePath") or address.workspace_path,
             error=str(result.get("error") or "Runtime cancel failed"),
         )
     return RuntimeTaskCancelResponse(
         accepted=bool(result.get("accepted", True)),
-        localTaskId=str(result.get("localTaskId") or address.local_task_id),
+        taskId=str(result.get("taskId") or address.local_task_id),
         workspacePath=result.get("workspacePath") or address.workspace_path,
         error=result.get("error"),
     )
@@ -1912,7 +1912,7 @@ def _runtime_create_response(
         return RuntimeTaskCreateResponse(
             accepted=False,
             deviceId=str(result.get("deviceId") or device_id),
-            localTaskId=str(result.get("localTaskId") or ""),
+            taskId=str(result.get("taskId") or ""),
             workspacePath=str(result.get("workspacePath") or workspace_path),
             runtime=result.get("runtime") or runtime,
             error=str(result.get("error") or "Runtime task creation failed"),
@@ -1920,7 +1920,7 @@ def _runtime_create_response(
     return RuntimeTaskCreateResponse(
         accepted=bool(result.get("accepted", True)),
         deviceId=str(result.get("deviceId") or device_id),
-        localTaskId=str(result.get("localTaskId") or ""),
+        taskId=str(result.get("taskId") or ""),
         workspacePath=str(result.get("workspacePath") or workspace_path),
         runtime=result.get("runtime") or runtime,
         error=result.get("error"),
@@ -1964,7 +1964,7 @@ def _runtime_fork_response(
     target = RuntimeTaskAddress(
         deviceId=str(result.get("deviceId") or target_device_id),
         workspacePath=str(result.get("workspacePath") or target_workspace_path),
-        localTaskId=str(result.get("localTaskId") or ""),
+        taskId=str(result.get("taskId") or ""),
     )
     if result.get("success") is False:
         return RuntimeTaskForkResponse(
@@ -2037,10 +2037,10 @@ def _workspace_path_for_runtime_task(
         return None
     for workspace in _iter_runtime_workspaces(result):
         workspace_path = normalize_workspace_path(workspace["workspacePath"])
-        for task in workspace["localTasks"]:
+        for task in workspace["tasks"]:
             if not isinstance(task, dict):
                 continue
-            task_id = str(task.get("localTaskId") or task.get("local_task_id") or "")
+            task_id = str(task.get("taskId") or "")
             if task_id.strip() != expected_task_id:
                 continue
             task_path = task.get("workspacePath") or task.get("workspace_path")
@@ -2462,7 +2462,7 @@ async def _list_runtime_workspaces_for_device(
                     ),
                 }
             )
-            for task in workspace["localTasks"]
+            for task in workspace["tasks"]
             if isinstance(task, dict)
         ]
         grouped[(device_id, workspace_path)] = RuntimeWorkspaceListing(
@@ -2794,7 +2794,7 @@ def _runtime_search_items_from_result(
         if not isinstance(raw_item, dict):
             continue
         workspace_path = str(raw_item.get("workspacePath") or "").strip()
-        local_task_id = str(raw_item.get("localTaskId") or "").strip()
+        local_task_id = str(raw_item.get("taskId") or "").strip()
         if not workspace_path or not local_task_id:
             continue
         project = _runtime_search_project_ref(device_id, workspace_path)
@@ -2855,13 +2855,18 @@ def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:
         path = item.get("workspacePath") or item.get("workspace_path")
         if not isinstance(path, str) or not path.strip():
             continue
-        raw_tasks = item.get("localTasks") or item.get("local_tasks") or []
+        raw_tasks = item.get("tasks")
         if not isinstance(raw_tasks, list):
-            raw_tasks = []
+            logger.warning(
+                "[RuntimeWork] Runtime workspace missing tasks: workspace_path=%s keys=%s",
+                path,
+                sorted(item.keys()),
+            )
+            continue
         normalized.append(
             {
                 "workspacePath": path,
-                "localTasks": raw_tasks,
+                "tasks": raw_tasks,
                 "label": _runtime_workspace_label(item),
                 "workspaceSource": _runtime_workspace_source(item),
                 "remoteHostId": _runtime_workspace_remote_host_id(item),

@@ -7,14 +7,14 @@ describe('createRuntimeWorkApi', () => {
     const get = vi.fn().mockResolvedValue({
       projects: [],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     })
     const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
 
     await expect(api.listRuntimeWork()).resolves.toEqual({
       projects: [],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     })
 
     expect(get).toHaveBeenCalledWith('/runtime-work')
@@ -43,12 +43,12 @@ describe('createRuntimeWorkApi', () => {
       source: {
         deviceId: 'source-device',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       target: {
         deviceId: 'target-device',
         workspacePath: '/repo/Wegent-copy',
-        localTaskId: 'runtime-copy',
+        taskId: 'runtime-copy',
       },
       runtime: 'codex',
     })
@@ -59,7 +59,7 @@ describe('createRuntimeWorkApi', () => {
         source: {
           deviceId: 'source-device',
           workspacePath: '/repo/Wegent',
-          localTaskId: 'codex-1',
+          taskId: 'codex-1',
         },
         target: {
           deviceId: 'target-device',
@@ -71,12 +71,12 @@ describe('createRuntimeWorkApi', () => {
       source: {
         deviceId: 'source-device',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       target: {
         deviceId: 'target-device',
         workspacePath: '/repo/Wegent-copy',
-        localTaskId: 'runtime-copy',
+        taskId: 'runtime-copy',
       },
       runtime: 'codex',
     })
@@ -85,7 +85,7 @@ describe('createRuntimeWorkApi', () => {
       source: {
         deviceId: 'source-device',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       target: {
         deviceId: 'target-device',
@@ -97,7 +97,7 @@ describe('createRuntimeWorkApi', () => {
   test('cancels a runtime task by address', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
       workspacePath: '/repo/Wegent',
     })
     const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
@@ -106,18 +106,18 @@ describe('createRuntimeWorkApi', () => {
       api.cancelRuntimeTask({
         deviceId: 'device-1',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       })
     ).resolves.toEqual({
       accepted: true,
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
       workspacePath: '/repo/Wegent',
     })
 
     expect(post).toHaveBeenCalledWith('/runtime-work/cancel', {
       deviceId: 'device-1',
       workspacePath: '/repo/Wegent',
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
     })
   })
 
@@ -128,7 +128,7 @@ describe('createRuntimeWorkApi', () => {
           address: {
             deviceId: 'device-1',
             workspacePath: '/repo/Wegent',
-            localTaskId: 'codex-1',
+            taskId: 'codex-1',
           },
           runtime: 'codex',
           title: '执行 pwd',
@@ -258,7 +258,7 @@ describe('createRuntimeWorkApi', () => {
       address: {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
-        localTaskId: 'runtime-1',
+        taskId: 'runtime-1',
       },
       boundSessionKeys: ['session-a', 'session-b'],
       notifiedCount: 2,
@@ -270,7 +270,7 @@ describe('createRuntimeWorkApi', () => {
         address: {
           deviceId: 'device-1',
           workspacePath: '/workspace/project-alpha',
-          localTaskId: 'runtime-1',
+          taskId: 'runtime-1',
         },
         sessionKeys: ['session-a', 'session-b'],
       })
@@ -278,7 +278,7 @@ describe('createRuntimeWorkApi', () => {
       address: {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
-        localTaskId: 'runtime-1',
+        taskId: 'runtime-1',
       },
       boundSessionKeys: ['session-a', 'session-b'],
       notifiedCount: 2,
@@ -288,7 +288,7 @@ describe('createRuntimeWorkApi', () => {
       address: {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
-        localTaskId: 'runtime-1',
+        taskId: 'runtime-1',
       },
       sessionKeys: ['session-a', 'session-b'],
     })
@@ -306,7 +306,7 @@ describe('createRuntimeWorkApi', () => {
     const put = vi.fn().mockResolvedValue({
       address: {
         deviceId: 'device-1',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       subscribed: true,
       sessionKeys: ['session-a'],
@@ -314,7 +314,7 @@ describe('createRuntimeWorkApi', () => {
     const post = vi.fn().mockResolvedValue({
       address: {
         deviceId: 'device-1',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       subscribed: false,
       sessionKeys: [],
@@ -333,13 +333,13 @@ describe('createRuntimeWorkApi', () => {
     await api.subscribeRuntimeTaskNotifications({
       address: {
         deviceId: 'device-1',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       sessionKeys: ['session-a'],
     })
     await api.unsubscribeRuntimeTaskNotifications({
       deviceId: 'device-1',
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
     })
 
     expect(get).toHaveBeenCalledWith('/runtime-work/im-notifications')
@@ -350,13 +350,13 @@ describe('createRuntimeWorkApi', () => {
     expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/runtime-task', {
       address: {
         deviceId: 'device-1',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       sessionKeys: ['session-a'],
     })
     expect(post).toHaveBeenCalledWith('/runtime-work/im-notifications/runtime-task/unsubscribe', {
       deviceId: 'device-1',
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
     })
   })
 })

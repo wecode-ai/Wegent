@@ -53,7 +53,7 @@ function targetKey(target: RuntimeTaskForkTarget): string {
 
 function runtimeTaskMatches(address: RuntimeTaskAddress, workspace: RuntimeDeviceWorkspace) {
   if (workspace.deviceId !== address.deviceId) return false
-  const matchedTask = workspace.localTasks.some(task => task.localTaskId === address.localTaskId)
+  const matchedTask = workspace.tasks.some(task => task.taskId === address.taskId)
   if (!matchedTask) return false
 
   const addressPath = address.workspacePath?.trim()
@@ -249,7 +249,7 @@ export function TaskForkDialog({
               <h2 id="task-fork-dialog-title" className="truncate text-base font-semibold">
                 {t('workbench.task_fork_title', '复制任务')}
               </h2>
-              <p className="truncate text-xs text-text-muted">{source.localTaskId}</p>
+              <p className="truncate text-xs text-text-muted">{source.taskId}</p>
             </div>
             <button
               type="button"

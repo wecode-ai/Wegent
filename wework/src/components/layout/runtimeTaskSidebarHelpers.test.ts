@@ -16,9 +16,9 @@ describe('runtimeTaskSidebarHelpers', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
       available: true,
-      localTasks: [
+      tasks: [
         {
-          localTaskId: 'older-running',
+          taskId: 'older-running',
           workspacePath: '/workspace/repo',
           title: 'Older running',
           runtime: 'codex',
@@ -26,7 +26,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           updatedAt: '2026-06-01T00:00:00.000Z',
         },
         {
-          localTaskId: 'newer-idle',
+          taskId: 'newer-idle',
           workspacePath: '/workspace/repo',
           title: 'Newer idle',
           runtime: 'codex',
@@ -40,9 +40,9 @@ describe('runtimeTaskSidebarHelpers', () => {
       workspacePath: '/workspace/repo/.worktrees/new-task',
       workspaceKind: 'worktree',
       available: true,
-      localTasks: [
+      tasks: [
         {
-          localTaskId: 'new-worktree-task',
+          taskId: 'new-worktree-task',
           workspacePath: '/workspace/repo/.worktrees/new-task',
           title: 'New worktree task',
           runtime: 'codex',
@@ -53,7 +53,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(
-      getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.localTaskId)
+      getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
@@ -62,10 +62,10 @@ describe('runtimeTaskSidebarHelpers', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
       available: true,
-      localTasks: [],
+      tasks: [],
     }
     const address = getRuntimeTaskAddress(workspace, {
-      localTaskId: 'local-visible-task',
+      taskId: 'local-visible-task',
       workspacePath: '/workspace/repo',
       title: 'Existing task',
       runtime: 'codex',
@@ -77,7 +77,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(address).toEqual({
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
-      localTaskId: 'local-visible-task',
+      taskId: 'local-visible-task',
       runtimeHandle: {
         threadId: 'provider-session-1',
       },
@@ -90,10 +90,10 @@ describe('runtimeTaskSidebarHelpers', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/repo',
         available: true,
-        localTasks: [],
+        tasks: [],
       },
       task: {
-        localTaskId: `task-${index + 1}`,
+        taskId: `task-${index + 1}`,
         workspacePath: '/workspace/repo',
         title: `Task ${index + 1}`,
         runtime: 'codex',
@@ -136,10 +136,10 @@ describe('runtimeTaskSidebarHelpers', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/repo',
         available: true,
-        localTasks: [],
+        tasks: [],
       },
       task: {
-        localTaskId: `task-${index + 1}`,
+        taskId: `task-${index + 1}`,
         workspacePath: '/workspace/repo',
         title: `Task ${index + 1}`,
         runtime: 'codex',
@@ -147,7 +147,7 @@ describe('runtimeTaskSidebarHelpers', () => {
       pinned: index < 2,
     }))
 
-    expect(getVisibleRuntimeSidebarTaskItems(items).map(item => item.task.localTaskId)).toEqual([
+    expect(getVisibleRuntimeSidebarTaskItems(items).map(item => item.task.taskId)).toEqual([
       'task-1',
       'task-2',
       'task-3',

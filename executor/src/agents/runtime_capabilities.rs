@@ -110,8 +110,11 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
     };
 
     let attachment_subtask_id = attachment_subtask_id(&download_candidates, &request);
-    let (attachments_dir, project_layout) =
-        resolve_attachments_dir(&request, &download_candidates, attachment_subtask_id);
+    let (attachments_dir, project_layout) = resolve_attachments_dir(
+        &request,
+        &download_candidates,
+        attachment_subtask_id.clone(),
+    );
     let api_base_url = request_api_base_url(&request);
     log_runtime_event(
         &request,
@@ -132,8 +135,8 @@ pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> 
         &attachments_dir,
         &api_base_url,
         &auth_token,
-        request.task_id,
-        request.subtask_id,
+        &request.task_id,
+        &request.subtask_id,
     )
     .await;
 
@@ -158,7 +161,7 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
     let attachments = attachment_records(&request);
     let attachment_subtask_id = attachment_subtask_id(&attachments, &request);
     if attachments.is_empty() {
-        return attachment_sync_response(request.task_id, request.subtask_id, &[], &[]);
+        return attachment_sync_response(&request.task_id, &request.subtask_id, &[], &[]);
     }
 
     log_runtime_event(
@@ -196,13 +199,13 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
         .map(ToOwned::to_owned)
     else {
         let failed = mark_attachments_failed(&attachments, "missing auth_token");
-        return attachment_sync_response(request.task_id, request.subtask_id, &[], &failed);
+        return attachment_sync_response(&request.task_id, &request.subtask_id, &[], &failed);
     };
 
     let api_base_url = request_api_base_url(&request);
     if api_base_url.trim().is_empty() {
         let failed = mark_attachments_failed(&attachments, "missing backend_url");
-        return attachment_sync_response(request.task_id, request.subtask_id, &[], &failed);
+        return attachment_sync_response(&request.task_id, &request.subtask_id, &[], &failed);
     }
 
     let (attachments_dir, project_layout) =
@@ -222,13 +225,13 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
         &attachments_dir,
         &api_base_url,
         &auth_token,
-        request.task_id,
-        request.subtask_id,
+        &request.task_id,
+        &request.subtask_id,
     )
     .await;
     attachment_sync_response(
-        request.task_id,
-        request.subtask_id,
+        &request.task_id,
+        &request.subtask_id,
         &result.success,
         &result.failed,
     )
@@ -238,7 +241,7 @@ fn apply_attachment_prompt_updates(
     request: &mut ExecutionRequest,
     success: &[AttachmentRecord],
     failed: &[AttachmentRecord],
-    attachment_subtask_id: i64,
+    attachment_subtask_id: String,
 ) {
     if success.is_empty() && failed.is_empty() {
         return;
@@ -247,7 +250,7 @@ fn apply_attachment_prompt_updates(
         &request.prompt,
         success,
         failed,
-        Some(request.task_id),
+        Some(request.task_id.clone()),
         Some(attachment_subtask_id),
     );
     if let Value::String(text) = &mut prompt {
@@ -267,7 +270,7 @@ pub async fn prepare_claude_runtime(
         .current_dir()
         .cloned()
         .or_else(|| claude_task_dir(request))
-        .unwrap_or_else(|| workspace_root().join(request.task_id.to_string()));
+        .unwrap_or_else(|| workspace_root().join(&request.task_id));
     fs::create_dir_all(&task_dir).map_err(|error| {
         format!(
             "failed to create Claude runtime task dir {}: {error}",
@@ -347,7 +350,7 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
     let task_dir = request
         .cwd()
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(request.task_id.to_string()));
+        .unwrap_or_else(|| workspace_root().join(&request.task_id));
     let codex_skills_dir = codex_skills_dir(&task_dir);
     deploy_request_skills(request, &codex_skills_dir).await;
 }
@@ -379,7 +382,7 @@ async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
 
     let api_base_url = request_api_base_url(request);
     if let Err(error) = deploy_skills(&plan, &api_base_url).await {
-        let mut fields = task_fields(request.task_id, request.subtask_id);
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("error_len", error.len().to_string()));
         log_executor_event("skill deployment skipped after error", &fields);
     }
@@ -443,21 +446,21 @@ fn attachment_failed_status(attachment: &AttachmentRecord) -> bool {
 fn resolve_attachments_dir(
     request: &ExecutionRequest,
     attachments: &[AttachmentRecord],
-    fallback_subtask_id: i64,
+    fallback_subtask_id: String,
 ) -> (PathBuf, bool) {
     let (workspace, project_layout) = resolve_attachment_workspace(request);
     let attachment_subtask_id = attachments
         .iter()
-        .find_map(|attachment| attachment.subtask_id)
+        .find_map(|attachment| attachment.subtask_id.clone())
         .unwrap_or(fallback_subtask_id);
     let attachments_dir = if project_layout {
         workspace
-            .join(request.task_id.to_string())
-            .join(attachment_subtask_id.to_string())
+            .join(&request.task_id)
+            .join(&attachment_subtask_id)
     } else {
         workspace
-            .join(attachments_subdir_name(&request.task_id.to_string()))
-            .join(attachment_subtask_id.to_string())
+            .join(attachments_subdir_name(&request.task_id))
+            .join(&attachment_subtask_id)
     };
     (attachments_dir, project_layout)
 }
@@ -475,8 +478,8 @@ fn mark_attachments_failed(attachments: &[AttachmentRecord], error: &str) -> Vec
 }
 
 fn attachment_sync_response(
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
     success: &[AttachmentRecord],
     failed: &[AttachmentRecord],
 ) -> Value {
@@ -530,8 +533,8 @@ fn attachment_sync_item(attachment: &AttachmentRecord, status: &str) -> Value {
     if let Some(file_size) = attachment.file_size {
         object.insert("file_size".to_owned(), Value::from(file_size));
     }
-    if let Some(subtask_id) = attachment.subtask_id {
-        object.insert("subtask_id".to_owned(), Value::from(subtask_id));
+    if let Some(subtask_id) = &attachment.subtask_id {
+        object.insert("subtask_id".to_owned(), Value::String(subtask_id.clone()));
     }
     item
 }
@@ -541,8 +544,8 @@ async fn download_attachments(
     attachments_dir: &Path,
     api_base_url: &str,
     auth_token: &str,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
 ) -> AttachmentDownloadOutcome {
     let _ = fs::create_dir_all(attachments_dir);
     let client = reqwest::Client::new();
@@ -843,7 +846,7 @@ async fn download_skill(
         });
     };
     let mut path = format!("/api/v1/kinds/skills/{skill_id}/download?namespace={namespace}");
-    if let Some(task_id) = plan.task_id {
+    if let Some(task_id) = &plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
     let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
@@ -958,7 +961,7 @@ async fn resolve_skill(
         "/api/v1/kinds/skills?name={skill_name}&namespace={}",
         plan.team_namespace
     );
-    if let Some(task_id) = plan.task_id {
+    if let Some(task_id) = &plan.task_id {
         path.push_str(&format!("&task_id={task_id}"));
     }
     let value = get_json(client, &plan.auth_token, api_base_url, &path, QUERY_TIMEOUT).await?;
@@ -1119,7 +1122,10 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
         subtask_id: value
             .get("subtask_id")
             .or_else(|| value.get("subtaskId"))
-            .and_then(|value| value_i64(Some(value))),
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
         error: value
             .get("error")
             .and_then(|value| value_string(Some(value))),
@@ -1130,7 +1136,7 @@ fn resolve_attachment_workspace(request: &ExecutionRequest) -> (PathBuf, bool) {
     if let Some(project_workspace) = project_workspace_path(request) {
         return (project_workspace.join(".wegent/attachments"), true);
     }
-    (workspace_root().join(request.task_id.to_string()), false)
+    (workspace_root().join(&request.task_id), false)
 }
 
 fn project_workspace_path(request: &ExecutionRequest) -> Option<PathBuf> {
@@ -1171,18 +1177,21 @@ fn repo_name_from_url(git_url: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn attachment_subtask_id(attachments: &[AttachmentRecord], request: &ExecutionRequest) -> i64 {
+fn attachment_subtask_id(attachments: &[AttachmentRecord], request: &ExecutionRequest) -> String {
     attachments
         .iter()
-        .find_map(|attachment| attachment.subtask_id)
+        .find_map(|attachment| attachment.subtask_id.clone())
         .or_else(|| {
             request
                 .extra
                 .get("user_subtask_id")
                 .or_else(|| request.extra.get("userSubtaskId"))
-                .and_then(|value| value_i64(Some(value)))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
         })
-        .unwrap_or(request.subtask_id)
+        .unwrap_or_else(|| request.subtask_id.clone())
 }
 
 fn attachments_subdir_name(task_id: &str) -> String {
@@ -1715,7 +1724,7 @@ fn log_runtime_event(
     event: &'static str,
     extra: Vec<(&'static str, String)>,
 ) {
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.extend(extra);
     log_executor_event(event, &fields);
 }
@@ -1838,7 +1847,7 @@ mod tests {
             local_path: local_path.map(ToOwned::to_owned),
             file_size: Some(12),
             mime_type: Some("text/plain".to_owned()),
-            subtask_id: Some(203),
+            subtask_id: Some("203".to_owned()),
             error: error.map(ToOwned::to_owned),
         }
     }
@@ -1875,9 +1884,9 @@ mod tests {
         )];
         let failed = vec![attachment(2, Some("failed"), None, Some("HTTP 404"))];
 
-        let payload = attachment_sync_response(72, 204, &success, &failed);
+        let payload = attachment_sync_response("72", "204", &success, &failed);
 
-        assert_eq!(payload["task_id"], 72);
+        assert_eq!(payload["task_id"], "72");
         assert_eq!(payload["success_count"], 1);
         assert_eq!(payload["failed_count"], 1);
         assert_eq!(payload["attachments"][0]["status"], "success");
@@ -1942,7 +1951,7 @@ mod tests {
             skills: vec!["agent-skill".to_owned()],
             auth_token: "token".to_owned(),
             team_namespace: "default".to_owned(),
-            task_id: Some(88),
+            task_id: Some("88".to_owned()),
             skills_dir: skills_dir.clone(),
             clear_cache: true,
             skip_existing: false,
@@ -1981,7 +1990,7 @@ mod tests {
             skills: vec!["agent-skill-a".to_owned(), "agent-skill-b".to_owned()],
             auth_token: "token".to_owned(),
             team_namespace: "default".to_owned(),
-            task_id: Some(88),
+            task_id: Some("88".to_owned()),
             skills_dir: skills_dir.clone(),
             clear_cache: true,
             skip_existing: false,

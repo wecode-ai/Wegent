@@ -1,27 +1,65 @@
 /* eslint-disable react-hooks/refs -- Inactive workbench panes are intentionally cached in refs so their local UI state survives pane switches. */
 /* eslint-disable react-refresh/only-export-components -- The stack exports pane identity helpers used by layout modules. */
-import { createContext, memo, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import { cn } from '@/lib/utils'
 
 export interface WorkbenchPaneIdentity {
   currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
+  standaloneChatKey?: number
 }
 
 export function getWorkbenchPaneKey({
   currentRuntimeTask,
   currentProject,
+  standaloneChatKey,
 }: WorkbenchPaneIdentity): string {
   if (currentRuntimeTask) {
-    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.localTaskId].join(':')
+    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
   }
-  return currentProject ? `project:${currentProject.id}` : 'standalone'
+  return currentProject ? `project:${currentProject.id}` : `standalone:${standaloneChatKey ?? 0}`
+}
+
+export function getRunningRuntimeWorkbenchPaneKeys(
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): string[] {
+  if (!runtimeWork) return []
+  const keys: string[] = []
+  const workspaces = [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+  workspaces.forEach(workspace => {
+    workspace.tasks.forEach(task => {
+      if (task.running !== true) return
+      keys.push(
+        getWorkbenchPaneKey({
+          currentRuntimeTask: {
+            deviceId: workspace.deviceId,
+            taskId: task.taskId,
+          },
+          currentProject: null,
+        })
+      )
+    })
+  })
+  return keys
 }
 
 interface CachedWorkbenchPaneStackProps {
   activePane: WorkbenchPaneIdentity
   maxPanes: number
+  pinnedKeys?: string[]
   className?: string
   activeTestId?: string
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
@@ -30,11 +68,13 @@ interface CachedWorkbenchPaneStackProps {
 export function CachedWorkbenchPaneStack({
   activePane,
   maxPanes,
+  pinnedKeys = [],
   className,
   activeTestId,
   renderPane,
 }: CachedWorkbenchPaneStackProps) {
   const activeKey = getWorkbenchPaneKey(activePane)
+  const pinnedKeySet = useMemo(() => new Set(pinnedKeys), [pinnedKeys])
   const paneCacheRef = useRef<Map<string, WorkbenchPaneIdentity>>(new Map())
   const [cachedKeys, setCachedKeys] = useState<string[]>(() => [activeKey])
   const cachedKeysRef = useRef<string[]>(cachedKeys)
@@ -46,7 +86,10 @@ export function CachedWorkbenchPaneStack({
 
   useEffect(() => {
     const currentKeys = cachedKeysRef.current
-    if (currentKeys.includes(activeKey) && currentKeys.length <= Math.max(1, maxPanes)) {
+    if (
+      currentKeys.includes(activeKey) &&
+      currentKeys.length <= Math.max(1, maxPanes) + pinnedKeySet.size
+    ) {
       return
     }
 
@@ -55,7 +98,8 @@ export function CachedWorkbenchPaneStack({
         previousKeys,
         activeKey,
         maxPanes,
-        recentKeysRef.current
+        recentKeysRef.current,
+        pinnedKeySet
       )
       if (areStringArraysEqual(previousKeys, nextKeys)) return previousKeys
 
@@ -63,9 +107,15 @@ export function CachedWorkbenchPaneStack({
       recentKeysRef.current = recentKeysRef.current.filter(key => nextKeys.includes(key))
       return nextKeys
     })
-  }, [activeKey, maxPanes])
+  }, [activeKey, maxPanes, pinnedKeySet])
 
-  const renderKeys = getStableCachedPaneKeys(cachedKeys, activeKey, maxPanes, recentKeysRef.current)
+  const renderKeys = getStableCachedPaneKeys(
+    cachedKeys,
+    activeKey,
+    maxPanes,
+    recentKeysRef.current,
+    pinnedKeySet
+  )
 
   return (
     <div className={cn('relative flex min-w-0 flex-1 overflow-hidden', className)}>
@@ -82,7 +132,7 @@ export function CachedWorkbenchPaneStack({
               aria-hidden={!active}
               className={cn(
                 'absolute inset-0 min-w-0 overflow-hidden',
-                active ? 'z-10' : 'pointer-events-none z-0'
+                active ? 'visible z-10' : 'invisible pointer-events-none z-0'
               )}
             >
               <CachedWorkbenchPane pane={pane} renderPane={renderPane} />
@@ -120,14 +170,20 @@ function getStableCachedPaneKeys(
   keys: string[],
   activeKey: string,
   maxPanes: number,
-  recentKeys: string[]
+  recentKeys: string[],
+  pinnedKeys: ReadonlySet<string> = new Set()
 ): string[] {
   const maxCount = Math.max(1, maxPanes)
   const nextKeys = keys.includes(activeKey) ? keys : [...keys, activeKey]
-  if (nextKeys.length <= maxCount) return nextKeys
+  const pinnedExistingKeys = nextKeys.filter(key => pinnedKeys.has(key))
+  const effectiveMaxCount = maxCount + pinnedExistingKeys.length
+  if (nextKeys.length <= effectiveMaxCount) return nextKeys
 
-  const evictableKeys = recentKeys.filter(key => key !== activeKey && nextKeys.includes(key))
-  const evictKey = evictableKeys[0] ?? nextKeys.find(key => key !== activeKey)
+  const evictableKeys = recentKeys.filter(
+    key => key !== activeKey && !pinnedKeys.has(key) && nextKeys.includes(key)
+  )
+  const evictKey =
+    evictableKeys[0] ?? nextKeys.find(key => key !== activeKey && !pinnedKeys.has(key))
   return evictKey ? nextKeys.filter(key => key !== evictKey) : nextKeys.slice(-maxCount)
 }
 

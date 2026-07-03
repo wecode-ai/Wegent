@@ -8,7 +8,7 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const streamingThinkingBlock: ProcessingBlock = {
   id: 'thinking-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'thinking',
   content: 'First step. Latest visible thought',
   status: 'streaming',
@@ -17,7 +17,7 @@ const streamingThinkingBlock: ProcessingBlock = {
 
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'text',
   content: 'Let me explore the repository structure.',
   status: 'streaming',
@@ -93,7 +93,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'web-search-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'web_search',
           toolInput: {
@@ -124,7 +124,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'cmd-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'exec_command',
           toolInput: {
@@ -148,7 +148,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'tool-unknown',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'custom_agent_tool',
           toolInput: {
@@ -175,7 +175,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'read-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'Read',
           toolInput: { filePath: '/Users/crystal/package.json' },
@@ -198,7 +198,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'edit-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'MultiEdit',
           toolInput: {
@@ -232,7 +232,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'patch-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'apply_patch',
           toolInput: {
@@ -263,7 +263,7 @@ describe('ToolBlockItem', () => {
       <ToolBlockItem
         block={{
           id: 'edit-unknown',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'apply_patch',
           toolInput: { input: 'invalid patch text' },

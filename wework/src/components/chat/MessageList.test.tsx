@@ -376,7 +376,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-21',
-            turnId: 21,
+            subtaskId: 21,
             role: 'assistant',
             content: 'Done',
             status: 'done',
@@ -412,7 +412,7 @@ describe('MessageList', () => {
   test('renders cancelled assistant turns like stopped Codex turns', () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',
-      turnId: 21,
+      subtaskId: 21,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'pnpm test' },
@@ -436,7 +436,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-stopped',
-            turnId: 21,
+            subtaskId: 21,
             role: 'assistant',
             content: 'interrupted',
             status: 'done',
@@ -537,7 +537,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'request-1',
-                turnId: 11,
+                subtaskId: 11,
                 type: 'tool',
                 toolName: 'request_user_input',
                 status: 'done',
@@ -602,7 +602,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'plan-1',
-                turnId: 11,
+                subtaskId: 11,
                 type: 'plan',
                 content: planContent,
                 status: 'done',
@@ -660,7 +660,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'plan-1',
-                turnId: 11,
+                subtaskId: 11,
                 type: 'plan',
                 content: '# Native plan\n\n- Save through Tauri.',
                 status: 'done',
@@ -695,7 +695,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'plan-streaming',
-                turnId: 11,
+                subtaskId: 11,
                 type: 'plan',
                 content: '# 流式计划\n\n- 正在生成第一步。',
                 status: 'streaming',
@@ -765,7 +765,7 @@ describe('MessageList', () => {
   test('shows trailing thinking after partial content when processing blocks are still running', () => {
     const runningSearchBlock: ProcessingBlock = {
       id: 'search-running',
-      turnId: 1,
+      subtaskId: 1,
       type: 'tool',
       toolName: 'bash',
       toolInput: { command: 'rg -n chat src' },
@@ -880,7 +880,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
-        turnId: 21,
+        subtaskId: 21,
         type: 'text',
         content: '我先看你提到的 package.json。',
         status: 'done',
@@ -888,7 +888,7 @@ describe('MessageList', () => {
       },
       {
         id: 'call-1',
-        turnId: 21,
+        subtaskId: 21,
         type: 'tool',
         toolName: 'Bash',
         toolInput: { command: 'cat package.json' },
@@ -897,7 +897,7 @@ describe('MessageList', () => {
       },
       {
         id: 'process-2',
-        turnId: 21,
+        subtaskId: 21,
         type: 'text',
         content: '从常用目录看，可能的前端仓库很多。',
         status: 'done',
@@ -953,7 +953,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'process-1',
-                turnId: 21,
+                subtaskId: 21,
                 type: 'text',
                 content: '我先看 package.json。',
                 status: 'done',
@@ -980,7 +980,7 @@ describe('MessageList', () => {
             blocks: [
               {
                 id: 'guidance-1',
-                turnId: 21,
+                subtaskId: 21,
                 type: 'tool',
                 toolName: 'conversation_guidance',
                 toolInput: { message: 'pnpm-lock.yaml' },
@@ -989,7 +989,7 @@ describe('MessageList', () => {
               },
               {
                 id: 'process-2',
-                turnId: 21,
+                subtaskId: 21,
                 type: 'text',
                 content: '我会继续看 lockfile。',
                 status: 'done',
@@ -1176,7 +1176,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'thinking',
         content: '正在执行 pwd',
         status: 'done',
@@ -1209,7 +1209,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'text',
         content: '我会先看这个 skill 当前的流程结构和相关记忆。',
         status: 'done',
@@ -1217,7 +1217,7 @@ describe('MessageList', () => {
       },
       {
         id: 'tool-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'tool',
         toolName: 'Bash',
         toolInput: { command: 'rg -n workflow' },
@@ -1313,7 +1313,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'web-search-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'tool',
         toolName: 'web_search',
         toolInput: {
@@ -1325,7 +1325,7 @@ describe('MessageList', () => {
       },
       {
         id: 'web-query-url-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'tool',
         toolName: 'web_search',
         toolInput: {
@@ -1337,7 +1337,7 @@ describe('MessageList', () => {
       },
       {
         id: 'web-open-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'tool',
         toolName: 'web_search',
         toolInput: {
@@ -1386,7 +1386,7 @@ describe('MessageList', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'tool-1',
-        turnId: 11,
+        subtaskId: 11,
         type: 'tool',
         toolName: 'Bash',
         toolInput: { command: 'pwd' },
@@ -1600,7 +1600,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-changed-file-link',
-            turnId: 42,
+            subtaskId: 42,
             role: 'assistant',
             content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md)',
             status: 'done',
@@ -1633,7 +1633,7 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
     expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
     const request = onOpenFileChangesReview.mock.calls[0][0]
-    expect(request.turnId).toBe(42)
+    expect(request.subtaskId).toBe(42)
     expect(request.focusFilePath).toBe('docs/zh/user-guide/chat/managing-tasks.md')
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
@@ -1788,7 +1788,7 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-file-change-documents',
-            turnId: 42,
+            subtaskId: 42,
             role: 'assistant',
             content:
               'Updated [SKILL.md](/workspace/project/SKILL.md) and [wegent-merged-env.md](/workspace/project/references/wegent-merged-env.md).',
@@ -3199,7 +3199,7 @@ describe('MessageList', () => {
   test('shows thinking from the message list after completed processing activity', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'pwd' },
@@ -3230,7 +3230,7 @@ describe('MessageList', () => {
   test('does not duplicate thinking when live process text is visible', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'text',
       content: 'Let me inspect the repository first.',
       status: 'streaming',
@@ -3259,7 +3259,7 @@ describe('MessageList', () => {
   test('keeps running tool rows visible while showing trailing thinking', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'rg -n "foo" src' },
@@ -3289,7 +3289,7 @@ describe('MessageList', () => {
   test('renders process text inside the processing timeline before the following tool', () => {
     const processBlock: ProcessingBlock = {
       id: 'text-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'done',
@@ -3297,7 +3297,7 @@ describe('MessageList', () => {
     }
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'ls' },
@@ -3329,7 +3329,7 @@ describe('MessageList', () => {
   test('keeps process text even when it matches the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
-      turnId: 1,
+      subtaskId: 1,
       type: 'text',
       content: '这是最终回答。',
       status: 'done',

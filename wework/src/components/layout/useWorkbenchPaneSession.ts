@@ -46,6 +46,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import { useWorkbenchPaneActive } from './workbenchPaneStack'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -79,6 +80,8 @@ const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
+const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -95,6 +98,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendCurrentInput,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
+  const paneActive = useWorkbenchPaneActive()
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
@@ -1158,6 +1162,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const cancelGuidanceMessage = useCallback(() => undefined, [])
 
   useEffect(() => {
+    if (!paneActive) return
+
     updateRuntimePaneDebugSnapshot({
       currentRuntimeTask,
       status: paneStatus,
@@ -1185,6 +1191,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     guidanceMessages,
     input.length,
     messages,
+    paneActive,
     paneStatus,
     queuedMessages,
     subagentStatuses,
@@ -1237,11 +1244,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}:${address.workspacePath ?? ''}`
+  return `${address.deviceId}:${address.taskId}:${address.workspacePath ?? ''}`
 }
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}`
+  return `${address.deviceId}:${address.taskId}`
 }
 
 function isPendingGoalVisibleForRuntimeTarget(
@@ -1271,14 +1278,16 @@ function pendingRuntimeGoalState(
 }
 
 function seedRuntimePaneGoal(address: RuntimeTaskAddress, goal: RuntimeGoal) {
-  runtimePaneGoalSeeds.set(
+  setLruMapValue(
+    runtimePaneGoalSeeds,
     runtimeTranscriptPaneIdentityKey(address),
-    pendingRuntimeGoalState(goal, address)
+    pendingRuntimeGoalState(goal, address),
+    MAX_CACHED_RUNTIME_PANE_GOALS
   )
 }
 
 function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoalState | null {
-  return runtimePaneGoalSeeds.get(runtimeTranscriptPaneIdentityKey(address)) ?? null
+  return getLruMapValue(runtimePaneGoalSeeds, runtimeTranscriptPaneIdentityKey(address)) ?? null
 }
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
@@ -1288,7 +1297,7 @@ function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
@@ -1301,7 +1310,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
     role: message.role,
     status: message.status,
     contentLength: message.content.length,
-    turnId: message.turnId ?? null,
+    subtaskId: message.subtaskId ?? null,
   }))
 }
 
@@ -1339,7 +1348,7 @@ function createLocalUserMessage(
 
 function seedRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
   const key = runtimeTranscriptPaneKey(address)
-  runtimePaneMessageSeeds.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSeeds, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
@@ -1348,21 +1357,42 @@ function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: Work
     runtimePaneMessageSnapshots.delete(key)
     return
   }
-  runtimePaneMessageSnapshots.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSnapshots, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function getRuntimePaneMessageSnapshot(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSnapshots.get(key) ?? [])]
+  const snapshot = getLruMapValue(runtimePaneMessageSnapshots, key)
+  return [...(snapshot ?? [])]
 }
 
 function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSeeds.get(key) ?? [])]
+  const seed = getLruMapValue(runtimePaneMessageSeeds, key)
+  return [...(seed ?? [])]
 }
 
 function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
   runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
+}
+
+function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const value = map.get(key)
+  if (value === undefined) return undefined
+  map.delete(key)
+  map.set(key, value)
+  return value
+}
+
+function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number) {
+  map.delete(key)
+  map.set(key, value)
+
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey === undefined) return
+    map.delete(oldestKey)
+  }
 }
 
 function mergeRuntimeTranscriptMessages(
@@ -1489,7 +1519,7 @@ function updateRuntimeSubagentStatuses(
   current: RuntimeSubagentStatus[],
   activity: RuntimeSubagentActivityPayload
 ): RuntimeSubagentStatus[] {
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (!agentPath) return current
 
   const agentId = runtimeSubagentId(activity)
@@ -1500,10 +1530,10 @@ function updateRuntimeSubagentStatuses(
     agentId,
     agentPath,
     agentName:
-      activity.agent_name?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
+      activity.agentName?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
     status,
     kind: activity.kind,
-    updatedAtMs: activity.occurred_at_ms ?? Date.now(),
+    updatedAtMs: activity.occurredAtMs ?? Date.now(),
   }
 
   const withoutCurrent = current.filter(item => item.id !== agentId)
@@ -1542,13 +1572,13 @@ function normalizeRuntimeSubagentStatus(
 }
 
 function runtimeSubagentId(activity: RuntimeSubagentActivityPayload): string {
-  const agentId = activity.agent_id?.trim()
+  const agentId = activity.agentId?.trim()
   if (agentId) return agentId
 
-  const threadId = activity.agent_thread_id?.trim()
+  const threadId = activity.agentThreadId?.trim()
   if (threadId) return threadId
 
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (agentPath.startsWith('thread:')) {
     return agentPath.slice('thread:'.length).trim() || agentPath
   }
@@ -1572,7 +1602,7 @@ function shortRuntimeAgentId(agentId: string): string {
 function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RuntimeTaskAddress>
-  return typeof candidate.deviceId === 'string' && typeof candidate.localTaskId === 'string'
+  return typeof candidate.deviceId === 'string' && typeof candidate.taskId === 'number'
 }
 
 function createPendingRuntimeGoal(objective: string): RuntimeGoal {

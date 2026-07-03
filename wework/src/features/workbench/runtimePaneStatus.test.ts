@@ -6,7 +6,7 @@ import { deriveRuntimePaneStatus, getRuntimePaneTaskExecution } from './runtimeP
 const runtimeAddress: RuntimeTaskAddress = {
   deviceId: 'device-1',
   workspacePath: '/workspace/project',
-  localTaskId: 'runtime-a',
+  taskId: 'runtime-a',
 }
 
 function assistantMessage(status: WorkbenchMessage['status']): WorkbenchMessage {
@@ -16,11 +16,11 @@ function assistantMessage(status: WorkbenchMessage['status']): WorkbenchMessage 
     content: 'working',
     status,
     createdAt: '2026-07-02T00:00:00.000Z',
-    turnId: 1,
+    subtaskId: 1,
     blocks: [
       {
         id: 'tool-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'bash',
         status: 'streaming',
@@ -40,9 +40,9 @@ function runtimeWork(running: boolean, status?: string | null): RuntimeWorkListR
         deviceStatus: 'online',
         workspacePath: '/workspace/project',
         available: true,
-        localTasks: [
+        tasks: [
           {
-            localTaskId: 'runtime-a',
+            taskId: 'runtime-a',
             workspacePath: '/workspace/project',
             title: 'Runtime A',
             runtime: 'codex',
@@ -52,7 +52,7 @@ function runtimeWork(running: boolean, status?: string | null): RuntimeWorkListR
         ],
       },
     ],
-    totalLocalTasks: 1,
+    totalTasks: 1,
   }
 }
 
@@ -83,5 +83,21 @@ describe('runtime pane status', () => {
     expect(status.isSubmitting).toBe(true)
     expect(status.isWaitingForAssistantIndicator).toBe(true)
     expect(status.isAssistantStreaming).toBe(false)
+  })
+
+  test('does not let stale streaming messages keep a completed runtime task busy', () => {
+    const taskExecution = getRuntimePaneTaskExecution(runtimeWork(false, 'done'), runtimeAddress)
+    const status = deriveRuntimePaneStatus({
+      messages: [assistantMessage('streaming')],
+      sendPhase: 'idle',
+      currentRuntimeTask: runtimeAddress,
+      taskExecution,
+    })
+
+    expect(status.taskExecution).toEqual({ known: true, running: false, status: 'done' })
+    expect(status.activeAssistantMessage).toBeNull()
+    expect(status.isAssistantStreaming).toBe(false)
+    expect(status.isBusy).toBe(false)
+    expect(status.canSendQueuedMessage).toBe(true)
   })
 })

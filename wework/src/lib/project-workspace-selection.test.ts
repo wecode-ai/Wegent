@@ -46,7 +46,7 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: true,
           workspacePath: '/repo/Wegent',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
         {
           id: 102,
@@ -57,7 +57,7 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: false,
           workspacePath: '/workspace/Wegent',
           mapped: true,
-          localTasks: [],
+          tasks: [],
           error: 'Device is offline',
         },
       ],
@@ -74,13 +74,13 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: true,
           workspacePath: '/repo/Docs',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     },
   ],
   chats: [],
-  totalLocalTasks: 0,
+  totalTasks: 0,
 }
 
 describe('project workspace selection', () => {
@@ -137,13 +137,13 @@ describe('project workspace selection', () => {
                 available: true,
                 workspacePath: '/repo/runtime-only',
                 mapped: true,
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
         ],
         chats: [],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 

@@ -112,18 +112,18 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
         .await
         .expect("task list should succeed");
 
-    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     let running_by_rollout = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "thread-running-rollout")
+        .find(|task| task["taskId"] == "thread-running-rollout")
         .unwrap();
     let idle = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "thread-idle")
+        .find(|task| task["taskId"] == "thread-idle")
         .unwrap();
     let active_completed = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "thread-active-completed")
+        .find(|task| task["taskId"] == "thread-active-completed")
         .unwrap();
 
     assert_eq!(running_by_rollout["status"], "active");
@@ -197,10 +197,10 @@ async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() 
         .await
         .expect("task list should succeed");
 
-    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     let locally_running = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "local-running-idle")
+        .find(|task| task["taskId"] == "local-running-idle")
         .unwrap();
 
     assert_eq!(locally_running["title"], "Locally running idle");
@@ -256,10 +256,10 @@ async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_stil
         .await
         .expect("task list should succeed");
 
-    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     let locally_failed = tasks
         .iter()
-        .find(|task| task["localTaskId"] == "local-failed-running-rollout")
+        .find(|task| task["taskId"] == "local-failed-running-rollout")
         .unwrap();
 
     assert_eq!(locally_failed["status"], "failed");

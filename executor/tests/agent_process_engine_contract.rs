@@ -136,7 +136,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 81,
+        task_id: "81".to_owned(),
         prompt: json!("remember"),
         bot: json!([{"id": 321, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -173,7 +173,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 82,
+        task_id: "82".to_owned(),
         prompt: json!("run in task dir"),
         bot: json!([{"id": 322, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -211,7 +211,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 2149,
+        task_id: "2149".to_owned(),
         prompt: json!("run in local task dir"),
         bot: json!([{"id": 2149, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -256,7 +256,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 85,
+        task_id: "85".to_owned(),
         prompt: json!("run in cloned repo"),
         bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -310,8 +310,8 @@ printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tex
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 2201,
-        subtask_id: 3212,
+        task_id: "2201".to_owned(),
+        subtask_id: "3212".to_owned(),
         backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!([
@@ -392,7 +392,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 86,
+        task_id: "86".to_owned(),
         backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with task skill"),
@@ -465,7 +465,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"global=
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 87,
+        task_id: "87".to_owned(),
         backend_url: Some("http://payload-backend.invalid".to_owned()),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with bot skill"),
@@ -526,7 +526,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 88,
+        task_id: "88".to_owned(),
         backend_url: Some(backend_url),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with refreshed bot skill"),
@@ -583,7 +583,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 89,
+        task_id: "89".to_owned(),
         backend_url: Some(backend_url),
         auth_token: Some("task-token".to_owned()),
         prompt: json!("run with bot skill"),
@@ -661,7 +661,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"plugin=
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 88,
+        task_id: "88".to_owned(),
         prompt: json!("run with global plugin skill"),
         bot: json!([{"id": 328, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -717,7 +717,7 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 83,
+        task_id: "83".to_owned(),
         skip_git_clone: true,
         prompt: json!("run with hook"),
         bot: json!([{"id": 323, "shell_type": "ClaudeCode"}]),
@@ -786,7 +786,7 @@ PY
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 85,
+        task_id: "85".to_owned(),
         prompt: json!("inspect file edit hooks"),
         bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -845,7 +845,7 @@ PY
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 86,
+        task_id: "86".to_owned(),
         prompt: json!("inspect default settings"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -903,7 +903,7 @@ PY
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 87,
+        task_id: "87".to_owned(),
         prompt: json!("inspect process env settings"),
         bot: json!([{"id": 327, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -1002,7 +1002,7 @@ PY
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 86,
+        task_id: "86".to_owned(),
         prompt: json!("replace stale file edit hooks"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -1050,7 +1050,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 84,
+        task_id: "84".to_owned(),
         prompt: json!("continue after hook"),
         bot: json!([{"id": 324, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),

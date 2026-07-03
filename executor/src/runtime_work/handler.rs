@@ -52,9 +52,9 @@ use super::{
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request, infer_workspace_kind,
-        integer_field, normalize_device_id, now_ms, prompt_text, runtime_task_id, string_field,
-        workspace_group_path, workspace_path,
+        apply_runtime_payload_metadata, bool_field, execution_request, id_field,
+        infer_workspace_kind, integer_field, normalize_device_id, now_ms, prompt_text,
+        runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
 };
 
@@ -375,9 +375,9 @@ impl RuntimeWorkRpcHandler {
         let links =
             self.visible_links_for_projects(self.collect_links(false).await, &project_index);
         let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
-        let local_task_count = workspaces
+        let task_count = workspaces
             .iter()
-            .filter_map(|workspace| workspace.get("localTasks").and_then(Value::as_array))
+            .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
             .map(Vec::len)
             .sum::<usize>();
         log_executor_event(
@@ -385,7 +385,7 @@ impl RuntimeWorkRpcHandler {
             &[
                 ("elapsed_ms", elapsed_ms(started_at)),
                 ("workspaces", workspaces.len().to_string()),
-                ("local_tasks", local_task_count.to_string()),
+                ("tasks", task_count.to_string()),
             ],
         );
         Ok(json!({
@@ -485,7 +485,7 @@ impl RuntimeWorkRpcHandler {
     async fn transcript(&self, payload: Value) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         let local_task_id = runtime_task_id(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "localTaskId is required"))?;
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
@@ -753,7 +753,7 @@ impl RuntimeWorkRpcHandler {
         for link in links {
             let result = self
                 .archive_task(json!({
-                    "localTaskId": link.local_task_id,
+                    "taskId": link.local_task_id,
                     "workspacePath": link.workspace_path,
                     "runtimeHandle": link.runtime_handle,
                 }))
@@ -933,8 +933,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let local_task_id = string_field(&payload, "localTaskId")
-            .or_else(|| string_field(&payload, "local_task_id"))
+        let local_task_id = id_field(&payload, "taskId")
+            .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("codex-local-{}", now_ms()));
         let payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
@@ -973,7 +973,7 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "deviceId": self.device_id,
-            "localTaskId": local_task_id,
+            "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
         }))
@@ -981,7 +981,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "localTaskId is required"))?;
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
@@ -1023,12 +1023,12 @@ impl RuntimeWorkRpcHandler {
                 "success": false,
                 "error": "runtime task session is not ready",
                 "code": "missing_runtime_session",
-                "localTaskId": local_task_id,
+                "taskId": local_task_id,
                 "runtime": "codex",
             }));
         };
 
-        let mut fields = task_fields(request.task_id, request.subtask_id);
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
         fields.push(("thread_id", thread_id.clone()));
         fields.push(("workspace_path", workspace_path.clone()));
@@ -1058,7 +1058,7 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "deviceId": self.device_id,
-            "localTaskId": local_task_id,
+            "taskId": local_task_id,
             "runtime": "codex",
         }))
     }
@@ -1078,7 +1078,7 @@ impl RuntimeWorkRpcHandler {
                 "success": false,
                 "error": "request_user_input is not pending",
                 "code": "missing_request_user_input",
-                "localTaskId": local_task_id,
+                "taskId": local_task_id,
                 "runtime": "codex",
             }));
         };
@@ -1087,7 +1087,7 @@ impl RuntimeWorkRpcHandler {
                 "success": false,
                 "error": "request_user_input response channel is closed",
                 "code": "closed_request_user_input",
-                "localTaskId": local_task_id,
+                "taskId": local_task_id,
                 "runtime": "codex",
             }));
         }
@@ -1095,14 +1095,14 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "deviceId": self.device_id,
-            "localTaskId": local_task_id,
+            "taskId": local_task_id,
             "runtime": "codex",
         }))
     }
 
     async fn cancel_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "localTaskId is required"))?;
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let link = self
             .store
             .update_task(&local_task_id, |link| {
@@ -1116,7 +1116,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({
                 "success": false,
                 "accepted": false,
-                "localTaskId": local_task_id,
+                "taskId": local_task_id,
                 "runtime": "codex",
                 "error": "runtime task did not stop within timeout",
                 "code": "cancel_timeout",
@@ -1128,7 +1128,7 @@ impl RuntimeWorkRpcHandler {
             None => json!({
                 "success": true,
                 "accepted": true,
-                "localTaskId": local_task_id,
+                "taskId": local_task_id,
                 "runtime": "codex",
             }),
         })
@@ -1279,7 +1279,7 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "workspacePath": workspace_path,
-            "localTaskId": link.local_task_id,
+            "taskId": link.local_task_id,
             "package": {
                 "sourceRuntime": link.runtime,
                 "title": link.title,
@@ -1334,7 +1334,7 @@ impl RuntimeWorkRpcHandler {
         initial_thread_name: Option<String>,
         initial_thread_goal: Option<Value>,
     ) {
-        let mut fields = task_fields(request.task_id, request.subtask_id);
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
         fields.push(("resume", resume_thread_id.is_some().to_string()));
         if let Some(thread_id) = &resume_thread_id {
@@ -1375,29 +1375,33 @@ impl RuntimeWorkRpcHandler {
             );
 
             handler.ensure_notification_router().await;
-            if let Some(thread_id) = resume_thread_id.as_deref() {
-                handler.register_thread_event_route(
-                    thread_id,
-                    turn_local_task_id.clone(),
-                    request.clone(),
-                    true,
-                );
-            } else {
-                handler.register_pending_thread_event_route(
-                    turn_local_task_id.clone(),
-                    request.clone(),
-                );
-            }
+            let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
+            let mapper_handler = handler.clone();
+            let mapper_local_task_id = turn_local_task_id.clone();
+            let mapper_request = request.clone();
+            let mapper_handle = tokio::spawn(async move {
+                let mut event_mapper = CodexNotificationEventMapper::default();
+                let mut cache_mapper = CodexNotificationCacheMapper::default();
+                while let Some(message) = notification_rx.recv().await {
+                    cache_mapper.map(
+                        &mapper_handler.store,
+                        &mapper_local_task_id,
+                        &mapper_request,
+                        &message,
+                    );
+                    event_mapper.map(
+                        &mapper_handler.event_tx,
+                        &mapper_handler.device_id,
+                        &mapper_local_task_id,
+                        &mapper_request,
+                        message,
+                    );
+                }
+            });
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
-            let route_request = request.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
-                route_handler.register_thread_event_route(
-                    &thread_id,
-                    route_local_task_id,
-                    route_request,
-                    true,
-                );
+                route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
             });
             let result = handler
                 .codex_app_server
@@ -1407,7 +1411,7 @@ impl RuntimeWorkRpcHandler {
                         resume_thread_id,
                         initial_thread_name,
                         initial_thread_goal,
-                        notifications: None,
+                        notifications: Some(notification_tx),
                         cancellation: Some(cancel_rx),
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
@@ -1416,6 +1420,7 @@ impl RuntimeWorkRpcHandler {
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
                 handler.unmark_active_local_task(&turn_local_task_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -1426,6 +1431,7 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
 
+            let _ = mapper_handle.await;
             handler.handle_turn_result(&turn_local_task_id, &request, result);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
@@ -1451,6 +1457,12 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Running => "running",
                 };
                 let thread_id = turn.thread_id.clone();
+                self.register_thread_event_route(
+                    &thread_id,
+                    local_task_id.to_owned(),
+                    request.clone(),
+                    false,
+                );
                 self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, request);
@@ -1485,7 +1497,7 @@ impl RuntimeWorkRpcHandler {
                         json!({"error": {"message": message}}),
                     ),
                     ExecutionOutcome::Failed { message } => {
-                        let mut fields = task_fields(request.task_id, request.subtask_id);
+                        let mut fields = task_fields(&request.task_id, &request.subtask_id);
                         fields.push(("local_task_id", local_task_id.to_owned()));
                         fields.push(("error", message.clone()));
                         fields.push(("error_len", message.len().to_string()));
@@ -1505,7 +1517,7 @@ impl RuntimeWorkRpcHandler {
             Err(error) => {
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
                 self.finish_local_task(local_task_id, None, "failed");
-                let mut fields = task_fields(request.task_id, request.subtask_id);
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
                 fields.push(("error", error.clone()));
                 fields.push(("error_len", error.len().to_string()));
@@ -1636,6 +1648,9 @@ impl RuntimeWorkRpcHandler {
             debug_unrouted_codex_notification(&message, "missing_route");
             return;
         };
+        if self.is_active_local_task(&route.local_task_id) {
+            return;
+        }
 
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
@@ -1688,6 +1703,7 @@ impl RuntimeWorkRpcHandler {
         routes.insert(thread_id.to_owned(), route);
     }
 
+    #[cfg(test)]
     fn register_pending_thread_event_route(
         &self,
         local_task_id: String,
@@ -1707,6 +1723,17 @@ impl RuntimeWorkRpcHandler {
             pending_id,
             RuntimeThreadEventRoute::new(local_task_id, request, true),
         );
+    }
+
+    fn record_local_task_thread(&self, local_task_id: &str, thread_id: &str) {
+        if thread_id.trim().is_empty() {
+            return;
+        }
+        self.store.update_task(local_task_id, |link| {
+            link.thread_id = Some(thread_id.to_owned());
+            link.updated_at = now_ms();
+        });
+        self.thread_list_cache.invalidate();
     }
 
     fn register_thread_event_route_for_link(&self, link: &RuntimeTaskLink, active: bool) {
@@ -2158,7 +2185,7 @@ impl RuntimeWorkRpcHandler {
         archived: bool,
     ) -> Result<RuntimeTaskLink, AppIpcError> {
         let local_task_id = runtime_task_id(payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "localTaskId is required"))?;
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         if let Some(link) = self.local_task_link(&local_task_id) {
             return Ok(link);
         }
@@ -2472,10 +2499,10 @@ fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
     ))
 }
 
-fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)> {
+fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("task_id", task_id.to_string()),
-        ("subtask_id", subtask_id.to_string()),
+        ("task_id", task_id.to_owned()),
+        ("subtask_id", subtask_id.to_owned()),
     ]
 }
 
@@ -2881,7 +2908,7 @@ fn transcript_response(
     let page = transcript_page(messages, limit, before_cursor, after_cursor);
     json!({
         "success": true,
-        "localTaskId": local_task_id,
+        "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
@@ -3066,10 +3093,10 @@ fn cached_user_message(
         "id".to_owned(),
         Value::String(format!(
             "{local_task_id}:user:{}",
-            if request.subtask_id > 0 {
-                request.subtask_id
+            if !request.subtask_id.trim().is_empty() {
+                request.subtask_id.clone()
             } else {
-                now_ms()
+                now_ms().to_string()
             }
         )),
     );
@@ -3234,7 +3261,7 @@ fn source_parent_json(source: &super::fork_transfer::SourceTaskIdentity) -> Valu
         );
     }
     parent.insert(
-        "localTaskId".to_owned(),
+        "taskId".to_owned(),
         Value::String(source.local_task_id.clone()),
     );
     if let Some(thread_id) = &source.thread_id {
@@ -3258,7 +3285,7 @@ fn task_action_success(link: &RuntimeTaskLink) -> Value {
     json!({
         "success": true,
         "accepted": true,
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
     })
@@ -3268,7 +3295,7 @@ fn task_action_failure(link: &RuntimeTaskLink, error: String) -> Value {
     json!({
         "success": false,
         "accepted": false,
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
         "error": error,
@@ -3279,7 +3306,7 @@ fn task_goal_missing_session(link: &RuntimeTaskLink) -> Value {
     json!({
         "success": false,
         "accepted": false,
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
         "error": "runtime task session is not ready",
@@ -3344,7 +3371,7 @@ mod tests {
     #[test]
     fn cached_user_message_uses_explicit_payload_text() {
         let request = ExecutionRequest {
-            subtask_id: 42,
+            subtask_id: "42".to_owned(),
             prompt: json!([
                 {"type": "input_text", "text": "# AGENTS.md instructions\n\n<environment_context>"},
                 {"type": "input_text", "text": "visible user text"}
@@ -3374,7 +3401,7 @@ mod tests {
     #[test]
     fn cached_user_message_does_not_fallback_to_prompt() {
         let request = ExecutionRequest {
-            subtask_id: 42,
+            subtask_id: "42".to_owned(),
             prompt: json!([
                 {"type": "input_text", "text": "# AGENTS.md instructions\n\n<environment_context>"}
             ]),
@@ -3523,12 +3550,12 @@ mod tests {
         let result = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
-                "payload": {"localTaskId": "local-task-1"}
+                "payload": {"taskId": "local-task-1"}
             }))
             .await
             .expect("cached transcript should return");
 
-        assert_eq!(result["localTaskId"], "local-task-1");
+        assert_eq!(result["taskId"], "local-task-1");
         assert_eq!(result["messages"][0]["content"], "cached");
     }
 
@@ -3540,7 +3567,7 @@ mod tests {
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
                 "payload": {
-                    "localTaskId": "optimistic-local-task",
+                    "taskId": "optimistic-local-task",
                     "workspacePath": "/tmp/project"
                 }
             }))
@@ -3548,7 +3575,7 @@ mod tests {
             .expect("missing runtime link should not read provider session");
 
         assert_eq!(result["success"], true);
-        assert_eq!(result["localTaskId"], "optimistic-local-task");
+        assert_eq!(result["taskId"], "optimistic-local-task");
         assert_eq!(result["workspacePath"], "/tmp/project");
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
@@ -3560,8 +3587,8 @@ mod tests {
         handler.store = RuntimeWorkStore::new(index_path.clone());
         let local_task_id = "local-task-1".to_owned();
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
         handler.upsert_local_task(RuntimeTaskLink::new_pending(
@@ -3579,6 +3606,63 @@ mod tests {
             .local_task_link(&local_task_id)
             .expect("local task should be stored");
         assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn active_local_task_skips_global_notification_route() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let index_path = temp_runtime_work_index_path("active-local-task-route");
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-task-1";
+        let request = ExecutionRequest {
+            task_id: local_task_id.to_owned(),
+            subtask_id: "runtime-subtask-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        handler.mark_active_local_task(local_task_id);
+        handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+        handler.route_codex_notification(json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "delta": "Hi",
+                "itemId": "msg-1",
+                "threadId": "thread-1",
+                "turnId": "turn-1"
+            }
+        }));
+
+        assert!(event_rx.try_recv().is_err());
+
+        handler.unmark_active_local_task(local_task_id);
+        handler.route_codex_notification(json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "delta": "Hi",
+                "itemId": "msg-1",
+                "threadId": "thread-1",
+                "turnId": "turn-1"
+            }
+        }));
+
+        let event = event_rx
+            .try_recv()
+            .expect("idle route should emit notification");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["taskId"], local_task_id);
+        assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
+        assert_eq!(event["payload"]["data"]["delta"], "Hi");
 
         let _ = fs::remove_file(index_path);
     }
@@ -3601,7 +3685,7 @@ mod tests {
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
                 "payload": {
-                    "localTaskId": "local-visible-task",
+                    "taskId": "local-visible-task",
                     "workspacePath": "/tmp/project",
                     "runtimeHandle": {
                         "threadId": "provider-session-1"
@@ -3611,7 +3695,7 @@ mod tests {
             .await
             .expect("explicit runtime handle should read cached provider session");
 
-        assert_eq!(result["localTaskId"], "local-visible-task");
+        assert_eq!(result["taskId"], "local-visible-task");
         assert_eq!(result["messages"][0]["content"], "cached");
     }
 
@@ -3647,7 +3731,7 @@ mod tests {
                 "createdAt": 2,
                 "status": "completed",
                 "items": [
-                    {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fresh"}]}}
+                    {"id":"item-2","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fresh"}]}}
                 ],
             }),
         ];
@@ -3659,7 +3743,7 @@ mod tests {
         assert_eq!(messages[0]["id"], "user-1");
         assert_eq!(messages[1]["id"], "assistant-turn-2");
         assert_eq!(messages[1]["content"], "fresh");
-        assert_eq!(messages[1]["turnId"], "turn-2");
+        assert_eq!(messages[1]["subtaskId"], "turn-2");
     }
 
     #[test]

@@ -83,7 +83,7 @@ async fn claude_timeout_does_not_persist_interrupted_session_id() {
         1,
     );
     let request = ExecutionRequest {
-        task_id: 9101,
+        task_id: "9101".to_owned(),
         bot: json!([{"id": 4101, "shell_type": "ClaudeCode"}]),
         ..ExecutionRequest::default()
     };
