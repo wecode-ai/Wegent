@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  RuntimeTaskSummary,
+  RuntimeDeviceWorkspace,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { buildTrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
 

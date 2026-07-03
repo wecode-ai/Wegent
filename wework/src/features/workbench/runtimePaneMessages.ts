@@ -278,7 +278,7 @@ function runtimeStreamTaskSubtaskIdentity(
     | ChatErrorPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
-  | RuntimeSubagentActivityPayload
+    | RuntimeSubagentActivityPayload
 ): { taskId: string; subtaskId: string } | null {
   const taskId = payload.taskId
   if (typeof taskId !== 'string' || !taskId.trim()) return null
@@ -504,7 +504,7 @@ function normalizeProcessingBlock(
           ? block.tool_use_id
           : typeof block.toolUseId === 'string'
             ? block.toolUseId
-          : null
+            : null
     if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     return {
       id,

@@ -1,7 +1,4 @@
-import type {
-  TurnFileChangesDiffResponse,
-  TurnFileChangesRevertResponse,
-} from '@/types/api'
+import type { TurnFileChangesDiffResponse, TurnFileChangesRevertResponse } from '@/types/api'
 import type { HttpClient } from './http'
 
 export function createTaskApi(client: HttpClient) {

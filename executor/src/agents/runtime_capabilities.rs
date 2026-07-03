@@ -1360,7 +1360,7 @@ fn subagent_file(bot: &Value) -> Option<(String, String)> {
 }
 
 fn write_claude_user_config(config_dir: &Path) {
-    let value = json!({
+    let user_config = json!({
         "numStartups": 2,
         "installMethod": "unknown",
         "autoUpdates": true,
@@ -1369,7 +1369,20 @@ fn write_claude_user_config(config_dir: &Path) {
         "bypassPermissionsModeAccepted": true,
         "isQualifiedForDataSharing": false,
     });
-    let _ = write_json_file(&config_dir.join("claude.json"), &value);
+    let _ = write_json_file(&config_dir.join("claude.json"), &user_config);
+
+    let runtime_config_path = config_dir.join(".claude.json");
+    if !runtime_config_path.exists() {
+        let runtime_config = json!({
+            "firstStartTime": chrono::Utc::now()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "opusProMigrationComplete": true,
+            "sonnet1m45MigrationComplete": true,
+            "seenNotifications": {},
+            "migrationVersion": 13,
+        });
+        let _ = write_json_file(&runtime_config_path, &runtime_config);
+    }
 }
 
 fn install_deferred_mcp_hook(config_dir: &Path) {
@@ -1832,6 +1845,55 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
+    }
+
+    #[test]
+    fn write_claude_user_config_creates_legacy_and_runtime_configs() {
+        let temp = env::temp_dir().join(format!("claude-user-config-{}", std::process::id()));
+        let config_dir = temp.join(".claude");
+
+        write_claude_user_config(&config_dir);
+
+        let legacy_config: Value =
+            serde_json::from_str(&fs::read_to_string(config_dir.join("claude.json")).unwrap())
+                .unwrap();
+        let runtime_config: Value =
+            serde_json::from_str(&fs::read_to_string(config_dir.join(".claude.json")).unwrap())
+                .unwrap();
+        assert_eq!(legacy_config["hasCompletedOnboarding"], true);
+        assert_eq!(legacy_config["bypassPermissionsModeAccepted"], true);
+        assert!(runtime_config["firstStartTime"].as_str().is_some());
+        assert_eq!(runtime_config["migrationVersion"], 13);
+        assert_eq!(runtime_config["opusProMigrationComplete"], true);
+        assert_eq!(runtime_config["sonnet1m45MigrationComplete"], true);
+        assert!(runtime_config["seenNotifications"].is_object());
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn write_claude_user_config_preserves_existing_runtime_config() {
+        let temp = env::temp_dir().join(format!(
+            "claude-existing-runtime-config-{}",
+            std::process::id()
+        ));
+        let config_dir = temp.join(".claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(
+            config_dir.join(".claude.json"),
+            "{\"firstStartTime\":\"existing\",\"migrationVersion\":13}",
+        )
+        .unwrap();
+
+        write_claude_user_config(&config_dir);
+
+        let runtime_config: Value =
+            serde_json::from_str(&fs::read_to_string(config_dir.join(".claude.json")).unwrap())
+                .unwrap();
+        assert_eq!(runtime_config["firstStartTime"], "existing");
+        assert_eq!(runtime_config["migrationVersion"], 13);
+
+        let _ = fs::remove_dir_all(temp);
     }
 
     fn attachment(

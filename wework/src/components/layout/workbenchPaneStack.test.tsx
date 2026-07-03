@@ -214,8 +214,20 @@ describe('workbenchPaneStack', () => {
                 available: true,
                 mapped: true,
                 tasks: [
-                  { taskId: 101, workspacePath: '/workspace/project-alpha', title: 'A', runtime: 'codex', running: true },
-                  { taskId: 102, workspacePath: '/workspace/project-alpha', title: 'B', runtime: 'codex', running: false },
+                  {
+                    taskId: 101,
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'A',
+                    runtime: 'codex',
+                    running: true,
+                  },
+                  {
+                    taskId: 102,
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'B',
+                    runtime: 'codex',
+                    running: false,
+                  },
                 ],
               },
             ],

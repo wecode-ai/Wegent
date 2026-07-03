@@ -4,8 +4,10 @@
 
 use std::{
     fs,
+    future::ready,
     io::{Cursor, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex as StdMutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,9 +22,30 @@ use tokio::{
 };
 use wegent_executor::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
+    emitter::{EventEnvelope, ResponsesEventBuilder},
     protocol::ExecutionRequest,
-    runner::{AgentEngine, ExecutionOutcome},
+    runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
+
+#[derive(Clone, Default)]
+struct RecordingSink {
+    events: Arc<StdMutex<Vec<EventEnvelope>>>,
+}
+
+impl RecordingSink {
+    fn events(&self) -> Vec<EventEnvelope> {
+        self.events.lock().unwrap().clone()
+    }
+}
+
+impl EventSink for RecordingSink {
+    type SendFuture = std::future::Ready<Result<(), String>>;
+
+    fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+        self.events.lock().unwrap().push(event);
+        ready(Ok(()))
+    }
+}
 
 #[tokio::test]
 async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
@@ -752,6 +775,64 @@ async fn claude_runtime_drains_stale_defer_after_interactive_form_answer() {
     );
 }
 
+#[tokio::test]
+async fn claude_runtime_completes_after_answer_drain_even_if_old_defer_remains() {
+    let _lock = env_lock().await;
+    let workspace_root = unique_dir("claude-runtime-answer-drain-stale-workspace");
+    let marker = unique_dir("claude-runtime-answer-drain-stale-marker").join("count");
+    let fake_claude = write_fake_claude_answer_drain_final_text_with_stale_defer(&marker);
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = interactive_form_answer_request(7793, 104);
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "published".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn claude_runtime_streams_answer_drain_follow_up_output() {
+    let _lock = env_lock().await;
+    let workspace_root = unique_dir("claude-runtime-answer-drain-stream-workspace");
+    let marker = unique_dir("claude-runtime-answer-drain-stream-marker").join("count");
+    let fake_claude = write_fake_claude_answer_drain_final_text_with_stale_defer(&marker);
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = interactive_form_answer_request(7794, 105);
+    let sink = RecordingSink::default();
+    let builder = ResponsesEventBuilder::new(
+        request.task_id.clone(),
+        request.subtask_id.clone(),
+        "claude",
+    );
+
+    let outcome = engine.run_with_events(request, sink.clone(), builder).await;
+    let events = sink.events();
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "published".to_owned()
+        }
+    );
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.output_text.delta" && event.data["delta"] == "published"
+    }));
+}
+
 async fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().await
@@ -878,6 +959,58 @@ printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_i
     fs::write(&path, content).unwrap();
     make_executable(&path);
     path
+}
+
+fn write_fake_claude_answer_drain_final_text_with_stale_defer(marker: &Path) -> PathBuf {
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let path = unique_dir("fake-claude-answer-drain-stale").join("claude");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let content = format!(
+        r#"#!/bin/sh
+MARKER='{}'
+if [ ! -f "$MARKER" ]; then
+  printf 1 > "$MARKER"
+  printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer-stale"}}'
+  printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-stale","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
+  exit 0
+fi
+if ! grep -q 'tool-answered' >/dev/null 2>&1; then
+  exit 9
+fi
+printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"published"}}]}}}}'
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-stale","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-stale-followup","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[{{"id":"confirm","question":"Confirm?"}}]}}}}}}'
+"#,
+        marker.display()
+    );
+    fs::write(&path, content).unwrap();
+    make_executable(&path);
+    path
+}
+
+fn interactive_form_answer_request(task_id: i64, subtask_id: i64) -> ExecutionRequest {
+    ExecutionRequest {
+        task_id: task_id.to_string(),
+        subtask_id: subtask_id.to_string(),
+        prompt: json!("answer form"),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode"
+        }]),
+        extra: serde_json::Map::from_iter([(
+            "interactive_form_answer".to_owned(),
+            json!({
+                "type": "interactive_form_question",
+                "tool_use_id": "tool-answered",
+                "answers": [{"id": "scope", "value": "all"}],
+                "success": true,
+                "status": "answered"
+            }),
+        )]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    }
 }
 
 fn write_fake_claude_api_error_then_completed(marker: &Path) -> PathBuf {

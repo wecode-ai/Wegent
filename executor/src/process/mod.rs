@@ -44,6 +44,58 @@ const MAX_API_ERROR_RETRIES: usize = 3;
 const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
 const STDERR_PREVIEW_MAX_CHARS: usize = 500;
 
+#[derive(Clone, Default)]
+struct NoopEventSink;
+
+impl EventSink for NoopEventSink {
+    type SendFuture = std::future::Ready<Result<(), String>>;
+
+    fn send(&self, _event: crate::emitter::EventEnvelope) -> Self::SendFuture {
+        std::future::ready(Ok(()))
+    }
+}
+
+#[derive(Clone)]
+enum FollowUpCommandRunner<S>
+where
+    S: EventSink,
+{
+    Silent,
+    Streaming {
+        sink: S,
+        builder: Box<ResponsesEventBuilder>,
+        task_id: String,
+        subtask_id: String,
+    },
+}
+
+impl<S> FollowUpCommandRunner<S>
+where
+    S: EventSink,
+{
+    async fn run(&self, spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
+        match self {
+            FollowUpCommandRunner::Silent => run_command_output(spec, timeout_seconds).await,
+            FollowUpCommandRunner::Streaming {
+                sink,
+                builder,
+                task_id,
+                subtask_id,
+            } => {
+                run_streaming_command_output(
+                    spec,
+                    timeout_seconds,
+                    sink.clone(),
+                    builder.as_ref().clone(),
+                    task_id.clone(),
+                    subtask_id.clone(),
+                )
+                .await
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     program: String,
@@ -165,10 +217,18 @@ impl AgentEngine for StreamProcessEngine {
                         &request,
                         summary,
                         timeout_seconds,
+                        FollowUpCommandRunner::<NoopEventSink>::Silent,
                     )
                     .await;
                     if summary.deferred_tool_use.is_some() {
-                        handle_deferred_mcp_loop(spec, request, summary, timeout_seconds).await
+                        handle_deferred_mcp_loop(
+                            spec,
+                            request,
+                            summary,
+                            timeout_seconds,
+                            FollowUpCommandRunner::<NoopEventSink>::Silent,
+                        )
+                        .await
                     } else {
                         summary.outcome
                     }
@@ -195,8 +255,8 @@ impl AgentEngine for StreamProcessEngine {
             match run_streaming_command_output(
                 spec.clone(),
                 timeout_seconds,
-                sink,
-                builder,
+                sink.clone(),
+                builder.clone(),
                 request.task_id.clone(),
                 request.subtask_id.clone(),
             )
@@ -207,15 +267,29 @@ impl AgentEngine for StreamProcessEngine {
                     if let Some(session_id) = &summary.session_id {
                         claude_session::save_session_id(&request, session_id);
                     }
+                    let follow_up_runner = FollowUpCommandRunner::Streaming {
+                        sink,
+                        builder: Box::new(builder),
+                        task_id: request.task_id.clone(),
+                        subtask_id: request.subtask_id.clone(),
+                    };
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
                         &request,
                         summary,
                         timeout_seconds,
+                        follow_up_runner.clone(),
                     )
                     .await;
                     if summary.deferred_tool_use.is_some() {
-                        handle_deferred_mcp_loop(spec, request, summary, timeout_seconds).await
+                        handle_deferred_mcp_loop(
+                            spec,
+                            request,
+                            summary,
+                            timeout_seconds,
+                            follow_up_runner,
+                        )
+                        .await
                     } else {
                         summary.outcome
                     }
@@ -233,6 +307,7 @@ async fn handle_retryable_api_errors(
     request: &ExecutionRequest,
     mut summary: crate::stream::ClaudeStreamSummary,
     timeout_seconds: u64,
+    runner: FollowUpCommandRunner<impl EventSink>,
 ) -> crate::stream::ClaudeStreamSummary {
     let fields = task_fields(&request.task_id, &request.subtask_id);
     let mut retry_count = 0;
@@ -249,7 +324,7 @@ async fn handle_retryable_api_errors(
             &session_id,
             ClaudeFollowUpQuery::Prompt("Retry to proceed".to_owned()),
         );
-        match run_command_output(retry_spec, timeout_seconds).await {
+        match runner.run(retry_spec, timeout_seconds).await {
             CommandOutcome::Success { stdout } => {
                 summary = collect_claude_stream_summary(&stdout);
                 if let Some(session_id) = &summary.session_id {
@@ -278,6 +353,7 @@ async fn handle_deferred_mcp_loop(
     request: ExecutionRequest,
     mut summary: crate::stream::ClaudeStreamSummary,
     timeout_seconds: u64,
+    runner: FollowUpCommandRunner<impl EventSink>,
 ) -> ExecutionOutcome {
     let mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
     let mut retry_count = 0;
@@ -288,13 +364,22 @@ async fn handle_deferred_mcp_loop(
         let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
             return summary.outcome;
         };
+        // After draining an already answered form, a non-empty final answer is
+        // authoritative; a leftover deferred form is stale Claude session state.
+        if stale_answer_defer_drained
+            && answered_interactive_form_tool_use_id(&request).is_some()
+            && completed_with_content(&summary.outcome)
+        {
+            log_executor_event("ignoring stale deferred form after answered drain", &fields);
+            return summary.outcome;
+        }
         if !stale_answer_defer_drained
             && answered_interactive_form_tool_use_id(&request)
                 .is_some_and(|tool_use_id| tool_use_id == deferred_tool_use.id)
         {
             stale_answer_defer_drained = true;
             log_executor_event("draining stale answered interactive form defer", &fields);
-            match run_command_output(base_spec.clone(), timeout_seconds).await {
+            match runner.run(base_spec.clone(), timeout_seconds).await {
                 CommandOutcome::Success { stdout } => {
                     summary = collect_claude_stream_summary(&stdout);
                     if let Some(session_id) = &summary.session_id {
@@ -368,7 +453,7 @@ async fn handle_deferred_mcp_loop(
                     &session_id,
                     ClaudeFollowUpQuery::ToolResult(retry_query),
                 );
-                match run_command_output(retry_spec, timeout_seconds).await {
+                match runner.run(retry_spec, timeout_seconds).await {
                     CommandOutcome::Success { stdout } => {
                         summary = collect_claude_stream_summary(&stdout);
                         if let Some(session_id) = &summary.session_id {
@@ -387,6 +472,10 @@ async fn handle_deferred_mcp_loop(
             }
         }
     }
+}
+
+fn completed_with_content(outcome: &ExecutionOutcome) -> bool {
+    matches!(outcome, ExecutionOutcome::Completed { content } if !content.trim().is_empty())
 }
 
 fn answered_interactive_form_tool_use_id(request: &ExecutionRequest) -> Option<String> {

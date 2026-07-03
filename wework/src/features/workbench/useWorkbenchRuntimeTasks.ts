@@ -554,7 +554,10 @@ function uniqueRuntimeTaskWorktreeTargets(
   return uniqueTargets
 }
 
-function isRuntimeTaskWorktree(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): boolean {
+function isRuntimeTaskWorktree(
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary
+): boolean {
   return (
     workspace.workspaceKind === 'worktree' ||
     Boolean(workspace.worktreeId) ||

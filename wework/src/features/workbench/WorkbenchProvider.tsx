@@ -639,7 +639,7 @@ export function WorkbenchProvider({
           dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
         },
-      }),
+      })
   )
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)

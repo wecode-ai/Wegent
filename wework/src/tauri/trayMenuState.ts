@@ -4,7 +4,11 @@ import {
   getRuntimeTaskAddress,
   sortRuntimeTaskItems,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
-import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  RuntimeTaskSummary,
+  RuntimeDeviceWorkspace,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { createTrayTaskMenuId } from './trayTaskMenuId'
 
 export interface TrayMenuTaskItem {

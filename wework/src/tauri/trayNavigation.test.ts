@@ -112,9 +112,7 @@ describe('trayNavigation', () => {
       deviceId: 'device/1',
       taskId: '101',
     })
-    expect(navigateToMock).toHaveBeenCalledWith(
-      '/runtime-tasks?deviceId=device%2F1&taskId=101'
-    )
+    expect(navigateToMock).toHaveBeenCalledWith('/runtime-tasks?deviceId=device%2F1&taskId=101')
   })
 
   test('syncs the tray menu state on install and language changes', async () => {

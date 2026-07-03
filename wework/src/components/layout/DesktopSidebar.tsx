@@ -1066,9 +1066,7 @@ function RuntimeTaskRow({
     setArchiving(true)
     try {
       const result = await Promise.resolve(
-        options
-          ? onArchiveRuntimeTask?.(taskAddress, options)
-          : onArchiveRuntimeTask?.(taskAddress)
+        options ? onArchiveRuntimeTask?.(taskAddress, options) : onArchiveRuntimeTask?.(taskAddress)
       )
       if (result?.status === 'dirty_worktree') {
         setForceArchiveConfirmOpen(true)
@@ -1945,9 +1943,7 @@ export function DesktopSidebar({
     if (currentRuntimeTask) {
       const projectWork = filteredRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
-          workspace.tasks.some(task =>
-            isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
-          )
+          workspace.tasks.some(task => isRuntimeTaskSelected(currentRuntimeTask, workspace, task))
         )
       )
       return projectWork

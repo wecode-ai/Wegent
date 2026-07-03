@@ -686,9 +686,7 @@ describe('workbenchReducer', () => {
     })
 
     expect(
-      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(
-        task => task.taskId
-      )
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
     ).toEqual(['task-a', 'task-b', 'task-c'])
     expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[1]).toMatchObject({
       title: 'Task B updated',

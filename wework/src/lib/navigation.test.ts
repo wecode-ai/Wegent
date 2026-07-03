@@ -15,14 +15,11 @@ describe('runtime task navigation', () => {
   })
 
   test('parses runtime task routes from device and task ids only', () => {
-    expect(
-      parseRuntimeTaskRoute(
-        '/runtime-tasks',
-        '?deviceId=axb-mac.local&taskId=12345'
-      )
-    ).toEqual({
-      deviceId: 'axb-mac.local',
-      taskId: '12345',
-    })
+    expect(parseRuntimeTaskRoute('/runtime-tasks', '?deviceId=axb-mac.local&taskId=12345')).toEqual(
+      {
+        deviceId: 'axb-mac.local',
+        taskId: '12345',
+      }
+    )
   })
 })
