@@ -28,6 +28,7 @@ from app.services.adapters.shell_utils import (
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.skill_resolution import build_skill_ref_meta
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -1919,11 +1920,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 f"[_get_skill_refs] Found {len(personal_skills)} personal skills: {[s.name for s in personal_skills]}"
             )
             for skill in personal_skills:
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=False,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # 2. Query group skills if namespace is not 'default'
@@ -1947,11 +1944,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             for skill in group_skills:
                 if skill.name not in remaining_names:
                     continue
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=False,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # 3. Query public/system skills (user_id=0)
@@ -1968,11 +1961,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 .all()
             )
             for skill in public_skills:
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=True,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # Note: remaining_names at this point are skills that weren't found
@@ -2049,11 +2038,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         detail=f"Permission denied for skill '{skill_name}'",
                     )
 
-            resolved[skill_name] = SkillRefMeta(
-                skill_id=skill.id,
-                namespace=skill.namespace,
-                is_public=is_public,
-            )
+            resolved[skill_name] = SkillRefMeta(**build_skill_ref_meta(skill))
 
         if missing_names:
             fallback_refs = self._get_skill_refs(db, missing_names, user_id, namespace)

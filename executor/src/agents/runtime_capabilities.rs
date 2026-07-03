@@ -669,12 +669,32 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             async move {
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
-                if !should_download_skill(&plan.skills_dir, &skill, skill_ref)? {
+                let Some(cache_miss_reason) =
+                    skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref)?
+                else {
                     return Ok::<SkillDeploymentResult, String>(SkillDeploymentResult {
                         success: true,
                         installed: None,
                     });
+                };
+                let mut fields = vec![
+                    ("skill", skill.clone()),
+                    ("reason", cache_miss_reason),
+                    ("target", target.display().to_string()),
+                ];
+                if let Some(skill_ref) = skill_ref {
+                    fields.push(("skill_id", skill_ref.skill_id.to_string()));
+                    fields.push(("namespace", skill_ref.namespace.clone()));
+                    fields.push((
+                        "expected_hash",
+                        skill_ref.content_hash.clone().unwrap_or_default(),
+                    ));
                 }
+                fields.push((
+                    "installed_hash",
+                    installed_skill_hash(&plan.skills_dir, &skill).unwrap_or_default(),
+                ));
+                log_executor_event("skill cache miss", &fields);
                 if plan.clear_cache && target.exists() {
                     let _ = fs::remove_dir_all(&target);
                 }
@@ -777,27 +797,44 @@ fn write_skill_manifest(
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+#[cfg(test)]
 fn should_download_skill(
     skills_dir: &Path,
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
 ) -> Result<bool, String> {
+    Ok(skill_cache_miss_reason(skills_dir, skill_name, skill_ref)?.is_some())
+}
+
+fn skill_cache_miss_reason(
+    skills_dir: &Path,
+    skill_name: &str,
+    skill_ref: Option<&SkillRef>,
+) -> Result<Option<String>, String> {
     if !skills_dir.join(skill_name).join("SKILL.md").is_file() {
-        return Ok(true);
+        return Ok(Some("missing_skill_file".to_owned()));
     }
     let Some(skill_ref) = skill_ref else {
-        return Ok(true);
-    };
-    let Some(content_hash) = skill_ref.content_hash.as_deref() else {
-        return Ok(true);
+        return Ok(Some("missing_skill_ref".to_owned()));
     };
     let manifest = read_skill_manifest(skills_dir)?;
     let Some(installed) = manifest.get(skill_name) else {
-        return Ok(true);
+        return Ok(Some("manifest_missing".to_owned()));
     };
-    Ok(installed.skill_id != skill_ref.skill_id
-        || installed.namespace != skill_ref.namespace
-        || installed.content_hash.as_deref() != Some(content_hash))
+    if installed.skill_id != skill_ref.skill_id || installed.namespace != skill_ref.namespace {
+        return Ok(Some("identity_changed".to_owned()));
+    }
+    let Some(content_hash) = skill_ref.content_hash.as_deref() else {
+        return Ok(None);
+    };
+    if installed.content_hash.as_deref() == Some(content_hash) {
+        return Ok(None);
+    }
+    if installed.content_hash.is_some() {
+        Ok(Some("content_hash_changed".to_owned()))
+    } else {
+        Ok(Some("installed_hash_missing".to_owned()))
+    }
 }
 
 fn installed_skill_hash(skills_dir: &Path, skill_name: &str) -> Option<String> {
@@ -1914,6 +1951,79 @@ mod tests {
         };
 
         assert!(!should_download_skill(&skills_dir, "agent-skill", Some(&skill_ref)).unwrap());
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn skill_manifest_skips_installed_skill_when_expected_hash_is_missing() {
+        let temp = env::temp_dir().join(format!(
+            "skill-manifest-missing-expected-hash-{}",
+            std::process::id()
+        ));
+        let skills_dir = temp.join("skills");
+        let skill_dir = skills_dir.join("agent-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Skill").unwrap();
+        write_skill_manifest(
+            &skills_dir,
+            &BTreeMap::from([(
+                "agent-skill".to_owned(),
+                InstalledSkillRecord {
+                    skill_id: 44,
+                    namespace: "default".to_owned(),
+                    content_hash: Some("sha256:abc".to_owned()),
+                },
+            )]),
+        )
+        .unwrap();
+
+        let skill_ref = SkillRef {
+            skill_id: 44,
+            namespace: "default".to_owned(),
+            is_public: false,
+            content_hash: None,
+        };
+
+        assert!(!should_download_skill(&skills_dir, "agent-skill", Some(&skill_ref)).unwrap());
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn skill_manifest_reports_content_hash_changed() {
+        let temp = env::temp_dir().join(format!(
+            "skill-manifest-hash-changed-{}",
+            std::process::id()
+        ));
+        let skills_dir = temp.join("skills");
+        let skill_dir = skills_dir.join("agent-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Skill").unwrap();
+        write_skill_manifest(
+            &skills_dir,
+            &BTreeMap::from([(
+                "agent-skill".to_owned(),
+                InstalledSkillRecord {
+                    skill_id: 44,
+                    namespace: "default".to_owned(),
+                    content_hash: Some("sha256:old".to_owned()),
+                },
+            )]),
+        )
+        .unwrap();
+
+        let skill_ref = SkillRef {
+            skill_id: 44,
+            namespace: "default".to_owned(),
+            is_public: false,
+            content_hash: Some("sha256:new".to_owned()),
+        };
+
+        assert_eq!(
+            skill_cache_miss_reason(&skills_dir, "agent-skill", Some(&skill_ref)).unwrap(),
+            Some("content_hash_changed".to_owned())
+        );
 
         let _ = fs::remove_dir_all(temp);
     }
