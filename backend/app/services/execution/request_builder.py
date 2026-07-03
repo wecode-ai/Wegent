@@ -317,6 +317,7 @@ class TaskRequestBuilder:
                 if name not in existing_skills:
                     bot_config[0].setdefault("skills", []).append(name)
                     existing_skills.add(name)
+            self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
 
         # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
         if bot_config:
@@ -584,6 +585,7 @@ class TaskRequestBuilder:
             if skill_name not in existing_bot_skills:
                 bot_config.setdefault("skills", []).append(skill_name)
                 existing_bot_skills.add(skill_name)
+        self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
 
         if bot_config.get("shell_type") == "ClaudeCode":
             new_skill_configs = [
@@ -1315,7 +1317,11 @@ class TaskRequestBuilder:
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
                             # Preload explicit reference overrides same-name skill ref
-                            skill_refs[skill_name] = ghost_preload_ref.model_dump()
+                            ref_meta = ghost_preload_ref.model_dump()
+                            ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                                build_skill_ref_meta(skill).get("content_hash")
+                            )
+                            skill_refs[skill_name] = ref_meta
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
@@ -1362,16 +1368,9 @@ class TaskRequestBuilder:
                         team_namespace=team_namespace,
                     )
                     if resolved_selected_skill:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(resolved_selected_skill, "id", None),
-                            "namespace": getattr(
-                                resolved_selected_skill,
-                                "namespace",
-                                skill_namespace,
-                            ),
-                            "is_public": getattr(resolved_selected_skill, "user_id", 1)
-                            == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(
+                            resolved_selected_skill
+                        )
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
@@ -1803,6 +1802,36 @@ Response template:
             )
 
         return bot_configs
+
+    @staticmethod
+    def _sync_skill_refs_to_bot_configs(
+        bot_configs: list[dict], skill_refs: dict[str, dict]
+    ) -> None:
+        """Fill resolved Skill refs for matching Bot skill names."""
+        for bot_config in bot_configs:
+            bot_skills = {
+                skill_name
+                for skill_name in bot_config.get("skills", [])
+                if isinstance(skill_name, str)
+            }
+            if not bot_skills:
+                continue
+            bot_skill_refs = bot_config.setdefault("skill_refs", {})
+            for skill_name in bot_skills:
+                ref = skill_refs.get(skill_name)
+                if not ref:
+                    continue
+                current_ref = bot_skill_refs.get(skill_name)
+                if not current_ref or TaskRequestBuilder._skill_refs_match(
+                    current_ref, ref
+                ):
+                    bot_skill_refs[skill_name] = ref
+
+    @staticmethod
+    def _skill_refs_match(left: dict, right: dict) -> bool:
+        return left.get("skill_id") == right.get("skill_id") and left.get(
+            "namespace", "default"
+        ) == right.get("namespace", "default")
 
     @staticmethod
     def _build_runtime_agent_config(model_config: dict[str, Any]) -> dict[str, Any]:
