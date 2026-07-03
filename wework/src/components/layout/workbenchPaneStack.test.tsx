@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import {
   CachedWorkbenchPaneStack,
+  WorkbenchPaneActiveOnly,
   getRunningRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
@@ -122,6 +123,84 @@ describe('workbenchPaneStack', () => {
     expect(screen.queryByTestId('runtime-pane-102')).not.toBeInTheDocument()
   })
 
+  test('hides cached runtime pane content after switching back to standalone chat', async () => {
+    const standalonePane: WorkbenchPaneIdentity = {
+      currentRuntimeTask: null,
+      currentProject: null,
+    }
+    const runtimePane: WorkbenchPaneIdentity = {
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      },
+      currentProject: null,
+    }
+
+    function RuntimePaneStackProbe() {
+      const [pane, setPane] = useState<WorkbenchPaneIdentity>(runtimePane)
+      return (
+        <div>
+          <button type="button" onClick={() => setPane(standalonePane)}>
+            start new chat
+          </button>
+          <CachedWorkbenchPaneStack
+            activePane={pane}
+            maxPanes={2}
+            renderPane={activePane => <RuntimePane pane={activePane} />}
+          />
+        </div>
+      )
+    }
+
+    render(<RuntimePaneStackProbe />)
+    expect(screen.getByTestId('runtime-pane-runtime-1')).toBeVisible()
+
+    await userEvent.click(screen.getByText('start new chat'))
+
+    const standaloneWrapper = screen
+      .getByTestId('runtime-pane-project')
+      .closest('[data-active-workbench-pane]')
+    const runtimeWrapper = screen
+      .getByTestId('runtime-pane-runtime-1')
+      .closest('[data-active-workbench-pane]')
+
+    expect(standaloneWrapper).toHaveAttribute('data-active-workbench-pane', 'true')
+    expect(standaloneWrapper).toHaveClass('visible')
+    expect(runtimeWrapper).toHaveAttribute('data-active-workbench-pane', 'false')
+    expect(runtimeWrapper).toHaveClass('invisible')
+  })
+
+  test('uses standalone chat key to create a fresh new chat pane', async () => {
+    function RuntimePaneStackProbe() {
+      const [standaloneChatKey, setStandaloneChatKey] = useState(0)
+      return (
+        <div>
+          <button type="button" onClick={() => setStandaloneChatKey(value => value + 1)}>
+            start fresh chat
+          </button>
+          <CachedWorkbenchPaneStack
+            activePane={{
+              currentRuntimeTask: null,
+              currentProject: null,
+              standaloneChatKey,
+            }}
+            maxPanes={2}
+            renderPane={activePane => <StandaloneLocalStatePane pane={activePane} />}
+          />
+        </div>
+      )
+    }
+
+    render(<RuntimePaneStackProbe />)
+
+    await userEvent.click(screen.getByText('seed local message'))
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('hi')
+
+    await userEvent.click(screen.getByText('start fresh chat'))
+
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
+  })
+
   test('derives running runtime pane keys from task ids', () => {
     expect(
       getRunningRuntimeWorkbenchPaneKeys({
@@ -163,5 +242,19 @@ function RuntimePane({ pane }: { pane: WorkbenchPaneIdentity }) {
         {pane.currentRuntimeTask?.workspacePath ?? 'none'}
       </span>
     </div>
+  )
+}
+
+function StandaloneLocalStatePane({ pane }: { pane: WorkbenchPaneIdentity }) {
+  const [message, setMessage] = useState('empty')
+
+  return (
+    <WorkbenchPaneActiveOnly>
+      <span data-testid="standalone-pane-key">{pane.standaloneChatKey ?? 0}</span>
+      <span data-testid="standalone-local-message">{message}</span>
+      <button type="button" onClick={() => setMessage('hi')}>
+        seed local message
+      </button>
+    </WorkbenchPaneActiveOnly>
   )
 }

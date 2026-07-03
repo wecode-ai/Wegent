@@ -16,16 +16,18 @@ import { cn } from '@/lib/utils'
 export interface WorkbenchPaneIdentity {
   currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
+  standaloneChatKey?: number
 }
 
 export function getWorkbenchPaneKey({
   currentRuntimeTask,
   currentProject,
+  standaloneChatKey,
 }: WorkbenchPaneIdentity): string {
   if (currentRuntimeTask) {
     return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
   }
-  return currentProject ? `project:${currentProject.id}` : 'standalone'
+  return currentProject ? `project:${currentProject.id}` : `standalone:${standaloneChatKey ?? 0}`
 }
 
 export function getRunningRuntimeWorkbenchPaneKeys(
@@ -130,7 +132,7 @@ export function CachedWorkbenchPaneStack({
               aria-hidden={!active}
               className={cn(
                 'absolute inset-0 min-w-0 overflow-hidden',
-                active ? 'z-10' : 'pointer-events-none z-0'
+                active ? 'visible z-10' : 'invisible pointer-events-none z-0'
               )}
             >
               <CachedWorkbenchPane pane={pane} renderPane={renderPane} />

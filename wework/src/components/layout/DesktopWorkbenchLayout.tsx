@@ -514,6 +514,7 @@ export function DesktopWorkbenchLayout() {
           activePane={{
             currentRuntimeTask: state.currentRuntimeTask,
             currentProject: state.currentProject,
+            standaloneChatKey: state.standaloneChatKey,
           }}
         />
       )}

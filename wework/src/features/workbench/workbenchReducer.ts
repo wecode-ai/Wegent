@@ -25,6 +25,7 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
+  standaloneChatKey: 0,
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
@@ -1098,6 +1099,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
         currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     case 'user_preferences_updated':
       return {
@@ -1142,7 +1144,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: settleRuntimeTask(state.runtimeWork, action.address),
       }
     case 'current_task_cleared':
-      return { ...state, currentRuntimeTask: null }
+      return {
+        ...state,
+        currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
+      }
     case 'error_set':
       return { ...state, error: action.error }
   }

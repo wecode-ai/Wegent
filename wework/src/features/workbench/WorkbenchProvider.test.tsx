@@ -654,6 +654,7 @@ function RuntimePaneSendProbe() {
         activePane={{
           currentRuntimeTask: workbench.state.currentRuntimeTask,
           currentProject: workbench.state.currentProject,
+          standaloneChatKey: workbench.state.standaloneChatKey,
         }}
         maxPanes={10}
         renderPane={pane => <RuntimePaneStackItem pane={pane} />}

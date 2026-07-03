@@ -48,6 +48,7 @@ export function MobileWorkbenchLayout() {
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
+    standaloneChatKey: state.standaloneChatKey,
   }
   const pinnedPaneKeys = useMemo(
     () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),

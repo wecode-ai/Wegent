@@ -46,6 +46,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import { useWorkbenchPaneActive } from './workbenchPaneStack'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -97,6 +98,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendCurrentInput,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
+  const paneActive = useWorkbenchPaneActive()
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
@@ -1160,6 +1162,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const cancelGuidanceMessage = useCallback(() => undefined, [])
 
   useEffect(() => {
+    if (!paneActive) return
+
     updateRuntimePaneDebugSnapshot({
       currentRuntimeTask,
       status: paneStatus,
@@ -1187,6 +1191,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     guidanceMessages,
     input.length,
     messages,
+    paneActive,
     paneStatus,
     queuedMessages,
     subagentStatuses,
