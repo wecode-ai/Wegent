@@ -32,7 +32,7 @@ RUN cd /app/executor_manager && \
     sed -i '/wegent-shared.*file:/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
 
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno","wecode-model-id":"${agent_config.env.model_id}"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno","wecode-model-id":"${agent_config.env.model_id}","wecode-wegent-agent-namespace":"${task_data.team.namespace}","wecode-wegent-agent-name":"${task_data.team.name}"}}'
 
 ENV REDIS_URL=redis://:fpxsHjf3m0Bh4SIA@rm48958.eos.grid.sina.com.cn:48958/0
 ENV E2B_API_KEY=kucvaN-qowmax-kyvni7
