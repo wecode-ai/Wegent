@@ -220,6 +220,66 @@ PUT /api/knowledge/documents/{document_id}/move
 
 `folder_id=0` 表示移动到根目录。
 
+### 删除文档
+
+```http
+DELETE /api/knowledge/documents/{document_id}
+```
+
+物理删除文档，删除关联附件，并清理对应 RAG 索引。删除成功返回 `204 No Content`。
+
+### 重新索引文档
+
+```http
+POST /api/knowledge/documents/{document_id}/reindex
+```
+
+使用知识库当前检索配置重新索引指定文档。该接口用于索引修复或配置调整后的手动重建。
+
+### 批量删除文档
+
+```http
+POST /api/knowledge/documents/batch/delete
+```
+
+请求体：
+
+```json
+{
+  "document_ids": [101, 102]
+}
+```
+
+响应：
+
+```json
+{
+  "success_count": 1,
+  "failed_count": 1,
+  "failed_ids": [102],
+  "message": "Successfully deleted 1 documents, 1 failed"
+}
+```
+
+批量删除允许部分成功。重复的 `document_ids` 会按首次出现顺序去重后处理，`success_count`、`failed_count` 和 `failed_ids` 均按去重后的文档集合计算。成功删除的文档会清理关联附件和 RAG 索引，并触发对应知识库摘要刷新。
+
+### 批量移动文档
+
+```http
+POST /api/knowledge/documents/batch/move
+```
+
+请求体：
+
+```json
+{
+  "document_ids": [101, 102],
+  "folder_id": 10
+}
+```
+
+`folder_id=0` 表示批量移动到根目录。接口允许部分成功，失败文档 ID 会出现在 `failed_ids` 中。
+
 ## 目录管理
 
 目录是知识库文档属性，不是附件属性；通用附件上传接口不会接收 `folder_id`。

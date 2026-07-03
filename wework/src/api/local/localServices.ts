@@ -467,7 +467,7 @@ function createRuntimeExecutionIdsFromSeed(seed: string): [number, number] {
   return [taskId, taskId + 1]
 }
 
-function createRuntimeMessageId(): number {
+function createRuntimeTurnSeed(): number {
   return Math.floor(Date.now() * 1000 + Math.floor(Math.random() * 1000))
 }
 
@@ -817,7 +817,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   teamId: number
   title: string
   message: string
-  messageId: number
+  turnSeed: number
   modelId?: string
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
@@ -835,7 +835,7 @@ function buildLocalRuntimeExecutionRequest(
   const baseSeed =
     input.localTaskId || `${input.runtime}:${input.workspacePath ?? ''}:${input.message}`
   const [taskId, turnId] = createRuntimeExecutionIdsFromSeed(
-    input.newSession ? baseSeed : `${baseSeed}:${input.messageId}`
+    input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const modelConfig = applyRuntimeModelOptions(
     localRuntimeModelConfig(input.modelId, input.modelOptions),
@@ -855,7 +855,6 @@ function buildLocalRuntimeExecutionRequest(
   return {
     task_id: taskId,
     subtask_id: turnId,
-    message_id: input.messageId,
     team_id: input.teamId,
     team_name: LOCAL_WORKBENCH_TEAM.name,
     team_namespace: 'default',
@@ -1015,10 +1014,11 @@ async function createLocalRuntimeTaskPayload(
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
-  const messageId = normalizedData.message_id ?? createRuntimeMessageId()
+  const turnSeed = createRuntimeTurnSeed()
+  const payload = { ...normalizedData } as Record<string, unknown>
 
   return {
-    ...normalizedData,
+    ...payload,
     ...(collaborationMode ? { collaborationMode } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: buildLocalRuntimeExecutionRequest({
@@ -1027,7 +1027,7 @@ async function createLocalRuntimeTaskPayload(
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
-      messageId,
+      turnSeed,
       modelId: normalizedData.modelId,
       modelOptions: normalizedData.modelOptions,
       additionalSkills: normalizedData.additionalSkills,
@@ -1045,7 +1045,7 @@ function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string
 ): Record<string, unknown> {
-  const messageId = data.message_id ?? createRuntimeMessageId()
+  const turnSeed = createRuntimeTurnSeed()
   const collaborationMode = runtimeCollaborationMode(data.modelOptions)
   const workspacePath = stringValue(data.address.workspacePath)
   const normalizedAddress: RuntimeTaskAddress = {
@@ -1061,7 +1061,6 @@ function createLocalRuntimeSendPayload(
     return {
       ...payload,
       address: normalizedAddress,
-      message_id: messageId,
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
         localTaskId: data.address.localTaskId,
@@ -1069,7 +1068,7 @@ function createLocalRuntimeSendPayload(
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: data.address.localTaskId,
         message: data.message,
-        messageId,
+        turnSeed,
         modelId: data.modelId,
         modelOptions: data.modelOptions,
         attachments: data.attachments,
@@ -1087,7 +1086,6 @@ function createLocalRuntimeSendPayload(
   return {
     ...payload,
     address: normalizedAddress,
-    message_id: messageId,
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       localTaskId: data.address.localTaskId,
@@ -1095,7 +1093,7 @@ function createLocalRuntimeSendPayload(
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: data.address.localTaskId,
       message: data.message,
-      messageId,
+      turnSeed,
       modelId: data.modelId,
       modelOptions: data.modelOptions,
       attachments: data.attachments,

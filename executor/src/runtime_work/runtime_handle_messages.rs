@@ -18,7 +18,10 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
-    transcript::{tool_block_from_notification, tool_update_from_notification},
+    transcript::{
+        assistant_text_kind_from_notification, tool_block_from_notification,
+        tool_update_from_notification,
+    },
     util::{
         extract_text, integer_field, is_completed_plan_item, item_id, now_ms, raw_string_field,
         reasoning_content, string_field,
@@ -103,7 +106,7 @@ impl CodexNotificationCacheMapper {
                 if self.is_subagent_delta(params) {
                     return;
                 }
-                if let Some(delta) = agent_text(params).filter(|delta| !delta.is_empty()) {
+                if let Some(delta) = agent_delta(params).filter(|delta| !delta.is_empty()) {
                     let phase = self.agent_message_phases.phase_for_delta(params);
                     if codex_phase_is_process(phase.as_deref()) {
                         log_codex_cache_text_classification(
@@ -171,6 +174,11 @@ impl CodexNotificationCacheMapper {
                 self.observe_root_thread(params);
                 if self.is_subagent_delta(params) {
                     self.forget_subagent_item(params);
+                    self.agent_message_phases.forget_item(params);
+                    return;
+                }
+                let phase = self.agent_message_phases.phase_for_item(params);
+                if assistant_text_kind_from_notification(params, phase.as_deref()).is_some() {
                     self.agent_message_phases.forget_item(params);
                     return;
                 }
@@ -310,8 +318,8 @@ fn is_root_codex_turn_event(params: &Value) -> bool {
         .map_or(true, |agent_path| agent_path == "/root")
 }
 
-fn agent_text(params: &Value) -> Option<String> {
-    raw_string_field(params, "delta").or_else(|| extract_text(params))
+fn agent_delta(params: &Value) -> Option<String> {
+    raw_string_field(params, "delta")
 }
 
 fn log_codex_cache_text_classification(
@@ -705,11 +713,6 @@ fn messages_match(left: &Value, right: &Value) -> bool {
     if string_field(left, "role") != string_field(right, "role") {
         return false;
     }
-    let left_message_id = integer_field(left, "message_id");
-    let right_message_id = integer_field(right, "message_id");
-    if left_message_id.is_some() && right_message_id.is_some() {
-        return left_message_id == right_message_id;
-    }
 
     let left_subtask_id = integer_field(left, "turn_id")
         .or_else(|| integer_field(left, "subtaskId"))
@@ -740,19 +743,14 @@ fn ensure_cached_assistant_message<'a>(
         return &mut messages[index];
     }
 
-    let message_identity = request
-        .message_id
-        .map(|message_id| message_id.to_string())
-        .unwrap_or_else(|| request.subtask_id.to_string());
     messages.push(json!({
-        "id": format!("{local_task_id}:assistant:{message_identity}"),
+        "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
         "role": "assistant",
         "content": "",
         "status": "streaming",
         "subtaskId": request.subtask_id,
         "subtask_id": request.subtask_id,
         "turn_id": request.subtask_id,
-        "message_id": request.message_id,
         "createdAt": now_ms(),
         "blocks": [],
     }));
@@ -766,10 +764,6 @@ fn cached_assistant_message_index(messages: &[Value], request: &ExecutionRequest
         if !string_field(message, "role").is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
         {
             return false;
-        }
-        if let Some(message_id) = request.message_id {
-            return integer_field(message, "message_id")
-                .is_some_and(|cached_message_id| cached_message_id == message_id);
         }
         integer_field(message, "turn_id")
             .or_else(|| integer_field(message, "subtaskId"))
@@ -1124,15 +1118,12 @@ mod tests {
             .expect("runtime task should exist");
         let messages = cached_messages(&link);
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0]["blocks"][0]["type"], "text");
-        assert_eq!(messages[0]["blocks"][0]["content"], "I will inspect.");
+        assert_eq!(messages[0]["blocks"][0]["type"], "thinking");
+        assert_eq!(messages[0]["blocks"][0]["content"], "Checking files.");
         assert_eq!(messages[0]["blocks"][0]["status"], "done");
-        assert_eq!(messages[0]["blocks"][1]["type"], "thinking");
-        assert_eq!(messages[0]["blocks"][1]["content"], "Checking files.");
+        assert_eq!(messages[0]["blocks"][1]["tool_name"], "exec_command");
+        assert_eq!(messages[0]["blocks"][1]["tool_output"], "runtime.rs");
         assert_eq!(messages[0]["blocks"][1]["status"], "done");
-        assert_eq!(messages[0]["blocks"][2]["tool_name"], "exec_command");
-        assert_eq!(messages[0]["blocks"][2]["tool_output"], "runtime.rs");
-        assert_eq!(messages[0]["blocks"][2]["status"], "done");
 
         let _ = fs::remove_file(index_path);
     }
@@ -1405,6 +1396,61 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["content"], "Current directory: /tmp/project");
         assert_eq!(messages[0]["blocks"].as_array().map(Vec::len), Some(0));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_ignores_completed_final_snapshot_after_delta() {
+        let index_path = temp_index_path("final-snapshot-ignored-after-delta");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: 1,
+            subtask_id: 42,
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done.Done."
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "Done.");
 
         let _ = fs::remove_file(index_path);
     }

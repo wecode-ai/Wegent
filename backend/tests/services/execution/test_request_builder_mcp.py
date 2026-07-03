@@ -39,7 +39,9 @@ def _bot_kind_with_ghost(
     )
 
 
-def _ghost_kind_with_mcp() -> SimpleNamespace:
+def _ghost_kind_with_mcp(
+    mcp_servers: dict | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         json={
             "apiVersion": "agent.wecode.io/v1",
@@ -47,7 +49,8 @@ def _ghost_kind_with_mcp() -> SimpleNamespace:
             "metadata": {"name": "chat-ghost", "namespace": "default"},
             "spec": {
                 "systemPrompt": "You are a chat bot.",
-                "mcpServers": {
+                "mcpServers": mcp_servers
+                or {
                     "ghost-server": {
                         "type": "streamable-http",
                         "url": "http://ghost.example.com/mcp",
@@ -357,6 +360,38 @@ class TestBuildMcpServers:
             "env-server",
             "ghost-server",
         ]
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_bot_mcp_preserves_timeout_fields(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "seconds-server": {
+                    "type": "http",
+                    "url": "http://seconds.example.com/mcp",
+                    "timeoutSeconds": 900,
+                },
+                "native-server": {
+                    "type": "http",
+                    "url": "http://native.example.com/mcp",
+                    "timeout": 900000,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        servers = {server["name"]: server for server in result}
+        assert servers["seconds-server"]["timeoutSeconds"] == 900
+        assert servers["native-server"]["timeout"] == 900000
 
 
 class TestPrepareMcpForClaudeCode:
