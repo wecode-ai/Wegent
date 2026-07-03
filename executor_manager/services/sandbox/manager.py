@@ -429,8 +429,15 @@ class SandboxManager(metaclass=SingletonMeta):
         if check_health and sandbox.base_url:
             is_healthy = self._health_checker.check_health_sync(sandbox.base_url)
             if not is_healthy:
-                sandbox.status = SandboxStatus.FAILED
-                sandbox.base_url = None
+                logger.info(
+                    "[SandboxManager] Sandbox health check failed; cleaning stale "
+                    "metadata: sandbox_id=%s container=%s base_url=%s",
+                    sandbox.sandbox_id,
+                    sandbox.container_name,
+                    sandbox.base_url,
+                )
+                await self._cleanup_dead_sandbox(sandbox)
+                return None
 
         return sandbox
 
