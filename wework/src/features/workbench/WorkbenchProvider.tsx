@@ -628,7 +628,7 @@ export function WorkbenchProvider({
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     runtimeTasks.loadRuntimeTranscriptForPane
   )
-  const subscribeRuntimeTaskStream = useCallback(
+  const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
       address: RuntimeTaskAddress,
       handlers: Parameters<typeof runtimeTasks.subscribeRuntimeTaskStream>[1]
@@ -640,9 +640,7 @@ export function WorkbenchProvider({
           handlers.onAssistantSettled?.()
         },
       }),
-    [runtimeTasks]
   )
-  const stableSubscribeRuntimeTaskStream = useStableEvent(subscribeRuntimeTaskStream)
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
