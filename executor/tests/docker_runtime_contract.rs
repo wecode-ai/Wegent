@@ -104,7 +104,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let events = callback.wait_for_events(3).await;
 
     assert_eq!(events[0]["event_type"], "response.created");
-    assert_eq!(events[0]["task_id"], "91");
+    assert_eq!(events[0]["task_id"], 91);
     assert_eq!(events[0]["executor_name"], "pod-from-env");
     assert_eq!(events[0]["executor_namespace"], "namespace-from-env");
     assert_eq!(events[1]["event_type"], "response.output_text.delta");
