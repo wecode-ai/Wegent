@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.schemas.kind import Task as TaskCrd
 from app.services.adapters.task_kinds.converters import (
@@ -27,11 +28,15 @@ from app.services.adapters.task_kinds.converters import (
 def _task_crd(
     execution_workspace: dict | None = None,
     external_knowledge_refs: list[dict] | None = None,
+    team_user_id: int | None = None,
 ) -> dict:
+    team_ref = {"name": "team-a", "namespace": "default"}
+    if team_user_id is not None:
+        team_ref["user_id"] = team_user_id
     spec = {
         "title": "Demo",
         "prompt": "hello",
-        "teamRef": {"name": "team-a", "namespace": "default"},
+        "teamRef": team_ref,
         "workspaceRef": {"name": "workspace-a", "namespace": "default"},
         "knowledgeBaseRefs": [],
     }
@@ -57,13 +62,16 @@ def _build_kind_task(
     project_id,
     execution_workspace: dict | None = None,
     external_knowledge_refs: list[dict] | None = None,
+    team_user_id: int | None = None,
 ):
     task = Mock(spec=TaskResource)
     task.id = 42
     task.user_id = 1
     task.project_id = project_id
     task.client_origin = "wework"
-    task.json = _task_crd(execution_workspace, external_knowledge_refs)
+    task.json = _task_crd(
+        execution_workspace, external_knowledge_refs, team_user_id=team_user_id
+    )
     return task
 
 
@@ -87,6 +95,38 @@ def test_convert_to_task_dict_includes_project_id_for_project_task():
         result = convert_to_task_dict(task, db, user_id=1)
 
     assert result["project_id"] == 1821
+
+
+@pytest.mark.unit
+def test_convert_to_task_dict_uses_task_team_ref_owner_when_names_overlap(test_db):
+    public_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json={},
+        is_active=True,
+    )
+    personal_team = Kind(
+        user_id=2,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json={},
+        is_active=True,
+    )
+    test_db.add_all([public_team, personal_team])
+    test_db.commit()
+
+    task = _build_kind_task(project_id=0, team_user_id=0)
+
+    with patch(
+        "app.services.readers.users.userReader.get_by_id",
+        return_value=SimpleNamespace(user_name="alice"),
+    ):
+        result = convert_to_task_dict(task, test_db, user_id=2)
+
+    assert result["team_id"] == public_team.id
 
 
 @pytest.mark.unit
