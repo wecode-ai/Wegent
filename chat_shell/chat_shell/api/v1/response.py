@@ -184,6 +184,7 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
             "input_type": "string",
             "message_count": 1 if text else 0,
             "roles": {},
+            "block_types": {},
             "last_user": text[:500],
         }
 
@@ -192,19 +193,35 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
             "input_type": type(input_data).__name__,
             "message_count": 0,
             "roles": {},
+            "block_types": {},
             "last_user": "",
         }
 
     role_counts: dict[str, int] = {}
+    block_type_counts: dict[str, int] = {}
     last_user = ""
+
+    def count_block(block: object) -> None:
+        if not isinstance(block, dict):
+            return
+        block_type = block.get("type")
+        if not block_type:
+            return
+        block_type_key = str(block_type)
+        block_type_counts[block_type_key] = block_type_counts.get(block_type_key, 0) + 1
+
     for item in input_data:
         if not isinstance(item, dict):
             continue
+        count_block(item)
         role = str(item.get("role") or "unknown")
         role_counts[role] = role_counts.get(role, 0) + 1
+        content = item.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                count_block(block)
         if role != "user":
             continue
-        content = item.get("content", "")
         if isinstance(content, str) and content.strip():
             last_user = content.strip()[:500]
 
@@ -212,6 +229,7 @@ def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, obj
         "input_type": "messages",
         "message_count": len(input_data),
         "roles": role_counts,
+        "block_types": block_type_counts,
         "last_user": last_user,
     }
 
@@ -369,11 +387,12 @@ async def _stream_response(
     request_summary = _summarize_openai_input(request.input)
     logger.info(
         "[RESPONSE] OpenAI request summary: model=%s input_type=%s message_count=%s roles=%s "
-        "last_user=%s metadata=%s",
+        "block_types=%s last_user=%s metadata=%s",
         request.model,
         request_summary["input_type"],
         request_summary["message_count"],
         json.dumps(request_summary["roles"], ensure_ascii=False),
+        json.dumps(request_summary["block_types"], ensure_ascii=False),
         request_summary["last_user"],
         json.dumps(_summarize_metadata_for_log(request.metadata), ensure_ascii=False),
     )
