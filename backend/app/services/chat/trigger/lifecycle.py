@@ -437,6 +437,7 @@ async def collect_completed_result(
     blocks = await chat_storage.session_manager.finalize_and_get_blocks(
         subtask_id,
         termination_reason=termination_reason,
+        terminal_status=normalized_status,
     )
 
     has_payload = bool(

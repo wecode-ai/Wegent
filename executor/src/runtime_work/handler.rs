@@ -1964,29 +1964,192 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
+        let input_count = links.len();
+        let project_count = project_index.projects().len();
+        let project_roots = project_index
+            .projects()
+            .iter()
+            .map(|project| project.workspace_path.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+
         if !project_index.has_projects() && !project_index.has_project_state() {
+            log_executor_event(
+                "runtime work project filter skipped",
+                &[
+                    ("reason", "no_project_state".to_owned()),
+                    ("input_links", input_count.to_string()),
+                    ("project_count", project_count.to_string()),
+                    (
+                        "project_state_loaded",
+                        project_index.has_project_state().to_string(),
+                    ),
+                ],
+            );
             return links;
         }
 
-        links
-            .into_iter()
-            .filter_map(|mut link| {
-                if !is_codex_runtime(&link.runtime) {
-                    return Some(link);
+        let mut visible_links = Vec::with_capacity(input_count);
+        let mut kept_non_codex = 0_usize;
+        let mut kept_chat = 0_usize;
+        let mut kept_project = 0_usize;
+        let mut filtered_projectless = 0_usize;
+        let mut filtered_no_project = 0_usize;
+
+        for mut link in links {
+            if !is_codex_runtime(&link.runtime) {
+                kept_non_codex += 1;
+                log_runtime_project_filter_item(
+                    &link,
+                    RuntimeProjectFilterLog {
+                        action: "keep",
+                        reason: "non_codex_runtime",
+                        workspace_kind: infer_workspace_kind(&link.workspace_path),
+                        group_path: None,
+                        matched_by: None,
+                        project_workspace_path: None,
+                        project_name: None,
+                        thread_hint: None,
+                        project_count,
+                    },
+                );
+                visible_links.push(link);
+                continue;
+            }
+
+            let workspace_kind = infer_workspace_kind(&link.workspace_path);
+            if workspace_kind == "chat" {
+                kept_chat += 1;
+                log_runtime_project_filter_item(
+                    &link,
+                    RuntimeProjectFilterLog {
+                        action: "keep",
+                        reason: "chat_workspace",
+                        workspace_kind,
+                        group_path: None,
+                        matched_by: None,
+                        project_workspace_path: None,
+                        project_name: None,
+                        thread_hint: None,
+                        project_count,
+                    },
+                );
+                visible_links.push(link);
+                continue;
+            }
+
+            let group_path = workspace_group_path(&link.workspace_path);
+            let thread_id = link.thread_id.as_deref();
+            let thread_hint = thread_id.and_then(|id| project_index.thread_workspace_hint(id));
+            if thread_id.is_some_and(|id| project_index.is_projectless_thread(id)) {
+                filtered_projectless += 1;
+                log_runtime_project_filter_item(
+                    &link,
+                    RuntimeProjectFilterLog {
+                        action: "filter",
+                        reason: "projectless_thread",
+                        workspace_kind,
+                        group_path: Some(&group_path),
+                        matched_by: None,
+                        project_workspace_path: None,
+                        project_name: None,
+                        thread_hint,
+                        project_count,
+                    },
+                );
+                continue;
+            }
+
+            let direct_project = project_index.project_for_thread(thread_id, &link.workspace_path);
+            let group_project = if direct_project.is_none() {
+                project_index.project_for_thread(thread_id, &group_path)
+            } else {
+                None
+            };
+            let project = direct_project.or(group_project);
+
+            let Some(project) = project else {
+                filtered_no_project += 1;
+                log_runtime_project_filter_item(
+                    &link,
+                    RuntimeProjectFilterLog {
+                        action: "filter",
+                        reason: "no_matching_project",
+                        workspace_kind,
+                        group_path: Some(&group_path),
+                        matched_by: None,
+                        project_workspace_path: None,
+                        project_name: None,
+                        thread_hint,
+                        project_count,
+                    },
+                );
+                continue;
+            };
+
+            let matched_by = if let Some(hinted_root) = thread_hint {
+                if project_index
+                    .project_for_key(hinted_root)
+                    .is_some_and(|hinted_project| {
+                        hinted_project.workspace_path == project.workspace_path
+                    })
+                {
+                    "thread_hint"
+                } else if direct_project.is_some() {
+                    "workspace_path"
+                } else {
+                    "group_path"
                 }
-                if super::util::infer_workspace_kind(&link.workspace_path) == "chat" {
-                    return Some(link);
-                }
-                let group_path = workspace_group_path(&link.workspace_path);
-                let project = project_index
-                    .project_for_thread(link.thread_id.as_deref(), &link.workspace_path)
-                    .or_else(|| {
-                        project_index.project_for_thread(link.thread_id.as_deref(), &group_path)
-                    })?;
-                link.group_workspace_path = Some(project.workspace_path.clone());
-                Some(link)
-            })
-            .collect()
+            } else if direct_project.is_some() {
+                "workspace_path"
+            } else {
+                "group_path"
+            };
+            let project_workspace_path = project.workspace_path.clone();
+            let project_name = project.name.clone();
+            link.group_workspace_path = Some(project_workspace_path.clone());
+            kept_project += 1;
+            log_runtime_project_filter_item(
+                &link,
+                RuntimeProjectFilterLog {
+                    action: "keep",
+                    reason: "matched_project",
+                    workspace_kind,
+                    group_path: Some(&group_path),
+                    matched_by: Some(matched_by),
+                    project_workspace_path: Some(&project_workspace_path),
+                    project_name: Some(&project_name),
+                    thread_hint,
+                    project_count,
+                },
+            );
+            visible_links.push(link);
+        }
+
+        log_executor_event(
+            "runtime work project filter finished",
+            &[
+                ("input_links", input_count.to_string()),
+                ("visible_links", visible_links.len().to_string()),
+                (
+                    "filtered_links",
+                    (filtered_projectless + filtered_no_project).to_string(),
+                ),
+                ("project_count", project_count.to_string()),
+                (
+                    "project_state_loaded",
+                    project_index.has_project_state().to_string(),
+                ),
+                ("project_roots", project_roots),
+                ("kept_non_codex", kept_non_codex.to_string()),
+                ("kept_chat", kept_chat.to_string()),
+                ("kept_project", kept_project.to_string()),
+                ("filtered_projectless", filtered_projectless.to_string()),
+                ("filtered_no_project", filtered_no_project.to_string()),
+            ],
+        );
+
+        visible_links
     }
 
     async fn task_link_from_payload(
@@ -2342,6 +2505,47 @@ struct RuntimeTranscriptLog<'a> {
     running: bool,
 }
 
+struct RuntimeProjectFilterLog<'a> {
+    action: &'a str,
+    reason: &'a str,
+    workspace_kind: &'a str,
+    group_path: Option<&'a str>,
+    matched_by: Option<&'a str>,
+    project_workspace_path: Option<&'a str>,
+    project_name: Option<&'a str>,
+    thread_hint: Option<&'a str>,
+    project_count: usize,
+}
+
+fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProjectFilterLog<'_>) {
+    log_executor_event(
+        "runtime work project filter item",
+        &[
+            ("action", details.action.to_owned()),
+            ("reason", details.reason.to_owned()),
+            ("local_task_id", link.local_task_id.clone()),
+            (
+                "thread_id",
+                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+            ),
+            ("title", link.title.clone()),
+            ("runtime", link.runtime.clone()),
+            ("status", link.status.clone()),
+            ("workspace_path", link.workspace_path.clone()),
+            ("workspace_kind", details.workspace_kind.to_owned()),
+            ("group_path", optional_str(details.group_path)),
+            ("matched_by", optional_str(details.matched_by)),
+            (
+                "project_workspace_path",
+                optional_str(details.project_workspace_path),
+            ),
+            ("project_name", optional_str(details.project_name)),
+            ("thread_hint", optional_str(details.thread_hint)),
+            ("project_count", details.project_count.to_string()),
+        ],
+    );
+}
+
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {
     log_executor_event(
         "runtime work transcript finished",
@@ -2368,6 +2572,12 @@ fn elapsed_ms(started_at: Instant) -> String {
 fn optional_usize(value: Option<usize>) -> String {
     value
         .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_owned())
+}
+
+fn optional_str(value: Option<&str>) -> String {
+    value
+        .map(str::to_owned)
         .unwrap_or_else(|| "none".to_owned())
 }
 
