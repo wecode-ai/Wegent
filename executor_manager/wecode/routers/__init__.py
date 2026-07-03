@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Wecode-specific executor_manager API routes for orphan pod cleanup."""
+
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from executor_manager.executors.dispatcher import ExecutorDispatcher
+from shared.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+
+class DeleteExecutorByTaskIdRequest(BaseModel):
+    task_id: int
+
+
+class DeletePodByNameRequest(BaseModel):
+    pod_name: str
+    executor_namespace: Optional[str] = None
+
+
+async def delete_executor_by_task_id(
+    request: DeleteExecutorByTaskIdRequest, http_request: Request
+):
+    """Delete executor pod(s) by task_id label for orphan pod cleanup."""
+    # Safety guard migrated from pod_delete scripts (awk '$1+0 > 1000'),
+    # prevents accidental deletion of early system tasks with low IDs.
+    if request.task_id <= 1000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"task_id must be greater than 1000, got {request.task_id}",
+        )
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            "+++ Received request to delete executor by task_id: %s from %s",
+            request.task_id,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "delete_executor_by_task_id"):
+            raise HTTPException(
+                status_code=501,
+                detail="delete_executor_by_task_id is not supported by this executor",
+            )
+        result = executor.delete_executor_by_task_id(str(request.task_id))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "+++ Error deleting executor by task_id '%s': %s", request.task_id, e
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def delete_pod_by_name(request: DeletePodByNameRequest, http_request: Request):
+    """Delete a specific executor pod by its name (kubectl fallback path).
+
+    Used as fallback when cleanup_stale_task_executor returns executor_not_found
+    for orphan pods that have no corresponding DB subtask records.
+    """
+    if not request.pod_name or not request.pod_name.strip():
+        raise HTTPException(status_code=400, detail="pod_name must not be empty")
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            "+++ Received request to delete pod by name: %s namespace: %s from %s",
+            request.pod_name,
+            request.executor_namespace,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "delete_executor"):
+            raise HTTPException(
+                status_code=501,
+                detail="delete_executor is not supported by this executor",
+            )
+        result = executor.delete_executor(
+            request.pod_name, executor_namespace=request.executor_namespace
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("+++ Error deleting pod by name '%s': %s", request.pod_name, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_old_task_ids(
+    older_than_hours: int = 48,
+    http_request: Request = None,
+):
+    """List old executor pods with task_id and pod_name for orphan cleanup.
+
+    Scans pods by name pattern (wegent-task or sandbox) and returns those
+    older than the given threshold, including both task_id (may be None)
+    and pod_name for direct deletion fallback.
+    """
+    # Safety guard: minimum 48h aligns with pod_delete scripts (date -v-2d)
+    if older_than_hours < 48:
+        raise HTTPException(
+            status_code=400,
+            detail=f"older_than_hours must be at least 48, got {older_than_hours}",
+        )
+    try:
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            "+++ Received request to get old task IDs (older_than_hours=%d) from %s",
+            older_than_hours,
+            client_ip,
+        )
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "get_old_task_ids"):
+            return {"status": "success", "pods": []}
+        result = executor.get_old_task_ids(older_than_hours)
+        return result
+    except Exception as e:
+        logger.error("+++ Error getting old task IDs: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def register(api_router: APIRouter) -> None:
+    """Register wecode-specific routes into executor_manager's api_router."""
+    api_router.add_api_route(
+        "/executor/delete-by-task-id",
+        delete_executor_by_task_id,
+        methods=["POST"],
+    )
+    api_router.add_api_route(
+        "/executor/delete-pod-by-name",
+        delete_pod_by_name,
+        methods=["POST"],
+    )
+    api_router.add_api_route(
+        "/executor/old-task-ids",
+        get_old_task_ids,
+        methods=["GET"],
+    )
