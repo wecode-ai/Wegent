@@ -19,8 +19,6 @@ import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
-const RUNTIME_BLOCK_TURN_ID_OFFSET = 1_000_000_000
-
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
 
 export interface RuntimeTaskStreamHandlers {
@@ -49,33 +47,42 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onAssistantStart?.()
       handlers.onMessageAction({
         type: 'assistant_started',
-        taskId: payload.task_id,
-        turnId: identity.subtaskId,
-        shellType: payload.shell_type,
+        taskId: payload.taskId,
+        subtaskId: identity.subtaskId,
+        shellType: payload.shellType,
       })
       handlers.onRefreshWorkLists?.()
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      const reasoningChunk = getReasoningChunk(payload.result)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:chunk', address, payload, {
           hasContent: Boolean(payload.content),
-          hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
+          hasReasoningChunk: Boolean(reasoningChunk),
+        })
+        return
+      }
+      const blocks = getResultBlocks(identity.subtaskId, payload.result)
+      if (!payload.content && !reasoningChunk && (!blocks || blocks.length === 0)) {
+        warnAndDropEmptyRuntimeChunk(address, payload, {
+          reason: 'empty_chunk',
+          resultKeys: isRecord(payload.result) ? Object.keys(payload.result) : [],
         })
         return
       }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
-        hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
-        blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
+        hasReasoningChunk: Boolean(reasoningChunk),
+        blockCount: blocks?.length ?? 0,
       })
       handlers.onMessageAction({
         type: 'assistant_chunk',
-        turnId: identity.subtaskId,
+        subtaskId: identity.subtaskId,
         content: payload.content,
-        reasoningChunk: getReasoningChunk(payload.result),
-        blocks: getResultBlocks(identity.subtaskId, payload.result),
+        reasoningChunk,
+        blocks,
       })
     },
     onChatDone: payload => {
@@ -86,16 +93,16 @@ export function createRuntimeTaskStreamHandlers(
         return
       }
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
-        hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.file_changes)),
+        hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.fileChanges)),
         blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
       handlers.onMessageAction({
         type: 'assistant_done',
-        turnId: identity.subtaskId,
+        subtaskId: identity.subtaskId,
         content: doneContent(payload.result),
         blocks: getResultBlocks(identity.subtaskId, payload.result),
-        fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
+        fileChanges: normalizeTurnFileChanges(payload.result.fileChanges),
       })
       handlers.onRefreshWorkLists?.()
     },
@@ -116,12 +123,12 @@ export function createRuntimeTaskStreamHandlers(
       if (isCancelledRuntimeError(payload)) {
         handlers.onMessageAction({
           type: 'assistant_cancelled',
-          turnId: identity.subtaskId,
+          subtaskId: identity.subtaskId,
         })
       } else {
         handlers.onMessageAction({
           type: 'assistant_error',
-          turnId: identity.subtaskId,
+          subtaskId: identity.subtaskId,
           error: payload.error,
           errorType: payload.type,
         })
@@ -145,7 +152,7 @@ export function createRuntimeTaskStreamHandlers(
       if (!block) return
       handlers.onMessageAction({
         type: 'block_created',
-        turnId: identity.subtaskId,
+        subtaskId: identity.subtaskId,
         block,
       })
     },
@@ -154,26 +161,26 @@ export function createRuntimeTaskStreamHandlers(
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('block:updated', address, payload, {
-          blockId: payload.block_id,
+          blockId: payload.blockId,
           status: payload.status ?? null,
         })
         return
       }
       debugRuntimeStreamEvent('block:updated', address, payload, true, {
-        blockId: payload.block_id,
+        blockId: payload.blockId,
         status: payload.status ?? null,
         hasContent: payload.content !== undefined,
-        hasToolInput: payload.tool_input !== undefined,
-        hasToolOutput: payload.tool_output !== undefined,
+        hasToolInput: payload.toolInput !== undefined,
+        hasToolOutput: payload.toolOutput !== undefined,
       })
       handlers.onMessageAction({
         type: 'block_updated',
-        turnId: identity.subtaskId,
-        blockId: payload.block_id,
+        subtaskId: identity.subtaskId,
+        blockId: payload.blockId,
         updates: {
           ...(payload.content !== undefined && { content: payload.content }),
-          ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
-          ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
+          ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
+          ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
           ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
         },
       })
@@ -181,7 +188,7 @@ export function createRuntimeTaskStreamHandlers(
     onSubagentActivity: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       debugRuntimeStreamEvent('subagent:activity', address, payload, true, {
-        agentPath: payload.agent_path,
+        agentPath: payload.agentPath,
         status: payload.status ?? null,
         kind: payload.kind ?? null,
       })
@@ -204,17 +211,17 @@ export function runtimeMessagesToWorkbenchMessages(
   return messages.map(runtimeMessageToWorkbenchMessage)
 }
 
-export function findFileChangesByTurnId(
+export function findFileChangesBySubtaskId(
   messages: WorkbenchMessage[],
-  turnId: number
+  subtaskId: string
 ): TurnFileChangesSummary | undefined {
-  return messages.find(message => message.turnId === turnId)?.fileChanges
+  return messages.find(message => message.subtaskId === subtaskId)?.fileChanges
 }
 
 export function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
   }
 }
@@ -256,10 +263,10 @@ function isRuntimeTaskStreamPayload(
     | RuntimeGoalEventPayload
     | RuntimeSubagentActivityPayload
 ): boolean {
-  if (!payload.local_task_id) return false
+  if (typeof payload.taskId !== 'string' || !payload.taskId.trim()) return false
   return (
-    (!payload.device_id || payload.device_id === address.deviceId) &&
-    payload.local_task_id === address.localTaskId
+    (!payload.deviceId || payload.deviceId === address.deviceId) &&
+    payload.taskId === address.taskId
   )
 }
 
@@ -271,13 +278,13 @@ function runtimeStreamTaskSubtaskIdentity(
     | ChatErrorPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
-    | RuntimeSubagentActivityPayload
-): { taskId: string; subtaskId: number } | null {
-  const taskId = payload.local_task_id
-  if (!taskId) return null
+  | RuntimeSubagentActivityPayload
+): { taskId: string; subtaskId: string } | null {
+  const taskId = payload.taskId
+  if (typeof taskId !== 'string' || !taskId.trim()) return null
 
-  const subtaskId = payload.subtask_id
-  if (typeof subtaskId !== 'number' || !Number.isFinite(subtaskId) || subtaskId <= 0) {
+  const subtaskId = payload.subtaskId
+  if (typeof subtaskId !== 'string' || !subtaskId.trim()) {
     return null
   }
 
@@ -286,12 +293,7 @@ function runtimeStreamTaskSubtaskIdentity(
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {
   const role = message.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const turnId =
-    typeof message.turnId === 'number'
-      ? message.turnId
-      : typeof message.subtask_id === 'number'
-        ? message.subtask_id
-        : undefined
+  const subtaskId = runtimeMessageSubtaskId(message)
   const normalizedStatus = String(message.status ?? '').toLowerCase()
   const status: WorkbenchMessage['status'] =
     normalizedStatus === 'failed'
@@ -314,15 +316,15 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
         ? message.message_index
         : undefined
   const messageCreatedAtMs = getBlockTimestamp(createdAt)
-  const blocks = normalizeProcessingBlocks(
-    getRuntimeMessageBlockTurnId(message, turnId),
-    message.blocks,
-    messageCreatedAtMs
-  )
+  warnInvalidRuntimeTranscriptIdentity(message, role, status, subtaskId)
+  const blocks =
+    typeof subtaskId === 'string'
+      ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
+      : []
   return {
     id: message.id,
     role,
-    turnId,
+    subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
     runtimeMessageIndex,
     status,
@@ -343,16 +345,32 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
 function warnAndDropRuntimeStreamEvent(
   event: string,
   address: RuntimeTaskAddress,
-  payload: { task_id?: number; local_task_id?: string; device_id?: string; subtask_id?: number },
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string },
   details: Record<string, unknown> = {}
 ): void {
   console.warn('[Wework] Dropped runtime stream event without task identity', {
     event,
     address: runtimeAddressDebug(address),
-    taskId: payload.local_task_id ?? payload.task_id,
-    localTaskId: payload.local_task_id,
-    deviceId: payload.device_id,
-    subtaskId: payload.subtask_id,
+    taskId: payload.taskId,
+    deviceId: payload.deviceId,
+    subtaskId: payload.subtaskId,
+    ...details,
+  })
+}
+
+function warnAndDropEmptyRuntimeChunk(
+  address: RuntimeTaskAddress,
+  payload: ChatChunkPayload,
+  details: Record<string, unknown> = {}
+): void {
+  console.warn('[Wework] Dropped empty runtime stream chunk', {
+    event: 'chat:chunk',
+    address: runtimeAddressDebug(address),
+    taskId: payload.taskId,
+    deviceId: payload.deviceId,
+    subtaskId: payload.subtaskId,
+    hasContent: Boolean(payload.content),
+    hasReasoningChunk: Boolean(getReasoningChunk(payload.result)),
     ...details,
   })
 }
@@ -363,15 +381,29 @@ function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean
     : undefined
 }
 
-function getRuntimeMessageBlockTurnId(message: NormalizedRuntimeMessage, turnId?: number): number {
-  if (typeof turnId === 'number') return turnId
+function runtimeMessageSubtaskId(message: NormalizedRuntimeMessage): string | undefined {
+  return typeof message.subtaskId === 'string' && message.subtaskId.trim()
+    ? message.subtaskId
+    : undefined
+}
 
-  let hash = 0
-  for (let index = 0; index < message.id.length; index += 1) {
-    hash = (hash * 31 + message.id.charCodeAt(index)) % 1_000_000
-  }
+function warnInvalidRuntimeTranscriptIdentity(
+  message: NormalizedRuntimeMessage,
+  role: WorkbenchMessage['role'],
+  status: WorkbenchMessage['status'],
+  subtaskId: string | undefined
+): void {
+  const hasBlocks = Array.isArray(message.blocks) && message.blocks.length > 0
+  const needsSubtaskId = role === 'assistant' && (status === 'streaming' || hasBlocks)
+  if (!needsSubtaskId || typeof subtaskId === 'string') return
 
-  return RUNTIME_BLOCK_TURN_ID_OFFSET + hash
+  console.warn('[Wework] Runtime transcript message missing valid subtask identity', {
+    messageId: message.id,
+    role,
+    status,
+    subtaskId: message.subtaskId,
+    blockCount: hasBlocks ? message.blocks?.length : 0,
+  })
 }
 
 function normalizeRuntimeReferences(
@@ -433,8 +465,8 @@ function isCancelledRuntimeError(payload: ChatErrorPayload): boolean {
   )
 }
 
-function normalizeChatBlock(turnId: number, block: ChatBlock): ProcessingBlock | null {
-  return normalizeProcessingBlock(turnId, block, 0)
+function normalizeChatBlock(subtaskId: string, block: ChatBlock): ProcessingBlock | null {
+  return normalizeProcessingBlock(subtaskId, block, 0)
 }
 
 function normalizeToolRenderPayload(block: Record<string, unknown>): unknown {
@@ -449,7 +481,7 @@ function normalizeToolRenderPayload(block: Record<string, unknown>): unknown {
 }
 
 function normalizeProcessingBlock(
-  turnId: number,
+  subtaskId: string,
   block: unknown,
   index: number,
   fallbackTimestamp?: number
@@ -470,14 +502,26 @@ function normalizeProcessingBlock(
         ? block.id
         : typeof block.tool_use_id === 'string'
           ? block.tool_use_id
-          : `tool-${turnId}-${index}`
+          : typeof block.toolUseId === 'string'
+            ? block.toolUseId
+          : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     return {
       id,
-      turnId,
+      subtaskId,
       type: 'tool',
-      toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
-      toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
-      toolOutput: block.tool_output,
+      toolName:
+        typeof block.toolName === 'string'
+          ? block.toolName
+          : typeof block.tool_name === 'string'
+            ? block.tool_name
+            : 'unknown',
+      toolInput: isRecord(block.toolInput)
+        ? block.toolInput
+        : isRecord(block.tool_input)
+          ? block.tool_input
+          : undefined,
+      toolOutput: block.toolOutput ?? block.tool_output,
       renderPayload: normalizeToolRenderPayload(block),
       status,
       createdAt: timestamp,
@@ -485,10 +529,11 @@ function normalizeProcessingBlock(
   }
 
   if (block.type === 'thinking') {
-    const id = typeof block.id === 'string' ? block.id : `thinking-${turnId}-${index}`
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     return {
       id,
-      turnId,
+      subtaskId,
       type: 'thinking',
       content: typeof block.content === 'string' ? block.content : '',
       status,
@@ -497,7 +542,8 @@ function normalizeProcessingBlock(
   }
 
   if (block.type === 'text') {
-    const id = typeof block.id === 'string' ? block.id : `text-${turnId}-${index}`
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     const content =
       typeof block.content === 'string'
         ? block.content
@@ -506,7 +552,7 @@ function normalizeProcessingBlock(
           : ''
     return {
       id,
-      turnId,
+      subtaskId,
       type: 'text',
       content,
       status,
@@ -515,7 +561,8 @@ function normalizeProcessingBlock(
   }
 
   if (block.type === 'plan') {
-    const id = typeof block.id === 'string' ? block.id : `plan-${turnId}-${index}`
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     const content =
       typeof block.content === 'string'
         ? block.content
@@ -524,7 +571,7 @@ function normalizeProcessingBlock(
           : ''
     return {
       id,
-      turnId,
+      subtaskId,
       type: 'plan',
       content,
       status,
@@ -535,10 +582,11 @@ function normalizeProcessingBlock(
   if (block.type === 'file_changes') {
     const fileChanges = normalizeTurnFileChanges(block.fileChanges ?? block.file_changes)
     if (!fileChanges) return null
-    const id = typeof block.id === 'string' ? block.id : `file-changes-${turnId}-${index}`
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
     return {
       id,
-      turnId,
+      subtaskId,
       type: 'file_changes',
       fileChanges,
       status,
@@ -546,25 +594,47 @@ function normalizeProcessingBlock(
     }
   }
 
+  console.warn('[Wework] Dropped runtime block with unsupported type', {
+    subtaskId,
+    index,
+    blockType: block.type,
+    blockId: block.id,
+    blockKeys: Object.keys(block).sort(),
+  })
+  return null
+}
+
+function warnAndDropRuntimeTranscriptBlock(
+  subtaskId: string,
+  block: Record<string, unknown>,
+  index: number
+): null {
+  console.warn('[Wework] Dropped runtime transcript block without block identity', {
+    subtaskId,
+    index,
+    blockType: block.type,
+    blockId: block.id,
+    toolUseId: block.tool_use_id,
+  })
   return null
 }
 
 function normalizeProcessingBlocks(
-  turnId: number,
+  subtaskId: string,
   blocks?: unknown[],
   fallbackTimestamp?: number
 ): ProcessingBlock[] {
   if (!blocks) return []
 
   return blocks.flatMap((block, index) => {
-    const normalized = normalizeProcessingBlock(turnId, block, index, fallbackTimestamp)
+    const normalized = normalizeProcessingBlock(subtaskId, block, index, fallbackTimestamp)
     return normalized ? [normalized] : []
   })
 }
 
-function getResultBlocks(turnId: number, result: unknown): ProcessingBlock[] | undefined {
+function getResultBlocks(subtaskId: string, result: unknown): ProcessingBlock[] | undefined {
   if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
-  const blocks = normalizeProcessingBlocks(turnId, result.blocks)
+  const blocks = normalizeProcessingBlocks(subtaskId, result.blocks)
   return blocks.length > 0 ? blocks : undefined
 }
 
@@ -577,7 +647,7 @@ function doneContent(result: unknown): string | undefined {
 
 function getReasoningChunk(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined
-  return typeof result.reasoning_chunk === 'string' ? result.reasoning_chunk : undefined
+  return typeof result.reasoningChunk === 'string' ? result.reasoningChunk : undefined
 }
 
 function getBlockTimestamp(value: unknown, fallbackTimestamp = Date.now()): number {
@@ -614,7 +684,7 @@ function isRuntimeWorkDebugEnabled(): boolean {
 function debugRuntimeStreamEvent(
   label: string,
   address: RuntimeTaskAddress,
-  payload: { device_id?: string; local_task_id?: string; subtask_id?: number },
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string },
   matched: boolean,
   details: Record<string, unknown> = {}
 ) {
@@ -622,9 +692,9 @@ function debugRuntimeStreamEvent(
   console.debug(`[Wework runtime] ${label}`, {
     matched,
     currentRuntimeTask: runtimeAddressDebug(address),
-    payloadDeviceId: payload.device_id ?? null,
-    payloadLocalTaskId: payload.local_task_id ?? null,
-    payloadTurnId: payload.subtask_id ?? null,
+    payloadDeviceId: payload.deviceId ?? null,
+    payloadTaskId: payload.taskId ?? null,
+    payloadSubtaskId: payload.subtaskId ?? null,
     ...details,
   })
 }

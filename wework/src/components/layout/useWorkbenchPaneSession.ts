@@ -1239,11 +1239,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}:${address.workspacePath ?? ''}`
+  return `${address.deviceId}:${address.taskId}:${address.workspacePath ?? ''}`
 }
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}`
+  return `${address.deviceId}:${address.taskId}`
 }
 
 function isPendingGoalVisibleForRuntimeTarget(
@@ -1292,7 +1292,7 @@ function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
@@ -1305,7 +1305,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
     role: message.role,
     status: message.status,
     contentLength: message.content.length,
-    turnId: message.turnId ?? null,
+    subtaskId: message.subtaskId ?? null,
   }))
 }
 
@@ -1514,7 +1514,7 @@ function updateRuntimeSubagentStatuses(
   current: RuntimeSubagentStatus[],
   activity: RuntimeSubagentActivityPayload
 ): RuntimeSubagentStatus[] {
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (!agentPath) return current
 
   const agentId = runtimeSubagentId(activity)
@@ -1525,10 +1525,10 @@ function updateRuntimeSubagentStatuses(
     agentId,
     agentPath,
     agentName:
-      activity.agent_name?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
+      activity.agentName?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
     status,
     kind: activity.kind,
-    updatedAtMs: activity.occurred_at_ms ?? Date.now(),
+    updatedAtMs: activity.occurredAtMs ?? Date.now(),
   }
 
   const withoutCurrent = current.filter(item => item.id !== agentId)
@@ -1567,13 +1567,13 @@ function normalizeRuntimeSubagentStatus(
 }
 
 function runtimeSubagentId(activity: RuntimeSubagentActivityPayload): string {
-  const agentId = activity.agent_id?.trim()
+  const agentId = activity.agentId?.trim()
   if (agentId) return agentId
 
-  const threadId = activity.agent_thread_id?.trim()
+  const threadId = activity.agentThreadId?.trim()
   if (threadId) return threadId
 
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (agentPath.startsWith('thread:')) {
     return agentPath.slice('thread:'.length).trim() || agentPath
   }
@@ -1597,7 +1597,7 @@ function shortRuntimeAgentId(agentId: string): string {
 function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RuntimeTaskAddress>
-  return typeof candidate.deviceId === 'string' && typeof candidate.localTaskId === 'string'
+  return typeof candidate.deviceId === 'string' && typeof candidate.taskId === 'number'
 }
 
 function createPendingRuntimeGoal(objective: string): RuntimeGoal {

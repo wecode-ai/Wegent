@@ -46,9 +46,9 @@ describe('trayNavigation', () => {
     listenMock.mockResolvedValue(vi.fn())
     invokeMock.mockResolvedValue(undefined)
     buildRuntimeTaskRouteMock.mockImplementation(
-      ({ deviceId, localTaskId }: { deviceId: string; localTaskId: string }) =>
-        `/runtime-tasks?deviceId=${encodeURIComponent(deviceId)}&localTaskId=${encodeURIComponent(
-          localTaskId
+      ({ deviceId, taskId }: { deviceId: string; taskId: number }) =>
+        `/runtime-tasks?deviceId=${encodeURIComponent(deviceId)}&taskId=${encodeURIComponent(
+          String(taskId)
         )}`
     )
   })
@@ -103,17 +103,17 @@ describe('trayNavigation', () => {
       payload: {
         id: createTrayTaskMenuId({
           deviceId: 'device/1',
-          localTaskId: 'task:1',
+          taskId: 101,
         }),
       },
     })
 
     expect(buildRuntimeTaskRouteMock).toHaveBeenCalledWith({
       deviceId: 'device/1',
-      localTaskId: 'task:1',
+      taskId: 101,
     })
     expect(navigateToMock).toHaveBeenCalledWith(
-      '/runtime-tasks?deviceId=device%2F1&localTaskId=task%3A1'
+      '/runtime-tasks?deviceId=device%2F1&taskId=101'
     )
   })
 

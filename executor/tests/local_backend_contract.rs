@@ -85,7 +85,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
-    client.set_running_task_ids([10, 20]);
+    client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
 
@@ -94,7 +94,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:heartbeat");
     assert_eq!(calls[0].payload["device_id"], "device-1");
-    assert_eq!(calls[0].payload["running_task_ids"], json!([10, 20]));
+    assert_eq!(calls[0].payload["running_task_ids"], json!(["10", "20"]));
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
@@ -109,7 +109,7 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
     let transport = RecordingTransport::default();
     let client = LocalBackendClient::new(local_backend_config(), transport.clone());
     let sink = LocalBackendEventSink::new(client);
-    let event = ResponsesEventBuilder::new(1, 2, "claude")
+    let event = ResponsesEventBuilder::new("1", "2", "claude")
         .with_response_id("resp-test")
         .response_completed("done");
 
@@ -118,8 +118,8 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
     let emits = transport.emits();
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "response.completed");
-    assert_eq!(emits[0].payload["task_id"], 1);
-    assert_eq!(emits[0].payload["subtask_id"], 2);
+    assert_eq!(emits[0].payload["task_id"], "1");
+    assert_eq!(emits[0].payload["subtask_id"], "2");
     assert_eq!(emits[0].payload["data"]["response"]["id"], "resp-test");
 }
 

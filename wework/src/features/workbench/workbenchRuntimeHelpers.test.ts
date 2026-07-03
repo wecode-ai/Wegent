@@ -8,7 +8,7 @@ describe('workbenchRuntimeHelpers', () => {
       projects: [
         {
           project: { key: 'legacy:7', id: 7, name: 'Wegent' },
-          totalLocalTasks: 1,
+          totalTasks: 1,
           deviceWorkspaces: [
             {
               id: 22,
@@ -19,9 +19,9 @@ describe('workbenchRuntimeHelpers', () => {
               workspacePath: '/workspace/project-alpha',
               mapped: true,
               available: true,
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'local-visible-task',
+                  taskId: 'local-visible-task',
                   workspacePath: '/workspace/project-alpha',
                   title: 'Fix guidance',
                   runtime: 'codex',
@@ -35,14 +35,14 @@ describe('workbenchRuntimeHelpers', () => {
         },
       ],
       chats: [],
-      totalLocalTasks: 1,
+      totalTasks: 1,
     }
 
     expect(projectTaskAddresses(runtimeWork, ['legacy:7'])).toEqual([
       {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
-        localTaskId: 'local-visible-task',
+        taskId: 'local-visible-task',
         runtimeHandle: {
           threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
         },

@@ -34,7 +34,7 @@ pub async fn prepare_git_workspace(
     let project_path = resolve_git_project_path(&request, &repo_name);
     request.project_workspace_path = Some(project_path.display().to_string());
 
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("path", project_path.display().to_string()));
     fields.push(("repo", repo_name));
 
@@ -181,7 +181,7 @@ async fn clone_repo(
 
     let credentials = git_credentials(request);
     if credentials.is_none() && requires_credentials_for_clone(git_url) {
-        let mut failed_fields = task_fields(request.task_id, request.subtask_id);
+        let mut failed_fields = task_fields(&request.task_id, &request.subtask_id);
         failed_fields.push(("path", project_path.display().to_string()));
         failed_fields.push(("git_url", mask_url_credentials(git_url)));
         if let Some(git_domain) = request_git_domain(request) {
@@ -204,7 +204,7 @@ async fn clone_repo(
     command.arg(clone_url).arg(project_path);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("path", project_path.display().to_string()));
     fields.push(("git_url", mask_url_credentials(git_url)));
     if let Some(branch) = branch.as_deref() {
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn resolves_project_workspace_path_first() {
         let request = ExecutionRequest {
-            task_id: 10,
+            task_id: "10".to_owned(),
             project_workspace_path: Some("projects/custom".to_owned()),
             extra: serde_json::Map::from_iter([("project_id".to_owned(), json!(99))]),
             ..ExecutionRequest::default()

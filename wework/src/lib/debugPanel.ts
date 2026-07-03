@@ -1,6 +1,6 @@
 import type { RuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import type {
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -31,7 +31,7 @@ export interface WorkbenchDebugSnapshot {
     currentRuntimeTask: RuntimeTaskAddress | null
     currentRuntimeTaskRunning: boolean
     runningState: RuntimeTaskRunningDebugState
-    activeTask: LocalTaskSummary | null
+    activeTask: RuntimeTaskSummary | null
     activeWorkspace: RuntimeDeviceWorkspace | null
     runtimeWorkSummary: RuntimeWorkSummary
     devices: WorkbenchState['devices']
@@ -88,7 +88,7 @@ export interface MessageStyleSample {
   status: WorkbenchMessage['status']
   runtimeStatus: WorkbenchMessage['runtimeStatus'] | null
   runtimeMessageIndex: number | null
-  turnId: number | null
+  subtaskId: string | null
   createdAt: string
   completedAt: string | number | null
   contentPreview: string
@@ -108,7 +108,7 @@ export interface MessageStyleFieldDiff {
 }
 
 interface RuntimeWorkSummary {
-  totalLocalTasks: number
+  totalTasks: number
   projectCount: number
   projectWorkspaceCount: number
   chatWorkspaceCount: number
@@ -165,7 +165,7 @@ export function updateWorkbenchDebugSnapshot({
   currentRuntimeTaskRunning: boolean
   cloudWorkStatus: CloudWorkStatus
 }) {
-  const activeTask = findRuntimeLocalTask(state.runtimeWork, state.currentRuntimeTask)
+  const activeTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
   workbenchSnapshot = {
     isBootstrapping: state.isBootstrapping,
     error: state.error,
@@ -315,7 +315,7 @@ function createMessageStyleSample(label: string, message: WorkbenchMessage): Mes
     runtimeStatus: message.runtimeStatus ?? null,
     runtimeMessageIndex:
       typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : null,
-    turnId: typeof message.turnId === 'number' ? message.turnId : null,
+    subtaskId: typeof message.subtaskId === 'string' ? message.subtaskId : null,
     createdAt: message.createdAt,
     completedAt: message.completedAt ?? null,
     contentPreview: truncatePreview(message.content.trim() || '[empty]'),
@@ -434,7 +434,7 @@ function serializeLogArgument(value: unknown): string {
 function summarizeRuntimeWork(runtimeWork: RuntimeWorkListResponse | null): RuntimeWorkSummary {
   if (!runtimeWork) {
     return {
-      totalLocalTasks: 0,
+      totalTasks: 0,
       projectCount: 0,
       projectWorkspaceCount: 0,
       chatWorkspaceCount: 0,
@@ -446,24 +446,24 @@ function summarizeRuntimeWork(runtimeWork: RuntimeWorkListResponse | null): Runt
   const workspaces = [...runtimeWork.chats, ...projectWorkspaces]
 
   return {
-    totalLocalTasks: runtimeWork.totalLocalTasks,
+    totalTasks: runtimeWork.totalTasks,
     projectCount: runtimeWork.projects.length,
     projectWorkspaceCount: projectWorkspaces.length,
     chatWorkspaceCount: runtimeWork.chats.length,
     runningTaskCount: workspaces.reduce(
-      (count, workspace) => count + workspace.localTasks.filter(task => task.running).length,
+      (count, workspace) => count + workspace.tasks.filter(task => task.running).length,
       0
     ),
   }
 }
 
-function findRuntimeLocalTask(
+function findRuntimeTask(
   runtimeWork: RuntimeWorkListResponse | null,
   address: RuntimeTaskAddress | null
-): LocalTaskSummary | null {
+): RuntimeTaskSummary | null {
   const workspace = findRuntimeWorkspace(runtimeWork, address)
   if (!workspace || !address) return null
-  return workspace.localTasks.find(task => task.localTaskId === address.localTaskId) ?? null
+  return workspace.tasks.find(task => task.taskId === address.taskId) ?? null
 }
 
 function findRuntimeWorkspace(
@@ -480,7 +480,7 @@ function findRuntimeWorkspace(
     workspaces.find(
       workspace =>
         workspace.deviceId === address.deviceId &&
-        workspace.localTasks.some(task => task.localTaskId === address.localTaskId)
+        workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )
 }

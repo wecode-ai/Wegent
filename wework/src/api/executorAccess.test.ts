@@ -20,7 +20,7 @@ function createRuntimeWork(): RuntimeWorkListResponse {
   return {
     projects: [],
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
   }
 }
 

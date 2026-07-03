@@ -30,13 +30,13 @@ export function LocalExecutorCloudBridge() {
         backendUrl,
         authToken,
       }).catch(error => {
-        console.error('[CloudConnection] Failed to connect local task service to cloud', error)
+        console.error('[CloudConnection] Failed to connect runtime task service to cloud', error)
       })
       return
     }
 
     void disconnectLocalExecutorFromBackend().catch(error => {
-      console.error('[CloudConnection] Failed to disconnect local task service from cloud', error)
+      console.error('[CloudConnection] Failed to disconnect runtime task service from cloud', error)
     })
   }, [cloud.backendUrl, cloud.isConnected, cloud.status, cloud.token])
 

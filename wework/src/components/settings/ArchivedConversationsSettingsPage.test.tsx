@@ -14,7 +14,8 @@ const createLocalAppServicesMock = vi.mocked(createLocalAppServices)
 
 const archivedItem: ArchivedConversationItem = {
   id: 'conversation-1',
-  localTaskId: 'codex-1',
+  taskId: 101,
+  taskId: 'codex-1',
   title: 'Greet user',
   projectKey: 'project-1',
   projectName: 'weekly-mail',
@@ -78,7 +79,7 @@ describe('ArchivedConversationsSettingsPage', () => {
       expect(deleteArchivedConversation).toHaveBeenCalledWith({
         deviceId: 'device-1',
         workspacePath: '/Users/crystal/dev/git/weekly-report',
-        localTaskId: 'codex-1',
+        taskId: 101,
       })
     })
     expect(listArchivedConversations).toHaveBeenCalledTimes(1)

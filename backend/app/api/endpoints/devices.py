@@ -213,9 +213,7 @@ def _runtime_workspace_roots_from_rpc_result(
             if _is_device_path_within(path, root):
                 roots.append(root)
 
-        raw_tasks = (
-            raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
-        )
+        raw_tasks = raw_workspace.get("tasks")
         if not isinstance(raw_tasks, list):
             continue
         for raw_task in raw_tasks:

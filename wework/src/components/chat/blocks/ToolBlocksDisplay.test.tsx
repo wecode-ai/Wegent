@@ -7,7 +7,7 @@ import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
   id: 'call-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
@@ -19,7 +19,7 @@ const completedCommandBlock: ProcessingBlock = {
 const completedWebSearchBlocks: ProcessingBlock[] = [
   {
     id: 'web-search-1',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -35,7 +35,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-search-2',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -47,7 +47,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-open-1',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -61,7 +61,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
 
 const completedFileChangesBlock: ProcessingBlock = {
   id: 'file-changes-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'file_changes',
   status: 'done',
   createdAt: 1770000003000,
@@ -218,7 +218,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'read-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -229,7 +229,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'read-command-2',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -258,7 +258,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'rg-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -271,7 +271,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'rg-command-2',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -282,7 +282,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'git-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -323,7 +323,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'rg-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -334,7 +334,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'read-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -367,7 +367,7 @@ describe('ToolBlocksDisplay', () => {
           completedGuidanceBlock,
           {
             id: 'stdin-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'write_stdin',
             toolInput: { session_id: 90870, chars: '' },
@@ -414,7 +414,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'patch-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'apply_patch',
             toolInput: {
@@ -447,7 +447,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'patch-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'apply_patch',
             toolInput: {
@@ -737,7 +737,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'thinking',
       content: 'Reading files',
       status: 'streaming',
@@ -753,7 +753,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'streaming',
@@ -770,7 +770,7 @@ describe('ToolBlocksDisplay', () => {
     const onSubmit = vi.fn()
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',
@@ -809,7 +809,7 @@ describe('ToolBlocksDisplay', () => {
   test('can hide request user input blocks when the composer owns them', () => {
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',
@@ -835,7 +835,7 @@ describe('ToolBlocksDisplay', () => {
   test('shows answered request user input blocks as summaries while hiding pending blocks', () => {
     const pendingBlock: ProcessingBlock = {
       id: 'request-pending',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'done',
@@ -848,7 +848,7 @@ describe('ToolBlocksDisplay', () => {
     }
     const answeredBlock: ProcessingBlock = {
       id: 'request-answered',
-      turnId: 10,
+      subtaskId: 10,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'done',
@@ -881,7 +881,7 @@ describe('ToolBlocksDisplay', () => {
   test('can hide pending request user input blocks by request id', () => {
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',

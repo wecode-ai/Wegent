@@ -68,7 +68,7 @@ where
         let sink = self.sink.clone();
         Box::pin(async move {
             let builder = event_builder(&request);
-            let fields = task_fields(request.task_id, request.subtask_id);
+            let fields = task_fields(&request.task_id, &request.subtask_id);
             log_executor_event("sending response.created callback", &fields);
             if let Err(message) = sink
                 .send(builder.response_created(request.resolved_shell_type().as_deref()))
@@ -100,7 +100,7 @@ async fn run_in_background<E, S>(
     E: AgentEngine,
     S: EventSink,
 {
-    let fields = task_fields(request.task_id, request.subtask_id);
+    let fields = task_fields(&request.task_id, &request.subtask_id);
     log_executor_event("background task started", &fields);
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
@@ -159,7 +159,7 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| env_value("EXECUTOR_NAMESPACE"));
-    ResponsesEventBuilder::new(request.task_id, request.subtask_id, model)
+    ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(executor_name.as_deref(), executor_namespace.as_deref())
 }

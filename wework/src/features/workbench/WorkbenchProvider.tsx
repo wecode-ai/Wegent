@@ -623,14 +623,28 @@ export function WorkbenchProvider({
   const stableStartNewChat = useStableEvent(startNewChat)
   const stableStartStandaloneChat = useStableEvent(startStandaloneChat)
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
-  const stableOpenRuntimeLocalTask = useStableEvent(runtimeTasks.openRuntimeLocalTask)
+  const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     runtimeTasks.loadRuntimeTranscriptForPane
   )
-  const stableSubscribeRuntimeTaskStream = useStableEvent(runtimeTasks.subscribeRuntimeTaskStream)
-  const stableRenameRuntimeLocalTask = useStableEvent(runtimeTasks.renameRuntimeLocalTask)
-  const stableArchiveRuntimeLocalTask = useStableEvent(runtimeTasks.archiveRuntimeLocalTask)
+  const subscribeRuntimeTaskStream = useCallback(
+    (
+      address: RuntimeTaskAddress,
+      handlers: Parameters<typeof runtimeTasks.subscribeRuntimeTaskStream>[1]
+    ) =>
+      runtimeTasks.subscribeRuntimeTaskStream(address, {
+        ...handlers,
+        onAssistantSettled: () => {
+          dispatch({ type: 'runtime_task_settled', address })
+          handlers.onAssistantSettled?.()
+        },
+      }),
+    [runtimeTasks]
+  )
+  const stableSubscribeRuntimeTaskStream = useStableEvent(subscribeRuntimeTaskStream)
+  const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
+  const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -851,12 +865,12 @@ export function WorkbenchProvider({
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openRuntimeLocalTask: runtimeTasks.openRuntimeLocalTask,
+    openRuntimeTask: runtimeTasks.openRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: runtimeTasks.subscribeRuntimeTaskStream,
-    renameRuntimeLocalTask: runtimeTasks.renameRuntimeLocalTask,
-    archiveRuntimeLocalTask: runtimeTasks.archiveRuntimeLocalTask,
+    renameRuntimeTask: runtimeTasks.renameRuntimeTask,
+    archiveRuntimeTask: runtimeTasks.archiveRuntimeTask,
     archiveProjectConversations: runtimeTasks.archiveProjectConversations,
     archiveProjectsConversations: runtimeTasks.archiveProjectsConversations,
     archiveChatConversations: runtimeTasks.archiveChatConversations,
@@ -920,12 +934,12 @@ export function WorkbenchProvider({
       startNewChat: stableStartNewChat,
       startStandaloneChat: stableStartStandaloneChat,
       startNewProjectChat: stableStartNewProjectChat,
-      openRuntimeLocalTask: stableOpenRuntimeLocalTask,
+      openRuntimeTask: stableOpenRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
-      renameRuntimeLocalTask: stableRenameRuntimeLocalTask,
-      archiveRuntimeLocalTask: stableArchiveRuntimeLocalTask,
+      renameRuntimeTask: stableRenameRuntimeTask,
+      archiveRuntimeTask: stableArchiveRuntimeTask,
       archiveProjectConversations: stableArchiveProjectConversations,
       archiveProjectsConversations: stableArchiveProjectsConversations,
       archiveChatConversations: stableArchiveChatConversations,
@@ -979,7 +993,7 @@ export function WorkbenchProvider({
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,
-      stableArchiveRuntimeLocalTask,
+      stableArchiveRuntimeTask,
       stableBindRuntimeTaskToImSessions,
       stableCancelRuntimePaneTask,
       stableClearRuntimeGoal,
@@ -1005,7 +1019,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
-      stableOpenRuntimeLocalTask,
+      stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
       stablePrepareDeviceWorkspace,
@@ -1013,7 +1027,7 @@ export function WorkbenchProvider({
       stableRefreshWorkLists,
       stableRememberExecutionDevice,
       stableRemoveProject,
-      stableRenameRuntimeLocalTask,
+      stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,
       stableSearchRuntimeWork,

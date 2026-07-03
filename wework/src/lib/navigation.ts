@@ -24,7 +24,7 @@ export function navigateTo(path: string) {
 
 export interface RuntimeTaskRoute {
   deviceId: string
-  localTaskId: string
+  taskId: string
   workspacePath?: string | null
 }
 
@@ -48,16 +48,16 @@ export function parseRuntimeTaskRoute(path: string, search = ''): RuntimeTaskRou
 
   const searchParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
   const deviceId = getRequiredSearchParam(searchParams, 'deviceId', 'device_id')
-  const localTaskId = getRequiredSearchParam(searchParams, 'localTaskId', 'local_task_id')
-  if (!deviceId || !localTaskId) return null
+  const taskIdParam = getRequiredSearchParam(searchParams, 'taskId', 'task_id')
+  if (!deviceId || !taskIdParam) return null
 
-  return { deviceId, localTaskId }
+  return { deviceId, taskId: taskIdParam }
 }
 
 export function buildRuntimeTaskRoute(address: RuntimeTaskRouteInput): string {
   const searchParams = new URLSearchParams()
   searchParams.set('deviceId', address.deviceId)
-  searchParams.set('localTaskId', address.localTaskId)
+  searchParams.set('taskId', String(address.taskId))
   return `/runtime-tasks?${searchParams.toString()}`
 }
 

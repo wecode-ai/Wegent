@@ -7,31 +7,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
-use crate::{
-    codex_phase::{
-        codex_item_id, codex_phase_is_process, codex_phase_name, CodexAgentMessagePhaseTracker,
-    },
-    logging::log_executor_event,
-    protocol::ExecutionRequest,
-};
+use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionRequest};
 
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
+    notification_mapping::{
+        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
+        TextChunkMapping,
+    },
     transcript::{
-        assistant_text_kind_from_notification, tool_block_from_notification,
-        tool_update_from_notification, AssistantNotificationTextKind,
+        completed_workbench_block_from_notification, tool_update_from_notification,
+        workbench_block_from_notification,
     },
-    util::{
-        extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, reasoning_content,
-        string_field,
-    },
+    util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
 };
 
 pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
     event: &str,
-    local_task_id: &str,
+    _local_task_id: &str,
     request: &ExecutionRequest,
     data: Value,
 ) {
@@ -43,12 +38,10 @@ pub(crate) fn emit_response_event(
         "event": event,
         "payload": {
             "event_type": event,
-            "task_id": request.task_id,
-            "subtask_id": request.subtask_id,
-            "turn_id": request.subtask_id,
+            "taskId": request.task_id.to_string(),
+            "subtaskId": request.subtask_id.to_string(),
             "data": data,
-            "device_id": device_id,
-            "local_task_id": local_task_id,
+            "deviceId": device_id,
             "runtime": "codex",
         },
     });
@@ -89,6 +82,8 @@ pub(crate) struct CodexNotificationEventMapper {
 
 struct ProcessTextStream {
     id: String,
+    block_type: String,
+    process_kind: String,
     item_id: Option<String>,
     content: String,
 }
@@ -111,49 +106,28 @@ impl CodexNotificationEventMapper {
                 let phase = self
                     .agent_message_phases
                     .phase_for_delta(notification.params);
-                if codex_phase_is_process(phase.as_deref()) {
-                    log_codex_event_mapper_text(
-                        local_task_id,
-                        &notification.method,
-                        "emit_process_block",
-                        phase.as_deref(),
-                        notification.params,
-                    );
-                    self.emit_process_text_delta(
-                        event_tx,
-                        device_id,
-                        local_task_id,
-                        request,
-                        notification.params,
-                    );
-                } else {
-                    log_codex_event_mapper_text(
-                        local_task_id,
-                        &notification.method,
-                        "emit_final_delta",
-                        phase.as_deref(),
-                        notification.params,
-                    );
-                    self.reset_process_text();
-                    emit_text_delta(
-                        event_tx,
-                        device_id,
-                        local_task_id,
-                        request,
-                        notification.params,
-                    );
-                }
+                self.emit_text_chunk(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    notification.params,
+                    phase.as_deref(),
+                );
             }
             "item/reasoning/delta" | "item/reasoningSummary/delta" => {
                 if self.is_subagent_delta(notification.params) {
                     return;
                 }
-                emit_reasoning_delta(
+                self.emit_text_chunk(
                     event_tx,
                     device_id,
                     local_task_id,
                     request,
+                    &notification.method,
                     notification.params,
+                    Some("analysis"),
                 );
             }
             "item/started" => {
@@ -200,54 +174,15 @@ impl CodexNotificationEventMapper {
                 let phase = self
                     .agent_message_phases
                     .phase_for_item(notification.params);
-                if let Some(assistant_text_kind) =
-                    assistant_text_kind_from_notification(notification.params, phase.as_deref())
-                {
-                    match assistant_text_kind {
-                        AssistantNotificationTextKind::Process => {
-                            log_codex_event_mapper_text(
-                                local_task_id,
-                                &notification.method,
-                                "emit_completed_process_block",
-                                phase.as_deref(),
-                                notification.params,
-                            );
-                            self.emit_completed_process_text(
-                                event_tx,
-                                device_id,
-                                local_task_id,
-                                request,
-                                notification.params,
-                            );
-                        }
-                        AssistantNotificationTextKind::Final => {
-                            log_codex_event_mapper_text(
-                                local_task_id,
-                                &notification.method,
-                                "ignore_completed_final_snapshot",
-                                phase.as_deref(),
-                                notification.params,
-                            );
-                        }
-                    }
-                    self.agent_message_phases.forget_item(notification.params);
-                    return;
-                }
-                if codex_phase_is_process(phase.as_deref()) {
-                    log_codex_event_mapper_text(
-                        local_task_id,
-                        &notification.method,
-                        "emit_completed_process_block",
-                        phase.as_deref(),
-                        notification.params,
-                    );
-                    self.emit_completed_process_text(
-                        event_tx,
-                        device_id,
-                        local_task_id,
-                        request,
-                        notification.params,
-                    );
+                if self.emit_text_chunk(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    notification.params,
+                    phase.as_deref(),
+                ) {
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
@@ -263,6 +198,23 @@ impl CodexNotificationEventMapper {
                             text,
                         );
                     }
+                    self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                if let Some(block) = completed_workbench_block_from_notification(
+                    notification.params,
+                    &request.subtask_id,
+                    device_id,
+                    request.cwd().unwrap_or_default(),
+                ) {
+                    emit_response_event(
+                        event_tx,
+                        device_id,
+                        "response.block.created",
+                        local_task_id,
+                        request,
+                        json!({"block": block}),
+                    );
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
@@ -348,15 +300,13 @@ impl CodexNotificationEventMapper {
         device_id: &str,
         local_task_id: &str,
         request: &ExecutionRequest,
-        params: &Value,
+        block_type: &str,
+        process_kind: &str,
+        item_id: Option<String>,
+        delta: String,
     ) {
-        let Some(delta) = agent_delta(params) else {
-            return;
-        };
-        let item_id = notification_item_id(params);
-
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
-            process_text.item_id.is_none() || item_id.is_none() || process_text.item_id == item_id
+            process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content.push_str(&delta);
             emit_response_event(
@@ -383,7 +333,9 @@ impl CodexNotificationEventMapper {
         );
         self.process_text = Some(ProcessTextStream {
             id: id.clone(),
-            item_id,
+            block_type: block_type.to_owned(),
+            process_kind: process_kind.to_owned(),
+            item_id: item_id.clone(),
             content: delta.clone(),
         });
         emit_response_event(
@@ -395,7 +347,9 @@ impl CodexNotificationEventMapper {
             json!({
                 "block": {
                     "id": id,
-                    "type": "text",
+                    "type": block_type,
+                    "process_kind": process_kind,
+                    "process_item_id": item_id,
                     "content": delta,
                     "status": "streaming",
                     "timestamp": now_ms(),
@@ -410,15 +364,13 @@ impl CodexNotificationEventMapper {
         device_id: &str,
         local_task_id: &str,
         request: &ExecutionRequest,
-        params: &Value,
+        block_type: &str,
+        process_kind: &str,
+        item_id: Option<String>,
+        text: String,
     ) {
-        let Some(text) = completed_agent_text(params) else {
-            return;
-        };
-        let item_id = notification_item_id(params);
-
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
-            process_text.item_id.is_none() || item_id.is_none() || process_text.item_id == item_id
+            process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content = text.clone();
             emit_response_event(
@@ -453,13 +405,124 @@ impl CodexNotificationEventMapper {
             json!({
                 "block": {
                     "id": id,
-                    "type": "text",
+                    "type": block_type,
+                    "process_kind": process_kind,
+                    "process_item_id": item_id,
                     "content": text,
                     "status": "done",
                     "timestamp": now_ms(),
                 }
             }),
         );
+    }
+
+    fn emit_text_chunk(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        method: &str,
+        params: &Value,
+        resolved_phase: Option<&str>,
+    ) -> bool {
+        match map_text_chunk(method, params, resolved_phase) {
+            Ok(Some(TextChunkMapping::ProcessDelta {
+                process_kind,
+                block_type,
+                item_id,
+                delta,
+            })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "emit_process_delta",
+                    resolved_phase,
+                    params,
+                    &delta,
+                );
+                self.emit_process_text_delta(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    block_type,
+                    process_kind,
+                    item_id,
+                    delta,
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "emit_final_delta",
+                    resolved_phase,
+                    params,
+                    &delta,
+                );
+                self.reset_process_text();
+                emit_response_event(
+                    event_tx,
+                    device_id,
+                    "response.output_text.delta",
+                    local_task_id,
+                    request,
+                    json!({"delta": delta}),
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::ProcessCompleted {
+                process_kind,
+                block_type,
+                item_id,
+                text,
+            })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "emit_completed_process",
+                    resolved_phase,
+                    params,
+                    &text,
+                );
+                self.emit_completed_process_text(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    block_type,
+                    process_kind,
+                    item_id,
+                    text,
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::FinalCompleted)) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "ignore_completed_final_snapshot",
+                    resolved_phase,
+                    params,
+                    "",
+                );
+                true
+            }
+            Ok(None) => false,
+            Err(reason) => {
+                log_dropped_notification(
+                    local_task_id,
+                    &request.task_id,
+                    &request.subtask_id,
+                    method,
+                    params,
+                    reason,
+                );
+                true
+            }
+        }
     }
 
     fn emit_plan_delta(
@@ -599,13 +662,12 @@ impl CodexNotificationEventMapper {
     }
 }
 
-fn notification_item_id(params: &Value) -> Option<String> {
-    params
-        .get("item")
-        .and_then(codex_item_id)
-        .or_else(|| string_field(params, "itemId"))
-        .or_else(|| string_field(params, "item_id"))
-        .or_else(|| codex_item_id(params))
+impl ProcessTextStream {
+    fn accepts(&self, block_type: &str, process_kind: &str, item_id: Option<&str>) -> bool {
+        self.block_type == block_type
+            && self.process_kind == process_kind
+            && self.item_id.as_deref() == item_id
+    }
 }
 
 fn is_non_root_codex_stream_event(params: &Value) -> bool {
@@ -660,134 +722,6 @@ fn stream_thread_id(value: &Value) -> Option<String> {
                     .or_else(|| string_field(thread, "thread_id"))
             })
         })
-}
-
-fn log_codex_event_mapper_text(
-    local_task_id: &str,
-    method: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-) {
-    let text = agent_text(params).unwrap_or_default();
-    log_executor_event(
-        "codex runtime event text classification",
-        &[
-            ("local_task_id", local_task_id.to_owned()),
-            ("method", method.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            ("item_id", json_string_field(params, "itemId")),
-            (
-                "phase",
-                codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            (
-                "payload_type",
-                nested_json_string_field(params, "payload", "type"),
-            ),
-            (
-                "payload_phase",
-                nested_json_string_field(params, "payload", "phase"),
-            ),
-            (
-                "payload_channel",
-                nested_json_string_field(params, "payload", "channel"),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(&text, 160)),
-        ],
-    );
-}
-
-fn agent_delta(params: &Value) -> Option<String> {
-    raw_string_field(params, "delta")
-}
-
-fn agent_text(params: &Value) -> Option<String> {
-    agent_delta(params).or_else(|| extract_text(params))
-}
-
-fn completed_agent_text(params: &Value) -> Option<String> {
-    params
-        .get("item")
-        .and_then(extract_text)
-        .or_else(|| agent_text(params))
-}
-
-fn json_string_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
-    value
-        .get(object_key)
-        .and_then(|object| object.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn truncate_log_text(text: &str, max_chars: usize) -> String {
-    let mut result = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index >= max_chars {
-            result.push('…');
-            return result;
-        }
-        result.push(ch);
-    }
-    result
-}
-
-fn emit_text_delta(
-    event_tx: &Option<broadcast::Sender<Value>>,
-    device_id: &str,
-    local_task_id: &str,
-    request: &ExecutionRequest,
-    params: &Value,
-) {
-    let Some(delta) = agent_delta(params) else {
-        return;
-    };
-    emit_response_event(
-        event_tx,
-        device_id,
-        "response.output_text.delta",
-        local_task_id,
-        request,
-        json!({"delta": delta}),
-    );
-}
-
-fn emit_reasoning_delta(
-    event_tx: &Option<broadcast::Sender<Value>>,
-    device_id: &str,
-    local_task_id: &str,
-    request: &ExecutionRequest,
-    params: &Value,
-) {
-    let Some(delta) = string_field(params, "delta").or_else(|| reasoning_content(params)) else {
-        return;
-    };
-    emit_response_event(
-        event_tx,
-        device_id,
-        "response.reasoning_summary_text.delta",
-        local_task_id,
-        request,
-        json!({"delta": delta}),
-    );
 }
 
 fn emit_context_compaction_event(
@@ -845,7 +779,13 @@ fn emit_tool_start(
     request: &ExecutionRequest,
     params: &Value,
 ) {
-    if let Some(block) = tool_block_from_notification(params, "pending") {
+    if let Some(block) = workbench_block_from_notification(
+        params,
+        &request.subtask_id,
+        device_id,
+        request.cwd().unwrap_or_default(),
+        Some("pending"),
+    ) {
         emit_response_event(
             event_tx,
             device_id,
@@ -1292,8 +1232,8 @@ mod tests {
     fn maps_codex_commentary_agent_messages_to_process_text_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1326,8 +1266,8 @@ mod tests {
     fn maps_codex_commentary_channel_agent_messages_to_process_text_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1358,8 +1298,8 @@ mod tests {
     fn maps_completed_codex_commentary_agent_messages_to_process_text_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1395,8 +1335,8 @@ mod tests {
     fn completes_streamed_codex_commentary_agent_message_without_duplicate_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1470,8 +1410,8 @@ mod tests {
     fn maps_codex_context_compacted_event_to_completed_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1504,8 +1444,8 @@ mod tests {
     fn maps_codex_started_final_agent_message_deltas_to_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1564,8 +1504,8 @@ mod tests {
     fn ignores_subagent_agent_message_deltas() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1609,8 +1549,8 @@ mod tests {
     fn ignores_cross_thread_agent_message_deltas() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1727,8 +1667,8 @@ mod tests {
     fn maps_codex_process_text_deltas_to_one_block_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1801,8 +1741,8 @@ mod tests {
     fn keeps_codex_process_text_stream_open_across_tool_start() {
         let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -1897,8 +1837,8 @@ mod tests {
     fn ignores_legacy_final_agent_message_snapshots_for_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1924,8 +1864,8 @@ mod tests {
     fn emits_codex_completed_plan_items_as_plan_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1961,8 +1901,8 @@ mod tests {
     fn emits_codex_plan_deltas_as_streaming_plan_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -2049,8 +1989,8 @@ mod tests {
     fn emits_codex_subagent_activity_events() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2086,8 +2026,8 @@ mod tests {
     fn emits_child_turn_completion_as_done_subagent_activity() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2128,8 +2068,8 @@ mod tests {
     fn emits_explicit_subagent_activity_items() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2164,8 +2104,8 @@ mod tests {
     fn emits_collab_agent_tool_call_subagent_status() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2226,8 +2166,8 @@ mod tests {
     fn emits_explicit_subagent_name_when_field_exists() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2258,8 +2198,8 @@ mod tests {
     fn emits_collab_agent_id_without_inventing_name_from_prompt() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2296,8 +2236,8 @@ mod tests {
     fn maps_codex_commentary_then_tool_then_unphased_final_without_duplication() {
         let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -2429,8 +2369,8 @@ mod tests {
     fn maps_codex_request_user_input_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
-            task_id: 7,
-            subtask_id: 8,
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -2473,5 +2413,50 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+    }
+
+    #[test]
+    fn maps_codex_file_change_to_realtime_file_changes_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            project_workspace_path: Some("/workspace/repo".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "file-change-1",
+                        "type": "fileChange",
+                        "status": "completed",
+                        "changes": [
+                            {
+                                "path": "/workspace/repo/helloworld.html",
+                                "kind": { "type": "add" },
+                                "diff": "@@ -0,0 +1 @@\n+<h1>Hello</h1>\n"
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("file changes event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["type"], "file_changes");
+        assert_eq!(block["file_changes"]["file_count"], 1);
+        assert_eq!(block["file_changes"]["files"][0]["path"], "helloworld.html");
+        assert!(event_rx.try_recv().is_err());
     }
 }

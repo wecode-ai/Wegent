@@ -4,7 +4,7 @@ import type { RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/ap
 type ConfirmClose = () => boolean
 
 function workspaceHasRunningTask(workspace: RuntimeDeviceWorkspace): boolean {
-  return workspace.localTasks.some(task => task.running === true)
+  return workspace.tasks.some(task => task.running === true)
 }
 
 export function hasRunningRuntimeTasks(

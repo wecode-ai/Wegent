@@ -68,13 +68,13 @@ describe('resolveWorkspaceTarget', () => {
                   workspacePath: '/Users/me/Wegent',
                   workspaceSource: 'local',
                   available: true,
-                  localTasks: [],
+                  tasks: [],
                 },
               ],
             },
           ],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         },
       })
     ).toEqual({
@@ -106,13 +106,13 @@ describe('resolveWorkspaceTarget', () => {
                   workspacePath: '/Users/me/Wegent',
                   workspaceSource: 'local',
                   available: true,
-                  localTasks: [],
+                  tasks: [],
                 },
               ],
             },
           ],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         },
       })
     ).toMatchObject({
@@ -138,7 +138,7 @@ describe('resolveWorkspaceTarget', () => {
         currentRuntimeTask: {
           deviceId: 'device-b',
           workspacePath: '/workspace/project-alpha',
-          localTaskId: 'runtime-1',
+          taskId: 'runtime-1',
         },
         projects: [project],
         runtimeWork: {
@@ -151,9 +151,9 @@ describe('resolveWorkspaceTarget', () => {
                   deviceId: 'device-b',
                   workspacePath: '/workspace/project-alpha',
                   available: true,
-                  localTasks: [
+                  tasks: [
                     {
-                      localTaskId: 'runtime-1',
+                      taskId: 'runtime-1',
                       workspacePath: '/workspace/worktrees/8/project-alpha',
                       title: 'Runtime task',
                       runtime: 'codex',
@@ -164,7 +164,7 @@ describe('resolveWorkspaceTarget', () => {
             },
           ],
           chats: [],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         },
       })
     ).toEqual({

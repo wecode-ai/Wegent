@@ -115,7 +115,7 @@ export interface ExecutorRuntimeClient {
 }
 
 export interface ExecutorReviewClient {
-  loadTurnFileChangesDiff?: (turnId: number) => Promise<{ diff: string }>
+  loadTurnFileChangesDiff?: (subtaskId: string) => Promise<{ diff: string }>
   revertTurnFileChanges?: ReturnType<typeof createRuntimeWorkApi>['revertRuntimeFileChanges']
 }
 

@@ -39,7 +39,7 @@ struct GitTokenDiagnostics {
 
 pub async fn setup_git_authentication(request: &ExecutionRequest) {
     set_git_environment(request);
-    let fields = task_fields(request.task_id, request.subtask_id);
+    let fields = task_fields(&request.task_id, &request.subtask_id);
     let Some(git_domain) = request_git_domain(request) else {
         log_executor_event(
             "git cli authentication skipped",
@@ -113,13 +113,13 @@ fn git_credentials_for_domain(
 ) -> Option<GitCredentials> {
     let Some((credentials, diagnostics)) = git_credentials_with_diagnostics(git_domain, request)
     else {
-        let mut fields = task_fields(request.task_id, request.subtask_id);
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("git_domain", git_domain.to_owned()));
         fields.push(("reason", "missing_token".to_owned()));
         log_executor_event("git token diagnostics unavailable", &fields);
         return None;
     };
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("git_domain", git_domain.to_owned()));
     push_token_diagnostic_fields(&mut fields, &diagnostics);
     log_executor_event("git token diagnostics", &fields);
@@ -257,7 +257,7 @@ fn token_file(git_domain: &str, request: &ExecutionRequest) -> Option<String> {
             Some(token)
         }
         Err(error) => {
-            let mut fields = task_fields(request.task_id, request.subtask_id);
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("git_domain", git_domain.to_owned()));
             fields.push(("token_source", "home_ssh_domain_file".to_owned()));
             fields.push(("token_file", path.display().to_string()));
@@ -276,7 +276,7 @@ fn log_token_source_probe(
     token_len: Option<usize>,
     reason: Option<&'static str>,
 ) {
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("git_domain", git_domain.to_owned()));
     fields.push(("token_source", token_source.to_owned()));
     if let Some(token_len) = token_len {

@@ -27,11 +27,11 @@ function createSettingsRuntimeWorkApi() {
 }
 
 function itemTestId(item: ArchivedConversationItem) {
-  return `${item.deviceId}-${item.localTaskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
+  return `${item.deviceId}-${item.taskId}`.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
 function itemAddressKey(item: ArchivedConversationItem) {
-  return `${item.deviceId}\0${item.workspacePath}\0${item.localTaskId}`
+  return `${item.deviceId}\0${item.workspacePath}\0${item.taskId}`
 }
 
 function projectOptionKey(group: {
@@ -80,7 +80,7 @@ function matchesSearch(item: ArchivedConversationItem, query: string) {
     item.title,
     item.projectName,
     item.workspacePath,
-    item.localTaskId,
+    item.taskId,
     item.deviceAddress,
     item.deviceId,
   ]
@@ -263,7 +263,7 @@ export function ArchivedConversationsSettingsPage() {
       await api.unarchiveConversation({
         deviceId: item.deviceId,
         workspacePath: item.workspacePath,
-        localTaskId: item.localTaskId,
+        taskId: item.taskId,
       })
       await loadArchivedConversations()
     } finally {
@@ -287,7 +287,7 @@ export function ArchivedConversationsSettingsPage() {
           items: pendingDelete.items.map(item => ({
             deviceId: item.deviceId,
             workspacePath: item.workspacePath,
-            localTaskId: item.localTaskId,
+            taskId: item.taskId,
           })),
         })
         setItems(currentItems =>
@@ -307,7 +307,7 @@ export function ArchivedConversationsSettingsPage() {
       await api.deleteArchivedConversation({
         deviceId: item.deviceId,
         workspacePath: item.workspacePath,
-        localTaskId: item.localTaskId,
+        taskId: item.taskId,
       })
       setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
       setPendingDelete(null)

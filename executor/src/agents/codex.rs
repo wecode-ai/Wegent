@@ -647,7 +647,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         thread_started,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
-    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
         fields.push(("cwd", cwd.to_owned()));
@@ -667,7 +667,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         } else {
             ("thread/start", thread_start_params(request, &launch_config))
         };
-        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
+        let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
         thread_fields.push(("operation", thread_operation.to_owned()));
         log_executor_event("codex shared thread request started", &thread_fields);
         let thread = client.request(thread_operation, thread_params).await?;
@@ -728,7 +728,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
         turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -806,7 +806,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         ..
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
-    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
         fields.push(("cwd", cwd.to_owned()));
@@ -861,7 +861,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         } else {
             ("thread/start", thread_start_params(request, &launch_config))
         };
-        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
+        let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
         thread_fields.push(("operation", thread_operation.to_owned()));
         log_executor_event("codex thread request started", &thread_fields);
         let thread = with_rpc_timeout(
@@ -916,7 +916,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
         turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -2435,7 +2435,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     );
 
     let mut generated_files = Vec::new();
-    let subtask_id = attachment_subtask_id(&attachments, request.subtask_id);
+    let subtask_id = attachment_subtask_id(&attachments, &request.subtask_id);
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
@@ -2480,7 +2480,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             &request.prompt,
             &success,
             &failed,
-            Some(request.task_id),
+            Some(request.task_id.clone()),
             Some(subtask_id),
         );
     }
@@ -2542,16 +2542,16 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
         subtask_id: value
             .get("subtask_id")
             .or_else(|| value.get("subtaskId"))
-            .and_then(value_i64),
+            .and_then(value_string),
         error: value.get("error").and_then(value_string),
     })
 }
 
-fn attachment_subtask_id(attachments: &[AttachmentRecord], fallback: i64) -> i64 {
+fn attachment_subtask_id(attachments: &[AttachmentRecord], fallback: &str) -> String {
     attachments
         .iter()
-        .find_map(|attachment| attachment.subtask_id)
-        .unwrap_or(fallback)
+        .find_map(|attachment| attachment.subtask_id.clone())
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn is_image_attachment(attachment: &AttachmentRecord) -> bool {

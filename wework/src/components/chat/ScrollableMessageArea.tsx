@@ -52,10 +52,10 @@ interface ScrollableMessageAreaProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (turnId: number) => Promise<string>
-  onRevertFileChanges?: (turnId: number) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
-    turnId: number
+    subtaskId: string
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean

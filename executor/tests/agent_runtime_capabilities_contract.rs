@@ -39,8 +39,8 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7788,
-        subtask_id: 99,
+        task_id: "7788".to_owned(),
+        subtask_id: "99".to_owned(),
         prompt: json!("use request tools"),
         bot: json!([{
             "id": 7,
@@ -134,8 +134,8 @@ async fn claude_runtime_prepares_project_custom_instructions_and_claude_md() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7790,
-        subtask_id: 99,
+        task_id: "7790".to_owned(),
+        subtask_id: "99".to_owned(),
         prompt: json!("use project instructions"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -190,8 +190,8 @@ async fn claude_runtime_does_not_overwrite_regular_claude_md() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7791,
-        subtask_id: 99,
+        task_id: "7791".to_owned(),
+        subtask_id: "99".to_owned(),
         prompt: json!("preserve claude md"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -242,8 +242,8 @@ async fn claude_runtime_downloads_request_skills_before_process_start() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7789,
-        subtask_id: 100,
+        task_id: "7789".to_owned(),
+        subtask_id: "100".to_owned(),
         prompt: json!("use request skills"),
         auth_token: Some("task-token".to_owned()),
         bot: json!([{
@@ -305,8 +305,8 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7792,
-        subtask_id: 101,
+        task_id: "7792".to_owned(),
+        subtask_id: "101".to_owned(),
         prompt: json!("summarize [attachment:55]"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -356,8 +356,8 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7793,
-        subtask_id: 99,
+        task_id: "7793".to_owned(),
+        subtask_id: "99".to_owned(),
         prompt: json!("retry api errors"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -399,8 +399,8 @@ async fn claude_runtime_decrypts_git_token_and_authenticates_github_cli() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7794,
-        subtask_id: 99,
+        task_id: "7794".to_owned(),
+        subtask_id: "99".to_owned(),
         skip_git_clone: true,
         prompt: json!("authenticate git cli"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
@@ -453,8 +453,8 @@ async fn claude_runtime_authenticates_github_enterprise_cli_with_hostname() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7795,
-        subtask_id: 99,
+        task_id: "7795".to_owned(),
+        subtask_id: "99".to_owned(),
         skip_git_clone: true,
         prompt: json!("authenticate github enterprise cli"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
@@ -511,8 +511,8 @@ async fn claude_runtime_falls_back_to_github_hosts_config_when_read_org_is_missi
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7797,
-        subtask_id: 99,
+        task_id: "7797".to_owned(),
+        subtask_id: "99".to_owned(),
         skip_git_clone: true,
         prompt: json!("authenticate git cli"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
@@ -565,8 +565,8 @@ async fn codex_runtime_authenticates_github_cli_before_start() {
         fake_codex.display().to_string(),
     ));
     let request = ExecutionRequest {
-        task_id: 7796,
-        subtask_id: 99,
+        task_id: "7796".to_owned(),
+        subtask_id: "99".to_owned(),
         skip_git_clone: true,
         prompt: json!("authenticate git cli"),
         bot: json!([{"id": 7, "shell_type": "codex"}]),
@@ -623,8 +623,8 @@ async fn claude_runtime_proxies_deferred_interactive_mcp_to_waiting_outcome() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7790,
-        subtask_id: 101,
+        task_id: "7790".to_owned(),
+        subtask_id: "101".to_owned(),
         prompt: json!("ask for form"),
         bot: json!([{
             "id": 7,
@@ -674,8 +674,8 @@ async fn claude_runtime_retries_deferred_interactive_mcp_invalid_form() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7791,
-        subtask_id: 102,
+        task_id: "7791".to_owned(),
+        subtask_id: "102".to_owned(),
         prompt: json!("ask for form"),
         bot: json!([{
             "id": 7,
@@ -713,8 +713,8 @@ async fn claude_runtime_drains_stale_defer_after_interactive_form_answer() {
         "codex",
     ));
     let request = ExecutionRequest {
-        task_id: 7792,
-        subtask_id: 103,
+        task_id: "7792".to_owned(),
+        subtask_id: "103".to_owned(),
         prompt: json!("answer form"),
         bot: json!([{
             "id": 7,

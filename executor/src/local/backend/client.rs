@@ -112,7 +112,7 @@ where
 
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
-        I: IntoIterator<Item = i64>,
+        I: IntoIterator<Item = String>,
     {
         self.running_tasks.set(task_ids);
     }

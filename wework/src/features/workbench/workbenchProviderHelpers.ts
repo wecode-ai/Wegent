@@ -7,7 +7,7 @@ import type {
   User,
 } from '@/types/api'
 import type { DeviceUpgradeStatusPayload } from '@/types/device-events'
-import { findRuntimeLocalTask } from './workbenchRuntimeHelpers'
+import { findRuntimeTask } from './workbenchRuntimeHelpers'
 
 const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
 const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
@@ -69,7 +69,7 @@ export function getCurrentRuntimeTaskCompatibilityFamily(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
 ): string | null {
-  return getRuntimeCompatibilityFamily(findRuntimeLocalTask(runtimeWork, address)?.runtime)
+  return getRuntimeCompatibilityFamily(findRuntimeTask(runtimeWork, address)?.runtime)
 }
 
 export function normalizeGuidanceError(error?: string) {

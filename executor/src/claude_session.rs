@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::protocol::ExecutionRequest;
 
 pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String> {
-    if request.new_session || request.task_id <= 0 {
+    if request.new_session || request.task_id.trim().is_empty() {
         if request.new_session {
             delete_saved_session_files(request);
         }
@@ -21,7 +21,7 @@ pub(crate) fn load_saved_session_id(request: &ExecutionRequest) -> Option<String
 
 pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
     let session_id = session_id.trim();
-    if session_id.is_empty() || request.task_id <= 0 {
+    if session_id.is_empty() || request.task_id.trim().is_empty() {
         return;
     }
 
@@ -33,14 +33,14 @@ pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
 }
 
 pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
-    if request.task_id <= 0 {
+    if request.task_id.trim().is_empty() {
         return None;
     }
 
     workspace_roots()
         .into_iter()
         .next()
-        .map(|root| root.join(request.task_id.to_string()))
+        .map(|root| root.join(request.task_id.trim()))
 }
 
 fn read_session_file(request: &ExecutionRequest) -> Option<String> {

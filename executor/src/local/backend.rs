@@ -248,7 +248,7 @@ where
         self.cancellations.snapshot()
     }
 
-    pub fn is_cancel_requested(&self, task_id: i64, subtask_id: Option<i64>) -> bool {
+    pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
         self.cancellations.is_cancel_requested(task_id, subtask_id)
     }
 
@@ -359,9 +359,9 @@ where
             let cancellations = cancellations.clone();
             let task_controller = task_controller.clone();
             Box::pin(async move {
-                let task_id = payload.get("task_id").and_then(Value::as_i64)?;
-                let subtask_id = payload.get("subtask_id").and_then(Value::as_i64);
-                cancellations.cancel_task(task_id, subtask_id);
+                let task_id = id_field(&payload, "task_id")?;
+                let subtask_id = payload.get("subtask_id").and_then(id_value_string);
+                cancellations.cancel_task(task_id.clone(), subtask_id.clone());
                 if let Some(controller) = task_controller {
                     let _ = controller.cancel_task(task_id, subtask_id).await;
                 }
@@ -377,7 +377,7 @@ where
             let task_controller = task_controller.clone();
             let client = client.clone();
             Box::pin(async move {
-                let Some(task_id) = payload.get("task_id").and_then(Value::as_i64) else {
+                let Some(task_id) = id_field(&payload, "task_id") else {
                     return Some(json!({"success": false, "error": "task_id is required"}));
                 };
                 if let Some(controller) = task_controller {
@@ -640,6 +640,18 @@ where
                 return;
             }
         }
+    }
+}
+
+fn id_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(id_value_string)
+}
+
+fn id_value_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
     }
 }
 

@@ -47,10 +47,10 @@ export function DesktopWorkbenchLayout() {
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
     startNewProjectChat: onStartNewProjectChat,
-    openRuntimeLocalTask: onOpenRuntimeLocalTask,
+    openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
-    renameRuntimeLocalTask: onRenameRuntimeLocalTask,
-    archiveRuntimeLocalTask: onArchiveRuntimeLocalTask,
+    renameRuntimeTask: onRenameRuntimeTask,
+    archiveRuntimeTask: onArchiveRuntimeTask,
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
@@ -337,9 +337,9 @@ export function DesktopWorkbenchLayout() {
         : []
     }
 
-    const taskKey = `${imNotificationDialogMode.address.deviceId}\0${imNotificationDialogMode.address.localTaskId}`
+    const taskKey = `${imNotificationDialogMode.address.deviceId}\0${imNotificationDialogMode.address.taskId}`
     const subscription = imNotificationSettings.runtimeTaskSubscriptions.find(
-      item => `${item.address.deviceId}\0${item.address.localTaskId}` === taskKey
+      item => `${item.address.deviceId}\0${item.address.taskId}` === taskKey
     )
     if (subscription?.sessionKeys.length) {
       return subscription.sessionKeys
@@ -435,9 +435,9 @@ export function DesktopWorkbenchLayout() {
       onOpenSearch={() => setSearchOpen(true)}
       onSelectProject={onSelectProject}
       onStartNewProjectChat={onStartNewProjectChat}
-      onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
-      onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-      onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+      onOpenRuntimeTask={onOpenRuntimeTask}
+      onRenameRuntimeTask={onRenameRuntimeTask}
+      onArchiveRuntimeTask={onArchiveRuntimeTask}
       onArchiveProjectConversations={onArchiveProjectConversations}
       onArchiveProjectsConversations={onArchiveProjectsConversations}
       onArchiveChatConversations={onArchiveChatConversations}
@@ -606,9 +606,9 @@ export function DesktopWorkbenchLayout() {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={onSearchRuntimeWork}
-        onOpenRuntimeLocalTask={async address => {
-          if (!onOpenRuntimeLocalTask) return
-          await onOpenRuntimeLocalTask(address)
+        onOpenRuntimeTask={async address => {
+          if (!onOpenRuntimeTask) return
+          await onOpenRuntimeTask(address)
         }}
       />
     </div>

@@ -6,11 +6,11 @@ import type { HttpClient } from './http'
 
 export function createTaskApi(client: HttpClient) {
   return {
-    getTurnFileChangesDiff(turnId: number): Promise<TurnFileChangesDiffResponse> {
-      return client.get(`/subtasks/${turnId}/file-changes/diff`)
+    getTurnFileChangesDiff(subtaskId: string): Promise<TurnFileChangesDiffResponse> {
+      return client.get(`/subtasks/${subtaskId}/file-changes/diff`)
     },
-    revertTurnFileChanges(turnId: number): Promise<TurnFileChangesRevertResponse> {
-      return client.post(`/subtasks/${turnId}/file-changes/revert`)
+    revertTurnFileChanges(subtaskId: string): Promise<TurnFileChangesRevertResponse> {
+      return client.post(`/subtasks/${subtaskId}/file-changes/revert`)
     },
   }
 }

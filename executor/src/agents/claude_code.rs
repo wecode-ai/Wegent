@@ -55,7 +55,7 @@ pub(super) fn restore_claude_plugin_cache(request: &ExecutionRequest, spec: &Com
         return;
     };
 
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("config_dir", config_dir.display().to_string()));
     match restore_enabled_claude_plugin_cache(&config_dir) {
         Ok(restored) if !restored.is_empty() => {
@@ -88,7 +88,7 @@ pub(super) fn configure_claude_file_edit_hooks(request: &ExecutionRequest, spec:
     };
 
     let settings_path = PathBuf::from(config_dir).join("settings.json");
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("settings", settings_path.display().to_string()));
 
     match write_claude_file_edit_hook_settings(&settings_path, &command) {
@@ -111,7 +111,7 @@ pub(super) fn configure_claude_default_settings(request: &ExecutionRequest, spec
     };
 
     let settings_path = PathBuf::from(config_dir).join("settings.json");
-    let fields = task_fields(request.task_id, request.subtask_id);
+    let fields = task_fields(&request.task_id, &request.subtask_id);
 
     match write_claude_default_settings(&settings_path) {
         Ok(()) => log_executor_event("claude default settings configured", &fields),
@@ -257,13 +257,13 @@ pub(super) async fn run_pre_execute_hook(request: &ExecutionRequest, spec: &Comm
         .unwrap_or_else(|| PathBuf::from("."));
     let _ = fs::create_dir_all(&task_dir);
 
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("cwd", task_dir.display().to_string()));
     log_executor_event("pre-execute hook started", &fields);
     let exit = hook
         .execute(PreExecuteContext {
             task_dir,
-            task_id: (request.task_id > 0).then_some(request.task_id),
+            task_id: (!request.task_id.trim().is_empty()).then_some(request.task_id.clone()),
             git_url: request.git_url(),
         })
         .await;
@@ -675,7 +675,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
                 else {
                     return;
                 };
-                let mut fields = task_fields(request.task_id, request.subtask_id);
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
                 fields.push(("skill", skill_name.clone()));
                 fields.push(("target", target.display().to_string()));
                 fields.push(("reason", cache_miss_reason));

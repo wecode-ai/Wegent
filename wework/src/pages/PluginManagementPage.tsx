@@ -25,9 +25,9 @@ export function PluginManagementPage() {
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openRuntimeLocalTask,
-    renameRuntimeLocalTask,
-    archiveRuntimeLocalTask,
+    openRuntimeTask,
+    renameRuntimeTask,
+    archiveRuntimeTask,
     archiveProjectConversations,
     archiveProjectsConversations,
     archiveChatConversations,
@@ -112,9 +112,9 @@ export function PluginManagementPage() {
           onNewChat={handleNewChat}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenRuntimeLocalTask={openRuntimeLocalTask}
-          onRenameRuntimeLocalTask={renameRuntimeLocalTask}
-          onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+          onOpenRuntimeTask={openRuntimeTask}
+          onRenameRuntimeTask={renameRuntimeTask}
+          onArchiveRuntimeTask={archiveRuntimeTask}
           onArchiveProjectConversations={archiveProjectConversations}
           onArchiveProjectsConversations={archiveProjectsConversations}
           onArchiveChatConversations={archiveChatConversations}
@@ -160,7 +160,7 @@ export function PluginManagementPage() {
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
-            onOpenRuntimeLocalTask={openRuntimeLocalTask}
+            onOpenRuntimeTask={openRuntimeTask}
             onCreateProject={createProject}
             onCreateGitWorkspaceProject={createGitWorkspaceProject}
             onPrepareDeviceWorkspace={prepareDeviceWorkspace}

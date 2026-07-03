@@ -15,7 +15,7 @@ function tool(
 ): ToolBlock {
   return {
     id,
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName,
     toolInput: toolName === 'exec_command' ? { cmd: command } : { command },
@@ -51,7 +51,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'cmdline-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'bash',
           toolInput: { commandLine: 'find . -name package.json' },
@@ -113,7 +113,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'guidance-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'conversation_guidance',
           toolInput: { message: 'follow this file' },
@@ -128,7 +128,7 @@ describe('toolBlockActivity', () => {
     const rows = buildProcessingDisplayRows([
       {
         id: 'guidance-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'conversation_guidance',
         toolInput: { message: 'follow this file' },
@@ -137,7 +137,7 @@ describe('toolBlockActivity', () => {
       },
       {
         id: 'stdin-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'write_stdin',
         toolInput: { session_id: 90870, chars: '' },
@@ -158,7 +158,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'edit-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'MultiEdit',
           toolInput: {
@@ -180,7 +180,7 @@ describe('toolBlockActivity', () => {
   test('groups completed tools while preserving context compaction and running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'thinking',
       content: 'Reading context',
       status: 'done',
@@ -190,7 +190,7 @@ describe('toolBlockActivity', () => {
       thinking,
       {
         id: 'text-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'text',
         content: 'Let me inspect package files.',
         status: 'done',
@@ -199,7 +199,7 @@ describe('toolBlockActivity', () => {
       tool('read-before-1', 'cat README.md'),
       {
         id: 'ctx-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'context_compaction',
         status: 'done',

@@ -59,7 +59,7 @@ impl PreExecuteHook {
         command.arg(script).arg(&context.task_dir);
         command.env("WEGENT_TASK_DIR", &context.task_dir);
         if let Some(task_id) = context.task_id {
-            command.env("WEGENT_TASK_ID", task_id.to_string());
+            command.env("WEGENT_TASK_ID", task_id);
         }
         if let Some(git_url) = &context.git_url {
             command.env("WEGENT_GIT_URL", git_url);
@@ -92,7 +92,7 @@ impl PreExecuteHook {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreExecuteContext {
     pub task_dir: PathBuf,
-    pub task_id: Option<i64>,
+    pub task_id: Option<String>,
     pub git_url: Option<String>,
 }
 
