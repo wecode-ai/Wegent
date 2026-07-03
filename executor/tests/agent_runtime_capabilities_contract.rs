@@ -105,7 +105,15 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let settings = read_json(&settings_path);
     let pre_tool_use = settings["hooks"]["PreToolUse"].as_array().unwrap();
     assert!(pre_tool_use.iter().any(|entry| {
-        entry["hooks"][0]["type"] == "command"
+        entry["matcher"] == "mcp__.*interactive_form_question.*"
+            && entry["hooks"][0]["type"] == "command"
+            && entry["hooks"][0]["command"]
+                .as_str()
+                .is_some_and(|command| command.ends_with("defer-interactive-mcp-hook.sh"))
+    }));
+    assert!(!pre_tool_use.iter().any(|entry| {
+        entry["matcher"] == "mcp__*interactive_form_question*"
+            && entry["hooks"][0]["type"] == "command"
             && entry["hooks"][0]["command"]
                 .as_str()
                 .is_some_and(|command| command.ends_with("defer-interactive-mcp-hook.sh"))
