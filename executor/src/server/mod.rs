@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 mod config;
@@ -27,7 +27,7 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::process::Command;
+use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::{
     agents::runtime_capabilities,
@@ -327,12 +327,23 @@ async fn download_workspace_file(
         status: StatusCode::NOT_FOUND,
         detail: "File not found".to_owned(),
     })?;
+    if metadata.is_dir() {
+        ensure_directory_download_size(&path)?;
+        let content = zip_directory(&path).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        return Ok((headers, Body::from(content)).into_response());
+    }
     if !metadata.is_file() {
         return Err(HttpError {
             status: StatusCode::BAD_REQUEST,
             detail: "Path is not a file".to_owned(),
         });
     }
+    ensure_file_download_size(metadata.len())?;
     let content = fs::read(&path).map_err(|error| HttpError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("failed to read file: {error}"),
@@ -365,15 +376,6 @@ async fn download_envd_file(
             query.path.as_deref().unwrap_or_default()
         ),
     })?;
-    if !metadata.is_file() {
-        return Err(HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!(
-                "Path is not a file: {}",
-                query.path.as_deref().unwrap_or_default()
-            ),
-        });
-    }
     if !has_read_access(&path) {
         return Err(HttpError {
             status: StatusCode::UNAUTHORIZED,
@@ -383,6 +385,26 @@ async fn download_envd_file(
             ),
         });
     }
+    if metadata.is_dir() {
+        ensure_directory_download_size(&path)?;
+        let content = zip_directory(&path).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        return Ok((headers, Body::from(content)).into_response());
+    }
+    if !metadata.is_file() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!(
+                "Path is not a file: {}",
+                query.path.as_deref().unwrap_or_default()
+            ),
+        });
+    }
+    ensure_file_download_size(metadata.len())?;
     let mut file = fs::File::open(&path).map_err(|error| HttpError {
         status: if error.kind() == std::io::ErrorKind::PermissionDenied {
             StatusCode::UNAUTHORIZED
@@ -409,6 +431,125 @@ async fn download_envd_file(
         HeaderValue::from_static("application/octet-stream"),
     );
     Ok((headers, Body::from(content)).into_response())
+}
+
+fn ensure_file_download_size(size: u64) -> Result<(), HttpError> {
+    let limit_bytes = workspace_download_limit_bytes();
+    if size > limit_bytes {
+        return Err(HttpError {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: format!("Download exceeds {} MiB limit", limit_bytes / 1024 / 1024),
+        });
+    }
+    Ok(())
+}
+
+fn workspace_download_limit_bytes() -> u64 {
+    std::env::var("MAX_WORKSPACE_DOWNLOAD_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB)
+        .saturating_mul(1024 * 1024)
+}
+
+fn ensure_directory_download_size(path: &Path) -> Result<(), HttpError> {
+    let mut total = 0;
+    add_directory_download_size(path, &mut total)
+}
+
+fn add_directory_download_size(path: &Path, total: &mut u64) -> Result<(), HttpError> {
+    for entry in fs::read_dir(path).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("failed to read directory: {error}"),
+    })? {
+        let entry = entry.map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to read directory entry: {error}"),
+        })?;
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to read metadata: {error}"),
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                detail: "Directory archive cannot include symbolic links".to_owned(),
+            });
+        }
+        if metadata.is_dir() {
+            add_directory_download_size(&entry_path, total)?;
+        } else if metadata.is_file() {
+            *total = total.saturating_add(metadata.len());
+            ensure_file_download_size(*total)?;
+        }
+    }
+    Ok(())
+}
+
+async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
+    let _permit = zip_download_semaphore()
+        .try_acquire()
+        .map_err(|_| HttpError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            detail: "Too many archive downloads in progress".to_owned(),
+        })?;
+    let parent = path.parent().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "Directory parent not found".to_owned(),
+    })?;
+    let file_name = path.file_name().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "Directory name not found".to_owned(),
+    })?;
+
+    let mut command = Command::new("zip");
+    command
+        .arg("-r")
+        .arg("-q")
+        .arg("-")
+        .arg(file_name)
+        .current_dir(parent)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let output = match timeout(
+        Duration::from_secs(MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS),
+        command.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Err(HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                detail: format!("failed to run zip: {error}"),
+            });
+        }
+        Err(_) => {
+            return Err(HttpError {
+                status: StatusCode::REQUEST_TIMEOUT,
+                detail: "Archive download timed out".to_owned(),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("zip failed: {stderr}"),
+        });
+    }
+
+    Ok(output.stdout)
+}
+
+fn zip_download_semaphore() -> &'static Semaphore {
+    static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
 }
 
 async fn upload_envd_file(
@@ -1380,6 +1521,9 @@ fn default_runtime_type() -> String {
 }
 
 const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
+const DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB: u64 = 500;
+const MAX_WORKSPACE_ZIP_CONCURRENCY: usize = 2;
+const MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS: u64 = 120;
 
 #[derive(Debug, Default)]
 struct ByteUsage {

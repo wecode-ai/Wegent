@@ -235,7 +235,8 @@ describe('RemoteWorkspaceDialog', () => {
       '/api/tasks/1/remote-workspace/file'
     )
 
-    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+    const handleOpenChange = jest.fn()
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={handleOpenChange} />)
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
@@ -375,7 +376,8 @@ describe('RemoteWorkspaceDialog', () => {
       '/api/tasks/1/remote-workspace/file'
     )
 
-    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+    const handleOpenChange = jest.fn()
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={handleOpenChange} />)
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
@@ -391,6 +393,20 @@ describe('RemoteWorkspaceDialog', () => {
     expect(within(previewDialog).getAllByText(/\/workspace\/diagram\.png/i).length).toBeGreaterThan(
       0
     )
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1)
+    expect(screen.getByTestId('remote-workspace-preview-close-button')).toBeInTheDocument()
+
+    const stopEscapePropagation = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+      }
+    }
+    document.addEventListener('keydown', stopEscapePropagation, { capture: true })
+    await user.keyboard('{Escape}')
+    document.removeEventListener('keydown', stopEscapePropagation, { capture: true })
+
+    expect(screen.queryByRole('dialog', { name: 'Preview' })).not.toBeInTheDocument()
+    expect(handleOpenChange).not.toHaveBeenCalled()
   })
 
   test('desktop preview dialog toggles application fullscreen', async () => {
@@ -414,12 +430,12 @@ describe('RemoteWorkspaceDialog', () => {
       'remote-workspace-preview-fullscreen-button'
     )
 
-    expect(previewDialog).toHaveClass('!max-w-[1400px]')
+    expect(previewDialog).toHaveClass('absolute', 'inset-3')
     expect(fullscreenButton).toHaveAttribute('aria-label', 'Fullscreen preview')
 
     await user.click(fullscreenButton)
 
-    expect(previewDialog).toHaveClass('!max-w-none', '!h-dvh')
+    expect(previewDialog).toHaveClass('fixed', 'inset-0', 'h-dvh')
     expect(fullscreenButton).toHaveAttribute('aria-label', 'Exit fullscreen')
   })
 
@@ -520,14 +536,22 @@ describe('RemoteWorkspaceDialog', () => {
     expect(screen.getByText('Multiple items selected')).toBeInTheDocument()
   })
 
-  test('desktop toolbar downloads all selected files', async () => {
+  test('desktop toolbar packages selected files into one zip download', async () => {
     const originalFetch = global.fetch
     const originalCreateObjectURL = URL.createObjectURL
     const originalRevokeObjectURL = URL.revokeObjectURL
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      blob: jest.fn().mockResolvedValue(new Blob(['file'])),
-    })
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: jest
+          .fn()
+          .mockResolvedValue(new Uint8Array([100, 105, 97, 103, 114, 97, 109]).buffer),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: jest.fn().mockResolvedValue(new Uint8Array([110, 111, 116, 101, 115]).buffer),
+      })
     global.fetch = fetchMock as unknown as typeof fetch
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -572,7 +596,9 @@ describe('RemoteWorkspaceDialog', () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(anchorClickMock).toHaveBeenCalledTimes(1)
       })
+      expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
       expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
         1,
         '/workspace/diagram.png',
@@ -594,6 +620,213 @@ describe('RemoteWorkspaceDialog', () => {
         value: originalRevokeObjectURL,
       })
       anchorClickMock.mockRestore()
+    }
+  })
+
+  test('desktop toolbar downloads the current directory when no file is selected', async () => {
+    const originalFetch = global.fetch
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue(new Blob(['zip'])),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: jest.fn(() => 'blob:remote-workspace-folder'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: jest.fn(),
+    })
+    const anchorClickMock = jest
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'demo',
+            path: '/workspace/demo',
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/demo',
+        entries: [
+          {
+            name: 'hello.json',
+            path: '/workspace/demo/hello.json',
+            is_directory: false,
+            size: 24,
+            modified_at: null,
+          },
+        ],
+      })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockImplementation(
+      (_taskId: number, path: string, disposition: string) =>
+        `/api/tasks/1/remote-workspace/file?path=${encodeURIComponent(path)}&disposition=${disposition}`
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      await waitFor(() => {
+        expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+      })
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.click(await screen.findByRole('button', { name: 'Open directory demo' }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/hello\.json/i)).toBeInTheDocument()
+      })
+
+      const downloadButton = screen.getByRole('button', { name: 'Download' })
+      expect(downloadButton).toBeEnabled()
+      await user.click(downloadButton)
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        expect(anchorClickMock).toHaveBeenCalledTimes(1)
+      })
+      expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
+        1,
+        '/workspace/demo',
+        'attachment'
+      )
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(2)
+    } finally {
+      global.fetch = originalFetch
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+      anchorClickMock.mockRestore()
+    }
+  })
+
+  test('desktop preview renders markdown as formatted content', async () => {
+    const originalFetch = global.fetch
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue(new Blob(['# Release Notes\n\n- shipped'])),
+    }) as unknown as typeof fetch
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/README.md',
+          is_directory: false,
+          size: 27,
+          modified_at: null,
+        },
+      ],
+    })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.dblClick(await screen.findByText(/README\.md/i))
+
+      expect(await screen.findByTestId('react-markdown-mock')).toHaveTextContent('Release Notes')
+      expect(screen.getByTestId('react-markdown-mock')).toHaveTextContent('- shipped')
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  test('desktop preview renders json key value content', async () => {
+    const originalFetch = global.fetch
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue(new Blob(['{"name":"wegent","enabled":true}'])),
+    }) as unknown as typeof fetch
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'config.json',
+          path: '/workspace/config.json',
+          is_directory: false,
+          size: 33,
+          modified_at: null,
+        },
+      ],
+    })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.dblClick(await screen.findByText(/config\.json/i))
+
+      expect(await screen.findByTestId('remote-workspace-json-tree')).toBeInTheDocument()
+      expect(screen.getByText('name:')).toBeInTheDocument()
+      expect(screen.getByText('"wegent"')).toBeInTheDocument()
+      expect(screen.getByText('enabled:')).toBeInTheDocument()
+      expect(screen.getByText('true')).toBeInTheDocument()
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  test('desktop preview renders json as a collapsible tree', async () => {
+    const originalFetch = global.fetch
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest
+        .fn()
+        .mockResolvedValue(new Blob(['{"message":"hello","items":[{"name":"first"}]}'])),
+    }) as unknown as typeof fetch
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'config.json',
+          path: '/workspace/config.json',
+          is_directory: false,
+          size: 49,
+          modified_at: null,
+        },
+      ],
+    })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.dblClick(await screen.findByText(/config\.json/i))
+
+      expect(await screen.findByTestId('remote-workspace-json-tree')).toBeInTheDocument()
+      expect(screen.getByText('"hello"')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Collapse items' }))
+
+      expect(screen.queryByText('"first"')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Expand items' })).toBeInTheDocument()
+    } finally {
+      global.fetch = originalFetch
     }
   })
 
