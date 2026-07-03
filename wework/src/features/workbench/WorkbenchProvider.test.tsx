@@ -134,21 +134,18 @@ function createRuntimeWork(
             available: true,
             tasks: [
               {
-                taskId: 77,
                 taskId: 'runtime-a',
                 workspacePath: '/workspace/project-alpha',
                 title: 'Runtime A',
                 runtime: 'claude_code',
               },
               {
-                taskId: 88,
                 taskId: 'runtime-b',
                 workspacePath: '/workspace/project-alpha',
                 title: 'Runtime B',
                 runtime: 'claude_code',
               },
               {
-                taskId: 99,
                 taskId: 'runtime-restored',
                 workspacePath: '/workspace/project-alpha',
                 title: 'Restored runtime',
@@ -228,7 +225,7 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
     })),
     sendRuntimeMessage: vi.fn().mockResolvedValue({
       accepted: true,
-      taskId: 77,
+      taskId: 'runtime-a',
     }),
     openRuntimeWorkspace: vi.fn().mockResolvedValue({
       accepted: true,
@@ -2290,16 +2287,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.some(handler => handler.onChatChunk)).toBe(true))
     await act(async () => {
       const startPayload = {
-        subtaskId: 102,
-        device_id: 'device-1',
-        task_id: request.taskId,
+        taskId: request.taskId,
+        subtaskId: '102',
+        deviceId: 'device-1',
       }
       const chunkPayload = {
-        subtaskId: 102,
+        taskId: request.taskId,
+        subtaskId: '102',
         content: 'streamed answer',
         offset: 0,
-        device_id: 'device-1',
-        task_id: request.taskId,
+        deviceId: 'device-1',
       }
       streamHandlers.forEach(handler => {
         handler.onChatStart?.(startPayload)
@@ -2489,10 +2486,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         attachmentIds: [45],
       })
     )
-    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
-      'src',
-      'blob:runtime-message-image-preview'
-    )
+    const previews = await screen.findAllByTestId('message-image-preview')
+    expect(
+      previews.some(preview => preview.getAttribute('src') === 'blob:runtime-message-image-preview')
+    ).toBe(true)
   })
 
   test('sends local image attachments as runtime attachments when creating a runtime task', async () => {
@@ -3172,19 +3169,17 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 102,
-        shell_type: 'Codex',
-        device_id: 'device-1',
-        task_id: request.taskId,
+        taskId: request.taskId,
+        subtaskId: '102',
+        shellType: 'Codex',
+        deviceId: 'device-1',
       })
       streamHandlers.onChatChunk?.({
-        taskId: 77,
-        subtaskId: 102,
+        taskId: request.taskId,
+        subtaskId: '102',
         content: 'streamed answer',
         offset: 0,
-        device_id: 'device-1',
-        task_id: request.taskId,
+        deviceId: 'device-1',
       })
     })
 
@@ -3204,7 +3199,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             id: 'assistant-1',
             role: 'assistant',
             content: 'streamed answer',
-            subtaskId: 102,
+            subtaskId: '102',
           },
         ],
       })
@@ -3224,7 +3219,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           id: 'assistant-1',
           role: 'assistant',
           content: '恢复的回答',
-          subtaskId: 901,
+          subtaskId: '901',
           fileChanges: {
             version: 1,
             status: 'active',
@@ -3314,7 +3309,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           id: 'assistant-1',
           role: 'assistant',
           content: '恢复的回答',
-          subtaskId: 901,
+          subtaskId: '901',
           createdAt: '2026-06-05T00:00:00.000Z',
           blocks: [
             {
@@ -3360,7 +3355,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           id: 'assistant-1',
           role: 'assistant',
           content: '已修复',
-          subtaskId: 902,
+          subtaskId: '902',
           fileChanges: createTurnFileChanges(),
         },
       ],
@@ -3573,7 +3568,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'assistant',
             content: 'working',
             status: 'streaming',
-            subtaskId: 901,
+            subtaskId: '901',
           },
         ],
       } satisfies RuntimeTranscriptResponse
@@ -3612,7 +3607,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           id: 'assistant-1',
           role: 'assistant',
           content: '已修复',
-          subtaskId: 902,
+          subtaskId: '902',
           fileChanges,
         },
       ],
@@ -4275,11 +4270,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -4302,7 +4296,38 @@ describe('WorkbenchProvider runtime tasks', () => {
       accepted: true,
       taskId: 'runtime-a',
     })
+    const runningRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: true,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runningRuntimeWork),
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
@@ -4333,11 +4358,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -4375,11 +4399,10 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
 
@@ -4419,11 +4442,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatDone?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
         result: { value: 'done' },
       })
     })
@@ -4467,10 +4488,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Codex',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
       })
     })
 
@@ -4478,9 +4498,8 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers?.onBlockCreated?.({
-        taskId: 77,
-        subtaskId: 101,
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
         block: {
           id: 'tool-1',
           type: 'tool',
@@ -4602,11 +4621,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -4618,11 +4636,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     runtimeRunning = false
     await act(async () => {
       streamHandlers.onChatDone?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
         result: { value: 'done' },
       })
     })
@@ -4745,11 +4761,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -4763,11 +4778,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     runtimeRunning = false
     await act(async () => {
       streamHandlers.onChatDone?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
         result: { value: 'done' },
       })
     })
@@ -4856,11 +4869,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -4955,11 +4967,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
@@ -5103,11 +5114,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        taskId: 77,
-        subtaskId: 101,
-        shell_type: 'Chat',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
       })
     })
     const listCallsBeforeCancel = listRuntimeWork.mock.calls.length
@@ -5206,10 +5216,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await act(async () => {
       streamHandlers.onChatStart?.({
-        subtaskId: 101,
-        shell_type: 'Codex',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
       })
     })
     await userEvent.click(screen.getByText('set ls follow-up'))
@@ -5423,30 +5433,30 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onChatStart?.({
-        subtaskId: 101,
-        shell_type: 'Codex',
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
       })
       streamHandlers.onChatDone?.({
-        subtaskId: 101,
+        taskId: 'runtime-a',
+        subtaskId: '101',
         offset: 0,
         result: { value: 'stale runtime a output' },
-        device_id: 'device-1',
-        task_id: 'runtime-a',
+        deviceId: 'device-1',
       })
       streamHandlers.onChatStart?.({
-        subtaskId: 102,
-        shell_type: 'Codex',
-        device_id: 'device-1',
-        task_id: 'runtime-b',
+        taskId: 'runtime-b',
+        subtaskId: '102',
+        shellType: 'Codex',
+        deviceId: 'device-1',
       })
       streamHandlers.onChatDone?.({
-        subtaskId: 102,
+        taskId: 'runtime-b',
+        subtaskId: '102',
         offset: 0,
         result: { value: 'current runtime b output' },
-        device_id: 'device-1',
-        task_id: 'runtime-b',
+        deviceId: 'device-1',
       })
     })
 

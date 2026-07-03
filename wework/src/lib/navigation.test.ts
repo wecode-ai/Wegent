@@ -6,7 +6,7 @@ describe('runtime task navigation', () => {
     const route = buildRuntimeTaskRoute({
       deviceId: 'axb-mac.local',
       workspacePath: '/Users/axb-mac/work/Wegent github',
-      taskId: 12345,
+      taskId: '12345',
     })
 
     expect(route).toBe('/runtime-tasks?deviceId=axb-mac.local&taskId=12345')
@@ -22,7 +22,7 @@ describe('runtime task navigation', () => {
       )
     ).toEqual({
       deviceId: 'axb-mac.local',
-      taskId: 12345,
+      taskId: '12345',
     })
   })
 })

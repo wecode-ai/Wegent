@@ -5,7 +5,6 @@ import { parseTrayTaskMenuId } from './trayTaskMenuId'
 
 function task(overrides: Partial<RuntimeTaskSummary>): RuntimeTaskSummary {
   return {
-    taskId: 1,
     taskId: 'task',
     workspacePath: '/workspace/project',
     title: 'Task',
@@ -47,20 +46,17 @@ describe('buildTrayMenuTaskGroups', () => {
             workspace({
               tasks: [
                 task({
-                  taskId: 10,
                   taskId: 'old',
                   title: 'Older task',
                   updatedAt: '2026-01-01T00:00:00Z',
                 }),
                 task({
-                  taskId: 11,
                   taskId: 'running',
                   title: 'Running task',
                   updatedAt: '2026-01-04T00:00:00Z',
                   running: true,
                 }),
                 task({
-                  taskId: 12,
                   taskId: 'pinned',
                   title: 'Pinned task',
                   updatedAt: '2026-01-03T00:00:00Z',
@@ -80,7 +76,6 @@ describe('buildTrayMenuTaskGroups', () => {
           workspaceKind: 'chat',
           tasks: [
             task({
-              taskId: 13,
               taskId: 'chat',
               workspacePath: '/workspace/chats/chat-1',
               workspaceKind: 'chat',
@@ -115,7 +110,7 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.running.map(item => parseTrayTaskMenuId(item.id))).toEqual([
       {
         deviceId: 'device-a',
-        taskId: 11,
+        taskId: 'running',
       },
     ])
   })

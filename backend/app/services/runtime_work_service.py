@@ -1026,7 +1026,7 @@ async def create_runtime_task(
         "executionRequest": execution_request.to_dict(),
     }
     if request.local_task_id:
-        payload["localTaskId"] = request.local_task_id
+        payload["taskId"] = request.local_task_id
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -1964,7 +1964,7 @@ def _runtime_fork_response(
     target = RuntimeTaskAddress(
         deviceId=str(result.get("deviceId") or target_device_id),
         workspacePath=str(result.get("workspacePath") or target_workspace_path),
-        localTaskId=str(result.get("localTaskId") or ""),
+        taskId=str(result.get("taskId") or ""),
     )
     if result.get("success") is False:
         return RuntimeTaskForkResponse(
@@ -2794,7 +2794,7 @@ def _runtime_search_items_from_result(
         if not isinstance(raw_item, dict):
             continue
         workspace_path = str(raw_item.get("workspacePath") or "").strip()
-        local_task_id = str(raw_item.get("localTaskId") or "").strip()
+        local_task_id = str(raw_item.get("taskId") or "").strip()
         if not workspace_path or not local_task_id:
             continue
         project = _runtime_search_project_ref(device_id, workspace_path)

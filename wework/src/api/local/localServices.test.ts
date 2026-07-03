@@ -214,13 +214,13 @@ describe('createLocalAppServices', () => {
       workspaces: [
         {
           workspace_path: '/Users/me/project',
-          local_tasks: [
+          tasks: [
             {
-              task_id: 'local-visible-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'local-visible-task',
+              workspacePath: '/Users/me/project',
               title: 'Fix guidance',
               runtime: 'codex',
-              runtime_handle: {
+              runtimeHandle: {
                 threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
               },
             },
@@ -259,18 +259,18 @@ describe('createLocalAppServices', () => {
       workspaces: [
         {
           workspace_path: '/Users/me/project',
-          local_tasks: [
+          tasks: [
             {
-              task_id: 'newer-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'newer-task',
+              workspacePath: '/Users/me/project',
               title: 'Newer task',
               runtime: 'codex',
               createdAt: 1780000100000,
               updatedAt: 1780000120000,
             },
             {
-              task_id: 'older-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'older-task',
+              workspacePath: '/Users/me/project',
               title: 'Older task',
               runtime: 'codex',
               created_at: 1780000000000,
@@ -405,8 +405,8 @@ describe('createLocalAppServices', () => {
         },
       ],
       executionRequest: expect.objectContaining({
-        task_id: expect.any(Number),
-        subtask_id: expect.any(Number),
+        task_id: 'task-1',
+        subtask_id: expect.any(String),
         team_id: 0,
         team_name: 'local-wework',
         task_title: 'Hello',
@@ -449,7 +449,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
-            subtask_id: expect.any(Number),
+            subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
             local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
@@ -538,7 +538,7 @@ describe('createLocalAppServices', () => {
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
     expect(worktreePath).toMatch(
-      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/\d+\/project$/
+      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -730,8 +730,8 @@ describe('createLocalAppServices', () => {
           },
         ],
         executionRequest: expect.objectContaining({
-          task_id: expect.any(Number),
-          subtask_id: expect.any(Number),
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
           prompt: 'continue',
           model_config: expect.objectContaining({
             model: 'openai',
@@ -769,7 +769,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
-              subtask_id: expect.any(Number),
+              subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
               local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
@@ -987,8 +987,8 @@ describe('createLocalAppServices', () => {
           },
         },
         executionRequest: expect.objectContaining({
-          task_id: expect.any(Number),
-          subtask_id: expect.any(Number),
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
           prompt: '工作目标',
           new_session: false,
           model_config: expect.objectContaining({
@@ -1231,14 +1231,14 @@ describe('createLocalAppServices', () => {
       workspaces: {
         '/Users/me/project': {
           label: 'Project',
-          local_tasks: [
+          tasks: [
             {
-              task_id: 'task-1',
-              project_workspace_path: '/Users/me/worktrees/99/project',
+              taskId: 'task-1',
+              projectWorkspacePath: '/Users/me/worktrees/99/project',
               title: 'Build',
               runtime: 'codex',
-              workspace_kind: 'worktree',
-              worktree_id: '99',
+              workspaceKind: 'worktree',
+              worktreeId: '99',
             },
           ],
         },

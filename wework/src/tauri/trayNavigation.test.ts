@@ -103,14 +103,14 @@ describe('trayNavigation', () => {
       payload: {
         id: createTrayTaskMenuId({
           deviceId: 'device/1',
-          taskId: 101,
+          taskId: '101',
         }),
       },
     })
 
     expect(buildRuntimeTaskRouteMock).toHaveBeenCalledWith({
       deviceId: 'device/1',
-      taskId: 101,
+      taskId: '101',
     })
     expect(navigateToMock).toHaveBeenCalledWith(
       '/runtime-tasks?deviceId=device%2F1&taskId=101'

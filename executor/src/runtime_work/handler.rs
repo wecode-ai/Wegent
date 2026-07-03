@@ -3311,12 +3311,12 @@ mod tests {
         let result = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
-                "payload": {"localTaskId": "local-task-1"}
+                "payload": {"taskId": "local-task-1"}
             }))
             .await
             .expect("cached transcript should return");
 
-        assert_eq!(result["localTaskId"], "local-task-1");
+        assert_eq!(result["taskId"], "local-task-1");
         assert_eq!(result["messages"][0]["content"], "cached");
     }
 
@@ -3328,7 +3328,7 @@ mod tests {
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
                 "payload": {
-                    "localTaskId": "optimistic-local-task",
+                    "taskId": "optimistic-local-task",
                     "workspacePath": "/tmp/project"
                 }
             }))
@@ -3336,7 +3336,7 @@ mod tests {
             .expect("missing runtime link should not read provider session");
 
         assert_eq!(result["success"], true);
-        assert_eq!(result["localTaskId"], "optimistic-local-task");
+        assert_eq!(result["taskId"], "optimistic-local-task");
         assert_eq!(result["workspacePath"], "/tmp/project");
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
     }
@@ -3389,7 +3389,7 @@ mod tests {
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.transcript",
                 "payload": {
-                    "localTaskId": "local-visible-task",
+                    "taskId": "local-visible-task",
                     "workspacePath": "/tmp/project",
                     "runtimeHandle": {
                         "threadId": "provider-session-1"
@@ -3399,7 +3399,7 @@ mod tests {
             .await
             .expect("explicit runtime handle should read cached provider session");
 
-        assert_eq!(result["localTaskId"], "local-visible-task");
+        assert_eq!(result["taskId"], "local-visible-task");
         assert_eq!(result["messages"][0]["content"], "cached");
     }
 
@@ -3435,7 +3435,7 @@ mod tests {
                 "createdAt": 2,
                 "status": "completed",
                 "items": [
-                    {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fresh"}]}}
+                    {"id":"item-2","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fresh"}]}}
                 ],
             }),
         ];
@@ -3447,7 +3447,7 @@ mod tests {
         assert_eq!(messages[0]["id"], "user-1");
         assert_eq!(messages[1]["id"], "assistant-turn-2");
         assert_eq!(messages[1]["content"], "fresh");
-        assert_eq!(messages[1]["turnId"], "turn-2");
+        assert_eq!(messages[1]["subtaskId"], "turn-2");
     }
 
     #[test]
